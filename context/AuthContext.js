@@ -1325,6 +1325,17 @@ export function AuthProvider({ children }) {
     if (user?.email) _syncShareExtAuth(user.email);
   }, [user?.email, _syncShareExtAuth]);
 
+  // [bia-convite 2026-10-19] Fallback do convite: depois de cadastro/login, se
+  // ainda houver código pendente (link aberto antes de instalar, cadastro por
+  // outro caminho), chama apply_referral uma vez; resposta definitiva limpa.
+  useEffect(() => {
+    if (!user?.email) return undefined;
+    const tm = setTimeout(() => {
+      try { require('../services/pendingReferral').applyPendingReferral().catch(() => {}); } catch {}
+    }, 6000);
+    return () => clearTimeout(tm);
+  }, [user?.email]);
+
   // Pre-fetch profile data on login so profile screen loads instantly
   // Also updates user.name with the profile display name
   const prefetchProfile = useCallback((email) => {
@@ -1764,7 +1775,8 @@ export function AuthProvider({ children }) {
   }, [loadAccounts, registerPushAfterAuth]);
 
   const signup = useCallback(async (username, password, name, domain) => {
-    const r = await api.signup(username, password, name, domain);
+    let _ref = ''; try { _ref = await require('../services/pendingReferral').getPendingRef(); } catch {} // [bia-convite 2026-10-19]
+    const r = await api.signup(username, password, name, domain, _ref ? { ref: _ref } : {});
     if (r.success) {
       // Defense-in-depth: signup creates a brand new account, so surgically
       // clear the three bare-key MMKV blobs + legacy localStorage twin

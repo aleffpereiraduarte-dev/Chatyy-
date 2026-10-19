@@ -3514,7 +3514,11 @@ export async function login(email, password) {
 }
 
 export async function signup(username, password, name, domain = 'chatyy.com.br', extra = {}) {
-  const r = await apiCall('signup', { username, password, name, domain, ...extra }, 'POST');
+  // [bia-convite 2026-10-19] extra.ref = código de convite pendente (services/pendingReferral)
+  const _ref = _refParam(extra && extra.ref);
+  const _extra = { ...(extra || {}) }; delete _extra.ref;
+  const r = await apiCall('signup', { username, password, name, domain, ..._extra, ...(_ref ? { ref: _ref } : {}) }, 'POST');
+  if (r.success && _ref) _clearPendingRefSoon();
   if (r.success) {
     const email = `${username}@${domain}`;
     savedCredentials = { email, password };
@@ -4380,15 +4384,30 @@ export async function phoneLoginRequest(phone) {
 export async function phoneLoginVerify(phone, code) {
   return apiCall('phone_login_verify', { phone, code }, 'POST');
 }
-export async function phoneSignup({ verify_token, username, name, domain = 'chatyy.com.br', password = '' }) {
-  return apiCall('phone_signup', { verify_token, username, name, domain, password }, 'POST');
+// [bia-convite 2026-10-19] Código de convite no cadastro (ref) — o servidor grava quem
+// indicou (captureReferralOnSignup). Sucesso → limpa o código pendente.
+function _refParam(raw) {
+  const c = String(raw || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  return /^[A-Z0-9]{4,32}$/.test(c) ? c : '';
+}
+function _clearPendingRefSoon() {
+  try { require('./pendingReferral').clearPendingRef().catch(() => {}); } catch {}
+}
+export async function phoneSignup({ verify_token, username, name, domain = 'chatyy.com.br', password = '', ref = '' }) {
+  const _ref = _refParam(ref);
+  const r = await apiCall('phone_signup', { verify_token, username, name, domain, password, ...(_ref ? { ref: _ref } : {}) }, 'POST');
+  if (r && r.success && _ref) _clearPendingRefSoon();
+  return r;
 }
 
 // Username-only signup (Telegram-style — no SIM/SMS). Mirror of phoneSignup
 // without the verify_token. Backend skips phone uniqueness + verification.
 // User can add a phone later via verifyPhoneSend/verifyPhoneCheck.
-export async function usernameSignup({ username, name, password, domain = 'chatyy.com.br' }) {
-  return apiCall('username_signup', { username, name, password, domain }, 'POST');
+export async function usernameSignup({ username, name, password, domain = 'chatyy.com.br', ref = '' }) {
+  const _ref = _refParam(ref); // [bia-convite 2026-10-19]
+  const r = await apiCall('username_signup', { username, name, password, domain, ...(_ref ? { ref: _ref } : {}) }, 'POST');
+  if (r && r.success && _ref) _clearPendingRefSoon();
+  return r;
 }
 
 // Firebase Phone Auth exchange (2026-06-18). The app verifies the phone with

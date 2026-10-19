@@ -6,27 +6,30 @@
 //   • prévia ao vivo (como a Bia cumprimentaria, com o nome + tom escolhidos);
 //   • Como a Bia me chama  → ai_memory display_name (bia-user-context: "chame de");
 //   • Tom de voz           → ai_memory tone (texto livre no prompt: "Tom que prefere");
-//   • Respostas curtas/detalhadas → NÃO há chave própria no servidor: vai junto
-//     no MESMO valor de `tone` ("Amigável e acolhedor, respostas curtas"), que o
-//     prompt já lê (texto e voz). Valor livre antigo = "Personalizado".
-//   • Idioma das respostas → ai_memory language (pt/en/es/fr/de/it — os que
-//     biaCtxLangName/_aiResolveLanguage conhecem). Hoje vale na VOZ; no chat de
-//     texto o idioma do pedido (app) tem prioridade no servidor.
-//   • Voz da Bia: o servidor não tem chave de voz (ai_memory não aceita) → fora.
+//   • Respostas curtas/detalhadas → [bia-convite 2026-10-19] chave própria
+//     ai_memory reply_length (short|detailed). Servidor sem o kit recusa a chave
+//     ("chave invalida") → volta ao jeito antigo: vai junto no MESMO valor de
+//     `tone` ("Amigável e acolhedor, respostas curtas"). Valor livre antigo = "Personalizado".
+//   • Idioma das respostas → ai_memory language (pt/en/es/fr/de/it) ou 'auto'
+//     ("Automático": o servidor com o kit apaga a chave → idioma do pedido/app).
+//   • Voz da Bia → [bia-convite 2026-10-19] ai_memory voice (vozes da conversa ao
+//     vivo). Prévia = one_tts com a voz salva. Sem o kit (sub_action delete /
+//     chave voice recusados) a seção some.
 //   • Privacidade: bia_personalize / bia_data_access + "Ver o que a Bia lembra".
 //   • Dados: "Apagar memória" (one_memory_delete all=1, com confirmação).
 //   • Escrita de e-mails: assinatura + aprender estilo (como antes).
 // Salva sozinho (toque/blur), sem botão "Salvar" global.
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, TextInput, Pressable, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
+import * as api from '../services/api';
 import { aiMemoryGet, aiMemorySet, aiMemoryLearnStyle, apiCall } from '../services/api';
 import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import { HapticsCompat as Haptics } from '../services/haptics';
 import { safeAlert } from '../services/alerts';
-import { IconTrash, IconSmile, IconBriefcase, IconZap, IconMessageCircle, IconGlobe, IconEye } from '../components/Icons';
+import { IconTrash, IconSmile, IconBriefcase, IconZap, IconMessageCircle, IconGlobe, IconEye, IconPlay, IconPause } from '../components/Icons';
 import {
   SettingsScreen, SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, useGroupedColors, useSettingsInputStyle,
 } from '../components/settings/SettingsKit';
@@ -45,7 +48,34 @@ const LENGTHS = [
   { id: 'detailed', phrase: 'respostas detalhadas', match: ['respostas detalhadas'] },
 ];
 const LANGS = ['pt', 'en', 'es', 'fr', 'de', 'it'];
-const LANG_FB = { pt: 'Português', en: 'English', es: 'Español', fr: 'Français', de: 'Deutsch', it: 'Italiano' };
+const LANG_FB = { auto: 'Automático', pt: 'Português', en: 'English', es: 'Español', fr: 'Français', de: 'Deutsch', it: 'Italiano' };
+
+// [bia-convite 2026-10-19] Vozes da Bia (ai_memory voice). Padrão do servidor = shimmer.
+const DEFAULT_VOICE = 'shimmer';
+const VOICES = [
+  { id: 'shimmer', name: 'Shimmer', desc: 'Leve e luminosa' },
+  { id: 'coral', name: 'Coral', desc: 'Calorosa e animada' },
+  { id: 'sage', name: 'Sage', desc: 'Serena e acolhedora' },
+  { id: 'marin', name: 'Marin', desc: 'Natural e próxima' },
+  { id: 'ballad', name: 'Ballad', desc: 'Suave e expressiva' },
+  { id: 'alloy', name: 'Alloy', desc: 'Neutra e equilibrada' },
+  { id: 'verse', name: 'Verse', desc: 'Versátil e animada' },
+  { id: 'echo', name: 'Echo', desc: 'Clara e firme' },
+  { id: 'ash', name: 'Ash', desc: 'Grave e calma' },
+  { id: 'cedar', name: 'Cedar', desc: 'Profunda e tranquila' },
+];
+const VOICE_IDS = VOICES.map(v => v.id);
+
+// Sessão: o servidor tem o kit (reply_length / voice)? null = ainda não sabemos.
+let _kitKnown = null;
+function _rejectedKey(r) {
+  const st = Number(r && r.__httpStatus) || 0;
+  const msg = String((r && (r.message || r.error)) || '').toLowerCase();
+  return !(r && r.success) && (/chave invalida|chave inválida|sub_action invalido|sub_action inválido/.test(msg) || st === 400);
+}
+
+let _ExpoAudio = null;
+try { _ExpoAudio = require('expo-audio'); } catch {}
 
 function parseTone(raw) {
   const s = String(raw || '').trim();
@@ -121,7 +151,7 @@ function Segmented({ options, value, onChange, g }) {
 }
 
 export default function BiaSettings() {
-  const { t, language } = useLanguage();
+  const { t } = useLanguage();
   const router = useRouter();
   let user = null;
   try { user = useAuth()?.user || null; } catch {}
@@ -141,6 +171,12 @@ export default function BiaSettings() {
   const [lengthId, setLengthId] = useState('');
   const [customTone, setCustomTone] = useState('');
   const [lang, setLang] = useState('');
+  // [bia-convite 2026-10-19] kit no servidor (reply_length/voice): null = sondando
+  const [kit, setKit] = useState(_kitKnown);
+  const [voice, setVoice] = useState('');
+  const [previewing, setPreviewing] = useState(false);
+  const playerRef = useRef(null);
+  const toneRawRef = useRef('');
   const [signature, setSignature] = useState('');
   const savedSig = useRef('');
   const [learnedStyle, setLearnedStyle] = useState('');
@@ -160,10 +196,19 @@ export default function BiaSettings() {
     if (!mem || typeof mem !== 'object') return;
     if (mem.display_name != null) { setDisplayName(String(mem.display_name)); savedName.current = String(mem.display_name); }
     if (mem.tone != null) {
+      toneRawRef.current = String(mem.tone);
       const p = parseTone(mem.tone);
-      setToneId(p.tone); setLengthId(p.length); setCustomTone(p.custom);
+      setToneId(p.tone); setCustomTone(p.custom);
+      if (!mem.reply_length) setLengthId(p.length);
     }
-    if (mem.language) setLang(String(mem.language).slice(0, 2).toLowerCase());
+    // [bia-convite 2026-10-19] chave própria vence o tamanho embutido no tom
+    if (mem.reply_length === 'short' || mem.reply_length === 'detailed') setLengthId(mem.reply_length);
+    if (mem.voice && VOICE_IDS.includes(String(mem.voice).toLowerCase())) setVoice(String(mem.voice).toLowerCase());
+    if (mem.reply_length || mem.voice) { _kitKnown = true; setKit(true); }
+    if (mem.language) {
+      const lv = String(mem.language).toLowerCase();
+      setLang(lv === 'auto' ? 'auto' : lv.slice(0, 2));
+    }
     if (mem.signature != null) { setSignature(String(mem.signature)); savedSig.current = String(mem.signature); }
     if (mem.writing_style) setLearnedStyle(mem.writing_style);
     if (mem.bia_personalize != null) setLearnOn(String(mem.bia_personalize) !== '0');
@@ -178,11 +223,23 @@ export default function BiaSettings() {
         if (r?.success) {
           hydrate(r.data?.memory);
           if (r.data?.memory && typeof r.data.memory === 'object') settingsCache.put('bia_memory', r.data.memory);
+          // [bia-convite 2026-10-19] sonda o kit sem mudar nada: "delete voice" quando
+          // não há voz salva (servidor antigo responde "sub_action invalido").
+          const m = r.data?.memory || {};
+          if (_kitKnown == null && !m.voice && !m.reply_length) {
+            try {
+              const pr = await apiCall('ai_memory', { sub_action: 'delete', key: 'voice' }, 'POST');
+              if (pr?.success) { _kitKnown = true; setKit(true); }
+              else if (_rejectedKey(pr)) { _kitKnown = false; setKit(false); }
+            } catch {}
+          }
         }
       } catch {}
       setLoading(false);
     })();
   }, [hydrate]);
+
+  useEffect(() => () => { try { playerRef.current?.stop?.(); } catch {} }, []);
 
   // Grava uma chave; devolve true/false. O servidor recusa valor vazio.
   const saveKey = useCallback(async (key, value) => {
@@ -196,6 +253,18 @@ export default function BiaSettings() {
       return false;
     }
   }, [showToast, t]);
+
+  // [bia-convite 2026-10-19] grava sem toast; diz se o servidor recusou a CHAVE (sem o kit).
+  const trySet = useCallback(async (key, value) => {
+    try {
+      const r = await aiMemorySet(key, value);
+      if (r?.success) {
+        try { settingsCache.patch('bia_memory', { [key]: value }); } catch {}
+        return { ok: true, rejected: false };
+      }
+      return { ok: false, rejected: _rejectedKey(r) };
+    } catch { return { ok: false, rejected: false }; }
+  }, []);
 
   const handleLearnToggle = useCallback(async (v) => {
     setLearnOn(v);
@@ -223,18 +292,103 @@ export default function BiaSettings() {
     const prev = { toneId, customTone };
     setToneId(id); setCustomTone('');
     try { Haptics.selectionAsync?.(); } catch {}
-    if (!(await saveKey('tone', composeTone(id, lengthId)))) { setToneId(prev.toneId); setCustomTone(prev.customTone); }
-  }, [toneId, customTone, lengthId, saveKey]);
+    // [bia-convite 2026-10-19] com reply_length próprio o tom vai sem o tamanho
+    const v = composeTone(id, kit === true ? '' : lengthId);
+    if (!(await saveKey('tone', v))) { setToneId(prev.toneId); setCustomTone(prev.customTone); }
+    else toneRawRef.current = v;
+  }, [toneId, customTone, lengthId, kit, saveKey]);
+
+  // Jeito antigo (servidor sem o kit): tamanho embutido no `tone`.
+  const legacyLengthTone = useCallback((id) => (toneId ? composeTone(toneId, id)
+    : customTone ? `${customTone.replace(/,?\s*respostas (curtas|detalhadas)/i, '')}, ${LENGTHS.find(x => x.id === id).phrase}`
+    : composeTone('', id)), [toneId, customTone]);
 
   const pickLength = useCallback(async (id) => {
     const prev = lengthId;
     setLengthId(id);
-    // Tom personalizado antigo: mantém o texto e acrescenta o tamanho.
-    const value = toneId ? composeTone(toneId, id)
-      : customTone ? `${customTone.replace(/,?\s*respostas (curtas|detalhadas)/i, '')}, ${LENGTHS.find(x => x.id === id).phrase}`
-      : composeTone('', id);
+    if (kit !== false) {
+      // [bia-convite 2026-10-19] chave própria reply_length
+      const r = await trySet('reply_length', id);
+      if (r.ok) {
+        if (!_kitKnown) { _kitKnown = true; setKit(true); }
+        // limpa o tamanho antigo embutido no tom (sem toast; falha = fica como estava)
+        const raw = toneRawRef.current;
+        if (raw && /respostas (curtas|detalhadas)/i.test(raw)) {
+          const clean = toneId ? composeTone(toneId, '') : raw.replace(/,?\s*respostas (curtas|detalhadas)/i, '').trim();
+          if (clean && (await trySet('tone', clean)).ok) toneRawRef.current = clean;
+        }
+        return;
+      }
+      if (!r.rejected) { setLengthId(prev); showToast(t('bia.toggleError', 'Não consegui salvar agora')); return; }
+      _kitKnown = false; setKit(false); // servidor sem o kit → jeito antigo
+    }
+    const value = legacyLengthTone(id);
     if (!(await saveKey('tone', value))) setLengthId(prev);
-  }, [lengthId, toneId, customTone, saveKey]);
+    else toneRawRef.current = value;
+  }, [lengthId, kit, toneId, trySet, legacyLengthTone, saveKey, showToast, t]);
+
+  // [bia-convite 2026-10-19] Voz da Bia
+  const pickVoice = useCallback(async (id) => {
+    if (id === (voice || DEFAULT_VOICE)) return;
+    const prev = voice;
+    setVoice(id);
+    try { Haptics.selectionAsync?.(); } catch {}
+    const r = await trySet('voice', id);
+    if (r.ok) { if (!_kitKnown) { _kitKnown = true; setKit(true); } return; }
+    setVoice(prev);
+    if (r.rejected) { _kitKnown = false; setKit(false); return; } // some a seção
+    showToast(t('bia.toggleError', 'Não consegui salvar agora'));
+  }, [voice, trySet, showToast, t]);
+
+  const stopPreview = useCallback(() => {
+    const p = playerRef.current;
+    playerRef.current = null;
+    try { p?.stop?.(); } catch {}
+    setPreviewing(false);
+  }, []);
+
+  const playPreview = useCallback(async () => {
+    if (previewing) { stopPreview(); return; }
+    const nm = displayName.trim() || firstName(user);
+    const text = (nm
+      ? t('bia.voice.sampleName', 'Oi, {name}! Eu sou a Bia. É assim que eu falo com você.').split('{name}').join(nm)
+      : t('bia.voice.sample', 'Oi! Eu sou a Bia. É assim que eu falo com você.'));
+    setPreviewing(true);
+    try {
+      if (Platform.OS === 'web') {
+        const url = await api.oneTTS(text);
+        if (!url) throw new Error('tts');
+        const audio = new window.Audio(url);
+        const end = () => { try { URL.revokeObjectURL(url); } catch {} if (playerRef.current?.audio === audio) { playerRef.current = null; setPreviewing(false); } };
+        audio.onended = end; audio.onerror = end;
+        playerRef.current = { audio, stop: () => { try { audio.pause(); } catch {} end(); } };
+        await audio.play();
+        return;
+      }
+      if (!_ExpoAudio?.createAudioPlayer) throw new Error('no_audio');
+      try { await _ExpoAudio.setAudioModeAsync?.({ playsInSilentMode: true }); } catch {}
+      const player = _ExpoAudio.createAudioPlayer({ uri: api.oneTTSUrl(text) });
+      let iv = null;
+      const cleanup = () => {
+        if (iv) { clearInterval(iv); iv = null; }
+        try { player.remove(); } catch {}
+        if (playerRef.current?.player === player) { playerRef.current = null; setPreviewing(false); }
+      };
+      playerRef.current = { player, stop: () => { try { player.pause(); } catch {} cleanup(); } };
+      let started = 0;
+      const startAt = Date.now();
+      iv = setInterval(() => {
+        try {
+          if (player.playing) started = started || Date.now();
+          if ((!player.playing && player.currentTime > 0) || (!started && Date.now() - startAt > 15000)) cleanup();
+        } catch { cleanup(); }
+      }, 300);
+      player.play();
+    } catch {
+      stopPreview();
+      showToast(t('bia.voice.previewError', 'Não consegui tocar a prévia agora'));
+    }
+  }, [previewing, stopPreview, displayName, user, showToast, t]);
 
   const pickLang = useCallback(async (code) => {
     const prev = lang;
@@ -280,9 +434,15 @@ export default function BiaSettings() {
     );
   }, [showToast, t]);
 
-  const appLang = String(language || 'pt').slice(0, 2).toLowerCase();
-  const langOptions = useMemo(() => LANGS.map(code => ({ value: code, label: t(`bia.lang.${code}`, LANG_FB[code]) })), [t]);
-  const langValue = lang || (LANGS.includes(appLang) ? appLang : 'pt');
+  const langOptions = useMemo(() => ['auto', ...LANGS].map(code => ({ value: code, label: t(`bia.lang.${code}`, LANG_FB[code]) })), [t]);
+  // [bia-convite 2026-10-19] sem idioma salvo = Automático (o servidor segue o idioma do pedido/app)
+  const langValue = lang && (lang === 'auto' || LANGS.includes(lang)) ? lang : 'auto';
+  const langFooter = kit === false
+    ? t('bia.langFooter', 'Na conversa por voz a Bia fala neste idioma. No chat por texto ela acompanha o idioma do app.')
+    : (langValue === 'auto'
+      ? t('bia.langFooterAuto', 'Automático: a Bia responde no idioma do app ou da sua mensagem.')
+      : t('bia.langFooterFixed', 'A Bia responde sempre neste idioma, no texto e na voz.'));
+  const voiceValue = voice || DEFAULT_VOICE;
   const previewName = displayName.trim() || firstName(user);
 
   const toneLabel = (id) => t(`bia.tone.${id}`, { friendly: 'Amigável', professional: 'Profissional', fun: 'Divertido', direct: 'Direto' }[id]);
@@ -382,8 +542,34 @@ export default function BiaSettings() {
             </View>
           </SettingsGroup>
 
+          {/* [bia-convite 2026-10-19] Voz da Bia — some se o servidor não aceita a chave voice */}
+          {kit === true && (
+            <SettingsGroup header={t('bia.voice.header', 'Voz da Bia')} footer={t('bia.voice.footer', 'A voz da conversa por voz e das respostas faladas. A prévia é uma amostra e pode soar um pouco diferente na conversa ao vivo.')}>
+              {VOICES.map(v => (
+                <SettingsRow
+                  key={v.id}
+                  title={v.name}
+                  subtitle={v.id === DEFAULT_VOICE
+                    ? `${t(`bia.voice.desc.${v.id}`, v.desc)} · ${t('bia.voice.default', 'Padrão')}`
+                    : t(`bia.voice.desc.${v.id}`, v.desc)}
+                  checked={voiceValue === v.id}
+                  accessibilityRole="radio"
+                  onPress={() => pickVoice(v.id)}
+                />
+              ))}
+              <SettingsRow
+                icon={previewing ? IconPause : IconPlay}
+                iconTile={false}
+                title={previewing ? t('bia.voice.stop', 'Parar prévia') : t('bia.voice.preview', 'Ouvir a voz escolhida')}
+                titleStyle={{ fontWeight: '600', color: g.ink }}
+                chevron={false}
+                onPress={playPreview}
+              />
+            </SettingsGroup>
+          )}
+
           {/* Idioma */}
-          <SettingsGroup footer={t('bia.langFooter', 'Na conversa por voz a Bia fala neste idioma. No chat por texto ela acompanha o idioma do app.')}>
+          <SettingsGroup footer={langFooter}>
             <SettingsPickerRow
               icon={IconGlobe}
               title={t('bia.langTitle', 'Idioma das respostas')}

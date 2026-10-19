@@ -243,6 +243,11 @@
               "scheme": "https",
               "host": "chatyy.com.br",
               "pathPrefix": "/stickers/store"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/signup"
             }
           ]
         },

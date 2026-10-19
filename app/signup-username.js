@@ -200,7 +200,8 @@ function SignupUsername() {
     if (!username || usernameAvailable === false) { goStep('handle'); return; }
     setError(''); setBusy(true);
     try {
-      const r = await api.usernameSignup({ username, name: fn, password, domain: 'chatyy.com.br' });
+      let _ref = ''; try { _ref = await require('../services/pendingReferral').getPendingRef(); } catch {} // [bia-convite 2026-10-19]
+      const r = await api.usernameSignup({ username, name: fn, password, domain: 'chatyy.com.br', ref: _ref });
       if (!mountedRef.current) return;
       if (r?.success && r.data?.token) {
         const lr = await loginWithToken(r.data.token, r.data.email);

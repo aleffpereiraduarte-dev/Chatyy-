@@ -14,7 +14,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, Alert, Linking, Platform, Share, StyleSheet } from 'react-native';
 import Svg, { Rect, Circle, Path, G } from 'react-native-svg';
 import { useLanguage } from '../../../context/LanguageContext';
-import { IconCopy, IconShare, IconMessageCircle, IconMessageSquare, IconMail, IconCheck, IconUserPlus } from '../../Icons';
+import { IconCopy, IconShare, IconMessageCircle, IconMessageSquare, IconMail, IconCheck, IconUserPlus, IconTag } from '../../Icons';
+import InviteCodeSheet from '../InviteCodeSheet'; // [bia-convite 2026-10-19]
 import { SettingsGroup, SettingsRow, SettingsValueText, useGroupedColors } from '../SettingsKit';
 import { HapticsCompat as Haptics } from '../../../services/haptics';
 import { useSection } from './shared';
@@ -288,6 +289,7 @@ export default function InviteCategory() {
   );
   const { state, list, load } = useInviteContacts(t);
   const [limit, setLimit] = useState(PAGE);
+  const [codeSheet, setCodeSheet] = useState(false); // [bia-convite 2026-10-19] "Tenho um código de convite"
 
   const inviteContact = useCallback((c) => {
     const digits = intlDigits(c.phone);
@@ -328,6 +330,15 @@ export default function InviteCategory() {
           <ProgressCard count={count} t={t} g={gc} />
         </SettingsGroup>
       )}
+
+      {/* [bia-convite 2026-10-19] código digitado depois do cadastro (apply_referral) */}
+      <SettingsGroup footer={t('invite.code.footer', 'Entrou sem usar o link de quem te convidou? Digite o código aqui.')}>
+        <SettingsRow
+          icon={IconTag}
+          title={t('invite.code.title', 'Tenho um código de convite')}
+          onPress={() => setCodeSheet(true)}
+        />
+      </SettingsGroup>
 
       {state !== 'web' && (
         <SettingsGroup header={t('invite.contactsHeader', 'Convide seus contatos')} footer={contactsFooter}>
@@ -374,6 +385,7 @@ export default function InviteCategory() {
           )}
         </SettingsGroup>
       )}
+      <InviteCodeSheet visible={codeSheet} onClose={() => setCodeSheet(false)} t={t} />
     </View>
   );
 }

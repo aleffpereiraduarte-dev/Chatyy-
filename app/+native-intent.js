@@ -35,6 +35,14 @@ export function redirectSystemPath({ path, initial }) {
       const fj = path.match(/(?:^|\/)family\/join\/([A-Za-z0-9_-]{8,128})/i);
       if (fj) return '/family?join=' + encodeURIComponent(fj[1]);
     }
+    // [bia-convite 2026-10-19] Convite: chatyy.com.br/signup?ref=CODE e
+    // onemundomail://signup?ref=CODE → grava o código pendente (1ª vez, 30 dias)
+    // e abre /signup (app/signup.js), que segue para o cadastro por telefone.
+    if (typeof path === 'string' && /signup/i.test(path)) {
+      let code = '';
+      try { code = require('../services/pendingReferral').captureRefFromUrl(path); } catch {}
+      if (code && /^onemundomail:\/\//i.test(path)) return '/signup?ref=' + code;
+    }
     // [2026-10-12 nav-dedup] Warm-start chat deep links (Android native
     // notification tap, widgets, Siri/shortcuts: onemundomail://chat-conversation?id=…)
     // used to be routed by expo-router as a blind NAVIGATE → a chat already in

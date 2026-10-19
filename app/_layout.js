@@ -708,6 +708,8 @@ function useDeepLinking() {
         }),
       }).catch(() => {});
     } catch {}
+    // [bia-convite 2026-10-19] .../signup?ref=CODE → convite pendente (não sobrescreve, 30 dias)
+    try { require('../services/pendingReferral').captureRefFromUrl(url); } catch {}
     try {
       // mailto: links → compose screen
       const mailtoMatch = url.match(/(mailto:[^)]*)/i) || (url.startsWith('mailto:') ? [url, url] : null);

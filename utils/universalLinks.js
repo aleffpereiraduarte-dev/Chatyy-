@@ -91,6 +91,13 @@ export function resolveUniversalLink(url) {
     }
     case 'chat':
       return seg[1] && /^\d+$/.test(seg[1]) ? { href: '/chat-conversation?id=' + seg[1], owner: 'layout' } : null;
+    case 'signup': {
+      // [bia-convite 2026-10-19] chatyy.com.br/signup?ref=CODE → app/signup.js
+      // (grava o convite pendente e segue para /signup-phone).
+      if (seg.length !== 1) return null;
+      const ref = String(u.searchParams.get('ref') || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      return { href: /^[A-Z0-9]{4,32}$/.test(ref) ? '/signup?ref=' + ref : '/signup', owner: 'router' };
+    }
     case 'stickers': {
       if (seg[1] !== 'store') return null;
       const inst = u.searchParams.get('install') || '';
@@ -102,4 +109,4 @@ export function resolveUniversalLink(url) {
 }
 
 // Mirror of the app-claimed paths (documentation + tests).
-export const UNIVERSAL_PATHS = ['/call/', '/j/', '/g/', '/u/', '/@', '/ch/', '/live/', '/feed/', '/meet/', '/chat/', '/stickers/store'];
+export const UNIVERSAL_PATHS = ['/call/', '/j/', '/g/', '/u/', '/@', '/ch/', '/live/', '/feed/', '/meet/', '/chat/', '/stickers/store', '/signup'];

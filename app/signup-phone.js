@@ -905,7 +905,8 @@ function SignupPhoneLegacy() {
     if (password.length > 0 && password.length < 8) { setError(t('signupPhone.err.passwordShort')); return; }
     setError(''); setBusy(true);
     try {
-      const r = await api.phoneSignup({ verify_token: verifyToken, username, name, domain: 'chatyy.com.br', password });
+      let _ref = ''; try { _ref = await require('../services/pendingReferral').getPendingRef(); } catch {} // [bia-convite 2026-10-19]
+      const r = await api.phoneSignup({ verify_token: verifyToken, username, name, domain: 'chatyy.com.br', password, ref: _ref });
       if (r?.success && r.data?.email) { try { await markFreshSignup(r.data.email, { skip: ['profile'] }); } catch {} } // name + photo were just asked here
       if (!mountedRef.current) return;
       if (r?.success && r.data?.token) {
