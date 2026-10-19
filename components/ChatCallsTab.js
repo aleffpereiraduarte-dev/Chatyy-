@@ -3919,7 +3919,8 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
       )}
 
       {/* FAB - Dialer button (Telegram-grade glass orb, green tint) */}
-      {isPstnEnabled() && (
+      {/* [2026-10-19] sem FAB: o botão de ligar já fica no topo da aba */}
+      {false && isPstnEnabled() && (
       <BrandFab
         style={{ position: 'absolute', right: 20, bottom: 24 }}
         size={56}
@@ -3934,7 +3935,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
       )}
 
       {/* [2026-10-17 sem-pstn] FAB "Nova chamada" (só Chatyy) — no lugar do teclado. */}
-      {!isPstnEnabled() && (
+      {false && !isPstnEnabled() && (
       <BrandFab
         style={{ position: 'absolute', right: 20, bottom: 24 }}
         size={56}
