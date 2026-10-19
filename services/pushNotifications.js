@@ -3394,6 +3394,15 @@ function _extraNotificationTarget(data) {
     case 'call_end':
     case 'answered_elsewhere':
       return false;
+    // [jogos 2026-10-18] "Ana jogou, sua vez" / convite / resultado → abre a tela do jogo
+    case 'game_turn':
+    case 'game_invite':
+    case 'game_start':
+    case 'game_result': {
+      const gidP = _str(data.game_id);
+      if (gidP) return { href: `/game/${encodeURIComponent(gidP)}?cid=${encodeURIComponent(_str(cid) || '')}` };
+      return cid ? { conv: _convHref(cid, ''), cid } : { href: '/chat' };
+    }
     case 'group_join_request':
     case 'group_join_approved':
       return cid ? { conv: _convHref(cid, '&type=group'), cid } : { href: '/chat' };

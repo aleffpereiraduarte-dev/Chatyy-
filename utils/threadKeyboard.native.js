@@ -21,6 +21,7 @@
 // back to RN's KeyboardAvoidingView with the same geometry (no crash).
 import React, { useEffect } from 'react';
 import { AppState, Keyboard, KeyboardAvoidingView, Platform, TurboModuleRegistry } from 'react-native';
+import { isAppResuming, kbResumeGuardOn as isAppResumingGuardOn } from './kbResumeGuard';
 
 let KC = null;
 let Rea = null;
@@ -182,6 +183,11 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
     let hideTimer = null;
     let showTimer = null; // [2026-10-13 android-kbd-flicker]
     const onHide = () => {
+      // [2026-10-18 kb-resume] keyboardDidHide postado pelo iOS ao ir pro fundo
+      // (ou processado na volta): o sistema devolve o teclado aberto sozinho.
+      // Assentar aqui jogava o composer pra baixo e ele subia de novo = pisca.
+      // A checagem do AppState 'active' abaixo decide depois da volta.
+      if (isAppResuming()) return;
       if (showTimer) { clearTimeout(showTimer); showTimer = null; }
       if (hideTimer) clearTimeout(hideTimer);
       hideTimer = setTimeout(() => {
@@ -241,7 +247,15 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
       if (appStateTimer) clearTimeout(appStateTimer);
       // iOS restores a previously-open keyboard right after resume — give it
       // time to emit keyboardWillShow before deciding it's closed.
-      appStateTimer = setTimeout(settleIfHidden, 700);
+      // [2026-10-18 kb-resume] KC (thread de UI) ainda vê teclado → confere de
+      // novo antes de assentar (o RN pode ter perdido o didShow da volta).
+      appStateTimer = setTimeout(() => {
+        appStateTimer = null;
+        let kcOpen = false;
+        try { kcOpen = Math.abs(height.value) > 1; } catch {}
+        if (!kcOpen || !isAppResumingGuardOn()) { settleIfHidden(); return; }
+        appStateTimer = setTimeout(() => { appStateTimer = null; settleIfHidden(); }, 600);
+      }, 700);
     });
     return () => {
       try { subHide.remove(); } catch {}

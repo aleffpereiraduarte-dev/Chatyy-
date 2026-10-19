@@ -1,0 +1,272 @@
+// services/games.js — [jogos 2026-10-18] Jogos dentro da conversa (estilo Messenger antigo).
+//
+// Servidor AUTORITATIVO (api/games.php via chat_game_*): o app só desenha a visão que o servidor
+// manda (lances legais, cartas jogáveis, mão do próprio jogador) e envia a intenção do lance.
+//
+// Gate (o item "Jogos" só aparece quando os dois valem):
+//   1) kill switch OTA: globalThis.__chatyy_games === false esconde tudo;
+//   2) capacidade do servidor: chat_game_types respondeu enabled=true. Se QUALQUER chamada de jogo
+//      voltar "Unknown chat action" / games_disabled, a capacidade vira false (item some).
+// Cache da capacidade em AsyncStorage (6 h) para o menu não piscar.
+//
+// Tempo real: evento WS `game_update` {conversation_id, game_id, message_id, version, content, game}
+// → store por jogo (subscribeGame) + ouvintes de conversa (onGameUpdate) que atualizam o cartão.
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const CAP_KEY = 'chatyy_games_cap_v1';
+const CAP_TTL = 6 * 3600 * 1000;
+let _cap = null;          // true | false | null (desconhecido)
+let _capAt = 0;
+let _probe = null;
+let _capLoaded = false;
+const _capSubs = new Set();
+
+function _api() { const m = require('./api'); return m.default && m.default.apiCall ? m.default : m; }
+
+export function gamesKillSwitched() {
+  try { return globalThis.__chatyy_games === false; } catch { return false; }
+}
+export function gamesAvailable() { return !gamesKillSwitched() && _cap === true; }
+export function onGamesCap(fn) { _capSubs.add(fn); return () => _capSubs.delete(fn); }
+function _setCap(v) {
+  const changed = _cap !== v;
+  _cap = v; _capAt = Date.now();
+  try { AsyncStorage.setItem(CAP_KEY, JSON.stringify({ v, at: _capAt })).catch(() => {}); } catch {}
+  if (changed) for (const fn of Array.from(_capSubs)) { try { fn(v); } catch {} }
+}
+export function isUnknownAction(r) {
+  if (!r) return false;
+  const m = String(r.message || r.error || (r.data && r.data.error) || '');
+  return /unknown (chat )?action/i.test(m) || m === 'unknown_action' || m === 'games_disabled';
+}
+/** Sonda o servidor (1x por sessão + a cada 6 h). Nunca lança. */
+export async function probeGames(force = false) {
+  if (gamesKillSwitched()) return false;
+  if (!_capLoaded) {
+    _capLoaded = true;
+    try {
+      const raw = await AsyncStorage.getItem(CAP_KEY);
+      const j = raw ? JSON.parse(raw) : null;
+      if (j && typeof j.v === 'boolean' && _cap === null) { _cap = j.v; _capAt = j.at || 0; for (const fn of Array.from(_capSubs)) { try { fn(_cap); } catch {} } }
+    } catch {}
+  }
+  if (!force && _cap !== null && Date.now() - _capAt < CAP_TTL) return _cap;
+  if (_probe) return _probe;
+  _probe = (async () => {
+    try {
+      const r = await _api().apiCall('chat_game_types', {}, 'POST');
+      if (r && r.success && r.data && r.data.enabled) _setCap(true);
+      else if (isUnknownAction(r)) _setCap(false);
+    } catch {}
+    _probe = null;
+    return _cap === true;
+  })();
+  return _probe;
+}
+
+async function _call(action, params) {
+  let r = null;
+  try { r = await _api().apiCall(action, params, 'POST'); } catch (e) { r = { success: false, message: String((e && e.message) || 'network') }; }
+  if (isUnknownAction(r)) _setCap(false);
+  const view = r && r.data && r.data.game;
+  if (view) putGameView(view);
+  if (r && r.data && r.data.rematch) putGameView(r.data.rematch);
+  return r || { success: false, message: 'network' };
+}
+export const gameCreate = (conversationId, type, players, open) => _call('chat_game_create', { conversation_id: conversationId, type, players: players || [], open: open ? 1 : 0 });
+export const gameAccept = (id) => _call('chat_game_accept', { game_id: id });
+export const gameJoin = (id) => _call('chat_game_join', { game_id: id });
+export const gameDecline = (id) => _call('chat_game_decline', { game_id: id });
+export const gameStart = (id) => _call('chat_game_start', { game_id: id });
+export const gameMove = (id, version, move) => _call('chat_game_move', { game_id: id, version, move });
+export const gameState = (id) => _call('chat_game_state', { game_id: id });
+export const gameStateByMessage = (messageId) => _call('chat_game_state', { message_id: messageId });
+export const gameResign = (id) => _call('chat_game_resign', { game_id: id });
+export const gameRematch = (id) => _call('chat_game_rematch', { game_id: id });
+export const gameList = (conversationId) => _call('chat_game_list', { conversation_id: conversationId });
+export const gameScoreboard = (conversationId) => _call('chat_game_scoreboard', { conversation_id: conversationId });
+
+// ─── store por jogo + WS ────────────────────────────────────────────────────
+const _views = new Map();
+const _subs = new Map();
+const _convSubs = new Set();
+let _wsAttached = false;
+
+export function getGameView(id) { return _views.get(Number(id)) || null; }
+export function putGameView(view) {
+  if (!view || !view.g) return;
+  const id = Number(view.g);
+  const prev = _views.get(id);
+  if (prev && Number(prev.v) > Number(view.v)) return;
+  const v = { ...view, _rx: Date.now() };
+  _views.set(id, v);
+  const set = _subs.get(id);
+  if (set) for (const fn of Array.from(set)) { try { fn(v); } catch {} }
+}
+export function subscribeGame(id, fn) {
+  ensureGameWs();
+  const k = Number(id);
+  if (!_subs.has(k)) _subs.set(k, new Set());
+  _subs.get(k).add(fn);
+  return () => { const s = _subs.get(k); if (s) { s.delete(fn); if (!s.size) _subs.delete(k); } };
+}
+/** Ouvinte de conversa: fn({conversation_id, message_id, content, game}) a cada game_update. */
+export function onGameUpdate(fn) { ensureGameWs(); _convSubs.add(fn); return () => _convSubs.delete(fn); }
+export function ensureGameWs() {
+  if (_wsAttached) return;
+  _wsAttached = true;
+  try {
+    const ws = require('./websocket').default;
+    ws.on('game_update', (d) => {
+      const data = d && d.game ? d : (d && d.data && d.data.game ? d.data : d);
+      if (!data) return;
+      if (data.game) putGameView(data.game);
+      if (!_cap && gamesKillSwitched() === false) _cap = true; // servidor mandou evento de jogo → tem jogos
+      for (const fn of Array.from(_convSubs)) { try { fn(data); } catch {} }
+    });
+  } catch { _wsAttached = false; }
+}
+
+// ─── textos e cartão ────────────────────────────────────────────────────────
+export const GAME_TYPES = ['damas', 'velha', 'cartas', 'quiz', 'forca'];
+const TITLE_FB = { velha: 'Jogo da Velha', damas: 'Damas', cartas: 'Cartas Coloridas', quiz: 'Quiz', forca: 'Forca' };
+export function tr(t, k, fb, vars) {
+  let s = fb;
+  try { const v = t ? t(k, vars ? { ...vars, defaultValue: fb } : fb) : fb; if (v && v !== k) s = v; } catch {}
+  if (vars && typeof s === 'string') Object.keys(vars).forEach((x) => { s = s.split('{' + x + '}').join(String(vars[x])); });
+  return s;
+}
+export function gameTitle(t, type) { return tr(t, 'games.title.' + type, TITLE_FB[type] || 'Jogo'); }
+export function gameSubtitle(t, type) {
+  const fb = { damas: 'Regras brasileiras, dama voa', velha: 'Rapidinho, 3 em linha', cartas: 'Descarte por cor ou número, 2 a 6', quiz: 'Todos respondem ao mesmo tempo', forca: 'Adivinhe a palavra em turnos' };
+  return tr(t, 'games.sub.' + type, fb[type] || '');
+}
+export function parseGameContent(c) {
+  if (c && typeof c === 'object') return c.kind ? c : null;
+  if (typeof c !== 'string') return null;
+  const s = c.trim();
+  if (!s.startsWith('{')) return null;
+  try { const j = JSON.parse(s); return j && (j.kind === 'game' || j.kind === 'result') && j.type ? j : null; } catch { return null; }
+}
+const PUBLIC_KEYS = ['g', 'type', 'title', 'status', 'v', 'by', 'players', 'seats', 'turn', 'winners', 'draw', 'ranking', 'open', 'min', 'max', 'info', 'rematch_id', 'rematch_of', 'result_mid', 'hanged'];
+/** Visão do servidor → content JSON do cartão (só campos públicos). */
+export function cardContentFromView(view) {
+  const o = { kind: 'game' };
+  for (const k of PUBLIC_KEYS) if (view && view[k] !== undefined) o[k] = view[k];
+  return JSON.stringify(o);
+}
+function _lc(s) { return String(s || '').toLowerCase(); }
+export function nameOf(g, email, meEmail, t) {
+  const e = _lc(email);
+  if (meEmail && e === _lc(meEmail)) return tr(t, 'games.you', 'Você');
+  const p = (g && Array.isArray(g.players) ? g.players : []).find((x) => _lc(x.e) === e);
+  if (p && p.n) return String(p.n).split(' ')[0];
+  const r = (g && Array.isArray(g.ranking) ? g.ranking : []).find((x) => _lc(x.e) === e);
+  if (r && r.n) return String(r.n).split(' ')[0];
+  return e.split('@')[0];
+}
+export function myStatusIn(g, meEmail) {
+  const p = (g && Array.isArray(g.players) ? g.players : []).find((x) => _lc(x.e) === _lc(meEmail));
+  return p ? p.s : null;
+}
+export function isMyTurn(g, meEmail) { return !!(g && g.status === 'active' && g.turn && _lc(g.turn) === _lc(meEmail)); }
+export function isSeat(g, meEmail) { return !!(g && Array.isArray(g.seats) && g.seats.some((e) => _lc(e) === _lc(meEmail))); }
+
+/** Linha de status do cartão: "Sua vez", "Vez de Ana", "Ana venceu", "Empate", "Aguardando Beto"… */
+export function gameStatusLine(t, g, meEmail) {
+  if (!g) return '';
+  const me = _lc(meEmail);
+  if (g.kind === 'result' || g.status === 'finished') {
+    const w = Array.isArray(g.winners) ? g.winners : [];
+    if (g.draw) return tr(t, 'games.status.draw', 'Empate');
+    if (g.type === 'forca' && g.hanged) return tr(t, 'games.status.hanged', 'Ninguém acertou a palavra');
+    if (!w.length) return tr(t, 'games.status.finished', 'Partida encerrada');
+    if (w.some((e) => _lc(e) === me)) return w.length > 1 ? tr(t, 'games.status.youTied', 'Você empatou no 1º lugar') : tr(t, 'games.status.youWon', 'Você venceu');
+    return tr(t, 'games.status.won', '{name} venceu', { name: nameOf(g, w[0], meEmail, t) });
+  }
+  if (g.status === 'cancelled') return tr(t, 'games.status.cancelled', 'Partida cancelada');
+  if (g.status === 'pending') {
+    const mine = myStatusIn(g, meEmail);
+    if (mine === 'invited') return tr(t, 'games.status.invitedYou', 'Convidou você para jogar');
+    const waiting = (g.players || []).filter((p) => p.s === 'invited');
+    if (g.open && !waiting.length) return tr(t, 'games.status.openWaiting', 'Aberto: toque em Entrar para jogar');
+    if (waiting.length === 1) return tr(t, 'games.status.waitingFor', 'Aguardando {name}', { name: nameOf(g, waiting[0].e, meEmail, t) });
+    return tr(t, 'games.status.waitingN', 'Aguardando {n} jogadores', { n: waiting.length });
+  }
+  if (g.status === 'active') {
+    if (g.type === 'quiz') {
+      const i = g.info && g.info.i; const n = g.info && g.info.count;
+      return i && n ? tr(t, 'games.status.quizProgress', 'Pergunta {i} de {n}', { i, n }) : tr(t, 'games.status.playing', 'Em andamento');
+    }
+    if (!g.turn) return tr(t, 'games.status.playing', 'Em andamento');
+    if (_lc(g.turn) === me) return tr(t, 'games.status.yourTurn', 'Sua vez');
+    return tr(t, 'games.status.turnOf', 'Vez de {name}', { name: nameOf(g, g.turn, meEmail, t) });
+  }
+  return '';
+}
+/** Frase do cartão de resultado: "Ana venceu a partida de Damas!" */
+export function resultHeadline(t, g, meEmail) {
+  const title = gameTitle(t, g.type);
+  const w = Array.isArray(g.winners) ? g.winners : [];
+  if (g.draw) return tr(t, 'games.result.draw', 'Empate na partida de {game}', { game: title });
+  if (g.type === 'forca' && g.hanged) return tr(t, 'games.result.hanged', 'A forca venceu desta vez');
+  if (!w.length) return tr(t, 'games.result.over', 'Fim da partida de {game}', { game: title });
+  if (w.length > 1) return tr(t, 'games.result.tie', 'Empate no topo da partida de {game}', { game: title });
+  if (_lc(w[0]) === _lc(meEmail)) return tr(t, 'games.result.youWon', 'Você venceu a partida de {game}!', { game: title });
+  return tr(t, 'games.result.won', '{name} venceu a partida de {game}!', { name: nameOf(g, w[0], meEmail, t), game: title });
+}
+/** Prévia na lista de conversas (sem emoji). */
+export function gamePreviewText(t, content) {
+  const g = parseGameContent(content);
+  if (!g) return tr(t, 'games.preview', 'Jogo');
+  if (g.kind === 'result') return resultHeadline(t, g, '');
+  return tr(t, 'games.previewInvite', 'Jogo: {game}', { game: gameTitle(t, g.type) });
+}
+const ERR_FB = {
+  not_your_turn: 'Não é a sua vez', illegal_move: 'Lance inválido', must_capture: 'A captura é obrigatória',
+  cell_taken: 'Essa casa já está ocupada', version_conflict: 'O jogo mudou, atualizamos para você',
+  illegal_card: 'Essa carta não serve agora', wild4_not_allowed: 'Coringa +4 só sem cartas da cor da mesa',
+  must_play_drawn: 'Jogue a carta comprada ou passe', already_drew: 'Você já comprou nesta vez', must_draw_first: 'Compre uma carta antes de passar',
+  color_required: 'Escolha uma cor', already_answered: 'Você já respondeu', time_up: 'Tempo esgotado', already_guessed: 'Essa letra já foi',
+  bad_letter: 'Escolha uma letra', game_over: 'A partida já acabou', not_started: 'A partida ainda não começou',
+  not_a_player: 'Você está assistindo', too_few_players: 'Faltam jogadores', too_many_players: 'Jogadores demais para este jogo',
+  too_many_games: 'Já há muitos jogos abertos nesta conversa', rate_limited: 'Calma, muitas jogadas seguidas', games_disabled: 'Jogos indisponíveis no momento',
+  not_invited: 'Este jogo é só para convidados', game_full: 'Este jogo já está cheio', only_creator: 'Só quem criou pode começar',
+  player_not_member: 'Essa pessoa não está na conversa', unavailable: 'Indisponível nesta conversa',
+};
+export function gameErrorText(t, r) {
+  const code = String((r && (r.message || (r.data && r.data.error))) || '');
+  if (ERR_FB[code]) return tr(t, 'games.err.' + code, ERR_FB[code]);
+  return tr(t, 'games.err.generic', 'Não deu certo. Tente de novo.');
+}
+
+/** Botões do cartão no chat (JS e nativo usam a mesma regra). */
+export function gameCardActions(g, meEmail) {
+  const acts = [];
+  if (!g) return acts;
+  const me = _lc(meEmail);
+  const seat = isSeat(g, me);
+  if (g.kind === 'result') { if (seat) acts.push('rematch'); acts.push('open'); return acts; }
+  const mine = myStatusIn(g, me);
+  if (g.status === 'pending') {
+    if (mine === 'invited') return ['accept', 'decline'];
+    if (!mine && g.open) acts.push('join');
+    if (_lc(g.by) === me) {
+      const acc = (g.players || []).filter((p) => p.s === 'accepted').length;
+      if (acc >= (Number(g.min) || 2)) acts.push('start');
+      acts.push('cancel');
+    }
+    return acts;
+  }
+  if (g.status === 'active') return [seat ? 'play' : 'watch'];
+  if (g.status === 'finished') { acts.push('open'); if (seat && !g.rematch_id) acts.push('rematch'); }
+  return acts;
+}
+export function gameActionLabel(t, act) {
+  const fb = { accept: 'Aceitar', decline: 'Recusar', join: 'Entrar', start: 'Começar', cancel: 'Cancelar', play: 'Jogar', watch: 'Assistir', open: 'Ver partida', rematch: 'Revanche' };
+  return tr(t, 'games.act.' + act, fb[act] || act);
+}
+export function playerStatusLabel(t, s) {
+  const fb = { accepted: 'Pronto', invited: 'Convidado', declined: 'Recusou', left: 'Saiu', expired: 'Não entrou' };
+  return tr(t, 'games.pstatus.' + s, fb[s] || '');
+}

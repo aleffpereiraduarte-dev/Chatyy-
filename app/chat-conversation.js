@@ -55,6 +55,7 @@ import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, get
 // [2026-10-06 keyboard-controller] Keyboard glued to the composer on the UI
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
+import { isAppResuming, kbResumeGuardOn } from '../utils/kbResumeGuard'; // [2026-10-18 kb-resume]
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
 import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal, nativeSearchOn, nativeDragSelectOn, nativeOverlayOn, nativeQuickReactOn } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
 import { useConvOpenMetric, noteConvOpen, noteSendAck, sendSocketSnapshot } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open + [wave10-D] send_ack
@@ -189,6 +190,11 @@ import GiftSheet from '../components/gifts/GiftSheet';
 import GiftBubble from '../components/gifts/GiftBubble';
 import { giftPreviewText } from '../components/gifts/giftCatalog';
 import { IconGiftBox as _IconGiftBox } from '../components/Icons';
+// [jogos 2026-10-18] Jogos na conversa (Damas, Velha, Cartas Coloridas, Quiz, Forca) — servidor autoritativo.
+import GameChatCard from '../components/games/GameChatCard';
+import GamePicker from '../components/games/GamePicker';
+import GameScoreboardSheet from '../components/games/GameScoreboard';
+import { IconGamepad as _IconGamepad } from '../components/games/GameIcons';
 import MentionJumpFab from '../components/chat/MentionJumpFab'; // [2026-10-14 grupo-rajada]
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
@@ -4947,6 +4953,10 @@ function describeReplyTarget(rt, ref, t) {
         ? { Icon: IconVideo, label: tr('chat.videoCall', 'Chamada de vídeo'), lines: 1, thumb: null }
         : { Icon: IconPhone, label: tr('chat.voiceCall', 'Chamada de voz'), lines: 1, thumb: null };
     }
+    case 'game': { // [jogos 2026-10-18]
+      let lbl = ''; try { lbl = require('../services/games').gamePreviewText(t, m.content); } catch {}
+      return { Icon: _IconGamepad, label: lbl || tr('games.preview', 'Jogo'), lines: 1, thumb: null };
+    }
     case 'meetup': {
       const ttl = String((m.meetup && m.meetup.title) || (_rtJSON(m.content) || {}).title || _rtField(content, 'title') || '').trim();
       return { Icon: IconCalendar, label: ttl || tr('chat.meetup', 'Reunião'), lines: 1, thumb: null };
@@ -5971,15 +5981,15 @@ function AttachmentMenu(props) {
   const [nativeFailed, setNativeFailed] = useState(false);
   if (!nativeFailed && NativeAttachBridge && NativeAttachBridge.nativeAttachUsable()) {
     const NativeSheet = NativeAttachBridge.default;
-    return <NativeSheet {...props} t={t} items={buildAttachItems(t, { gift: !!props.giftEnabled })} onFail={() => setNativeFailed(true)} />;
+    return <NativeSheet {...props} t={t} items={buildAttachItems(t, { gift: !!props.giftEnabled, games: !!props.gamesEnabled })} onFail={() => setNativeFailed(true)} />;
   }
   if (ATTACH_SHEET_NATIVE && AttachSheetNative) {
-    return <AttachSheetNative {...props} items={buildAttachItems(t, { gift: !!props.giftEnabled })} />;
+    return <AttachSheetNative {...props} items={buildAttachItems(t, { gift: !!props.giftEnabled, games: !!props.gamesEnabled })} />;
   }
   return <AttachmentMenuLegacy {...props} />;
 }
 
-function AttachmentMenuLegacy({ visible, onClose, onPick, colors, giftEnabled }) {
+function AttachmentMenuLegacy({ visible, onClose, onPick, colors, giftEnabled, gamesEnabled }) {
   const { t } = useLanguage();
   const sheetAnim = useRef(new Animated.Value(0)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
@@ -6001,7 +6011,7 @@ function AttachmentMenuLegacy({ visible, onClose, onPick, colors, giftEnabled })
   }, [visible]);
 
   if (!show) return null;
-  const items = buildAttachItems(t, { gift: !!giftEnabled });
+  const items = buildAttachItems(t, { gift: !!giftEnabled, games: !!gamesEnabled });
 
   const translateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [350, 0] });
   const scale = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1] });
@@ -6075,6 +6085,8 @@ function buildAttachItems(t, opts = {}) {
     { key: 'playlist', icon: IconMusic || IconPlay, label: t('chatConv.playlist') || 'Playlist', color: '#111111' },
     // [2026-10-13 diamantes] Presente — só em conversa 1:1 (servidor recusa grupo).
     ...(opts.gift ? [{ key: 'gift', icon: _IconGiftBox, label: t('gifts.attachLabel') || 'Presente', color: '#111111' }] : []),
+    // [jogos 2026-10-18] "Jogos" — só com o servidor pronto (chat_game_types) e sem o kill switch __chatyy_games === false.
+    ...(opts.games ? [{ key: 'games', icon: _IconGamepad, label: t('games.menu') || 'Jogos', color: '#111111' }] : []),
     // 2026-05-18: "Vídeo curto" — Reels-style 9:16 clip in-chat. Only renders
     // when the feature flag is on (isShortVideoInChatEnabled returns true).
     // Returns null otherwise so the grid silently drops the slot for users
@@ -11333,6 +11345,7 @@ function ChatConversationInner() {
       if (!restore || !had) return;
       setTimeout(() => {
         if (_kbLeavingRef.current || !mountedRef.current) return;
+        if (isAppResuming()) return; // [2026-10-18 kb-resume]
         try { if (_kbNav.isFocused && !_kbNav.isFocused()) return; } catch {}
         try { inputRef.current?.focus?.(); } catch {}
       }, 60);
@@ -12991,11 +13004,62 @@ function ChatConversationInner() {
     if (!showAttachMenu) return undefined;
     const ev = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const sub = Keyboard.addListener(ev, () => {
+      // [2026-10-18 kb-resume] volta do fundo com o menu aberto: o iOS
+      // restaura o teclado sozinho — derrubar aqui = abre-fecha.
+      if (isAppResuming()) return;
       try { inputRef.current?.blur?.(); } catch {}
       try { Keyboard.dismiss(); } catch {}
     });
     return () => { try { sub.remove(); } catch {} };
   }, [showAttachMenu]);
+  // [2026-10-18 kb-resume] "+" → fechar a folha → teclado abria e fechava.
+  // RAIZ: a folha era apresentada 60 ms depois do resign, com o teclado ainda
+  // DESCENDO; o UIKit guarda o teclado visível na apresentação e o devolve ao
+  // dispensar → o ouvinte acima (menu ainda "aberto" até a promessa resolver)
+  // derrubava de novo. WhatsApp: teclado aberto antes do "+" volta aberto ao
+  // cancelar; fechado continua fechado. Agora: (1) iOS apresenta só depois do
+  // keyboardDidHide (teto 320 ms); (2) cancelou (sem ação) e o teclado estava
+  // aberto → um focus() limpo depois que a folha sumiu; (3) o compositor
+  // nativo (focusGuard) recusa o re-foco automático do UIKit depois do "+".
+  // Kill switch: globalThis.__chatyy_kb_resume_guard = false (= 60 ms antigo).
+  const _attachKbRef = useRef({ had: false, at: 0 });
+  const _openAttachMenuKb = (had) => {
+    const legacy = () => setTimeout(() => setShowAttachMenu(true), Platform.OS === 'android' ? 80 : 60);
+    if (!kbResumeGuardOn()) { legacy(); return; }
+    _attachKbRef.current = { had: !!had, at: Date.now() };
+    let vis = false;
+    try { vis = !!Keyboard.isVisible?.(); } catch {}
+    if (Platform.OS !== 'ios' || !vis) { legacy(); return; }
+    let done = false;
+    let sub = null;
+    const go = () => {
+      if (done) return;
+      done = true;
+      try { sub?.remove?.(); } catch {}
+      if (!mountedRef.current || _kbLeavingRef.current) return;
+      setShowAttachMenu(true);
+    };
+    try { sub = Keyboard.addListener('keyboardDidHide', go); } catch {}
+    setTimeout(go, 320);
+  };
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    let sub = null;
+    try {
+      sub = require('react-native').DeviceEventEmitter.addListener('chatyy:attachSheetClosed', (e) => {
+        const st = _attachKbRef.current;
+        _attachKbRef.current = { had: false, at: 0 };
+        if (!kbResumeGuardOn() || !st.had || !e || e.action !== 'cancel') return;
+        if (Date.now() - st.at > 10 * 60 * 1000) return;
+        setTimeout(() => {
+          if (!mountedRef.current || _kbLeavingRef.current || _ctxMenuOpenRef.current || isAppResuming()) return;
+          try { if (_kbNav && _kbNav.isFocused && !_kbNav.isFocused()) return; } catch {}
+          try { inputRef.current?.focus?.(); } catch {}
+        }, 30);
+      });
+    } catch {}
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // Desktop-web webcam capture overlay (getUserMedia photo + video)
   const [showWebcam, setShowWebcam] = _useStateT(false);
   const WebcamCapture = require('../components/WebcamCapture').default;
@@ -13465,7 +13529,7 @@ function ChatConversationInner() {
     const had = _ctxKbRestoreRef.current;
     _ctxKbRestoreRef.current = false;
     if (!restore || !had || Platform.OS === 'web') return;
-    setTimeout(() => { if (!_ctxMenuOpenRef.current && !_kbLeavingRef.current && mountedRef.current) { try { inputRef.current?.focus?.(); } catch {} } }, 60); // [kb-pop]
+    setTimeout(() => { if (!_ctxMenuOpenRef.current && !_kbLeavingRef.current && mountedRef.current && !isAppResuming() /* [2026-10-18 kb-resume] */) { try { inputRef.current?.focus?.(); } catch {} } }, 60); // [kb-pop]
   };
   const openNativeEmojiPanel = useCallback((tab) => {
     if (tab) setNativeEmojiTab(tab);
@@ -20926,6 +20990,7 @@ function ChatConversationInner() {
       sendingRef.current = false;
       setTimeout(() => { // [ctxmenu-kb] não re-foca com o menu aberto · [kb-pop] nem com a tela saindo/coberta
         if (_ctxMenuOpenRef.current || _kbLeavingRef.current || !mountedRef.current) return;
+        if (isAppResuming()) return; // [2026-10-18 kb-resume] ack chegando com o app indo/voltando do fundo
         try { if (_kbNav && _kbNav.isFocused && !_kbNav.isFocused()) return; } catch {}
         inputRef.current?.focus();
       }, 50);
@@ -21342,6 +21407,59 @@ function ChatConversationInner() {
   // ============================================================
 
   const [showGiftSheet, setShowGiftSheet] = useState(false);
+  // [jogos 2026-10-18] seletor de jogos + placar + cartão do jogo (atualizado ao vivo pelo game_update)
+  const [showGamePicker, setShowGamePicker] = useState(false);
+  const [showGameScore, setShowGameScore] = useState(false);
+  const [gamesOn, setGamesOn] = useState(() => { try { return require('../services/games').gamesAvailable(); } catch { return false; } });
+  useEffect(() => {
+    let off = null;
+    try {
+      const G = require('../services/games');
+      off = G.onGamesCap((v) => setGamesOn(!!v && !G.gamesKillSwitched()));
+      G.probeGames().then((v) => setGamesOn(!!v && !G.gamesKillSwitched())).catch(() => {});
+    } catch {}
+    return () => { try { off && off(); } catch {} };
+  }, []);
+  const _gamePatchCardRef = useRef(null);
+  _gamePatchCardRef.current = (mid, content) => {
+    if (mid == null || typeof content !== 'string') return;
+    const vOf = (c) => { try { const j = JSON.parse(c); return Number(j && j.v) || 0; } catch { return 0; } };
+    const nv = vOf(content);
+    setMessages(prev => _mapKeep(prev, row => (row && String(row.id) === String(mid) && row.content !== content && vOf(row.content) <= nv) ? { ...row, content } : row));
+    try {
+      const base = (messagesRef.current || []).find(r => r && String(r.id) === String(mid));
+      if (base && base.content !== content && vOf(base.content) <= nv) _cacheOne(conversationId, { ...base, content });
+    } catch {}
+  };
+  useEffect(() => {
+    if (!conversationId) return undefined;
+    let off = null;
+    try {
+      off = require('../services/games').onGameUpdate((d) => {
+        if (!d || String(d.conversation_id) !== String(conversationId) || d.message_id == null || !d.content) return;
+        try { _gamePatchCardRef.current(d.message_id, d.content); } catch {}
+      });
+    } catch {}
+    return () => { try { off && off(); } catch {} };
+  }, [conversationId]);
+  const _gameCardActionRef = useRef(null);
+  _gameCardActionRef.current = async (msg, act) => {
+    let G; try { G = require('../services/games'); } catch { return; }
+    const g = G.parseGameContent(msg && msg.content);
+    if (!g || !g.g) return;
+    const open = (id) => { try { router.push({ pathname: '/game/[id]', params: { id: String(id), cid: String(conversationId) } }); } catch {} };
+    if (act === 'open' || act === 'play' || act === 'watch') { open(g.g); return; }
+    const fn = { accept: G.gameAccept, join: G.gameJoin, decline: G.gameDecline, start: G.gameStart, cancel: G.gameResign, rematch: G.gameRematch }[act];
+    if (!fn) { open(g.g); return; }
+    try { Haptics.selectionAsync(); } catch {}
+    const r = await fn(g.g);
+    if (!r || !r.success) { setScheduleToast(G.gameErrorText(t, r)); setTimeout(() => setScheduleToast(''), 2400); return; }
+    const gv = r.data && r.data.game;
+    if (gv && gv.message_id) { try { _gamePatchCardRef.current(gv.message_id, G.cardContentFromView(gv)); } catch {} }
+    const nv = r.data && (r.data.rematch || r.data.game);
+    if (act === 'rematch' && nv) { open(nv.g); return; }
+    if (nv && nv.status === 'active' && (act === 'accept' || act === 'join' || act === 'start')) open(nv.g);
+  };
   const handlePickAttachment = async (type) => {
     // AttachmentMenu is now a plain <View> overlay (not a <Modal>), so we can
     // fire the picker modal immediately without waiting for a dismiss animation.
@@ -21372,6 +21490,7 @@ function ChatConversationInner() {
       case 'meetup':       return setShowMeetupCreator(true);
       case 'playlist':     return setShowPlaylistCreator(true);
       case 'gift':         return setShowGiftSheet(true);
+      case 'games':        return setShowGamePicker(true); // [jogos 2026-10-18]
       // 2026-05-18: in-chat short video (Reels-style). Flag-gated — when off
       // the menu item isn't even rendered. The recorder orchestrates capture
       // → compress → upload → send via shortVideoRecord.js. We surface a
@@ -25859,6 +25978,7 @@ function ChatConversationInner() {
     }
     rows.push({ id: 'media', k: 'media', sid: 'media', title: _ciTr('chatConv.mediaLinksDocs', 'Mídia, links e docs') });
     rows.push({ id: 'starred', sid: 'media', icon: 'star', title: _ciTr('chat.starredMessages', 'Mensagens favoritas'), onPress: () => { loadStarredMessages(); go(() => setShowStarredModal(true)); } });
+    if (gamesOn) rows.push({ id: 'gameScore', sid: 'media', icon: 'chart', title: _ciTr('games.score.title', 'Placar do grupo'), onPress: () => go(() => setShowGameScore(true)) }); // [jogos 2026-10-18]
     if (isGroupAdmin && !exMember && pendingMembers.length > 0) {
       rows.push({
         id: 'pending', sid: 'pending', icon: 'userPlus',
@@ -32446,6 +32566,10 @@ function ChatConversationInner() {
           );
         }
 
+        case 'game': { // [jogos 2026-10-18] cartão do jogo (convite/andamento/resultado)
+          return <GameChatCard msg={msg} isOwn={isOwn} currentEmail={currentEmail} colors={colors} isDark={isDark} t={t}
+            onAction={(m, a) => { try { _gameCardActionRef.current && _gameCardActionRef.current(m, a); } catch {} }} />;
+        }
         case 'meetup': {
           let meetup;
           meetup = _memoJSONSafe(msg.content); // [2026-10-06 thread-tech]
@@ -34862,6 +34986,7 @@ function ChatConversationInner() {
         conversationId, currentEmail, user, t, router, api, Linking, Share, Haptics, safeAlert,
         setMessages, mapKeep: _mapKeep, cacheOne: _cacheOne, pollVoteLocksRef,
         setMapModalData, setRoundVideoViewer, setPlaylistEditor, setScheduleToast, startCall, thankGift: _thankGift,
+        gameAction: (m, a) => { try { _gameCardActionRef.current && _gameCardActionRef.current(m, a); } catch {} }, // [jogos 2026-10-18]
         liveLocIntervalRef, liveLocTimeoutRef, liveLocMsgIdRef, setLiveLocActive,
         resolve: (u) => { try { return resolveMediaUri(u); } catch { return u; } },
       });
@@ -38116,10 +38241,12 @@ function ChatConversationInner() {
               // the sheet around and breaks pointer handling on Android.
               // [2026-10-09] Às vezes o teclado continuava aberto por cima do menu
               // de anexos (iOS: o campo continuava focado e o teclado voltava).
+              let _had = false; // [2026-10-18 kb-resume]
+              try { _had = !!inputRef.current?.isFocused?.() || !!Keyboard.isVisible?.(); } catch {}
               try { inputRef.current?.blur?.(); } catch {}
               try { Keyboard.dismiss(); } catch {}
               try { require('react-native-keyboard-controller').KeyboardController?.dismiss?.(); } catch {}
-              setTimeout(() => setShowAttachMenu(true), Platform.OS === 'android' ? 80 : 60);
+              _openAttachMenuKb(_had);
             }}
             disabled={uploading}
             style={{ width: 40, height: 44, alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end' }}
@@ -38641,9 +38768,12 @@ function ChatConversationInner() {
             onSelectionChange={_onComposerSelection}
             onSend={() => { if (!sending) handleSend(); }}
             onAttach={() => {
+              // [2026-10-18 kb-resume] o nativo já fez resign; teclado ainda descendo = estava aberto.
+              let _had = false;
+              try { _had = !!Keyboard.isVisible?.(); } catch {}
               try { Keyboard.dismiss(); } catch {}
               try { require('react-native-keyboard-controller').KeyboardController?.dismiss?.(); } catch {}
-              setTimeout(() => setShowAttachMenu(true), Platform.OS === 'android' ? 80 : 60);
+              _openAttachMenuKb(_had);
             }}
             onCamera={() => handlePickAttachment('camera')}
             onEmoji={() => {
@@ -39207,7 +39337,29 @@ function ChatConversationInner() {
         onSendDirect={handleAttachSendDirect}
         colors={colors}
         giftEnabled={DIAMONDS_ENABLED && conversationType === 'direct' && !isSavedMode && !!conversationId}
+        gamesEnabled={gamesOn && !isSavedMode && !!conversationId && (conversationType === 'direct' || conversationType === 'group')}
       />
+
+      {/* [jogos 2026-10-18] seletor de jogos (+ quem joga no grupo) e placar */}
+      {showGamePicker && conversationId ? (
+        <GamePicker
+          visible
+          onClose={() => setShowGamePicker(false)}
+          conversationId={conversationId}
+          conversationType={conversationType}
+          members={members}
+          currentEmail={currentEmail}
+          t={t}
+          colors={colors}
+          isDark={isDark}
+          onCreated={(gv) => { if (gv && gv.g) { try { router.push({ pathname: '/game/[id]', params: { id: String(gv.g), cid: String(conversationId) } }); } catch {} } }}
+          onOpenGame={(gv) => { if (gv && gv.g) { try { router.push({ pathname: '/game/[id]', params: { id: String(gv.g), cid: String(conversationId) } }); } catch {} } }}
+        />
+      ) : null}
+      {showGameScore && conversationId ? (
+        <GameScoreboardSheet visible onClose={() => setShowGameScore(false)} conversationId={conversationId} currentEmail={currentEmail}
+          t={t} colors={colors} isDark={isDark} title={conversationType === 'group' ? (t('games.score.title') || 'Placar do grupo') : (t('games.score.titleDirect') || 'Placar da conversa')} />
+      ) : null}
 
       {showGiftSheet && conversationId ? (
         <GiftSheet
@@ -42361,6 +42513,11 @@ function ChatConversationInner() {
                 onPress={() => { loadStarredMessages(); groupInfoGo(() => setShowStarredModal(true)); }} // [2026-10-07 group-admin]
                 right="chevron"
               />
+              {gamesOn ? (<>
+                <GroupDivider colors={colors} />
+                <GroupRow colors={colors} Icon={_IconGamepad} tint="#111111" title={t('games.score.title') || 'Placar do grupo'}
+                  onPress={() => groupInfoGo(() => setShowGameScore(true))} right="chevron" />
+              </>) : null}
             </GroupCard>
 
             {/* Preferences — mute, sound, topics, slow mode */}

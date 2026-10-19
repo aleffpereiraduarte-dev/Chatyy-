@@ -491,6 +491,38 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   private var rowAnimShown = -1f
   private var rowAnim: ValueAnimator? = null
 
+  // [2026-10-18 kb-resume] Minimizar/voltar sem abre-fecha do teclado: do
+  // fundo até 600 ms depois de voltar, foco que NÃO existia ao sair não abre
+  // (re-foco atrasado do envio etc.) e blur JS não fecha o que estava aberto.
+  // Kill switch: prop focusGuard=false (JS: globalThis.__chatyy_kb_resume_guard = false).
+  var focusGuard = true
+  private var resumeHadFocus = false
+
+  internal fun onAppBackground() {
+    if (!appInBackground) resumeHadFocus = try { edit.hasFocus() } catch (_: Throwable) { false }
+  }
+
+  private fun inResumeWindow(): Boolean =
+    appInBackground || (android.os.SystemClock.uptimeMillis() - appForegroundAt) < 600L
+
+  companion object {
+    @Volatile internal var appInBackground = false
+    @Volatile internal var appForegroundAt = 0L
+    internal val live: MutableSet<ChatyyComposerView> =
+      java.util.Collections.newSetFromMap(java.util.WeakHashMap<ChatyyComposerView, Boolean>())
+
+    internal fun notifyBackground() {
+      try { synchronized(live) { live.toList() }.forEach { it.onAppBackground() } } catch (_: Throwable) {}
+      appInBackground = true
+    }
+
+    internal fun notifyForeground() {
+      if (!appInBackground) return
+      appInBackground = false
+      appForegroundAt = android.os.SystemClock.uptimeMillis()
+    }
+  }
+
   fun setMotion(v: Boolean) {
     if (v == motionEnabled) return
     motionEnabled = v
@@ -554,6 +586,7 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   )
 
   init {
+    try { synchronized(live) { live.add(this) } } catch (_: Throwable) {} // [2026-10-18 kb-resume]
     clipChildren = false
     clipToPadding = false
     setWillNotDraw(true)
@@ -945,6 +978,7 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     // [2026-10-17 kb-pop] tela saindo/fora da janela → não reabre o teclado
     // (ex.: re-foco atrasado do envio chegando durante o voltar).
     if (!isAttachedToWindow || !isShown) return
+    if (focusGuard && inResumeWindow() && !resumeHadFocus) return // [2026-10-18 kb-resume]
     edit.requestFocus()
     val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
     edit.post {
@@ -955,6 +989,7 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   }
 
   fun blurInput() {
+    if (focusGuard && inResumeWindow() && resumeHadFocus && isAttachedToWindow) return // [2026-10-18 kb-resume]
     hideKeyboard()
     edit.clearFocus()
   }

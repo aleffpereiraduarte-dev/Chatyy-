@@ -14,7 +14,7 @@
 // Binário sem o módulo / web / globalThis.__chatyy_native_attach === false →
 // nativeAttachUsable() === false e nada aqui é usado (comportamento idêntico).
 import { useEffect, useRef } from 'react';
-import { Platform } from 'react-native';
+import { DeviceEventEmitter, Platform } from 'react-native';
 
 let _na; // undefined = não tentou, null = indisponível
 function getNA() {
@@ -211,6 +211,9 @@ export default function NativeAttachSheet({
       const cur = propsRef.current;
       if (!r || !r.action) { try { cur.onFail && cur.onFail(); } catch {} return; }
       try { cur.onClose && cur.onClose(); } catch {}
+      // [2026-10-18 kb-resume] folha já dispensada (promessa resolve no fim do
+      // dismiss): a conversa devolve o teclado só se cancelou e ele estava aberto.
+      try { DeviceEventEmitter.emit('chatyy:attachSheetClosed', { action: String(r.action) }); } catch {}
       try {
         if (r.action === 'action' && r.key) {
           cur.onPick && cur.onPick(r.key);

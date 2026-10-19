@@ -1249,6 +1249,11 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
         else if (parsed.file_url || parsed.attachment_url || parsed.media_url || (parsed.url && parsed.mime_type)) {
           content = '\uD83D\uDCCE ' + (t('chat.attachment') || 'Anexo');
         }
+        // [jogos 2026-10-18] cartão de jogo / resultado → "Jogo: Damas" / "Ana venceu a partida de Damas!"
+        else if (lastMsg.type === 'game' || ((parsed.kind === 'game' || parsed.kind === 'result') && typeof parsed.type === 'string' && parsed.g)) {
+          let _gl = ''; try { _gl = require('../services/games').gamePreviewText(t, parsed); } catch {}
+          content = _gl || t('games.preview') || 'Jogo';
+        }
         // Poll payload {question, options}: WhatsApp previews the question.
         else if ((lastMsg.type === 'poll' || parsed.type === 'poll' || Array.isArray(parsed.options)) && typeof parsed.question === 'string') {
           if (!caption && parsed.question.trim()) caption = parsed.question.trim();
@@ -10822,6 +10827,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
               else if (m.type === 'gif') body = '🎬 GIF';
               else if (m.type === 'file') body = '\uD83D\uDCC4 ' + (m.file_name || t?.('chat.file') || 'Arquivo');
               else if (m.type === 'poll') body = '📊 ' + (t?.('chat.poll') || 'Enquete');
+              else if (m.type === 'game') { let _gl = ''; try { _gl = require('../services/games').gamePreviewText(t, m.content); } catch {} body = _gl || 'Jogo'; } // [jogos 2026-10-18]
               else if (m.type === 'location') body = '📍 ' + (t?.('chat.location') || 'Localização');
               else if (m.type === 'contact') { let _ctl = ''; try { _ctl = require('./chat/contactShare').contactPreviewLabel(m.content, t); } catch {} body = '👤 ' + (_ctl || t?.('chat.contact') || 'Contato'); }
               else if (typeof body === 'string' && /^https?:\/\/(media[0-9]*\.)?(tenor|giphy)\.com\//i.test(body.trim())) {

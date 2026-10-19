@@ -40,6 +40,7 @@ import {
 } from '../Icons';
 import { parseContactPayload, contactTitle } from './contactShare'; // [2026-10-17 share-contact]
 import { previewForMessage, isFreshMessage, LP_SKELETON } from './linkPreviewState'; // [linkpreview 2026-10-18]
+import { IconTrophy as _IconGameTrophy, gameTypeIconComp as _gameIconComp } from '../games/GameIcons'; // [jogos 2026-10-18]
 
 // ─── utilidades ─────────────────────────────────────────────────────────────
 const URL_RE = /(https?:\/\/[^\s<]+)/;
@@ -378,6 +379,7 @@ function cardKind(item, ctx) {
     case 'location': case 'contact': case 'poll': case 'meetup': case 'playlist':
     case 'call_card': case 'gift': case 'status_reply':
     case 'voicemail': case 'lottie_sticker': // [2026-10-16 native-cover]
+    case 'game': // [jogos 2026-10-18]
       return type;
     // [2026-10-16 native-cover] vídeo redondo antigo (200 px) → mesma nota de vídeo nativa
     case 'video_message': return (item.file_url || item._localUri) ? 'vn' : null;
@@ -416,6 +418,7 @@ export function cardReason(item, ctx) {
     case 'vn': return (item.file_url || item.content || item._localUri) ? '' : 'vn-nourl';
     case 'poll': return _poll(item) ? '' : 'poll-raw';
     case 'meetup': case 'playlist': case 'call_card': return _json(item.content) ? '' : k + '-raw';
+    case 'game': { try { return require('../../services/games').parseGameContent(item.content) ? '' : 'game-raw'; } catch { return 'game-raw'; } } // [jogos 2026-10-18]
     case 'location': return '';
     default: return '';
   }
@@ -1086,6 +1089,75 @@ function buildLottie(m, row, C) {
  * com toque 'jsrow' (abre a versão JS em folha). Nunca derruba a conversa.
  * Devolve true quando preencheu row.bl.
  */
+// [jogos 2026-10-18] Cartão de jogo (convite / em andamento / resultado com pódio) — espelho do
+// components/games/GameChatCard.js. Ações: game:<open|play|watch|accept|decline|join|start|cancel|rematch>.
+function buildGame(m, row, ctx, C, own) {
+  const G = require('../../services/games');
+  const g = G.parseGameContent(m.content);
+  if (!g) return;
+  const P = _palette(own, C); const col = P.col;
+  const ink = own ? C.ownText : (col.text || '#111111');
+  const sub = own ? C.ownMeta : (col.textSecondary || C.otherMeta || '#6b7280');
+  const line = own ? 'rgba(255,255,255,0.18)' : (C.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
+  const tf = (k, opts) => { try { return C.t ? C.t(k, opts) : (opts && opts.defaultValue) || k; } catch { return (opts && opts.defaultValue) || k; } };
+  const me = ctx.myEmail || '';
+  const isRes = g.kind === 'result';
+  const w = 268;
+  const acts = G.gameCardActions(g, me);
+  const openAct = acts.includes('play') ? 'play' : (acts.includes('watch') ? 'watch' : 'open');
+  const myTurn = G.isMyTurn(g, me);
+  const head = hstack([
+    vstack([icon(isRes ? _IconGameTrophy : _gameIconComp(g.type), { s: 18, c: '#FFFFFF' })], { w: 32, h: 32, r: 9, bg: 'rgba(255,255,255,0.14)', al: 'c', jc: 'c' }),
+    vstack([
+      text(G.gameTitle(tf, g.type), { fs: 14.5, fw: 700, c: '#FFFFFF', ml: 1 }),
+      text(isRes ? G.tr(tf, 'games.resultLabel', 'Resultado') : G.tr(tf, 'games.cardLabel', 'Jogo na conversa'), { fs: 11, c: 'rgba(255,255,255,0.7)', ml: 1 }),
+    ], { fl: 1 }),
+    myTurn ? vstack([text(G.tr(tf, 'games.status.yourTurn', 'Sua vez'), { fs: 11, fw: 800, c: '#000000' })], { bg: '#FFFFFF', r: 10, p: [3, 8, 3, 8] }) : null,
+  ], { w: -1, bg: isRes ? '#000000' : '#111111', p: [9, 12, 9, 12], g: 9, al: 'c', a: 'game:' + openAct });
+  const body = [];
+  if (isRes) {
+    body.push(text(G.resultHeadline(tf, g, me), { fs: 15, fw: 800, c: ink, lh: 20, m: [0, 0, 6, 0] }));
+    if (g.type === 'forca' && g.word) body.push(text(G.tr(tf, 'games.forca.wordWas', 'A palavra era {w}', { w: g.word }), { fs: 12, c: sub, m: [0, 0, 4, 0] }));
+    const rk = Array.isArray(g.ranking) ? g.ranking.slice(0, 3) : [];
+    const showSc = g.type === 'quiz' || g.type === 'forca';
+    if (rk.length > 1) rk.forEach((r, i) => {
+      body.push(hstack([
+        text(String(i + 1), { fs: 13, fw: 800, c: i === 0 ? ink : sub, w: 14, ta: 'c' }),
+        _avatarNode(r.n, r.e, 22),
+        text(G.nameOf(g, r.e, me, tf), { fs: 13.5, fw: i === 0 ? 700 : 500, c: ink, fl: 1, ml: 1 }),
+        showSc ? text(G.tr(tf, 'games.points', '{n} pts', { n: r.sc }), { fs: 12, fw: 600, c: sub }) : null,
+      ], { w: -1, g: 8, al: 'c', p: [6, 0, 6, 0] }));
+    });
+  } else {
+    const pls = (Array.isArray(g.players) ? g.players : []).filter((p) => g.status === 'pending' || p.s === 'accepted' || p.s === 'left').slice(0, 6);
+    body.push(hstack(pls.map((p) => {
+      const lc = String(p.e || '').toLowerCase();
+      const turn = g.status === 'active' && String(g.turn || '').toLowerCase() === lc;
+      const win = Array.isArray(g.winners) && g.winners.some((x) => String(x).toLowerCase() === lc);
+      return vstack([
+        vstack([_avatarNode(p.n, p.e, 22)], (turn || win) ? { bw: 2, bc: ink, r: 14, p: 1 } : { p: 3 }),
+        text(G.nameOf(g, p.e, me, tf), { fs: 11, fw: 600, c: ink, ml: 1, m: [3, 0, 0, 0] }),
+        g.status === 'pending' ? text(G.playerStatusLabel(tf, p.s), { fs: 9.5, c: sub, ml: 1 }) : null,
+      ], { w: 54, al: 'c' });
+    }), { g: 10, m: [0, 0, 8, 0] }));
+    body.push(text(G.gameStatusLine(tf, g, me), { fs: 14.5, fw: 700, c: ink, ml: 2 }));
+  }
+  const kids = [head, vstack(body, { w: -1, p: [10, 12, 8, 12], a: 'game:' + openAct })];
+  if (acts.length) {
+    const primary = { accept: 1, join: 1, start: 1, play: 1, rematch: 1 };
+    kids.push(vstack([], { w: -1, h: 0.5, bg: line }));
+    kids.push(hstack(acts.slice(0, 3).map((a) => {
+      const prim = !!primary[a];
+      const pbg = own || C.isDark ? '#FFFFFF' : '#111111';
+      return vstack([text(G.gameActionLabel(tf, a), { fs: 13.5, fw: 700, c: prim ? (own || C.isDark ? '#111111' : '#FFFFFF') : ink })], {
+        fl: 1, p: [8, 0, 8, 0], r: 10, al: 'c', bg: prim ? pbg : undefined, bw: prim ? 0 : 1, bc: prim ? undefined : line, a: 'game:' + a,
+      });
+    }), { w: -1, g: 8, p: [9, 10, 9, 10] }));
+  }
+  row.bl = [vstack(kids, { w, r: 14, m: [1, 0, 1, 0] })];
+  row.cw = w; row.pad = PAD; row.mp = 'below';
+}
+
 export function buildFallbackCard(item, row, ctx, reason) {
   const C = ctx && ctx.cards;
   const isAlbum = item && item._type === 'album';
@@ -1242,6 +1314,7 @@ export function buildCard(item, row, ctx) {
       case 'vo': buildViewOnce(item, row, ctx, C, own); break;
       case 'voicemail': buildVoicemail(item, row, C, own); break;
       case 'lottie_sticker': buildLottie(item, row, C); break;
+      case 'game': buildGame(item, row, ctx, C, own); break; // [jogos 2026-10-18]
       default: return false;
     }
   } catch (e) {
@@ -1426,6 +1499,7 @@ export function runCardAction(item, action, D) {
       }
       case 'st_open': { _openStatus(m, D, tt); return; }
       case 'gift_thank': { if (typeof D.thankGift === 'function') D.thankGift(m); return; } // [gift-premium 2026-10-16]
+      case 'game': { if (typeof D.gameAction === 'function') D.gameAction(m, arg || 'open'); return; } // [jogos 2026-10-18]
       default: return;
     }
   } catch (e) {

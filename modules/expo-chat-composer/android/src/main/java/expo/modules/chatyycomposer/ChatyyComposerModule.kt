@@ -91,6 +91,10 @@ class ChatyyComposerModule : Module() {
     //     alinhar com o iOS; o gate `>= 2` do cartão de resposta é só iOS.)
     Function("apiVersion") { 3 }
 
+    // [2026-10-18 kb-resume] fundo/frente → guarda de foco do compositor.
+    OnActivityEntersBackground { ChatyyComposerView.notifyBackground() }
+    OnActivityEntersForeground { ChatyyComposerView.notifyForeground() }
+
     View(ChatyyComposerView::class) {
       Events(
         "onChangeText", "onSend", "onAttach", "onCamera", "onEmoji", "onVideoNote",
@@ -122,6 +126,7 @@ class ChatyyComposerModule : Module() {
       Prop("changeDebounceMs") { view: ChatyyComposerView, v: Double? -> view.changeDebounceMs = (v ?: 60.0).coerceAtLeast(0.0).toLong() }
       Prop("keyboardTracking") { view: ChatyyComposerView, v: String? -> view.setKeyboardTracking(v ?: "none") }
       Prop("motion") { view: ChatyyComposerView, v: Boolean? -> view.setMotion(v ?: true) } // [2026-10-16 motion-composer]
+      Prop("focusGuard") { view: ChatyyComposerView, v: Boolean? -> view.focusGuard = v ?: true } // [2026-10-18 kb-resume]
 
       OnViewDidUpdateProps { view: ChatyyComposerView -> view.didUpdateProps() }
 

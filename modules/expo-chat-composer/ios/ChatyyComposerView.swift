@@ -20,10 +20,27 @@ final class NCTextView: UITextView {
   var onPasteImage: ((UIImage, Data?, String) -> Void)?
   // [2026-10-17 kb-pop] true = tela saindo (pop/swipe) → nada devolve o teclado.
   var shouldBlockFocus: (() -> Bool)?
+  // [2026-10-18 kb-resume] true = pedido de resign que NÃO deve fechar o teclado
+  // (blur JS/KeyboardController chegando com o app indo/voltando do fundo).
+  var shouldBlockResign: (() -> Bool)?
+  /// Último toque do usuário DENTRO do campo (CACurrentMediaTime). Foco vindo
+  /// de um toque real nunca é bloqueado pelos guardas.
+  private(set) var lastTouchAt: CFTimeInterval = 0
 
   override func becomeFirstResponder() -> Bool {
     if shouldBlockFocus?() == true { return false }
     return super.becomeFirstResponder()
+  }
+
+  override func resignFirstResponder() -> Bool {
+    if isFirstResponder, shouldBlockResign?() == true { return false }
+    return super.resignFirstResponder()
+  }
+
+  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    let v = super.hitTest(point, with: event)
+    if v != nil, event?.type == .touches { lastTouchAt = CACurrentMediaTime() }
+    return v
   }
 
   override init(frame: CGRect, textContainer: NSTextContainer?) {
@@ -483,6 +500,23 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   private var lifecycleProxy: NCLifecycleProxy?
   private var focusBlocked = false
   private var hostTransitionGen = 0
+  // [2026-10-18 kb-resume] Teclado nível WhatsApp ao minimizar/voltar e ao
+  // fechar a folha do "+": o iOS devolve sozinho o teclado que estava aberto;
+  // qualquer focus/blur extra nesse meio = abre-fecha ("pisca").
+  //  • app inativo/fundo + 0,6 s após voltar: estava FECHADO → nada abre
+  //    (re-foco do envio, restauração do UIKit); estava ABERTO → nada fecha
+  //    (blur JS / KeyboardController.dismiss processados no meio).
+  //  • depois do "+": só foco explícito (JS focus, cartão de resposta, toque
+  //    no campo) abre o teclado — a restauração automática do UIKit ao
+  //    dispensar a folha não.
+  // Kill switch: prop focusGuard=false (JS: globalThis.__chatyy_kb_resume_guard = false).
+  var focusGuard = true
+  private var appObservers: [NSObjectProtocol] = []
+  private var appInactive = false
+  private var resumeUntil: CFTimeInterval = 0
+  private var resumeHadFocus = false
+  private var attachGuard = false
+  private var internalFocusOp = false
 
   private static let mentionRegex = try? NSRegularExpression(pattern: "@[\\w.\\-]+", options: [])
 
@@ -541,7 +575,9 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     textView.smartInsertDeleteType = .default
     textView.placeholderLabel.font = font
     textView.onPasteImage = { [weak self] img, data, mime in self?.handlePastedImage(img, data: data, mime: mime) }
-    textView.shouldBlockFocus = { [weak self] in self?.isFocusBlockedNow() ?? false }
+    textView.shouldBlockFocus = { [weak self] in self?.shouldBlockBecome() ?? false }
+    textView.shouldBlockResign = { [weak self] in self?.shouldBlockResign() ?? false }
+    installAppObservers()
     pillView.addSubview(textView)
 
     cameraButton.setImage(UIImage(systemName: "camera", withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)), for: .normal)
@@ -562,6 +598,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   }
 
   deinit {
+    for o in appObservers { NotificationCenter.default.removeObserver(o) }
     changeTimer?.invalidate()
     kbLink?.invalidate()
     kbProbe?.removeFromSuperview()
@@ -791,7 +828,8 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   // MARK: Buttons
 
   @objc private func plusTapped() {
-    if textView.isFirstResponder { textView.resignFirstResponder() }
+    if focusGuard { attachGuard = true } // [2026-10-18 kb-resume]
+    if textView.isFirstResponder { withInternalFocus { _ = textView.resignFirstResponder() } }
     onAttach()
   }
 
@@ -863,11 +901,51 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   }
 
   func focusInput() {
-    if !textView.isFirstResponder { textView.becomeFirstResponder() }
+    if !textView.isFirstResponder { withInternalFocus { _ = textView.becomeFirstResponder() } }
   }
 
   func blurInput() {
+    // JS blur: NÃO marcado como interno → o guarda de volta do fundo pode recusar.
     if textView.isFirstResponder { textView.resignFirstResponder() }
+  }
+
+  // MARK: Focus guard (kb-resume)
+
+  private func withInternalFocus(_ f: () -> Void) {
+    let prev = internalFocusOp
+    internalFocusOp = true
+    f()
+    internalFocusOp = prev
+  }
+
+  private func installAppObservers() {
+    let nc = NotificationCenter.default
+    appObservers.append(nc.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      guard let self = self else { return }
+      if !self.appInactive { self.resumeHadFocus = self.textView.isFirstResponder }
+      self.appInactive = true
+    })
+    appObservers.append(nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      guard let self = self, self.appInactive else { return }
+      self.appInactive = false
+      self.resumeUntil = CACurrentMediaTime() + 0.6
+    })
+  }
+
+  private var inResumeWindow: Bool { appInactive || CACurrentMediaTime() < resumeUntil }
+
+  private func shouldBlockBecome() -> Bool {
+    if isFocusBlockedNow() { return true }
+    guard focusGuard else { return false }
+    if CACurrentMediaTime() - textView.lastTouchAt < 0.8 { attachGuard = false; return false }
+    if inResumeWindow && !resumeHadFocus { return true }
+    if attachGuard && !internalFocusOp { return true }
+    return false
+  }
+
+  private func shouldBlockResign() -> Bool {
+    guard focusGuard, !internalFocusOp, window != nil, !disabled else { return false }
+    return inResumeWindow && resumeHadFocus
   }
 
   func cancelVoiceFromJS() {
@@ -906,6 +984,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   }
 
   func textViewDidBeginEditing(_ tv: UITextView) {
+    attachGuard = false // [2026-10-18 kb-resume] foco explícito chegou
     onFocusChange(["focused": true])
   }
 
@@ -1157,7 +1236,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       // visto o pop → derruba o teclado já, sem animação.
       if textView.isFirstResponder {
         focusBlocked = true
-        UIView.performWithoutAnimation { _ = self.textView.resignFirstResponder() }
+        withInternalFocus { UIView.performWithoutAnimation { _ = self.textView.resignFirstResponder() } }
       }
       flushChange()
       voice.cancel(reason: "unmount")
@@ -1232,14 +1311,14 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     let gen = hostTransitionGen
     focusBlocked = true
     if wasFirst {
-      UIView.performWithoutAnimation { _ = self.textView.resignFirstResponder() }
+      withInternalFocus { UIView.performWithoutAnimation { _ = self.textView.resignFirstResponder() } }
     }
     guard let coord = coord else { return }
     _ = coord.animate(alongsideTransition: nil, completion: { [weak self] ctx in
       guard let self = self, self.hostTransitionGen == gen, ctx.isCancelled else { return }
       self.focusBlocked = false
       if wasFirst && self.window != nil && !self.disabled {
-        _ = self.textView.becomeFirstResponder()
+        self.withInternalFocus { _ = self.textView.becomeFirstResponder() }
       }
     })
   }

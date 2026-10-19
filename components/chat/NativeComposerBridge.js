@@ -21,6 +21,7 @@
 
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, processColor } from 'react-native';
+import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
 
 let _failed = false;
 
@@ -364,6 +365,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
       changeDebounceMs={40}
       keyboardTracking={keyboardTracking}
       motion={_motionOff() ? false : undefined}
+      focusGuard={kbResumeGuardOn() ? undefined : false /* [2026-10-18 kb-resume] kill __chatyy_kb_resume_guard */}
       onChangeText={_onChangeText}
       onSend={_onSend}
       onAttach={_onAttach}

@@ -2264,6 +2264,7 @@ export default function RootLayout() {
                   <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] · [2026-10-14] nasce c/ o vidro do SettingsScreen */ }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="feed/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="game/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true }} />{/* [jogos 2026-10-18] tela do jogo */}
                   <Stack.Screen name="search" options={{ headerShown: false, animation: _PUSH }} />
                   <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false, ..._DARK_BG }} />
                   <Stack.Screen name="call/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />{/* [2026-10-14 nav-nativa] era fade 120ms (página de link de chamada, não é o player) */}
