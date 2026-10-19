@@ -33,6 +33,11 @@ export type NativeTabItem = {
   /** [2026-10-18 you-tab-nolabel] api 4+: sem rótulo (só ícone/foto, centralizado e maior);
    *  `label` continua como accessibilityLabel/contentDescription. */
   hideLabel?: boolean;
+  /** [2026-10-19 tabbar-offline] api 6+: cópia LOCAL da foto (file:// / caminho) — mostrada
+   *  antes da rede; `avatarUrl` (https) revalida em 2º plano. */
+  avatarLocalPath?: string | null;
+  /** api 6+: chave estável da conta (e-mail): última foto boa em disco, mostrada na montagem. */
+  avatarKey?: string | null;
 };
 
 export type NativeTabTheme = {

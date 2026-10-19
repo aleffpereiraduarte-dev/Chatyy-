@@ -227,6 +227,79 @@ function _releaseSlot() {
 
 const _inflight = new Map(); // urlKey → Promise<localPath | url>
 
+// ── Última foto boa por PESSOA (chave estável = e-mail) ───────────────
+//
+// [2026-10-19 tabbar-offline] A URL muda com o `v=` (e o store de versões pode
+// ainda não ter hidratado no boot) → o índice por URL erra e, offline, a foto
+// da aba "Você" caía nas iniciais/ícone. Aqui fica e-mail → NOME do arquivo do
+// último download bom (só o nome: o caminho absoluto muda de UUID no iOS a cada
+// build instalado — remontado com o documentDirectory atual na leitura).
+const LAST_GOOD_MMKV_KEY = 'avatar_last_good_v1';
+const MAX_LAST_GOOD = 300;
+const _lastGood = new Map(); // email(lower) → nome do arquivo em avatar-saved/
+let _lastGoodLoaded = false;
+let _lastGoodTimer = null;
+
+function _ensureLastGood() {
+  if (_lastGoodLoaded || Platform.OS === 'web') return;
+  _lastGoodLoaded = true;
+  try {
+    const raw = require('./mmkv').getString?.(LAST_GOOD_MMKV_KEY);
+    const obj = raw ? JSON.parse(raw) : null;
+    if (obj && typeof obj === 'object') {
+      for (const [k, v] of Object.entries(obj)) if (typeof v === 'string' && v) _lastGood.set(k, v);
+    }
+  } catch {}
+}
+
+function _emailFromUrl(url) {
+  try {
+    const e = require('./avatarVersions').emailFromAvatarUrl(url);
+    return typeof e === 'string' && e.indexOf('@') > 0 ? e.trim().toLowerCase() : '';
+  } catch { return ''; }
+}
+
+function _noteLastGood(url, localPath) {
+  if (Platform.OS === 'web' || !url || !localPath) return;
+  // Só a foto de perfil "normal" (a 1024 do visualizador é outro arquivo, mesma pessoa — tanto faz,
+  // mas a pequena é a que a aba/AvatarCircle mostram).
+  if (/[?&]size=/.test(String(url))) return;
+  const email = _emailFromUrl(url);
+  if (!email) return;
+  const name = String(localPath).split('/').pop();
+  if (!name) return;
+  _ensureLastGood();
+  if (_lastGood.get(email) === name) return;
+  _lastGood.delete(email); // reinsere no fim (mais novo)
+  _lastGood.set(email, name);
+  while (_lastGood.size > MAX_LAST_GOOD) _lastGood.delete(_lastGood.keys().next().value);
+  if (_lastGoodTimer) return;
+  _lastGoodTimer = setTimeout(() => {
+    _lastGoodTimer = null;
+    try {
+      const obj = {};
+      for (const [k, v] of _lastGood.entries()) obj[k] = v;
+      require('./mmkv').setString?.(LAST_GOOD_MMKV_KEY, JSON.stringify(obj));
+    } catch {}
+  }, 1500);
+}
+
+/**
+ * [2026-10-19 tabbar-offline] SÍNCRONO, zero I/O: file:// do último download bom
+ * da foto desta pessoa (qualquer versão), no container ATUAL; null se nunca baixou
+ * ou o arquivo saiu do índice (LRU). Quem usa: aba "Você" (nativa api 6 e barra
+ * JS) — mostra a foto offline/conectando e revalida pela rede depois.
+ */
+export function getLastGoodAvatarUri(email) {
+  if (!email || Platform.OS === 'web') return null;
+  _ensureIndex();
+  _ensureLastGood();
+  const name = _lastGood.get(String(email).trim().toLowerCase());
+  if (!name || !syncIndex.has(name)) return null;
+  const dir = getAvatarDir();
+  return dir ? dir + name : null;
+}
+
 // ── Public API ────────────────────────────────────────────────────────
 
 /**
@@ -299,7 +372,7 @@ export async function cacheAvatar(url) {
   if (indexed) {
     try {
       const info = await fs.getInfoAsync(indexed);
-      if (info.exists) return indexed;
+      if (info.exists) { _noteLastGood(url, indexed); return indexed; }
     } catch {}
     // Stale entry — fall through to re-download.
     syncIndex.delete(key);
@@ -314,6 +387,7 @@ export async function cacheAvatar(url) {
     if (info.exists && info.size > 0) {
       syncIndex.set(key, localPath);
       _schedulePersist();
+      _noteLastGood(url, localPath);
       return localPath;
     }
   } catch {}
@@ -364,6 +438,7 @@ export async function cacheAvatar(url) {
       if (download?.status === 200) {
         syncIndex.set(key, localPath);
         _schedulePersist();
+        _noteLastGood(url, localPath);
         // Fire LRU sweep — debounced inside.
         try { evictIfNeeded(); } catch {}
         return localPath;
@@ -532,6 +607,9 @@ export async function clearAvatarCache() {
   } catch {}
   _lastEvictAt = 0;
   _scanPromise = null;
+  _lastGood.clear();
+  _lastGoodLoaded = true;
+  try { require('./mmkv').setString?.(LAST_GOOD_MMKV_KEY, '{}'); } catch {}
   // Reset the abort gate so a subsequent login can resume caching.
   _aborted = false;
 }

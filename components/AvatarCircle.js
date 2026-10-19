@@ -8,7 +8,7 @@ import { useLanguageOptional } from '../context/LanguageContext';
 // OS cache evictions so a contact's profile photo paints from disk on
 // cold-start / offline — even if expo-image's NSURLCache got purged.
 // Web: no-ops (browser Cache API + Cache-Control headers already cover).
-import { getCachedAvatarUriOrNull, cacheAvatar } from '../services/avatarCache';
+import { getCachedAvatarUriOrNull, cacheAvatar, getLastGoodAvatarUri } from '../services/avatarCache';
 import { seenAwareTransition, markImageLoaded } from '../utils/imageSeen'; // [2026-10-08 chat-open-flicker]
 // [2026-10-14 avatar-instant] URL canônica única (lista = cabeçalho = perfil = visualizador).
 import { buildAvatarUrl, canonicalAvatarUrl, prefetchAvatarFull, avatarSource } from '../services/avatar';
@@ -388,7 +388,7 @@ function _GroupCollage({ members, size, style }) {
   );
 }
 
-function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#111111', showStatus = false, members, onPress, prefetchFull = false }) {
+function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#111111', showStatus = false, members, onPress, prefetchFull = false, offlineFirst = false }) {
   const _lang = useLanguageOptional();
   const [imgError, setImgError] = useState(false);
   const _imgErrRef = useRef(null);
@@ -574,11 +574,19 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
           }
         }).catch(() => {});
       } catch {}
-      // If offline AND nothing on disk, drop the URL so we render
-      // initials instead of letting expo-image flash an empty box
-      // before its onError handler fires.
-      const _online = _networkInfo?.isConnected?.() !== false;
-      if (!_online) avatarUrl = null;
+      // [2026-10-19 tabbar-offline] offlineFirst (aba "Você"): a versão atual ainda não
+      // está no disco → mostra a ÚLTIMA foto boa da pessoa (qualquer versão) na hora,
+      // online ou não; o download acima troca p/ a nova quando terminar.
+      const _lastGood = offlineFirst ? getLastGoodAvatarUri(_verEmail || email) : null;
+      if (_lastGood) {
+        avatarUrl = _lastGood;
+      } else {
+        // If offline AND nothing on disk, drop the URL so we render
+        // initials instead of letting expo-image flash an empty box
+        // before its onError handler fires.
+        const _online = _networkInfo?.isConnected?.() !== false;
+        if (!_online) avatarUrl = null;
+      }
     }
   }
   const showImage = avatarUrl && !imgError;
@@ -767,6 +775,7 @@ function _avatarEqual(prev, next) {
     prev.ringColor === next.ringColor &&
     prev.showStatus === next.showStatus &&
     prev.prefetchFull === next.prefetchFull &&
+    prev.offlineFirst === next.offlineFirst &&
     // `onPress` swaps from undefined → fn when the caller wires tap-to-fullscreen
     // mid-mount (rare, but happens on Profile peek's avatar). Treating it as a
     // tracked dim means a freshly-passed callback re-wraps the avatar in a

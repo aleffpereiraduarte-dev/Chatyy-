@@ -33,6 +33,10 @@ class NTBItemRecord : Record {
    *  centralizado e maior — aba de perfil do Instagram). `label` continua sendo
    *  o contentDescription (TalkBack lê "Você"). */
   @Field val hideLabel: Boolean = false
+  /** [2026-10-19 tabbar-offline] api 6: cópia LOCAL da foto (file:// / caminho) — antes da rede. */
+  @Field val avatarLocalPath: String? = null
+  /** api 6: chave ESTÁVEL da conta (e-mail) p/ a última foto boa em disco (offline-first). */
+  @Field val avatarKey: String? = null
 }
 
 class NTBThemeRecord : Record {
@@ -60,7 +64,10 @@ class ChatyyTabBarModule : Module() {
     // 2 = [2026-10-18 you-tab] ícone "you" (aba Você). JS: binário < 2 no Android → barra JS.
     // 3 = [2026-10-18 you-tab-avatar] items[].avatarUrl (foto redonda + anel quando ativa).
     // 4 = [2026-10-18 you-tab-nolabel] items[].hideLabel (sem rótulo; ícone/foto centralizado e maior).
-    Function("apiVersion") { 4 }
+    // 5 = (só iOS: foto por cima do ícone + autochecagem) — Android pula de 4 p/ 6.
+    // 6 = [2026-10-19 tabbar-offline] items[].avatarLocalPath + avatarKey: foto OFFLINE-FIRST (última
+    //     foto boa por conta em disco, síncrona; rede só revalida; falha nunca volta ao vetor).
+    Function("apiVersion") { 6 }
 
     View(ChatyyTabBarView::class) {
       Events("onTabPress", "onTabLongPress", "onPreferredHeight")

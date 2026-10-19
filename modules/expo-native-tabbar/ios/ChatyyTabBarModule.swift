@@ -6,7 +6,7 @@ import UIKit
 // sendo o JS (handleTabPress / requestNewStatus).
 //
 // Props: items[{key,label,sfSymbol,sfSymbolActive,badge,dot,longPress,selectable,
-//        avatarUrl,avatarHeaders (api 3+), hideLabel (api 4+)}],
+//        avatarUrl,avatarHeaders (api 3+), hideLabel (api 4+), avatarLocalPath,avatarKey (api 6+)}],
 //        selectedKey (String|null), theme{dark,active,inactive,background,hairline,
 //        badgeBackground,badgeText,pill,ripple}, translucent, bounce.
 // Eventos: onTabPress{key}, onTabLongPress{key}, onPreferredHeight{height}
@@ -32,6 +32,12 @@ struct NTBItemRecord: Record {
   /// centralizado e maior — aba de perfil do Instagram). `label` continua
   /// sendo o accessibilityLabel (VoiceOver lê "Você").
   @Field var hideLabel: Bool = false
+  /// [2026-10-19 tabbar-offline] api 6: cópia LOCAL da foto (file:// ou caminho do
+  /// avatarCache do JS) — mostrada antes da rede; `avatarUrl` (https) revalida.
+  @Field var avatarLocalPath: String? = nil
+  /// api 6: chave ESTÁVEL da conta (e-mail) p/ a "última foto boa" em disco —
+  /// aparece na montagem, offline, antes de qualquer rede.
+  @Field var avatarKey: String? = nil
 }
 
 struct NTBThemeRecord: Record {
@@ -65,8 +71,11 @@ public class ChatyyTabBarModule: Module {
     // 4 = [2026-10-18 you-tab-nolabel] items[].hideLabel (sem rótulo; ícone/foto centralizado e maior).
     // 5 = [2026-10-19 tabbar-api5] foto por cima do ícone (itens nunca mudam de imagem), autochecagem
     //     de visibilidade real (fora da tela / sem conteúdo → onBarFail), onBarProbe + onAvatarState.
+    // 6 = [2026-10-19 tabbar-offline] items[].avatarLocalPath + avatarKey: foto OFFLINE-FIRST (última
+    //     foto boa por conta em disco, síncrona na montagem; rede só revalida; falha nunca volta ao
+    //     ícone) e item transparente por baixo da foto (nada do SF Symbol aparece em volta).
     Function("apiVersion") { () -> Int in
-      return 5
+      return 6
     }
 
     View(ChatyyTabBarView.self) {

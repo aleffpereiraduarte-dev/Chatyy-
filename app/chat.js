@@ -607,10 +607,15 @@ function ChatHub() {
       setYouAvatarRetry((n) => (n < 2 ? n + 1 : n));
     }, 20000);
   }, []);
+  // [2026-10-19 tabbar-offline] api 6: offline-first — URL remota + cópia local + chave
+  // da conta (o nativo mostra a última foto boa do disco na hora; rede só revalida).
+  // api < 6: file:// se já está em disco, senão a remota.
   const youTabAvatar = useNativeTabAvatar(user?.email, user?.name || user?.email, NATIVE_YOU_AVATAR,
-    { remote: Platform.OS === 'ios' && nativeTabsApi() >= 5, retry: youAvatarRetry });
+    { api: nativeTabsApi(), retry: youAvatarRetry });
   const youAvatarUrl = youTabAvatar?.uri || null;
   const youAvatarHeaders = youTabAvatar?.headers || null;
+  const youAvatarLocal = youTabAvatar?.localPath || null;
+  const youAvatarKey = youTabAvatar?.key || null;
   // [2026-10-18 you-tab-nolabel] api 4+: aba "Você" SÓ com a foto redonda (sem o
   // rótulo embaixo, como a aba de perfil do Instagram), centralizada e um pouco
   // maior; o label segue indo (accessibilityLabel/contentDescription "Você").
@@ -666,10 +671,11 @@ function ChatHub() {
       YOU_TAB
         ? { key: 'you', label: t('chat.tabYou') || 'Você', sfSymbol: 'person.crop.circle', sfSymbolActive: 'person.crop.circle.fill', androidIcon: 'you', selectable: false,
             ...(NATIVE_YOU_NOLABEL ? { hideLabel: true } : null),
-            ...(youAvatarUrl ? { avatarUrl: youAvatarUrl, avatarHeaders: youAvatarHeaders } : null) }
+            ...(youAvatarUrl ? { avatarUrl: youAvatarUrl, avatarHeaders: youAvatarHeaders } : null),
+            ...(youAvatarKey ? { avatarKey: youAvatarKey, avatarLocalPath: youAvatarLocal || null } : null) }
         : { key: 'apps', label: t('chat.tabApps') || 'Apps', sfSymbol: 'square.grid.2x2', sfSymbolActive: 'square.grid.2x2.fill', androidIcon: 'apps' },
     ];
-  }, [NATIVE_TABS, YOU_TAB, NATIVE_YOU_NOLABEL, t, chatsBadge, emailBadge, missedCallBadge, youAvatarUrl, youAvatarHeaders]);
+  }, [NATIVE_TABS, YOU_TAB, NATIVE_YOU_NOLABEL, t, chatsBadge, emailBadge, missedCallBadge, youAvatarUrl, youAvatarHeaders, youAvatarLocal, youAvatarKey]);
 
   // Compute missed-call count from cached call history.
   // We gate by a persisted "calls last seen" timestamp — counting only missed
@@ -2035,12 +2041,15 @@ function ChatHub() {
             const noLabel = (() => { try { return globalThis.__chatyy_you_tab_avatar !== false; } catch { return true; } })();
             // [2026-10-18 you-tab-bigger] founder: foto um pouco maior → 34 (era 30) com
             // anel sutil sempre (hairline translúcido; 1,5 na cor ativa se ativa).
+            // [2026-10-19 tabbar-offline] founder: "igual WhatsApp" — só a foto, círculo
+            // limpo (sem anel/hairline quando não ativa) e offlineFirst: última foto boa
+            // do disco na hora (offline/conectando), a rede só atualiza.
             const box = noLabel ? 34 : 26;
             return (
             <TabBarItem
               icon={(active) => (
-                <View style={{ width: box, height: box, borderRadius: box / 2, alignItems: 'center', justifyContent: 'center', borderWidth: active ? 1.5 : 1, borderColor: active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.12)') }}>
-                  <AvatarCircle name={user?.name || user?.email} email={user?.email} size={active ? box - 6 : box - 4} />
+                <View style={{ width: box, height: box, borderRadius: box / 2, alignItems: 'center', justifyContent: 'center', borderWidth: active ? 1.5 : 0, borderColor: active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : 'transparent' }}>
+                  <AvatarCircle name={user?.name || user?.email} email={user?.email} size={active ? box - 6 : box - 2} offlineFirst />
                 </View>
               )}
               label={t('chat.tabYou') || 'Você'}

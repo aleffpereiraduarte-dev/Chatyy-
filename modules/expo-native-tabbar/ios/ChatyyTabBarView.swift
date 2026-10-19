@@ -66,6 +66,14 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
   private var overlayURL = ""
   private var overlayPhoto: UIImage? = nil
   private var overlaySig = ""
+  /// [2026-10-19 tabbar-offline] api 6: conta dona da foto mostrada (chave estável).
+  private var overlayKey = ""
+  /// Item da foto montado com imagem TRANSPARENTE (nada do SF Symbol por trás).
+  private var placeholderIndex: Int? = nil
+  private var placeholderSize = CGSize(width: 28, height: 28)
+  /// Sem como ancorar a foto (UITabBar mudou de estrutura) → volta ao ícone.
+  private var placeholderBlocked = false
+  private var anchorCheckWork: DispatchWorkItem?
   /// Último estado enviado ("loading|url" etc.) — evita repetir o mesmo evento.
   private var avatarStateSent = ""
   private var avatarState = "none"
@@ -118,6 +126,7 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     NotificationCenter.default.removeObserver(self)
     healthWork?.cancel()
     probeWork?.cancel()
+    anchorCheckWork?.cancel()
   }
 
   override func didMoveToWindow() {
@@ -403,23 +412,56 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
   // MARK: - Items
 
   private func applyItems() {
-    let sig = records.map { "\($0.key)|\($0.label)|\($0.sfSymbol)|\($0.sfSymbolActive ?? "")|\($0.hideLabel)" }.joined(separator: "\n")
-    if sig != structureSignature || (tabBar.items?.count ?? -1) != records.count {
-      structureSignature = sig
-      var built: [UITabBarItem] = []
-      for (i, r) in records.enumerated() {
-        let (img, selImg) = ChatyyTabBarView.symbolImages(r)
-        built.append(makeItem(r, at: i, image: img, selectedImage: selImg))
-      }
-      tabBar.setItems(built, animated: false)
-      overlaySig = "" // ícones novos → reancora a foto
-      // As abas novas perderam a seleção — reaplica sem animar.
-      let keep = displayedKey
-      displayedKey = nil
-      setDisplayed(keep ?? selectedKey, bounce: false)
-    }
+    // [2026-10-19 tabbar-offline] Foto da última sessão (disco, síncrono) ANTES de
+    // montar os itens → a aba "Você" já nasce com a foto, sem ícone por trás.
+    primeAvatarFromDisk()
+    buildItemsIfNeeded()
     applyBadges()
     applyAvatars()
+  }
+
+  /// Item que deve nascer com imagem transparente (foto por cima): só quando há foto.
+  private func wantedPlaceholderIndex() -> Int? {
+    guard !placeholderBlocked, overlayPhoto != nil, let i = overlayIndex, i < records.count else { return nil }
+    return i
+  }
+
+  /// (Re)cria os UITabBarItem quando a estrutura muda — inclusive quando a aba da
+  /// foto passa de ícone ↔ transparente (nunca muta a imagem de um item exibido).
+  private func buildItemsIfNeeded() {
+    let ph = wantedPlaceholderIndex()
+    let sig = records.map { "\($0.key)|\($0.label)|\($0.sfSymbol)|\($0.sfSymbolActive ?? "")|\($0.hideLabel)" }.joined(separator: "\n")
+      + "|ph=\(ph.map { String($0) } ?? "-")"
+    guard sig != structureSignature || (tabBar.items?.count ?? -1) != records.count else { return }
+    structureSignature = sig
+    var built: [UITabBarItem] = []
+    for (i, r) in records.enumerated() {
+      let (img, selImg) = ChatyyTabBarView.symbolImages(r)
+      if i == ph {
+        let size = img?.size ?? CGSize(width: 28, height: 28)
+        placeholderSize = size
+        let clear = ChatyyTabBarView.clearImage(size)
+        built.append(makeItem(r, at: i, image: clear, selectedImage: clear))
+      } else {
+        built.append(makeItem(r, at: i, image: img, selectedImage: selImg))
+      }
+    }
+    placeholderIndex = ph
+    tabBar.setItems(built, animated: false)
+    overlaySig = "" // ícones novos → reancora a foto
+    // As abas novas perderam a seleção — reaplica sem animar.
+    let keep = displayedKey
+    displayedKey = nil
+    setDisplayed(keep ?? selectedKey, bounce: false)
+  }
+
+  /// Imagem 100% transparente do tamanho do SF Symbol (mesmo layout do ícone).
+  private static func clearImage(_ size: CGSize) -> UIImage {
+    let fmt = UIGraphicsImageRendererFormat.preferred()
+    fmt.opaque = false
+    let s = CGSize(width: max(1, size.width), height: max(1, size.height))
+    let img = UIGraphicsImageRenderer(size: s, format: fmt).image { _ in }
+    return img.withRenderingMode(.alwaysOriginal)
   }
 
   private func makeItem(_ r: NTBItemRecord, at i: Int, image: UIImage?, selectedImage: UIImage?) -> UITabBarItem {
@@ -453,23 +495,47 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
       item.imageInsets = .zero
       return
     }
-    var dy: CGFloat = 6
-    if #available(iOS 26.0, *) { dy = 5 } // Liquid Glass: faixa do rótulo menor
+    let dy = noLabelDy()
     item.imageInsets = UIEdgeInsets(top: dy, left: 0, bottom: -dy, right: 0)
   }
 
-  // MARK: - Avatar (api 3)
-
-  private static func avatarURL(_ r: NTBItemRecord) -> String {
-    return (r.avatarUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+  /// Descida do ícone sem rótulo (metade da faixa do rótulo).
+  private func noLabelDy() -> CGFloat {
+    guard traitCollection.userInterfaceIdiom == .phone else { return 0 }
+    if #available(iOS 26.0, *) { return 5 } // Liquid Glass: faixa do rótulo menor
+    return 6
   }
 
-  /// Índice do item com foto (só a aba "Você" usa) e a URL.
-  private func avatarTarget() -> (Int, String)? {
-    guard let items = tabBar.items else { return nil }
-    for i in items.indices where i < records.count {
-      let url = ChatyyTabBarView.avatarURL(records[i])
-      if !url.isEmpty { return (i, url) }
+  // MARK: - Avatar (api 3 → api 6 offline-first)
+  //
+  // [2026-10-19 tabbar-offline] Ordem (WhatsApp/Instagram): 1) última foto boa da
+  // CONTA, do disco, síncrona na montagem; 2) cópia local do avatarCache do JS
+  // (avatarLocalPath); 3) URL remota + cabeçalhos revalida em 2º plano. Falha de
+  // rede NUNCA troca a foto mostrada pelo ícone. Com foto, o item da aba nasce com
+  // imagem TRANSPARENTE (nada do SF Symbol por trás/em volta da foto); o ícone só
+  // aparece quando não há foto nenhuma (conta nova sem foto e nada em disco).
+
+  /// Fonte da foto: índice do item + URL remota + cópia local (api 6) + conta (api 6).
+  private struct NTBAvatarSource {
+    let index: Int
+    let url: String
+    let local: String
+    let key: String
+  }
+
+  private static func trimmed(_ s: String?) -> String {
+    return (s ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// Item com foto (só a aba "Você" usa). Vem dos records → vale antes dos itens existirem.
+  private func avatarSource() -> NTBAvatarSource? {
+    for (i, r) in records.enumerated() {
+      let url = ChatyyTabBarView.trimmed(r.avatarUrl)
+      let local = ChatyyTabBarView.trimmed(r.avatarLocalPath)
+      let key = ChatyyTabBarView.trimmed(r.avatarKey).lowercased()
+      if !url.isEmpty || !local.isEmpty || !key.isEmpty {
+        return NTBAvatarSource(index: i, url: url, local: local, key: key)
+      }
     }
     return nil
   }
@@ -480,57 +546,58 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     let key = "\(state)|\(reason)|\(url)"
     if key == avatarStateSent { return }
     avatarStateSent = key
-    onAvatarState(["state": state, "reason": reason, "scheme": url.hasPrefix("http") ? "http" : (url.isEmpty ? "-" : "file")])
+    let scheme: String
+    if url.hasPrefix("http") { scheme = "http" }
+    else if url.hasPrefix("last:") { scheme = "last" }
+    else if url.isEmpty { scheme = "-" }
+    else { scheme = "file" }
+    onAvatarState(["state": state, "reason": reason, "scheme": scheme])
   }
 
-  /// Volta ao 1º plano / nova janela sem foto → tenta de novo (sem back-off).
+  /// Volta ao 1º plano / nova janela sem a foto atual → tenta de novo (sem back-off).
   private func retryAvatarIfNeeded() {
-    guard let target = avatarTarget() else { return }
-    let url = target.1
-    guard overlayPhoto == nil || overlayURL != url else { return }
-    NTBAvatarLoader.shared.clearFailure(url)
+    guard let src = avatarSource() else { return }
+    let current = !src.url.isEmpty ? src.url : src.local
+    guard !current.isEmpty, overlayURL != current else { return }
+    if !src.url.isEmpty { NTBAvatarLoader.shared.clearFailure(src.url) }
+    if !src.local.isEmpty { NTBAvatarLoader.shared.clearFailure(src.local) }
     applyAvatars()
   }
 
-  private func applyAvatars() {
-    guard let target = avatarTarget() else {
-      if overlayIndex != nil || !overlayURL.isEmpty {
-        overlayIndex = nil
-        overlayURL = ""
-        overlayPhoto = nil
-        overlaySig = ""
-        avatarOverlay.isHidden = true
-        avatarOverlay.image = nil
-        sendAvatarState("none", "", url: "")
-      }
+  /// Sem foto na barra: esconde a camada e devolve o ícone ao item.
+  private func clearAvatar() {
+    guard overlayIndex != nil || !overlayURL.isEmpty || overlayPhoto != nil || !overlayKey.isEmpty else { return }
+    overlayIndex = nil
+    overlayURL = ""
+    overlayPhoto = nil
+    overlaySig = ""
+    overlayKey = ""
+    avatarOverlay.isHidden = true
+    avatarOverlay.image = nil
+    sendAvatarState("none", "", url: "")
+  }
+
+  /// SÍNCRONO: troca de conta zera a foto; sem foto → última boa da conta (disco).
+  private func primeAvatarFromDisk() {
+    guard let src = avatarSource() else {
+      clearAvatar()
       return
     }
-    let (i, url) = target
-    overlayIndex = i
-    if let photo = NTBAvatarLoader.shared.cached(url) {
-      setOverlayPhoto(photo, url: url)
-      return
+    overlayIndex = src.index
+    if overlayKey != src.key {
+      overlayKey = src.key
+      overlayPhoto = nil
+      overlayURL = ""
+      overlaySig = ""
     }
-    // Enquanto baixa: mantém a foto anterior (só mudou o `v=`) ou o SF Symbol.
-    sendAvatarState("loading", "", url: url)
-    NTBAvatarLoader.shared.load(url, headers: records[i].avatarHeaders) { [weak self] photo, reason in
-      guard let self = self, let cur = self.avatarTarget(), cur.1 == url else { return }
-      if let photo = photo {
-        self.setOverlayPhoto(photo, url: url)
-      } else {
-        self.sendAvatarState("failed", reason ?? "unknown", url: url)
-        if self.overlayURL != url && self.overlayPhoto != nil {
-          // URL nova falhou: segue a foto anterior (mesma conta) em vez do ícone.
-          return
-        }
-      }
+    if overlayPhoto == nil, !src.key.isEmpty, let img = NTBAvatarLoader.shared.lastGoodImage(src.key) {
+      overlayPhoto = img
+      overlayURL = "last:" + src.key
+      overlaySig = ""
     }
   }
 
-  private func setOverlayPhoto(_ photo: UIImage, url: String) {
-    overlayPhoto = photo
-    overlayURL = url
-    overlaySig = ""
+  private func paintOverlay() {
     if canPaintNow {
       positionAvatarOverlay()
     } else {
@@ -538,14 +605,91 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     }
   }
 
-  /// Ícones reais do UITabBar (UIImageView com SF Symbol), agrupados por
-  /// coluna — no iOS 26 pode haver cópias (lente da seleção) no mesmo X.
+  /// Itens só são recriados com a barra visível e ativa, ou antes de entrar na janela.
+  private func rebuildItemsIfAllowed() {
+    if canPaintNow || window == nil {
+      buildItemsIfNeeded()
+    } else {
+      avatarPaintPending = true
+    }
+  }
+
+  private func applyAvatars() {
+    primeAvatarFromDisk()
+    rebuildItemsIfAllowed()
+    paintOverlay()
+    guard let src = avatarSource() else { return }
+    let i = src.index
+    let loader = NTBAvatarLoader.shared
+
+    // 1) remota já decodificada em memória.
+    if !src.url.isEmpty {
+      if overlayURL == src.url && overlayPhoto != nil { return }
+      if let img = loader.cached(src.url) {
+        setOverlayPhoto(img, source: src.url, key: src.key)
+        return
+      }
+    }
+
+    // 2) cópia local do JS (avatarCache) — instantânea, sem rede.
+    if !src.local.isEmpty && overlayURL != src.local {
+      if let img = loader.cached(src.local) {
+        setOverlayPhoto(img, source: src.local, key: src.key)
+      } else {
+        let wantLocal = src.local
+        let wantKey = src.key
+        loader.load(wantLocal, headers: nil) { [weak self] (photo: UIImage?, _: String?) in
+          guard let self = self, let photo = photo, let cur = self.avatarSource(),
+                cur.key == wantKey, cur.local == wantLocal else { return }
+          // A remota (mais nova) já chegou → não volta p/ a cópia local.
+          if !cur.url.isEmpty && self.overlayURL == cur.url { return }
+          self.setOverlayPhoto(photo, source: wantLocal, key: wantKey)
+        }
+      }
+    }
+
+    // 3) remota revalida em 2º plano; falhou → mantém a foto que está na tela.
+    guard !src.url.isEmpty else { return }
+    if overlayPhoto == nil { sendAvatarState("loading", "", url: src.url) }
+    let wantURL = src.url
+    loader.load(wantURL, headers: records[i].avatarHeaders) { [weak self] (photo: UIImage?, reason: String?) in
+      guard let self = self, let cur = self.avatarSource(), cur.url == wantURL else { return }
+      if let photo = photo {
+        self.setOverlayPhoto(photo, source: wantURL, key: cur.key)
+      } else {
+        let kept = self.overlayPhoto != nil
+        self.sendAvatarState("failed", (kept ? "kept_" : "") + (reason ?? "unknown"), url: wantURL)
+      }
+    }
+  }
+
+  private func setOverlayPhoto(_ photo: UIImage, source: String, key: String) {
+    overlayPhoto = photo
+    overlayURL = source
+    overlaySig = ""
+    if !key.isEmpty {
+      NTBAvatarLoader.shared.rememberLastGood(photo, account: key, source: source)
+    }
+    rebuildItemsIfAllowed() // 1ª foto: ícone → item transparente
+    paintOverlay()
+  }
+
+  /// Ícones reais do UITabBar (UIImageView com SF Symbol ou a imagem transparente
+  /// da aba da foto), agrupados por coluna — no iOS 26 pode haver cópias (lente
+  /// da seleção) no mesmo X.
   private func iconAnchors() -> [CGRect] {
     var found: [CGRect] = []
+    let phSize = placeholderSize
+    let hasPlaceholder = placeholderIndex != nil
+    func isAnchorImage(_ img: UIImage) -> Bool {
+      if img.isSymbolImage { return true }
+      guard hasPlaceholder else { return false }
+      return abs(img.size.width - phSize.width) < 1 && abs(img.size.height - phSize.height) < 1
+    }
     func walk(_ v: UIView, _ depth: Int) {
       if depth > 8 { return }
       for sub in v.subviews where !sub.isHidden && sub.alpha > 0.01 {
-        if let iv = sub as? UIImageView, let img = iv.image, img.isSymbolImage,
+        if let iv = sub as? UIImageView, let img = iv.image, isAnchorImage(img),
            iv.bounds.width >= 10, iv.bounds.width <= 60, iv.bounds.height >= 10, iv.bounds.height <= 60 {
           found.append(iv.convert(iv.bounds, to: self))
         }
@@ -565,21 +709,66 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     return cols
   }
 
-  /// Desenha/posiciona a foto sobre o ícone do item (chamado em todo layout
-  /// do UITabBar — ícones se movem com a seleção/rotação/iOS 26).
+  /// Onde desenhar a foto do item `i`. Se a imagem transparente não for achada
+  /// (o UITabBar pode copiá-la), deduz a coluna que falta pelas vizinhas.
+  private func avatarAnchor(_ i: Int) -> CGRect? {
+    let anchors = iconAnchors()
+    let n = records.count
+    guard i >= 0, i < n else { return nil }
+    if anchors.count == n { return anchors[i] }
+    guard placeholderIndex == i, anchors.count == n - 1, anchors.count >= 2 else { return nil }
+    let last = anchors.count - 1
+    let step = (anchors[last].midX - anchors[0].midX) / CGFloat(last)
+    let midX: CGFloat
+    if i == 0 {
+      midX = anchors[0].midX - step
+    } else if i > last {
+      midX = anchors[last].midX + step
+    } else {
+      midX = (anchors[i - 1].midX + anchors[i].midX) / 2
+    }
+    var midY: CGFloat = 0
+    for a in anchors { midY += a.midY }
+    midY /= CGFloat(anchors.count)
+    if records[i].hideLabel { midY += noLabelDy() }
+    let s = placeholderSize
+    return CGRect(x: midX - s.width / 2, y: midY - s.height / 2, width: s.width, height: s.height)
+  }
+
+  /// Sem âncora por > 1,2 s com o item transparente → volta ao ícone (melhor do
+  /// que a aba vazia); a foto segue por cima do ícone quando der para ancorar.
+  private func scheduleAnchorCheck() {
+    guard placeholderIndex != nil, !placeholderBlocked, anchorCheckWork == nil else { return }
+    let work = DispatchWorkItem { [weak self] in
+      guard let self = self else { return }
+      self.anchorCheckWork = nil
+      guard self.canPaintNow, let i = self.overlayIndex, self.overlayPhoto != nil, self.placeholderIndex != nil else { return }
+      if self.avatarAnchor(i) != nil {
+        self.positionAvatarOverlay()
+        return
+      }
+      self.placeholderBlocked = true
+      self.buildItemsIfNeeded()
+      self.sendAvatarState("failed", "anchor_blocked", url: self.overlayURL)
+    }
+    anchorCheckWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
+  }
+
+  /// Desenha/posiciona a foto sobre o item (chamado em todo layout do UITabBar —
+  /// ícones se movem com a seleção/rotação/iOS 26).
   private func positionAvatarOverlay() {
     guard let i = overlayIndex, let photo = overlayPhoto, i < records.count else {
       avatarOverlay.isHidden = true
       return
     }
     guard canPaintNow else { avatarPaintPending = true; return }
-    let anchors = iconAnchors()
-    guard anchors.count == records.count, i < anchors.count else {
+    guard let a = avatarAnchor(i) else {
       avatarOverlay.isHidden = true
-      sendAvatarState("failed", "no_anchor_\(anchors.count)", url: overlayURL)
+      sendAvatarState("failed", "no_anchor_\(iconAnchors().count)", url: overlayURL)
+      scheduleAnchorCheck()
       return
     }
-    let a = anchors[i]
     let side = records[i].hideLabel ? ntbAvatarSideNoLabel : ntbAvatarSide
     let selected = displayedKey != nil && displayedKey == records[i].key
     let dark = theme.dark

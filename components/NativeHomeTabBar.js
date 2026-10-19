@@ -51,15 +51,26 @@ export function nativeTabsApi() {
 // baixa sozinho. Enquanto o disco não responde: null (= SF Symbol / vetor "you"),
 // sem baixar a mesma foto 2×. Upload novo / WS avatar_updated → nova versão →
 // nova URL → o nativo redesenha.
-// [2026-10-19 tabbar-avatar] opts.remote (iOS api 5): entrega a URL https + Bearer
+// [2026-10-19 tabbar-avatar] (histórico) opts.remote (iOS api 5): entregava a URL https + Bearer
 // direto (o nativo tem cache de memória + URLCache próprios) — nada de file:// do
 // Documents, que muda de UUID a cada build instalado. opts.retry: nonce que o
 // chat.js sobe quando o nativo avisa onAvatarState failed → URL nova (&ntbr=N),
 // fura o back-off/dedupe do loader nativo.
+// [2026-10-19 tabbar-offline] opts.api >= 6 (iOS/Android): OFFLINE-FIRST como
+// WhatsApp/Instagram — devolve { uri: URL https, headers, localPath, key }:
+//   - key = e-mail (chave ESTÁVEL da conta): o nativo guarda a última foto boa em
+//     disco e mostra NA MONTAGEM, antes de qualquer rede;
+//   - localPath = cópia em disco do avatarCache (síncrono: índice da URL atual ou a
+//     última foto boa da pessoa, qualquer versão) — o nativo mostra antes da rede;
+//   - uri/headers = remota, revalida em 2º plano (falha nunca volta ao ícone).
+// api < 6: compatível — file:// se já existe em disco, senão a remota (o
+// cacheAvatar() confere o arquivo e troca p/ file:// quando o download termina).
 export function useNativeTabAvatar(email, name, enabled, opts) {
-  const preferRemote = !!(opts && opts.remote);
+  const api = (opts && Number(opts.api)) || 0;
+  const offlineFirst = api >= 6;
   const retry = (opts && Number(opts.retry)) || 0;
   const on = !!enabled && typeof email === 'string' && email.indexOf('@') > 0;
+  const key = on ? email.trim().toLowerCase() : '';
   const [ver, setVer] = useState(0);
   useEffect(() => {
     if (!on) return undefined;
@@ -75,37 +86,50 @@ export function useNativeTabAvatar(email, name, enabled, opts) {
     return u;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [on, email, name, ver, retry]);
-  const [resolved, setResolved] = useState(null); // { for: remote, email, uri }
+  // URL sem o &ntbr= (o índice do avatarCache é por URL canônica).
+  const canon = remote ? remote.replace(/[?&]ntbr=\d+/, '') : null;
+  // Cópia em disco SÍNCRONA (zero I/O): índice da URL atual → última foto boa da pessoa.
+  const syncLocal = useMemo(() => {
+    if (!canon) return null;
+    let p = null;
+    try {
+      const c = require('../services/avatarCache');
+      p = (c.getCachedAvatarUriOrNull && c.getCachedAvatarUriOrNull(canon))
+        || (c.getLastGoodAvatarUri && c.getLastGoodAvatarUri(key)) || null;
+    } catch { p = null; }
+    if (p && p.charAt(0) === '/') p = 'file://' + p;
+    return p;
+  }, [canon, key]);
+  // Download/conferência em disco (cacheAvatar confere se o arquivo existe — no iOS o
+  // UUID do container muda a cada build instalado) → caminho local verificado.
+  const [verified, setVerified] = useState(null); // { for: canon, path }
   useEffect(() => {
-    if (!remote) return undefined;
+    if (!canon) return undefined;
     let alive = true;
     let cache = null;
     try { cache = require('../services/avatarCache'); } catch { cache = null; }
-    // [2026-10-19 tabbar-fix] NÃO confiar no índice síncrono: depois de instalar um
-    // build novo o iOS troca o UUID do sandbox e o índice (MMKV) ainda aponta p/ o
-    // Documents ANTIGO → o nativo lia um arquivo inexistente, falhava (back-off 60 s)
-    // e a aba "Você" ficava no ícone p/ sempre (build 728). cacheAvatar() confere se
-    // o arquivo existe (getInfoAsync) e rebaixa se preciso; falhou → URL remota.
-    if (preferRemote || !cache || !cache.cacheAvatar) { setResolved({ for: remote, email, uri: remote }); return undefined; }
-    Promise.resolve(cache.cacheAvatar(remote)).then((r) => {
+    if (!cache || !cache.cacheAvatar) return undefined;
+    Promise.resolve(cache.cacheAvatar(canon)).then((r) => {
       if (!alive) return;
-      let uri = (typeof r === 'string' && r) ? r : remote;
-      // Caminho absoluto sem esquema → file:// (o nativo aceita os dois; normaliza).
-      if (uri.charAt(0) === '/') uri = 'file://' + uri;
-      setResolved({ for: remote, email, uri });
-    }).catch(() => { if (alive) setResolved({ for: remote, email, uri: remote }); });
+      let p = (typeof r === 'string' && r && !/^https?:/i.test(r)) ? r : null;
+      if (p && p.charAt(0) === '/') p = 'file://' + p;
+      setVerified({ for: canon, path: p });
+    }).catch(() => { if (alive) setVerified({ for: canon, path: null }); });
     return () => { alive = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remote, preferRemote]);
-  // Versão nova baixando → continua mostrando a foto anterior (mesma conta), sem piscar o ícone.
+  }, [canon]);
   return useMemo(() => {
-    if (!remote || !resolved || resolved.email !== email) return null;
-    const uri = resolved.uri;
-    if (!/^https?:/i.test(uri)) return { uri, headers: null };
+    if (!remote) return null;
+    const vf = verified && verified.for === canon ? verified : null;
+    // api 6: a conferência falhou (offline) → segue a cópia síncrona (última foto boa).
+    // api < 6: o resultado conferido manda (caminho velho do índice não vai ao nativo).
+    const local = offlineFirst ? ((vf && vf.path) || syncLocal || null) : (vf ? vf.path : syncLocal);
     let headers = null;
-    try { headers = require('../services/avatar').avatarAuthHeaders(uri) || null; } catch { headers = null; }
-    return { uri, headers };
-  }, [remote, resolved, email]);
+    try { headers = require('../services/avatar').avatarAuthHeaders(remote) || null; } catch { headers = null; }
+    if (offlineFirst) return { uri: remote, headers, localPath: local, key };
+    // api < 6: file:// se existe em disco, senão a remota.
+    if (local) return { uri: local, headers: null, localPath: null, key: null };
+    return { uri: remote, headers, localPath: null, key: null };
+  }, [remote, canon, verified, syncLocal, offlineFirst, key]);
 }
 
 // [2026-10-19 tabbar-api5] Diagnóstico `tabbar_probe` / `tabbar_avatar` → nativeTelemetry

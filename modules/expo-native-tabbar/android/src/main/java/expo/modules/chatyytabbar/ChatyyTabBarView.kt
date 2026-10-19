@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
@@ -38,6 +39,8 @@ import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -55,7 +58,6 @@ internal const val NTB_AVATAR_NOLABEL_DP = 33f
 internal class NTBAvatarDrawable(
   private val photo: Bitmap,
   private val ring: Int?,
-  private val edge: Int,
   private val density: Float,
 ) : Drawable() {
   private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
@@ -79,9 +81,8 @@ internal class NTBAvatarDrawable(
     }
     dst.set(cx - pr, cy - pr, cx + pr, cy + pr)
     canvas.drawBitmap(photo, null, dst, paint)
-    stroke.strokeWidth = 0.5f * density
-    stroke.color = edge
-    canvas.drawCircle(cx, cy, pr - 0.25f * density, stroke)
+    // [2026-10-19 tabbar-offline] founder: "igual WhatsApp" — círculo limpo, sem
+    // contorno quando não selecionada (o hairline de 0,5 dp saiu).
   }
 
   override fun setAlpha(alpha: Int) {
@@ -97,6 +98,67 @@ internal class NTBAvatarDrawable(
 
   @Deprecated("Deprecated in Java")
   override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+}
+
+/**
+ * [2026-10-19 tabbar-offline] api 6: ÚLTIMA foto boa por CONTA (chave estável =
+ * e-mail, não a URL com `v=`) em filesDir/ntb-avatar-last/<conta>.png. Lida
+ * SÍNCRONA ao montar a célula (antes de qualquer rede) → a foto aparece offline /
+ * conectando, como WhatsApp/Instagram; a rede só revalida.
+ */
+internal object NTBAvatarLastGood {
+  private val mem = HashMap<String, Bitmap>()
+  private val memSrc = HashMap<String, String>()
+  private val io = Executors.newSingleThreadExecutor()
+
+  private fun norm(account: String): String = account.trim().lowercase()
+
+  private fun file(ctx: Context, k: String): File? {
+    if (k.isEmpty()) return null
+    val safe = k.map { ch ->
+      if (ch in 'a'..'z' || ch in '0'..'9' || ch == '@' || ch == '.' || ch == '_' || ch == '-') ch else '_'
+    }.joinToString("").take(120)
+    return File(File(ctx.filesDir, "ntb-avatar-last"), "$safe.png")
+  }
+
+  @Synchronized
+  fun get(ctx: Context, account: String): Bitmap? {
+    val k = norm(account)
+    if (k.isEmpty()) return null
+    val m = mem[k]
+    if (m != null && !m.isRecycled) return m
+    val f = file(ctx, k) ?: return null
+    if (!f.exists()) return null
+    val bmp = try { BitmapFactory.decodeFile(f.absolutePath) } catch (_: Throwable) { null } ?: return null
+    mem[k] = bmp
+    return bmp
+  }
+
+  fun remember(ctx: Context, account: String, bmp: Bitmap, source: String) {
+    val k = norm(account)
+    if (k.isEmpty()) return
+    val same = synchronized(this) {
+      val was = memSrc[k] == source && mem[k] != null
+      mem[k] = bmp
+      memSrc[k] = source
+      was
+    }
+    if (same) return
+    val app = ctx.applicationContext
+    io.execute {
+      try {
+        val f = file(app, k) ?: return@execute
+        val dir = f.parentFile ?: return@execute
+        if (!dir.exists()) dir.mkdirs()
+        val tmp = File(dir, f.name + ".tmp")
+        FileOutputStream(tmp).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
+        if (!tmp.renameTo(f)) {
+          f.delete()
+          tmp.renameTo(f)
+        }
+      } catch (_: Throwable) {}
+    }
+  }
 }
 
 /** Modelo Glide: http(s) (com cabeçalhos opcionais), file://, content:// ou caminho. */
@@ -237,6 +299,12 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
     var avatarReqUrl = ""
     var avatarTarget: CustomTarget<Bitmap>? = null
     var avatarShown = false
+    // [2026-10-19 tabbar-offline] api 6: cópia local (avatarLocalPath), conta e o
+    // que está na tela ("last:<conta>", caminho local ou URL remota).
+    var avatarReqLocal = ""
+    var avatarLocalTarget: CustomTarget<Bitmap>? = null
+    var avatarKeyShown = ""
+    var avatarSrc = ""
 
     init {
       root.orientation = LinearLayout.VERTICAL
@@ -335,8 +403,7 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
       if (bmp != null) {
         setIconSizeDp(if (record.hideLabel) NTB_AVATAR_NOLABEL_DP else 28f) // [2026-10-18 you-tab-bigger] 30→33 dp
         icon.imageTintList = null
-        val edge = if (isDarkTheme) 0x24FFFFFF else 0x1A000000
-        icon.setImageDrawable(NTBAvatarDrawable(bmp, if (active) cActive else null, edge, density))
+        icon.setImageDrawable(NTBAvatarDrawable(bmp, if (active) cActive else null, density))
         avatarShown = true
         return
       }
@@ -349,52 +416,108 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
       }
     }
 
-    /** Pede a foto quando `avatarUrl` muda. Até chegar fica o que já está (vetor
-     *  ou a foto anterior, se só mudou o `v=`); erro → volta ao vetor (ntb_you). */
+    /**
+     * [2026-10-19 tabbar-offline] OFFLINE-FIRST (api 6): 1) última foto boa da conta
+     * (disco, síncrona); 2) cópia local do JS (avatarLocalPath); 3) URL remota
+     * revalida. Erro de rede NUNCA troca a foto mostrada pelo vetor; o vetor
+     * (ntb_you) só aparece quando não há foto nenhuma. Binário/JS api < 6:
+     * `avatarUrl` pode ser file:// ou https (como antes), sem chave.
+     */
     fun updateAvatar() {
       val url = record.avatarUrl?.trim().orEmpty()
-      if (url == avatarReqUrl) return
-      avatarReqUrl = url
+      val local = record.avatarLocalPath?.trim().orEmpty()
+      val key = record.avatarKey?.trim()?.lowercase().orEmpty()
       val app = context.applicationContext
-      avatarTarget?.let { old -> try { Glide.with(app).clear(old) } catch (_: Throwable) {} }
-      avatarTarget = null
-      val model = if (url.isEmpty()) null else ntbAvatarModel(url, record.avatarHeaders)
-      if (model == null) {
+      if (url.isEmpty() && local.isEmpty() && key.isEmpty()) {
+        cancelAvatarLoads()
+        avatarReqUrl = ""
+        avatarReqLocal = ""
+        avatarKeyShown = ""
+        avatarSrc = ""
         if (avatarBmp != null) {
           avatarBmp = null
           updateIcon()
         }
         return
       }
+      if (key != avatarKeyShown) {
+        // Outra conta (ou 1ª montagem): nada da foto anterior; última boa do disco.
+        avatarKeyShown = key
+        cancelAvatarLoads()
+        avatarReqUrl = ""
+        avatarReqLocal = ""
+        val last = if (key.isEmpty()) null else NTBAvatarLastGood.get(app, key)
+        avatarBmp = last
+        avatarSrc = if (last != null) "last:$key" else ""
+        updateIcon()
+      }
+      if (local.isNotEmpty() && local != avatarReqLocal && (url.isEmpty() || avatarSrc != url)) {
+        avatarReqLocal = local
+        startAvatarLoad(local, null, remote = false, key = key)
+      }
+      if (url.isNotEmpty() && url != avatarReqUrl) {
+        avatarReqUrl = url
+        startAvatarLoad(url, record.avatarHeaders, remote = true, key = key)
+      }
+    }
+
+    /** Remota ainda não está na tela → tenta de novo (volta à janela). */
+    fun retryAvatar() {
+      val url = record.avatarUrl?.trim().orEmpty()
+      if (url.isEmpty() || avatarSrc == url) return
+      avatarReqUrl = ""
+      updateAvatar()
+    }
+
+    private fun cancelAvatarLoads() {
+      val app = context.applicationContext
+      avatarTarget?.let { old -> try { Glide.with(app).clear(old) } catch (_: Throwable) {} }
+      avatarLocalTarget?.let { old -> try { Glide.with(app).clear(old) } catch (_: Throwable) {} }
+      avatarTarget = null
+      avatarLocalTarget = null
+    }
+
+    private fun startAvatarLoad(src: String, headers: Map<String, String>?, remote: Boolean, key: String) {
+      val app = context.applicationContext
+      val model = ntbAvatarModel(src, headers) ?: return
+      val old = if (remote) avatarTarget else avatarLocalTarget
+      old?.let { o -> try { Glide.with(app).clear(o) } catch (_: Throwable) {} }
       val px = dp(if (record.hideLabel) NTB_AVATAR_NOLABEL_DP else 28f)
       val target = object : CustomTarget<Bitmap>(px, px) {
         override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
-          if (avatarTarget !== this) return
+          val mine = if (remote) avatarTarget else avatarLocalTarget
+          if (mine !== this || key != avatarKeyShown) return
+          // Cópia local chegou depois da remota (mais nova) → fica a remota.
+          if (!remote) {
+            val curUrl = record.avatarUrl?.trim().orEmpty()
+            if (curUrl.isNotEmpty() && avatarSrc == curUrl) return
+          }
           val own = try {
             resource.copy(Bitmap.Config.ARGB_8888, false)
           } catch (_: Throwable) {
             null
           } ?: return
           avatarBmp = own
+          avatarSrc = src
+          if (key.isNotEmpty()) NTBAvatarLastGood.remember(app, key, own, src)
           updateIcon()
         }
 
         override fun onLoadFailed(errorDrawable: Drawable?) {
-          if (avatarTarget !== this) return
-          if (avatarBmp != null) {
-            avatarBmp = null
-            updateIcon()
-          }
+          // Offline/rede ruim: mantém a foto que está na tela (ou o vetor, se não há).
+          val mine = if (remote) avatarTarget else avatarLocalTarget
+          if (mine !== this) return
+          if (remote) avatarReqUrl = "" // próxima atualização/volta à janela tenta de novo
         }
 
         override fun onLoadCleared(placeholder: Drawable?) {}
       }
-      avatarTarget = target
+      if (remote) avatarTarget = target else avatarLocalTarget = target
       try {
         Glide.with(app).asBitmap().load(model).circleCrop()
           .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC).into(target)
       } catch (_: Throwable) {
-        avatarTarget = null
+        if (remote) avatarTarget = null else avatarLocalTarget = null
       }
     }
 
@@ -581,5 +704,11 @@ class ChatyyTabBarView(context: Context, appContext: AppContext) : ExpoView(cont
   override fun onDetachedFromWindow() {
     super.onDetachedFromWindow()
     main.removeCallbacks(resync)
+  }
+
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    // [2026-10-19 tabbar-offline] foto remota que falhou (offline) → tenta de novo.
+    for (c in cells) c.retryAvatar()
   }
 }

@@ -94,6 +94,72 @@ final class NTBAvatarLoader {
 
   static let backoff: TimeInterval = 20
 
+  // MARK: - Última foto boa por CONTA (api 6, offline-first)
+  //
+  // [2026-10-19 tabbar-offline] WhatsApp/Instagram: a foto da aba "Você" aparece
+  // NA HORA, mesmo sem rede/conectando. Guardamos a última imagem que carregou
+  // (já reduzida a 96 px, PNG ~10 KB) em Application Support/ntb-avatar-last/
+  // <conta>.png — chave estável por conta (e-mail), NÃO pela URL (o `v=` muda).
+  // Lida SÍNCRONA na montagem (antes de qualquer rede); a rede só atualiza.
+
+  private var lastGood: [String: UIImage] = [:]
+  private var lastGoodSrc: [String: String] = [:]
+
+  private static let lastGoodDir: URL? = {
+    guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+    var dir = base.appendingPathComponent("ntb-avatar-last", isDirectory: true)
+    if !FileManager.default.fileExists(atPath: dir.path) {
+      try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+      var rv = URLResourceValues()
+      rv.isExcludedFromBackup = true
+      try? dir.setResourceValues(rv)
+    }
+    return dir
+  }()
+
+  /// Nome de arquivo seguro p/ a conta ("a@b.com" → "a@b.com.png").
+  static func lastGoodFile(_ account: String) -> URL? {
+    let k = account.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !k.isEmpty, let dir = lastGoodDir else { return nil }
+    let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789@._-")
+    let safe = String(k.map { allowed.contains($0) ? $0 : "_" }.prefix(120))
+    return dir.appendingPathComponent(safe + ".png", isDirectory: false)
+  }
+
+  /// SÍNCRONO (main): memória → disco. nil = nunca carregou foto p/ esta conta.
+  func lastGoodImage(_ account: String) -> UIImage? {
+    let k = account.lowercased()
+    if k.isEmpty { return nil }
+    lock.lock()
+    let mem = lastGood[k]
+    lock.unlock()
+    if let mem = mem { return mem }
+    guard let file = NTBAvatarLoader.lastGoodFile(k),
+          let data = try? Data(contentsOf: file),
+          let img = UIImage(data: data, scale: 1) else { return nil }
+    lock.lock()
+    lastGood[k] = img
+    lock.unlock()
+    return img
+  }
+
+  /// Guarda a foto como a "última boa" da conta (escrita fora da main).
+  /// `source` (URL/caminho) evita regravar a mesma foto a cada montagem.
+  func rememberLastGood(_ img: UIImage, account: String, source: String) {
+    let k = account.lowercased()
+    if k.isEmpty { return }
+    lock.lock()
+    let same = lastGoodSrc[k] == source && lastGood[k] != nil
+    lastGood[k] = img
+    lastGoodSrc[k] = source
+    lock.unlock()
+    if same { return }
+    queue.async {
+      guard let file = NTBAvatarLoader.lastGoodFile(k), let png = img.pngData() else { return }
+      try? png.write(to: file, options: .atomic)
+    }
+  }
+
   /// Esquece a falha recente (volta ao 1º plano / nova janela → tenta de novo).
   func clearFailure(_ url: String) {
     lock.lock()
@@ -154,7 +220,7 @@ let ntbAvatarSide: CGFloat = 28
 /// [2026-10-18 you-tab-bigger] 30 → 33 pt (founder: "a foto um pouco maior").
 let ntbAvatarSideNoLabel: CGFloat = 33
 
-func ntbAvatarImage(_ photo: UIImage, ring: UIColor?, dark: Bool, side: CGFloat = ntbAvatarSide) -> UIImage {
+func ntbAvatarImage(_ photo: UIImage, ring: UIColor?, dark _: Bool, side: CGFloat = ntbAvatarSide) -> UIImage {
   let fmt = UIGraphicsImageRendererFormat.preferred()
   fmt.opaque = false
   let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: fmt)
@@ -177,12 +243,8 @@ func ntbAvatarImage(_ photo: UIImage, ring: UIColor?, dark: Bool, side: CGFloat 
     UIBezierPath(ovalIn: photoRect).addClip()
     photo.draw(in: photoRect)
     ctx.cgContext.restoreGState()
-    // Contorno quase invisível: foto clara no fundo claro (ou escura no escuro)
-    // não "some" na barra.
-    let edge = UIBezierPath(ovalIn: photoRect.insetBy(dx: 0.25, dy: 0.25))
-    edge.lineWidth = 0.5
-    (dark ? UIColor(white: 1, alpha: 0.14) : UIColor(white: 0, alpha: 0.10)).setStroke()
-    edge.stroke()
+    // [2026-10-19 tabbar-offline] founder: "igual WhatsApp" — círculo limpo, sem
+    // contorno/anel quando não selecionada (o hairline de 0,5 pt saiu).
   }
   return img.withRenderingMode(.alwaysOriginal)
 }
