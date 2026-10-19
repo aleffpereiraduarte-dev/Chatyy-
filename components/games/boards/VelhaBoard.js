@@ -1,10 +1,11 @@
 // components/games/boards/VelhaBoard.js — [jogos 2026-10-18] Jogo da Velha 3×3 (X = 1º assento).
 // Polish 2: X e O se DESENHAM (traço animado, X em dois riscos), linha vencedora risca de ponta a
 // ponta com brilho dourado e as 3 casas pulsam; toque com afundar; movimento reduzido = sem animação.
+// Round 3: superfície premium (gradiente radial suave + brilho + filete interno) num Svg estático.
 import React, { useEffect } from 'react';
 import { View, StyleSheet, useWindowDimensions } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withDelay, withSequence, withSpring, withRepeat } from 'react-native-reanimated';
-import Svg from 'react-native-svg';
+import Svg, { Defs, RadialGradient, LinearGradient, Stop, Rect } from 'react-native-svg';
 import { hTap } from '../fx';
 import { PressScale, DrawLine, DrawCircle, useRM, IS_WEB } from '../motion';
 
@@ -76,6 +77,28 @@ function Cell({ i, m, cell, can, last, win, pal, onPress, rm }) {
   );
 }
 
+// Superfície estática (memo): ids por tema = defs idênticas por id (web inline SVG).
+const Surface = React.memo(function Surface({ size, dark }) {
+  const v = dark ? 'dk' : 'lt';
+  return (
+    <Svg width={size} height={size}>
+      <Defs>
+        <RadialGradient id={'vlS_' + v} cx="50%" cy="38%" r="75%">
+          <Stop offset="0" stopColor={dark ? '#202024' : '#FFFFFF'} />
+          <Stop offset="1" stopColor={dark ? '#101012' : '#EEEEF0'} />
+        </RadialGradient>
+        <LinearGradient id={'vlG_' + v} x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#FFFFFF" stopOpacity={dark ? 0.06 : 0.5} />
+          <Stop offset="0.5" stopColor="#FFFFFF" stopOpacity="0" />
+        </LinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width={size} height={size} rx="24" fill={`url(#vlS_${v})`} />
+      <Rect x="0" y="0" width={size} height={size} rx="24" fill={`url(#vlG_${v})`} />
+      <Rect x="5.5" y="5.5" width={size - 11} height={size - 11} rx="19" fill="none" stroke={dark ? '#FFFFFF' : '#000000'} strokeOpacity={dark ? 0.08 : 0.06} strokeWidth="1" />
+    </Svg>
+  );
+});
+
 export default function VelhaBoard({ view, onMove, pal, busy, maxW }) {
   const win = useWindowDimensions();
   const width = maxW || win.width;
@@ -91,7 +114,9 @@ export default function VelhaBoard({ view, onMove, pal, busy, maxW }) {
   const lineKey = line ? line.join('-') : '';
   return (
     <View style={{ alignItems: 'center', marginTop: 8 }}>
-      <View style={{ width: size, height: size, borderRadius: 24, backgroundColor: pal.card, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: pal.line }}>
+      <View style={{ width: size, height: size, borderRadius: 24, backgroundColor: pal.card, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderColor: pal.line,
+        shadowColor: '#000', shadowOpacity: pal.dark ? 0.4 : 0.1, shadowRadius: 14, shadowOffset: { width: 0, height: 6 } }}>
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}><Surface size={size} dark={!!pal.dark} /></View>
         {[1, 2].map((k) => <View key={'v' + k} pointerEvents="none" style={{ position: 'absolute', left: k * cell - 1.5, top: 14, bottom: 14, width: 3, borderRadius: 2, backgroundColor: pal.ink, opacity: 0.85 }} />)}
         {[1, 2].map((k) => <View key={'h' + k} pointerEvents="none" style={{ position: 'absolute', top: k * cell - 1.5, left: 14, right: 14, height: 3, borderRadius: 2, backgroundColor: pal.ink, opacity: 0.85 }} />)}
         {b.map((m, i) => (

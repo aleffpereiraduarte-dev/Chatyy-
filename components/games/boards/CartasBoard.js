@@ -5,10 +5,12 @@
 // carta que não serve treme; adversários com versos em leque + número; seta de sentido girando em volta
 // da mesa (meia-volta no Inverter); seletor de cor em pétalas; selo "Última carta!".
 // Voo = 1 shared value por carta (UI thread); o JS só mede (measureInWindow) no início e desmonta no fim.
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, Modal, StyleSheet, useWindowDimensions } from 'react-native';
+import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, StyleSheet, Platform, useWindowDimensions } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, withSequence, withDelay, withRepeat, cancelAnimation, runOnJS, Easing } from 'react-native-reanimated';
-import Svg, { Path, Circle, Rect, G } from 'react-native-svg';
+import Svg, { Path, Circle, Rect, G, Defs, LinearGradient, Stop, ClipPath } from 'react-native-svg';
+import AvatarCircle from '../../AvatarCircle';
+import NativeSheetDialog from '../../NativeSheetDialog';
 import { CARD_COLORS, hTap, hCard, hDraw, hNope, hLast } from '../fx';
 import { tr, nameOf } from '../../../services/games';
 import { PressScale, shake, pop, useRM } from '../motion';
@@ -24,62 +26,170 @@ export function cardLabel(t, code) {
   return `${vl} ${colorName(t, code[0]).toLowerCase()}`;
 }
 
-function Glyph({ v, size, color }) {
+// ─── arte das cartas (round 3) ──────────────────────────────────────────────
+// Desenho ORIGINAL do Chatyy: face com degradê suave da cor, moldura fina interna, numeral serifado
+// elegante no centro e índices nos cantos. Símbolos próprios: Pular = seta em arco saltando um ponto;
+// Inverter = duas meias-setas opostas formando um laço; +2 = duas cartinhas empilhadas; Coringa = roseta
+// de 4 pétalas nas 4 cores sobre fundo quase preto. Ids de degradê iguais por cor (defs idênticas →
+// colisão de id no web é inofensiva).
+const SERIF = Platform.select({ ios: 'Georgia', android: 'serif', default: 'Georgia, "Times New Roman", serif' });
+const WILD_BG = '#121214';
+function lighten(hex, k) {
+  const h = String(hex || '#777777').replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map((x) => x + x).join('') : h, 16);
+  const ch = (sh) => { const v = (n >> sh) & 255; return Math.round(v + (255 - v) * k); };
+  return '#' + [ch(16), ch(8), ch(0)].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+function darken(hex, k) {
+  const h = String(hex || '#777777').replace('#', '');
+  const n = parseInt(h, 16);
+  const ch = (sh) => Math.round(((n >> sh) & 255) * (1 - k));
+  return '#' + [ch(16), ch(8), ch(0)].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+const PETAL = 'M12 12 C 9.2 9.4, 9 5.2, 12 2.6 C 15 5.2, 14.8 9.4, 12 12 Z';
+const ROSETTE_ORDER = ['r', 'y', 'g', 'b'];
+function Rosette({ size, outline, color = '#FFFFFF' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      {ROSETTE_ORDER.map((c, i) => (
+        <Path key={c} d={PETAL} transform={`rotate(${i * 90 + 45} 12 12)`}
+          fill={outline ? 'none' : CARD_COLORS[c]} stroke={outline ? color : 'rgba(255,255,255,0.55)'} strokeWidth={outline ? 0.9 : 0.5} />
+      ))}
+      <Circle cx="12" cy="12" r={outline ? 1.6 : 1.9} fill={outline ? 'none' : '#FFFFFF'} stroke={outline ? color : 'none'} strokeWidth={0.9} />
+    </Svg>
+  );
+}
+function Glyph({ v, size, color = '#FFFFFF' }) {
   if (v === 'S') {
-    return (<Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.6} strokeLinecap="round"><Circle cx="12" cy="12" r="8" /><Path d="M6.5 17.5l11-11" /></Svg>);
-  }
-  if (v === 'R') {
-    return (<Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><Path d="M5 9h11l-3-3" /><Path d="M19 15H8l3 3" /></Svg>);
-  }
-  if (v === 'W' || v === '4') {
     return (
-      <Svg width={size} height={size} viewBox="0 0 24 24">
-        <G>
-          <Path d="M12 12V3a9 9 0 0 1 9 9z" fill={CARD_COLORS.r} />
-          <Path d="M12 12h9a9 9 0 0 1-9 9z" fill={CARD_COLORS.b} />
-          <Path d="M12 12v9a9 9 0 0 1-9-9z" fill={CARD_COLORS.g} />
-          <Path d="M12 12H3a9 9 0 0 1 9-9z" fill={CARD_COLORS.y} />
-        </G>
-        <Circle cx="12" cy="12" r="9" fill="none" stroke="#FFFFFF" strokeWidth={1.4} />
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M4 16.5 C 5.5 7.5, 16.5 6.2, 19.4 14" />
+        <Path d="M16.4 13.4 L19.6 14.4 L20.6 11.2" />
+        <Circle cx="11.8" cy="17.4" r="2.1" fill={color} stroke="none" />
       </Svg>
     );
   }
+  if (v === 'R') {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M5.2 11 A 6.8 6.8 0 0 1 16.6 6" />
+        <Path d="M17.4 2.8 V 6.6 H 13.6" />
+        <Path d="M18.8 13 A 6.8 6.8 0 0 1 7.4 18" />
+        <Path d="M6.6 21.2 V 17.4 H 10.4" />
+      </Svg>
+    );
+  }
+  if (v === 'D') {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.4} strokeLinejoin="round">
+        <Rect x="4.2" y="3.4" width="10" height="14" rx="2.2" transform="rotate(-10 9.2 10.4)" opacity={0.6} />
+        <Rect x="9.4" y="6.6" width="10" height="14" rx="2.2" transform="rotate(8 14.4 13.6)" fill="rgba(255,255,255,0.16)" />
+      </Svg>
+    );
+  }
+  if (v === 'W' || v === '4') return <Rosette size={size} />;
   return null;
 }
 
-export function CardFace({ code, w = 62, h = 92, dim }) {
-  const wild = code && code[0] === 'W';
+function CardFaceImpl({ code, w = 62, h = 92, dim }) {
+  const c0 = code ? code[0] : '';
+  const wild = c0 === 'W';
   const v = code ? code.slice(1) : '';
-  const bg = wild ? '#0A0A0A' : (CARD_COLORS[code && code[0]] || '#777');
-  const center = v === 'D' ? '+2' : (/^\d$/.test(v) ? v : null);
-  const corner = v === 'D' ? '+2' : v === '4' ? '+4' : v === 'W' ? '' : v === 'S' ? '' : v === 'R' ? '' : v;
-  return (
-    <View style={{ width: w, height: h, borderRadius: w * 0.14, backgroundColor: '#FFFFFF', padding: 3, opacity: dim ? 0.5 : 1,
-      shadowColor: '#000', shadowOpacity: 0.28, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 4 }}>
-      <View style={{ flex: 1, borderRadius: w * 0.11, backgroundColor: bg, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-        <View style={{ position: 'absolute', left: w * 0.16, right: w * 0.16, top: h * 0.2, bottom: h * 0.2, borderRadius: w * 0.12, borderWidth: 2, borderColor: 'rgba(255,255,255,0.85)' }} />
-        {center ? <Text style={{ color: '#FFFFFF', fontSize: w * 0.46, fontWeight: '900' }}>{center}</Text> : <Glyph v={v} size={w * 0.52} color="#FFFFFF" />}
-        {v === '4' ? <Text style={{ position: 'absolute', bottom: h * 0.24, color: '#FFFFFF', fontSize: w * 0.2, fontWeight: '900' }}>+4</Text> : null}
-        {corner ? <Text style={{ position: 'absolute', top: 3, left: 5, color: '#FFFFFF', fontSize: w * 0.17, fontWeight: '900' }}>{corner}</Text> : null}
-        {corner ? <Text style={{ position: 'absolute', bottom: 3, right: 5, color: '#FFFFFF', fontSize: w * 0.17, fontWeight: '900', transform: [{ rotate: '180deg' }] }}>{corner}</Text> : null}
+  const base = wild ? WILD_BG : (CARD_COLORS[c0] || '#777777');
+  const top = wild ? '#2A2A2E' : lighten(base, 0.18);
+  const bot = wild ? '#060607' : darken(base, 0.12);
+  const gid = 'ctg_' + (wild ? 'w' : (c0 || 'x'));
+  const R = w * 0.16;
+  const digit = /^\d$/.test(v);
+  const cornerTx = digit ? v : v === 'D' ? '+2' : v === '4' ? '+4' : '';
+  const cornerGlyph = !cornerTx && (v === 'S' || v === 'R' || v === 'W') ? v : null;
+  const shadowTx = { textShadowColor: 'rgba(0,0,0,0.28)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 };
+  let center;
+  if (digit) {
+    center = <Text style={[{ color: '#FFFFFF', fontFamily: SERIF, fontWeight: '700', fontSize: w * 0.58, letterSpacing: 0.5, includeFontPadding: false }, shadowTx]}>{v}</Text>;
+  } else if (v === 'D') {
+    center = (
+      <View style={{ width: w * 0.62, height: w * 0.62, alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ position: 'absolute' }}><Glyph v="D" size={w * 0.62} /></View>
+        <Text style={[{ color: '#FFFFFF', fontFamily: SERIF, fontWeight: '700', fontSize: w * 0.24, marginLeft: w * 0.1, marginTop: w * 0.06 }, shadowTx]}>+2</Text>
       </View>
+    );
+  } else if (v === '4') {
+    center = (
+      <View style={{ alignItems: 'center' }}>
+        <Rosette size={w * 0.48} />
+        <Text style={[{ color: '#FFFFFF', fontFamily: SERIF, fontWeight: '700', fontSize: w * 0.22, marginTop: 1, letterSpacing: 0.5 }, shadowTx]}>+4</Text>
+      </View>
+    );
+  } else {
+    center = <Glyph v={v} size={w * (v === 'W' ? 0.6 : 0.5)} />;
+  }
+  const cs = w * 0.17;
+  const corner = (flip) => (
+    <View style={{ position: 'absolute', alignItems: 'center', ...(flip ? { bottom: h * 0.045, right: w * 0.08, transform: [{ rotate: '180deg' }] } : { top: h * 0.045, left: w * 0.08 }) }}>
+      {cornerTx ? <Text style={{ color: '#FFFFFF', fontFamily: SERIF, fontWeight: '700', fontSize: cs, includeFontPadding: false }}>{cornerTx}</Text>
+        : cornerGlyph ? <Glyph v={cornerGlyph} size={cs * 1.15} /> : null}
     </View>
   );
-}
-export function CardBack({ w = 62, h = 92 }) {
   return (
-    <View style={{ width: w, height: h, borderRadius: w * 0.14, backgroundColor: '#FFFFFF', padding: 3,
-      shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 3, shadowOffset: { width: 0, height: 2 }, elevation: 3 }}>
-      <View style={{ flex: 1, borderRadius: w * 0.11, backgroundColor: '#0A0A0A', alignItems: 'center', justifyContent: 'center' }}>
-        <Svg width={w * 0.7} height={h * 0.62} viewBox="0 0 40 56">
-          <Rect x="6" y="8" width="28" height="40" rx="6" fill="none" stroke="#FFFFFF" strokeWidth="1.6" opacity="0.8" />
-          <Path d="M20 14l9 14-9 14-9-14z" fill="none" stroke="#FFFFFF" strokeWidth="1.6" />
-          <Circle cx="20" cy="28" r="3.2" fill="#FFFFFF" />
+    <View style={{ width: w, height: h, borderRadius: R, backgroundColor: base, opacity: dim ? 0.5 : 1,
+      shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 5 }}>
+      <View style={{ flex: 1, borderRadius: R, overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
+        borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.22)' }}>
+        <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width={w} height={h}>
+          <Defs>
+            <LinearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor={top} />
+              <Stop offset="1" stopColor={bot} />
+            </LinearGradient>
+          </Defs>
+          <Rect x="0" y="0" width={w} height={h} fill={`url(#${gid})`} />
+          <Rect x="0" y="0" width={w} height={h * 0.42} fill="#FFFFFF" opacity={0.06} />
         </Svg>
+        <View pointerEvents="none" style={{ position: 'absolute', left: w * 0.07, right: w * 0.07, top: w * 0.07, bottom: w * 0.07, borderRadius: R * 0.7, borderWidth: 1, borderColor: 'rgba(255,255,255,0.4)' }} />
+        {center}
+        {corner(false)}
+        {corner(true)}
       </View>
     </View>
   );
 }
+export const CardFace = memo(CardFaceImpl);
+
+// verso: grafite quase preto com treliça fina de losangos + roseta em contorno no centro
+const BACK_LINES = (() => {
+  let d = '';
+  for (let k = -56; k <= 40; k += 4.5) { d += `M${k} 0 L${k + 56} 56 `; d += `M${k + 56} 0 L${k} 56 `; }
+  return d;
+})();
+function CardBackImpl({ w = 62, h = 92 }) {
+  const R = w * 0.16;
+  return (
+    <View style={{ width: w, height: h, borderRadius: R, backgroundColor: '#0E0E10',
+      shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 4 }}>
+      <View style={{ flex: 1, borderRadius: R, overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
+        borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.2)' }}>
+        <Svg pointerEvents="none" style={StyleSheet.absoluteFill} width={w} height={h} viewBox="0 0 40 56" preserveAspectRatio="none">
+          <Defs>
+            <LinearGradient id="ctb_bg" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor="#222226" />
+              <Stop offset="1" stopColor="#09090A" />
+            </LinearGradient>
+            <ClipPath id="ctb_clip"><Rect x="3.2" y="3.2" width="33.6" height="49.6" rx="4.2" /></ClipPath>
+          </Defs>
+          <Rect x="0" y="0" width="40" height="56" fill="url(#ctb_bg)" />
+          <G clipPath="url(#ctb_clip)">
+            <Path d={BACK_LINES} stroke="#FFFFFF" strokeWidth={0.28} opacity={0.22} />
+          </G>
+          <Rect x="3.2" y="3.2" width="33.6" height="49.6" rx="4.2" fill="none" stroke="#FFFFFF" strokeWidth={0.6} opacity={0.5} />
+          <Circle cx="20" cy="28" r="8.6" fill="#0E0E10" stroke="#FFFFFF" strokeWidth={0.6} opacity={0.95} />
+        </Svg>
+        <Rosette size={w * 0.36} outline color="rgba(255,255,255,0.85)" />
+      </View>
+    </View>
+  );
+}
+export const CardBack = memo(CardBackImpl);
 
 function hashAng(s, k) { let h = 7; const x = String(s) + k; for (let i = 0; i < x.length; i++) h = (h * 31 + x.charCodeAt(i)) | 0; return ((Math.abs(h) % 25) - 12); }
 function measure(ref) {
@@ -231,12 +341,15 @@ function OppFan({ n, rm }) {
     </View>
   );
 }
-function Opp({ name, n, turn, out, pal, rm, oppRef, one }) {
+function Opp({ name, email, n, turn, out, pal, rm, oppRef, one }) {
   const s = useSharedValue(1);
   useEffect(() => { if (one) pop(s, 1.18, rm); }, [one]); // eslint-disable-line react-hooks/exhaustive-deps
   const badgeSt = useAnimatedStyle(() => ({ transform: [{ scale: s.value }] }));
   return (
     <View ref={oppRef} collapsable={false} style={[st.opp, { borderColor: turn ? pal.strong : pal.line, backgroundColor: pal.card, opacity: out ? 0.4 : 1 }]}>
+      <View style={{ borderWidth: 2, borderColor: turn ? pal.strong : 'transparent', borderRadius: 22, padding: 1.5, marginBottom: 4 }}>
+        <AvatarCircle email={email} name={name} size={34} />
+      </View>
       <OppFan n={n} rm={rm} />
       <Text style={{ color: pal.ink, fontWeight: '700', fontSize: 12.5, maxWidth: 90 }} numberOfLines={1}>{name}</Text>
       <Animated.View style={[st.badge, { backgroundColor: one ? pal.accent : pal.card2 }, badgeSt]}>
@@ -283,24 +396,18 @@ function Petal({ c, i, picked, onPick, t, rm }) {
 }
 function ColorPicker({ visible, onPick, onClose, pal, t, rm }) {
   const [picked, setPicked] = useState(null);
-  const e = useSharedValue(0);
-  useEffect(() => { if (visible) { setPicked(null); e.value = rm ? 1 : withTiming(1, { duration: 180 }); } else e.value = 0; }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
-  const bd = useAnimatedStyle(() => ({ opacity: e.value }));
-  const box = useAnimatedStyle(() => ({ transform: [{ scale: 0.9 + 0.1 * e.value }] }));
-  if (!visible) return null;
+  useEffect(() => { if (visible) setPicked(null); }, [visible]);
   const pick = (c) => { if (picked) return; setPicked(c); hTap(); setTimeout(() => onPick(c), rm ? 0 : 200); };
   return (
-    <Modal visible transparent animationType="none" onRequestClose={onClose}>
-      <Animated.View style={[st.backdrop, bd]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel={tr(t, 'common.cancel', 'Cancelar')} />
-        <Animated.View style={[st.colorBox, { backgroundColor: pal.bg, borderColor: pal.line }, box]}>
-          <Text style={{ color: pal.ink, fontWeight: '800', fontSize: 16, marginBottom: 16 }}>{tr(t, 'games.cartas.pickColor', 'Escolha a cor')}</Text>
-          <View style={{ width: 196, flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-            {['r', 'y', 'g', 'b'].map((c, i) => <Petal key={c} c={c} i={i} picked={picked} onPick={pick} t={t} rm={rm} />)}
-          </View>
-        </Animated.View>
-      </Animated.View>
-    </Modal>
+    <NativeSheetDialog visible={!!visible} onClose={onClose} detents="fitToContents"
+      panelStyle={[st.colorBox, { backgroundColor: pal.bg, borderColor: pal.line }]}>
+      <Text style={{ color: pal.ink, fontWeight: '800', fontSize: 16, marginBottom: 16, textAlign: 'center' }}>{tr(t, 'games.cartas.pickColor', 'Escolha a cor')}</Text>
+      {visible ? (
+        <View style={{ width: 196, flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignSelf: 'center' }}>
+          {['r', 'y', 'g', 'b'].map((c, i) => <Petal key={c} c={c} i={i} picked={picked} onPick={pick} t={t} rm={rm} />)}
+        </View>
+      ) : null}
+    </NativeSheetDialog>
   );
 }
 
@@ -466,7 +573,7 @@ export default function CartasBoard({ view, onMove, pal, busy, t, me, maxW }) {
         {seats.map((e, i) => {
           if (i === view.me) return null;
           return (
-            <Opp key={e} name={nameOf(view, e, me, t)} n={counts[i] || 0} turn={view.status === 'active' && S.turn === i} out={Array.isArray(S.out) && S.out[i]}
+            <Opp key={e} email={e} name={nameOf(view, e, me, t)} n={counts[i] || 0} turn={view.status === 'active' && S.turn === i} out={Array.isArray(S.out) && S.out[i]}
               pal={pal} rm={rm} one={counts[i] === 1 && view.status === 'active'} oppRef={(r) => { oppRefs.current[i] = r; }} />
           );
         })}
@@ -543,8 +650,7 @@ const st = StyleSheet.create({
   table: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 22, marginTop: 10 },
   last: { textAlign: 'center', marginTop: 8, fontSize: 13, paddingHorizontal: 20 },
   passBtn: { alignSelf: 'center', marginTop: 10, borderWidth: 1.5, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 8 },
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
-  colorBox: { borderRadius: 24, padding: 22, alignItems: 'center', borderWidth: StyleSheet.hairlineWidth },
+  colorBox: { width: 300, borderRadius: 24, padding: 22, alignItems: 'center', borderWidth: StyleSheet.hairlineWidth },
   calloutWrap: { position: 'absolute', left: 0, right: 0, top: 96, alignItems: 'center', zIndex: 60 },
   callout: { borderRadius: 18, paddingHorizontal: 18, paddingVertical: 9, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 6 },
   oneTag: { position: 'absolute', top: -6, alignSelf: 'center', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 3, zIndex: 5 },

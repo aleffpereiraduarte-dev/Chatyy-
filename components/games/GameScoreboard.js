@@ -1,8 +1,9 @@
 // components/games/GameScoreboard.js — [jogos 2026-10-18] "Placar do grupo": vitórias por membro e por jogo
 // (chat_game_scoreboard). Usado dentro do seletor de jogos e como folha própria (dados do grupo).
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, Pressable, Modal, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { View, Text, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
+import GameSheet, { sheetScrollFill } from './GameSheet';
+import AvatarCircle from '../AvatarCircle';
 import { gameScoreboard, gameTitle, tr, GAME_TYPES } from '../../services/games';
 import { GameTypeIcon, IconPodium } from './GameIcons';
 
@@ -40,6 +41,7 @@ export function ScoreboardList({ conversationId, currentEmail, t, colors, isDark
           <View style={[s.rank, { backgroundColor: i === 0 ? ink : 'transparent', borderColor: i === 0 ? ink : line }]}>
             <Text style={{ color: i === 0 ? (isDark ? '#000' : '#fff') : ink, fontWeight: '800', fontSize: 13 }}>{i + 1}</Text>
           </View>
+          <AvatarCircle email={r.e} name={r.n || r.e} size={36} />
           <View style={{ flex: 1 }}>
             <Text style={{ color: ink, fontWeight: r.e === me ? '800' : '600', fontSize: 15 }} numberOfLines={1}>
               {r.e === me ? tr(t, 'games.you', 'Você') : (r.n || r.e.split('@')[0])}
@@ -63,28 +65,26 @@ export function ScoreboardList({ conversationId, currentEmail, t, colors, isDark
   );
 }
 
+// [jogos 2026-10-19] folha NATIVA (detents 60%/95% + grabber do sistema; web = folha deslizante)
 export default function GameScoreboardSheet({ visible, onClose, conversationId, currentEmail, t, colors, isDark, title }) {
-  const ins = useSafeAreaInsets();
   if (!visible) return null;
+  const bg = colors.background || (isDark ? '#000' : '#fff');
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={s.backdrop} onPress={onClose} />
-      <View style={[s.sheet, { backgroundColor: colors.background || (isDark ? '#000' : '#fff'), paddingBottom: Math.max(ins.bottom, 16) }]}>
-        <View style={s.grab} />
+    <GameSheet visible onClose={onClose} bg={bg} detents={[0.6, 0.95]}>
+      <View style={s.titleRow}>
+        <IconPodium size={20} color={colors.text} />
         <Text style={[s.title, { color: colors.text }]}>{title || tr(t, 'games.score.title', 'Placar do grupo')}</Text>
-        <ScrollView style={{ maxHeight: 460 }} contentContainerStyle={{ paddingHorizontal: 16 }}>
-          <ScoreboardList conversationId={conversationId} currentEmail={currentEmail} t={t} colors={colors} isDark={isDark} />
-        </ScrollView>
       </View>
-    </Modal>
+      <ScrollView style={sheetScrollFill} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+        <ScoreboardList conversationId={conversationId} currentEmail={currentEmail} t={t} colors={colors} isDark={isDark} />
+      </ScrollView>
+    </GameSheet>
   );
 }
 
 const s = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sheet: { borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 8 },
-  grab: { alignSelf: 'center', width: 38, height: 5, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.4)', marginBottom: 8 },
-  title: { fontSize: 18, fontWeight: '800', paddingHorizontal: 16, marginBottom: 6 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, marginBottom: 6 },
+  title: { fontSize: 18, fontWeight: '800', flex: 1 },
   empty: { textAlign: 'center', marginTop: 10, fontSize: 14, paddingHorizontal: 24 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 11, borderBottomWidth: StyleSheet.hairlineWidth },
   rank: { width: 28, height: 28, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },

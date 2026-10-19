@@ -5,9 +5,13 @@
 // Peças animam pelo caminho (Reanimated); capturadas somem; último lance fica marcado.
 // Polish 2: a peça capturada estoura em partículas QUANDO a peça que captura passa por cima dela
 // (atraso por passo do caminho); promoção a dama = coroa entra girando + anel dourado se expandindo.
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Pressable, Text, useWindowDimensions } from 'react-native';
+// Round 3: materiais "pedra polida" em SVG (mármore marfim + grafite/ônix, veios bem leves, vinheta) num
+// ÚNICO Svg; moldura de obsidiana com filete dourado e coordenadas a–h/1–8; peças em SVG (marfim/ônix com
+// brilho especular, bisel e 2 sulcos) memoizadas — as animações só mexem no wrapper (UI thread).
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Pressable, Text, StyleSheet, useWindowDimensions } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSequence, withSpring, withDelay, Easing } from 'react-native-reanimated';
+import Svg, { Defs, LinearGradient, RadialGradient, Stop, Rect, Circle, Ellipse, Path, G, Text as SvgText } from 'react-native-svg';
 import { IconCrown } from '../GameIcons';
 import { hTap, hMove, hCapture, hKing } from '../fx';
 import { tr } from '../../../services/games';
@@ -62,6 +66,34 @@ function initPieces(bd) {
   for (let i = 0; i < 64; i++) { const ch = bd[i]; if (ch && ch !== '.') out.push({ id: 'p' + i, sq: i, ch }); }
   return out;
 }
+
+// Face estática da peça (SVG). ids fixos por cor = defs idênticas (colisão de id no web é inofensiva).
+const PieceFace = memo(function PieceFace({ d, white }) {
+  const k = white ? 'w' : 'b';
+  return (
+    <Svg width={d} height={d} viewBox="0 0 100 100">
+      <Defs>
+        <LinearGradient id={'dmPr' + k} x1="0" y1="0" x2="0" y2="1">
+          {white ? <Stop offset="0" stopColor="#F4F3EF" /> : <Stop offset="0" stopColor="#4A4A50" />}
+          {white ? <Stop offset="1" stopColor="#A9A7A0" /> : <Stop offset="1" stopColor="#020202" />}
+        </LinearGradient>
+        <RadialGradient id={'dmPf' + k} cx="38%" cy="32%" r="75%" fx="34%" fy="28%">
+          {white ? <Stop offset="0" stopColor="#FFFFFF" /> : <Stop offset="0" stopColor="#56565C" />}
+          {white ? <Stop offset="0.55" stopColor="#F2F1EC" /> : <Stop offset="0.5" stopColor="#1E1E21" />}
+          {white ? <Stop offset="1" stopColor="#D3D1CA" /> : <Stop offset="1" stopColor="#060607" />}
+        </RadialGradient>
+      </Defs>
+      <Circle cx="50" cy="50" r="49" fill={'url(#dmPr' + k + ')'} />
+      <Circle cx="50" cy="50" r="42.5" fill={'url(#dmPf' + k + ')'} />
+      <Circle cx="50" cy="50" r="42.5" fill="none" stroke={white ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.16)'} strokeWidth="1.2" />
+      <Circle cx="50" cy="50" r="33" fill="none" stroke={white ? 'rgba(0,0,0,0.13)' : 'rgba(0,0,0,0.55)'} strokeWidth="2.2" />
+      <Circle cx="50" cy="50.8" r="33" fill="none" stroke={white ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.10)'} strokeWidth="0.9" />
+      <Circle cx="50" cy="50" r="23" fill="none" stroke={white ? 'rgba(0,0,0,0.10)' : 'rgba(0,0,0,0.5)'} strokeWidth="1.8" />
+      <Circle cx="50" cy="50.7" r="23" fill="none" stroke={white ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.09)'} strokeWidth="0.8" />
+      <Ellipse cx="37" cy="29" rx="17" ry="8.5" fill="#FFFFFF" opacity={white ? 0.55 : 0.13} transform="rotate(-28 37 29)" />
+    </Svg>
+  );
+});
 
 function Piece({ p, cell, flip, selected, hint, pal, rm }) {
   const pos = (sq) => {
@@ -122,24 +154,102 @@ function Piece({ p, cell, flip, selected, hint, pal, rm }) {
   const white = p.ch === 'w' || p.ch === 'W';
   const king = p.ch === 'W' || p.ch === 'B';
   const d = cell * 0.78;
-  const face = white ? '#FAFAFA' : '#111111';
-  const rim = white ? '#BDBDBD' : '#9A9A9E';
   return (
     <Animated.View pointerEvents="none" style={[{ position: 'absolute', left: 0, top: 0, width: cell, height: cell, alignItems: 'center', justifyContent: 'center' }, st]}>
       <View style={{
-        width: d, height: d, borderRadius: d / 2, backgroundColor: face, borderWidth: Math.max(2, cell * 0.05), borderColor: selected ? '#FFD60A' : rim,
-        alignItems: 'center', justifyContent: 'center',
-        shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 3, shadowOffset: { width: 0, height: 2 }, elevation: 3,
+        width: d, height: d, borderRadius: d / 2, backgroundColor: white ? '#B8B6AF' : '#0A0A0B', alignItems: 'center', justifyContent: 'center',
+        shadowColor: '#000', shadowOpacity: 0.42, shadowRadius: 3.5, shadowOffset: { width: 0, height: 2.5 }, elevation: 4,
       }}>
-        <View style={{ width: d * 0.62, height: d * 0.62, borderRadius: d, borderWidth: 1.5, borderColor: white ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.22)', alignItems: 'center', justifyContent: 'center' }}>
-          {king ? <Animated.View style={crownSt}><IconCrown size={d * 0.42} color={pal.accent} /></Animated.View> : null}
-        </View>
+        <PieceFace d={d} white={white} />
+        {king ? <Animated.View style={[{ position: 'absolute' }, crownSt]}><IconCrown size={d * 0.42} color={pal.accent} /></Animated.View> : null}
+        {selected ? <View style={{ position: 'absolute', left: -2, top: -2, width: d + 4, height: d + 4, borderRadius: d, borderWidth: 2.5, borderColor: pal.accent }} /> : null}
       </View>
       <Animated.View style={[{ position: 'absolute', width: d, height: d, borderRadius: d, borderWidth: 3, borderColor: pal.accent }, haloSt]} />
-      {hint ? <View style={{ position: 'absolute', width: d + 8, height: d + 8, borderRadius: d, borderWidth: 2, borderColor: pal.strong, opacity: 0.35 }} /> : null}
+      {hint ? <View style={{ position: 'absolute', width: d + 8, height: d + 8, borderRadius: d, borderWidth: 2, borderColor: pal.accent, opacity: 0.5 }} /> : null}
     </Animated.View>
   );
 }
+
+const GLOW = { shadowColor: '#FFD60A', shadowOpacity: 0.7, shadowRadius: 6, shadowOffset: { width: 0, height: 0 } };
+
+// Veios bem leves (coordenadas 0..100, escalam com o tabuleiro).
+const VEINS = [
+  'M-4 18 C 14 22, 22 9, 38 15 S 62 30, 78 22 S 98 12, 106 19',
+  'M-3 62 C 12 55, 26 70, 44 63 S 70 50, 84 60 S 100 72, 106 66',
+  'M8 104 C 16 86, 30 80, 36 68 S 52 40, 60 30',
+  'M70 104 C 74 92, 86 86, 92 74 S 101 56, 106 50',
+];
+// 64 casas num Svg só: marfim (mármore) e grafite/ônix polidos + veios + brilho + vinheta.
+const StoneSquares = memo(function StoneSquares({ size, dark }) {
+  const v = dark ? 'dk' : 'lt';
+  const c = size / 8;
+  const rects = [];
+  for (let r = 0; r < 8; r++) for (let col = 0; col < 8; col++) {
+    const isDark = ((r + col) & 1) === 1;
+    rects.push(<Rect key={r * 8 + col} x={col * c} y={r * c} width={c + 0.5} height={c + 0.5} fill={`url(#${isDark ? 'dmD_' : 'dmL_'}${v})`} />);
+  }
+  return (
+    <Svg width={size} height={size}>
+      <Defs>
+        <LinearGradient id={'dmL_' + v} x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor={dark ? '#77777D' : '#FCFBF7'} />
+          <Stop offset="0.55" stopColor={dark ? '#66666C' : '#F1EFE9'} />
+          <Stop offset="1" stopColor={dark ? '#58585E' : '#E4E2DB'} />
+        </LinearGradient>
+        <LinearGradient id={'dmD_' + v} x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor={dark ? '#2C2C31' : '#48484D'} />
+          <Stop offset="0.5" stopColor={dark ? '#1E1E22' : '#2E2E32'} />
+          <Stop offset="1" stopColor={dark ? '#121214' : '#1C1C1F'} />
+        </LinearGradient>
+        <LinearGradient id={'dmS_' + v} x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor="#FFFFFF" stopOpacity={dark ? 0.10 : 0.22} />
+          <Stop offset="0.45" stopColor="#FFFFFF" stopOpacity="0" />
+        </LinearGradient>
+        <RadialGradient id={'dmV_' + v} cx="50%" cy="50%" r="72%">
+          <Stop offset="0.62" stopColor="#000000" stopOpacity="0" />
+          <Stop offset="1" stopColor="#000000" stopOpacity={dark ? 0.42 : 0.26} />
+        </RadialGradient>
+      </Defs>
+      {rects}
+      <G transform={`scale(${size / 100})`}>
+        {VEINS.map((d, i) => <Path key={i} d={d} fill="none" stroke={i % 2 ? '#000000' : '#FFFFFF'} strokeOpacity={dark ? 0.06 : (i % 2 ? 0.05 : 0.14)} strokeWidth={0.35} />)}
+      </G>
+      <Rect x="0" y="0" width={size} height={size} fill={`url(#dmS_${v})`} />
+      <Rect x="0" y="0" width={size} height={size} fill={`url(#dmV_${v})`} />
+    </Svg>
+  );
+});
+// Moldura de obsidiana: bisel em gradiente, filete dourado discreto e coordenadas (respeita o giro).
+const BoardFrame = memo(function BoardFrame({ outer, F, cell, flip, pal }) {
+  const fs = Math.max(7, Math.min(11, F * 0.5));
+  const files = []; const ranks = [];
+  for (let k = 0; k < 8; k++) {
+    const c = flip ? 7 - k : k; const r = flip ? 7 - k : k;
+    files.push(<SvgText key={'f' + k} x={F + k * cell + cell / 2} y={outer - F / 2 + fs * 0.36} fontSize={fs} fontWeight="600" fill="#FFFFFF" fillOpacity={0.42} textAnchor="middle">{String.fromCharCode(97 + c)}</SvgText>);
+    ranks.push(<SvgText key={'r' + k} x={F / 2} y={F + k * cell + cell / 2 + fs * 0.36} fontSize={fs} fontWeight="600" fill="#FFFFFF" fillOpacity={0.42} textAnchor="middle">{String(8 - r)}</SvgText>);
+  }
+  return (
+    <Svg width={outer} height={outer}>
+      <Defs>
+        <LinearGradient id="dmF" x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor="#3A3A3F" />
+          <Stop offset="0.35" stopColor="#151517" />
+          <Stop offset="1" stopColor="#050506" />
+        </LinearGradient>
+        <LinearGradient id="dmFb" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#FFFFFF" stopOpacity="0.22" />
+          <Stop offset="1" stopColor="#FFFFFF" stopOpacity="0.02" />
+        </LinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width={outer} height={outer} rx="16" fill="url(#dmF)" />
+      <Rect x="0.75" y="0.75" width={outer - 1.5} height={outer - 1.5} rx="15.5" fill="none" stroke="url(#dmFb)" strokeWidth="1.5" />
+      <Rect x={F - 3} y={F - 3} width={outer - 2 * F + 6} height={outer - 2 * F + 6} rx="5" fill="none" stroke={pal.accent} strokeOpacity={0.38} strokeWidth="0.8" />
+      <Rect x={F - 1} y={F - 1} width={outer - 2 * F + 2} height={outer - 2 * F + 2} rx="4" fill="none" stroke="#000000" strokeOpacity={0.6} strokeWidth="1.5" />
+      {files}
+      {ranks}
+    </Svg>
+  );
+});
 
 export default function DamasBoard({ view, onMove, pal, busy, t, maxW }) {
   const win = useWindowDimensions();
@@ -150,7 +260,9 @@ export default function DamasBoard({ view, onMove, pal, busy, t, maxW }) {
   const bd = typeof S.bd === 'string' && S.bd.length === 64 ? S.bd : '.'.repeat(64);
   const legal = Array.isArray(S.legal) ? S.legal : [];
   const flip = view.me === 1;
-  const size = Math.min(width - 24, maxW ? 620 : 440);
+  const outer = Math.min(width - 16, maxW ? 640 : 456);
+  const F = Math.round(Math.max(12, (outer / 8) * 0.3)); // moldura (com coordenadas)
+  const size = outer - 2 * F;
   const cell = size / 8;
   const [sel, setSel] = useState([]);
   const [pieces, setPieces] = useState(() => initPieces(bd));
@@ -233,11 +345,11 @@ export default function DamasBoard({ view, onMove, pal, busy, t, maxW }) {
       squares.push(
         <Pressable key={sq} onPress={() => tap(sq)} disabled={!dark}
           accessibilityLabel={`${String.fromCharCode(97 + c)}${8 - r}`}
-          style={{ position: 'absolute', left: vc * cell, top: vr * cell, width: cell, height: cell, backgroundColor: dark ? pal.boardDark : pal.boardLight, alignItems: 'center', justifyContent: 'center' }}>
-          {dark && lastSet.has(sq) ? <View style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, backgroundColor: 'rgba(255,214,10,0.22)' }} /> : null}
-          {dark && capSet.has(sq) ? <View style={{ position: 'absolute', width: cell * 0.3, height: cell * 0.3, borderRadius: cell, borderWidth: 2, borderColor: 'rgba(255,90,90,0.75)' }} /> : null}
-          {isSel && sel.length > 1 ? <View style={{ position: 'absolute', width: cell * 0.36, height: cell * 0.36, borderRadius: cell, backgroundColor: 'rgba(255,214,10,0.55)' }} /> : null}
-          {isT ? <View style={{ width: cell * (isCapture ? 0.5 : 0.28), height: cell * (isCapture ? 0.5 : 0.28), borderRadius: cell, backgroundColor: isCapture ? 'transparent' : 'rgba(255,214,10,0.85)', borderWidth: isCapture ? 3 : 0, borderColor: 'rgba(255,214,10,0.9)' }} /> : null}
+          style={{ position: 'absolute', left: vc * cell, top: vr * cell, width: cell, height: cell, alignItems: 'center', justifyContent: 'center' }}>
+          {dark && lastSet.has(sq) ? <View style={{ position: 'absolute', left: 1, top: 1, right: 1, bottom: 1, borderRadius: 3, backgroundColor: 'rgba(255,205,60,0.16)', borderWidth: 1, borderColor: 'rgba(255,214,10,0.38)' }} /> : null}
+          {dark && capSet.has(sq) ? <View style={{ position: 'absolute', width: cell * 0.3, height: cell * 0.3, borderRadius: cell, borderWidth: 1.5, borderColor: 'rgba(255,110,100,0.7)', backgroundColor: 'rgba(255,90,90,0.12)' }} /> : null}
+          {isSel && sel.length > 1 ? <View style={{ position: 'absolute', width: cell * 0.36, height: cell * 0.36, borderRadius: cell, backgroundColor: 'rgba(255,214,10,0.5)', ...GLOW }} /> : null}
+          {isT ? <View style={{ width: cell * (isCapture ? 0.52 : 0.26), height: cell * (isCapture ? 0.52 : 0.26), borderRadius: cell, backgroundColor: isCapture ? 'rgba(255,214,10,0.08)' : 'rgba(255,214,10,0.82)', borderWidth: isCapture ? 2.5 : 0, borderColor: 'rgba(255,214,10,0.85)', ...GLOW }} /> : null}
         </Pressable>,
       );
     }
@@ -248,8 +360,10 @@ export default function DamasBoard({ view, onMove, pal, busy, t, maxW }) {
       <View style={{ height: 22, justifyContent: 'center' }}>
         {myTurn && isCapture ? <Text style={{ color: pal.ink, fontWeight: '800', fontSize: 13 }}>{tr(t, 'games.damas.mustCapture', 'Captura obrigatória')}</Text> : null}
       </View>
-      <View style={{ width: size + 10, height: size + 10, padding: 5, borderRadius: 14, backgroundColor: pal.frame }}>
-        <View style={{ width: size, height: size, borderRadius: 9, overflow: 'hidden' }}>
+      <View style={{ width: outer, height: outer, borderRadius: 16, shadowColor: '#000', shadowOpacity: pal.dark ? 0.5 : 0.28, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 8, backgroundColor: '#0B0B0C' }}>
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}><BoardFrame outer={outer} F={F} cell={cell} flip={flip} pal={pal} /></View>
+        <View style={{ position: 'absolute', left: F, top: F, width: size, height: size, borderRadius: 4, overflow: 'hidden' }}>
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}><StoneSquares size={size} dark={!!pal.dark} /></View>
           {squares}
           {pieces.map((p) => (
             <Piece key={p.id} p={p} cell={cell} flip={flip} pal={pal} rm={rm}

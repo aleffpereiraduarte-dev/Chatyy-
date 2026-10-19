@@ -20,6 +20,10 @@ let _capAt = 0;
 let _probe = null;
 let _capLoaded = false;
 const _capSubs = new Set();
+// [jogos 2026-10-19] recursos do servidor (chat_game_types.features): cancel, draw, hide, expire, rematch_consent, end_reason.
+// Ações novas só aparecem quando o servidor anuncia — app novo + servidor antigo = sem botão quebrado.
+let _features = new Set();
+export function gameFeature(name) { return _features.has(name); }
 
 function _api() { const m = require('./api'); return m.default && m.default.apiCall ? m.default : m; }
 
@@ -31,7 +35,7 @@ export function onGamesCap(fn) { _capSubs.add(fn); return () => _capSubs.delete(
 function _setCap(v) {
   const changed = _cap !== v;
   _cap = v; _capAt = Date.now();
-  try { AsyncStorage.setItem(CAP_KEY, JSON.stringify({ v, at: _capAt })).catch(() => {}); } catch {}
+  try { AsyncStorage.setItem(CAP_KEY, JSON.stringify({ v, at: _capAt, f: Array.from(_features) })).catch(() => {}); } catch {}
   if (changed) for (const fn of Array.from(_capSubs)) { try { fn(v); } catch {} }
 }
 export function isUnknownAction(r) {
@@ -47,6 +51,7 @@ export async function probeGames(force = false) {
     try {
       const raw = await AsyncStorage.getItem(CAP_KEY);
       const j = raw ? JSON.parse(raw) : null;
+      if (j && Array.isArray(j.f) && !_features.size) _features = new Set(j.f);
       if (j && typeof j.v === 'boolean' && _cap === null) { _cap = j.v; _capAt = j.at || 0; for (const fn of Array.from(_capSubs)) { try { fn(_cap); } catch {} } }
     } catch {}
   }
@@ -56,7 +61,7 @@ export async function probeGames(force = false) {
   _probe = (async () => {
     try {
       const r = await _api().apiCall('chat_game_types', {}, 'POST');
-      if (r && r.success && r.data && r.data.enabled) _setCap(true);
+      if (r && r.success && r.data && r.data.enabled) { _features = new Set(Array.isArray(r.data.features) ? r.data.features : []); _setCap(true); }
       else if (isUnknownAction(r)) _setCap(false);
     } catch {}
     _probe = null;
@@ -65,10 +70,11 @@ export async function probeGames(force = false) {
   return _probe;
 }
 
-async function _call(action, params) {
+async function _call(action, params, soft) {
   let r = null;
   try { r = await _api().apiCall(action, params, 'POST'); } catch (e) { r = { success: false, message: String((e && e.message) || 'network') }; }
-  if (isUnknownAction(r)) _setCap(false);
+  // `soft` = ação nova (2026-10-19): servidor antigo responde unknown_action, mas isso NÃO esconde os jogos
+  if (isUnknownAction(r) && !(soft && String(r && r.message) !== 'games_disabled')) _setCap(false);
   const view = r && r.data && r.data.game;
   if (view) putGameView(view);
   if (r && r.data && r.data.rematch) putGameView(r.data.rematch);
@@ -83,6 +89,11 @@ export const gameMove = (id, version, move) => _call('chat_game_move', { game_id
 export const gameState = (id) => _call('chat_game_state', { game_id: id });
 export const gameStateByMessage = (messageId) => _call('chat_game_state', { message_id: messageId });
 export const gameResign = (id) => _call('chat_game_resign', { game_id: id });
+// [jogos 2026-10-19] ciclo de vida completo (servidor v2). Sem o recurso no servidor: cancelar = resign antigo.
+export const gameCancel = (id) => (gameFeature('cancel') ? _call('chat_game_cancel', { game_id: id }, true) : _call('chat_game_resign', { game_id: id }));
+export const gameDraw = (id, op) => _call('chat_game_draw', { game_id: id, op: op || 'offer' }, true);
+export const gameHide = (id) => _call('chat_game_hide', { game_id: id }, true);
+export const gameHideAll = (conversationId) => _call('chat_game_hide', { conversation_id: conversationId, all: 1 }, true);
 export const gameRematch = (id) => _call('chat_game_rematch', { game_id: id });
 export const gameList = (conversationId) => _call('chat_game_list', { conversation_id: conversationId });
 export const gameScoreboard = (conversationId) => _call('chat_game_scoreboard', { conversation_id: conversationId });
@@ -149,7 +160,8 @@ export function parseGameContent(c) {
   if (!s.startsWith('{')) return null;
   try { const j = JSON.parse(s); return j && (j.kind === 'game' || j.kind === 'result') && j.type ? j : null; } catch { return null; }
 }
-const PUBLIC_KEYS = ['g', 'type', 'title', 'status', 'v', 'by', 'players', 'seats', 'turn', 'winners', 'draw', 'ranking', 'open', 'min', 'max', 'info', 'rematch_id', 'rematch_of', 'result_mid', 'hanged'];
+const PUBLIC_KEYS = ['g', 'type', 'title', 'status', 'v', 'by', 'players', 'seats', 'turn', 'winners', 'draw', 'ranking', 'open', 'min', 'max', 'info', 'rematch_id', 'rematch_of', 'result_mid', 'hanged',
+  'end', 'end_by', 'left', 'draw_offer', 'can_offer_draw', 'created', 'exp', 'ts', 'afk_ms', 'rematch_st', 'rematch_by'];
 /** Visão do servidor → content JSON do cartão (só campos públicos). */
 export function cardContentFromView(view) {
   const o = { kind: 'game' };
@@ -173,28 +185,104 @@ export function myStatusIn(g, meEmail) {
 export function isMyTurn(g, meEmail) { return !!(g && g.status === 'active' && g.turn && _lc(g.turn) === _lc(meEmail)); }
 export function isSeat(g, meEmail) { return !!(g && Array.isArray(g.seats) && g.seats.some((e) => _lc(e) === _lc(meEmail))); }
 
+/** Convite vencido? (o servidor fecha sozinho; o app já mostra "Expirado" na hora pelo `exp` do cartão) */
+export function isInviteExpired(g, now) {
+  if (!g || g.status !== 'pending' || !g.exp) return false;
+  return (Number(now) || Date.now()) > Number(g.exp);
+}
+/** Quem abandonou (1º que saiu) — para "Ana abandonou". */
+function _leaver(g) {
+  if (g && g.end_by && (g.end === 'resign')) return g.end_by;
+  const l = g && Array.isArray(g.left) ? g.left : [];
+  return l.length ? l[0] : null;
+}
+/**
+ * [jogos 2026-10-19] Estado final para o selo do cartão/tela:
+ * 'expired' | 'cancelled' | 'declined' | 'draw' | 'won' (eu venci) | 'lost' | 'abandoned' (eu saí) | 'resigned_other' (o outro saiu e eu venci)
+ * | 'winner' (espectador: alguém venceu) | 'hanged' | 'over' | null (em aberto).
+ */
+export function gameEndKind(g, meEmail, now) {
+  if (!g) return null;
+  const me = _lc(meEmail);
+  if (g.status === 'pending') return isInviteExpired(g, now) ? 'expired' : null;
+  if (g.status === 'cancelled') {
+    if (g.end === 'expired') return 'expired';
+    if (g.end === 'declined') return 'declined';
+    return 'cancelled';
+  }
+  if (g.kind === 'result' || g.status === 'finished') {
+    const w = Array.isArray(g.winners) ? g.winners.map(_lc) : [];
+    if (g.draw) return 'draw';
+    if (g.type === 'forca' && g.hanged) return 'hanged';
+    const leaver = _lc(_leaver(g));
+    if (g.end === 'resign' && leaver && leaver === me) return 'abandoned';
+    if (w.includes(me)) return g.end === 'resign' && leaver ? 'resigned_other' : 'won';
+    const seat = isSeat(g, me) || (Array.isArray(g.ranking) && g.ranking.some((r) => _lc(r.e) === me));
+    if (seat && w.length) return 'lost';
+    return w.length ? 'winner' : 'over';
+  }
+  return null;
+}
+/** Selo curto do estado final (cartão no chat / lista do seletor): Cancelado, Expirado, Recusado, Empate, Venceu, Abandonou… */
+export function gameEndBadge(t, g, meEmail, now) {
+  const k = gameEndKind(g, meEmail, now);
+  if (!k) return null;
+  const fb = {
+    expired: ['games.badge.expired', 'Expirado'], cancelled: ['games.badge.cancelled', 'Cancelado'], declined: ['games.badge.declined', 'Recusado'],
+    draw: ['games.badge.draw', 'Empate'], won: ['games.badge.won', 'Venceu'], resigned_other: ['games.badge.won', 'Venceu'], lost: ['games.badge.lost', 'Perdeu'],
+    abandoned: ['games.badge.abandoned', 'Abandonou'], winner: ['games.badge.finished', 'Encerrado'], hanged: ['games.badge.finished', 'Encerrado'], over: ['games.badge.finished', 'Encerrado'],
+  }[k];
+  if (!fb) return null;
+  // espectador/jogador vendo que alguém abandonou: "Abandonou" vale mais que "Encerrado"/"Perdeu"
+  if ((k === 'winner' || k === 'lost') && g.end === 'resign' && _leaver(g)) return { kind: 'abandoned', label: tr(t, 'games.badge.abandoned', 'Abandonou') };
+  return { kind: k, label: tr(t, fb[0], fb[1]) };
+}
+
 /** Linha de status do cartão: "Sua vez", "Vez de Ana", "Ana venceu", "Empate", "Aguardando Beto"… */
-export function gameStatusLine(t, g, meEmail) {
+export function gameStatusLine(t, g, meEmail, now) {
   if (!g) return '';
   const me = _lc(meEmail);
   if (g.kind === 'result' || g.status === 'finished') {
     const w = Array.isArray(g.winners) ? g.winners : [];
-    if (g.draw) return tr(t, 'games.status.draw', 'Empate');
+    if (g.draw) return g.end === 'draw' ? tr(t, 'games.status.drawAgreed', 'Empate combinado') : tr(t, 'games.status.draw', 'Empate');
     if (g.type === 'forca' && g.hanged) return tr(t, 'games.status.hanged', 'Ninguém acertou a palavra');
+    const leaver = _leaver(g);
+    if (g.end === 'resign' && leaver) {
+      if (_lc(leaver) === me) return tr(t, 'games.status.youLeft', 'Você abandonou a partida');
+      const ln = nameOf(g, leaver, meEmail, t);
+      if (w.some((e) => _lc(e) === me)) return tr(t, 'games.status.leftYouWon', '{name} abandonou. Você venceu', { name: ln });
+      if (w.length === 1) return tr(t, 'games.status.leftWon', '{name} abandonou. {winner} venceu', { name: ln, winner: nameOf(g, w[0], meEmail, t) });
+      return tr(t, 'games.status.left', '{name} abandonou', { name: ln });
+    }
     if (!w.length) return tr(t, 'games.status.finished', 'Partida encerrada');
     if (w.some((e) => _lc(e) === me)) return w.length > 1 ? tr(t, 'games.status.youTied', 'Você empatou no 1º lugar') : tr(t, 'games.status.youWon', 'Você venceu');
     return tr(t, 'games.status.won', '{name} venceu', { name: nameOf(g, w[0], meEmail, t) });
   }
-  if (g.status === 'cancelled') return tr(t, 'games.status.cancelled', 'Partida cancelada');
+  if (g.status === 'cancelled') {
+    if (g.end === 'expired') return tr(t, 'games.status.expired', 'Convite expirado');
+    if (g.end === 'declined') {
+      if (g.end_by && _lc(g.end_by) === me) return tr(t, 'games.status.youDeclined', 'Você recusou o convite');
+      return g.end_by ? tr(t, 'games.status.declinedBy', '{name} recusou o convite', { name: nameOf(g, g.end_by, meEmail, t) }) : tr(t, 'games.status.declined', 'Convite recusado');
+    }
+    if (g.end === 'cancelled' && g.end_by) {
+      return _lc(g.end_by) === me ? tr(t, 'games.status.youCancelled', 'Você cancelou o convite') : tr(t, 'games.status.cancelledBy', '{name} cancelou o convite', { name: nameOf(g, g.end_by, meEmail, t) });
+    }
+    return tr(t, 'games.status.cancelled', 'Partida cancelada');
+  }
   if (g.status === 'pending') {
+    if (isInviteExpired(g, now)) return tr(t, 'games.status.expired', 'Convite expirado');
     const mine = myStatusIn(g, meEmail);
-    if (mine === 'invited') return tr(t, 'games.status.invitedYou', 'Convidou você para jogar');
+    if (mine === 'invited') return g.rematch_of ? tr(t, 'games.status.rematchYou', 'Quer uma revanche') : tr(t, 'games.status.invitedYou', 'Convidou você para jogar');
     const waiting = (g.players || []).filter((p) => p.s === 'invited');
     if (g.open && !waiting.length) return tr(t, 'games.status.openWaiting', 'Aberto: toque em Entrar para jogar');
     if (waiting.length === 1) return tr(t, 'games.status.waitingFor', 'Aguardando {name}', { name: nameOf(g, waiting[0].e, meEmail, t) });
     return tr(t, 'games.status.waitingN', 'Aguardando {n} jogadores', { n: waiting.length });
   }
   if (g.status === 'active') {
+    if (g.draw_offer) {
+      if (_lc(g.draw_offer) === me) return tr(t, 'games.status.drawOffered', 'Você propôs empate');
+      if (isSeat(g, me)) return tr(t, 'games.status.drawOfferYou', '{name} propôs empate', { name: nameOf(g, g.draw_offer, meEmail, t) });
+    }
     if (g.type === 'quiz') {
       const i = g.info && g.info.i; const n = g.info && g.info.count;
       return i && n ? tr(t, 'games.status.quizProgress', 'Pergunta {i} de {n}', { i, n }) : tr(t, 'games.status.playing', 'Em andamento');
@@ -209,8 +297,14 @@ export function gameStatusLine(t, g, meEmail) {
 export function resultHeadline(t, g, meEmail) {
   const title = gameTitle(t, g.type);
   const w = Array.isArray(g.winners) ? g.winners : [];
-  if (g.draw) return tr(t, 'games.result.draw', 'Empate na partida de {game}', { game: title });
+  if (g.draw) return g.end === 'draw' ? tr(t, 'games.result.drawAgreed', 'Empate combinado na partida de {game}', { game: title }) : tr(t, 'games.result.draw', 'Empate na partida de {game}', { game: title });
   if (g.type === 'forca' && g.hanged) return tr(t, 'games.result.hanged', 'A forca venceu desta vez');
+  const leaver = _leaver(g);
+  if (g.end === 'resign' && leaver && w.length === 1) {
+    if (_lc(leaver) === _lc(meEmail)) return tr(t, 'games.result.youLeft', 'Você abandonou a partida de {game}', { game: title });
+    if (_lc(w[0]) === _lc(meEmail)) return tr(t, 'games.result.leftYouWon', '{name} abandonou. Você venceu a partida de {game}!', { name: nameOf(g, leaver, meEmail, t), game: title });
+    return tr(t, 'games.result.leftWon', '{name} abandonou. {winner} venceu a partida de {game}', { name: nameOf(g, leaver, meEmail, t), winner: nameOf(g, w[0], meEmail, t), game: title });
+  }
   if (!w.length) return tr(t, 'games.result.over', 'Fim da partida de {game}', { game: title });
   if (w.length > 1) return tr(t, 'games.result.tie', 'Empate no topo da partida de {game}', { game: title });
   if (_lc(w[0]) === _lc(meEmail)) return tr(t, 'games.result.youWon', 'Você venceu a partida de {game}!', { game: title });
@@ -232,8 +326,12 @@ const ERR_FB = {
   bad_letter: 'Escolha uma letra', game_over: 'A partida já acabou', not_started: 'A partida ainda não começou',
   not_a_player: 'Você está assistindo', too_few_players: 'Faltam jogadores', too_many_players: 'Jogadores demais para este jogo',
   too_many_games: 'Já há muitos jogos abertos nesta conversa', rate_limited: 'Calma, muitas jogadas seguidas', games_disabled: 'Jogos indisponíveis no momento',
-  not_invited: 'Este jogo é só para convidados', game_full: 'Este jogo já está cheio', only_creator: 'Só quem criou pode começar',
+  not_invited: 'Este jogo é só para convidados', game_full: 'Este jogo já está cheio', only_creator: 'Só quem criou pode fazer isso',
   player_not_member: 'Essa pessoa não está na conversa', unavailable: 'Indisponível nesta conversa',
+  // [2026-10-19] ciclo de vida
+  already_accepted: 'Alguém já aceitou: não dá mais para cancelar', invite_expired: 'Este convite expirou', invite_cancelled: 'Este convite foi cancelado',
+  not_pending: 'Este convite já foi respondido', draw_not_allowed: 'Este jogo não tem empate combinado', no_draw_offer: 'Não há proposta de empate',
+  draw_wait: 'Jogue um lance antes de propor empate de novo', not_finished: 'A partida ainda não acabou',
 };
 export function gameErrorText(t, r) {
   const code = String((r && (r.message || (r.data && r.data.error))) || '');
@@ -242,28 +340,36 @@ export function gameErrorText(t, r) {
 }
 
 /** Botões do cartão no chat (JS e nativo usam a mesma regra). */
-export function gameCardActions(g, meEmail) {
+export function gameCardActions(g, meEmail, now) {
   const acts = [];
   if (!g) return acts;
   const me = _lc(meEmail);
   const seat = isSeat(g, me);
-  if (g.kind === 'result') { if (seat) acts.push('rematch'); acts.push('open'); return acts; }
+  const wasPlayer = seat || (Array.isArray(g.ranking) && g.ranking.some((r) => _lc(r.e) === me));
+  if (g.kind === 'result') { if (wasPlayer && g.rematch_st !== 'active') acts.push('rematch'); acts.push('open'); return acts; }
   const mine = myStatusIn(g, me);
   if (g.status === 'pending') {
+    if (isInviteExpired(g, now)) return acts;
     if (mine === 'invited') return ['accept', 'decline'];
     if (!mine && g.open) acts.push('join');
     if (_lc(g.by) === me) {
       const acc = (g.players || []).filter((p) => p.s === 'accepted').length;
       if (acc >= (Number(g.min) || 2)) acts.push('start');
-      acts.push('cancel');
+      const others = (g.players || []).some((p) => p.s === 'accepted' && _lc(p.e) !== me);
+      if (!others) acts.push('cancel');
     }
     return acts;
   }
   if (g.status === 'active') return [seat ? 'play' : 'watch'];
-  if (g.status === 'finished') { acts.push('open'); if (seat && !g.rematch_id) acts.push('rematch'); }
+  if (g.status === 'finished') {
+    acts.push('open');
+    // revanche: o outro já pediu → "Aceitar revanche"; eu já pedi → espera (sem botão); aceita → some
+    if (wasPlayer && !(g.rematch_st === 'pending' && _lc(g.rematch_by) === me) && g.rematch_st !== 'active') acts.push('rematch');
+  }
   return acts;
 }
-export function gameActionLabel(t, act) {
+export function gameActionLabel(t, act, g, meEmail) {
+  if (act === 'rematch' && g && g.rematch_st === 'pending' && g.rematch_by && _lc(g.rematch_by) !== _lc(meEmail)) return tr(t, 'games.act.acceptRematch', 'Aceitar revanche');
   const fb = { accept: 'Aceitar', decline: 'Recusar', join: 'Entrar', start: 'Começar', cancel: 'Cancelar', play: 'Jogar', watch: 'Assistir', open: 'Ver partida', rematch: 'Revanche' };
   return tr(t, 'games.act.' + act, fb[act] || act);
 }

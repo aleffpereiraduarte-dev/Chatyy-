@@ -1106,6 +1106,8 @@ function buildGame(m, row, ctx, C, own) {
   const acts = G.gameCardActions(g, me);
   const openAct = acts.includes('play') ? 'play' : (acts.includes('watch') ? 'watch' : 'open');
   const myTurn = G.isMyTurn(g, me);
+  const badge = G.gameEndBadge ? G.gameEndBadge(tf, g, me) : null; // [jogos 2026-10-19]
+  const BADGE_BG = { won: '#16A34A', resigned_other: '#16A34A', abandoned: '#B45309', draw: 'rgba(255,255,255,0.22)' };
   const head = hstack([
     vstack([icon(isRes ? _IconGameTrophy : _gameIconComp(g.type), { s: 18, c: '#FFFFFF' })], { w: 32, h: 32, r: 9, bg: 'rgba(255,255,255,0.14)', al: 'c', jc: 'c' }),
     vstack([
@@ -1113,6 +1115,8 @@ function buildGame(m, row, ctx, C, own) {
       text(isRes ? G.tr(tf, 'games.resultLabel', 'Resultado') : G.tr(tf, 'games.cardLabel', 'Jogo na conversa'), { fs: 11, c: 'rgba(255,255,255,0.7)', ml: 1 }),
     ], { fl: 1 }),
     myTurn ? vstack([text(G.tr(tf, 'games.status.yourTurn', 'Sua vez'), { fs: 11, fw: 800, c: '#000000' })], { bg: '#FFFFFF', r: 10, p: [3, 8, 3, 8] }) : null,
+    // [jogos 2026-10-19] estado final: Cancelado · Expirado · Recusado · Empate · Venceu · Perdeu · Abandonou
+    (!myTurn && badge) ? vstack([text(badge.label, { fs: 11, fw: 800, c: '#FFFFFF' })], { bg: BADGE_BG[badge.kind] || 'rgba(255,255,255,0.16)', r: 10, p: [3, 8, 3, 8] }) : null,
   ], { w: -1, bg: isRes ? '#000000' : '#111111', p: [9, 12, 9, 12], g: 9, al: 'c', a: 'game:' + openAct });
   const body = [];
   if (isRes) {
@@ -1149,7 +1153,7 @@ function buildGame(m, row, ctx, C, own) {
     kids.push(hstack(acts.slice(0, 3).map((a) => {
       const prim = !!primary[a];
       const pbg = own || C.isDark ? '#FFFFFF' : '#111111';
-      return vstack([text(G.gameActionLabel(tf, a), { fs: 13.5, fw: 700, c: prim ? (own || C.isDark ? '#111111' : '#FFFFFF') : ink })], {
+      return vstack([text(G.gameActionLabel(tf, a, g, me), { fs: 13.5, fw: 700, c: prim ? (own || C.isDark ? '#111111' : '#FFFFFF') : ink })], {
         fl: 1, p: [8, 0, 8, 0], r: 10, al: 'c', bg: prim ? pbg : undefined, bw: prim ? 0 : 1, bc: prim ? undefined : line, a: 'game:' + a,
       });
     }), { w: -1, g: 8, p: [9, 10, 9, 10] }));

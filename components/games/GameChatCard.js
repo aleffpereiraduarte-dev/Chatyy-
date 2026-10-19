@@ -6,7 +6,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { GameTypeIcon, IconTrophy } from './GameIcons';
 import {
   parseGameContent, gameTitle, gameStatusLine, resultHeadline, gameCardActions, gameActionLabel,
-  nameOf, playerStatusLabel, isMyTurn, tr,
+  nameOf, playerStatusLabel, isMyTurn, tr, gameEndBadge,
 } from '../../services/games';
 
 const PRIMARY = new Set(['accept', 'join', 'start', 'play', 'rematch']);
@@ -31,6 +31,9 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
   const press = (a) => { try { onAction && onAction(msg, a, g); } catch {} };
   const isResult = g.kind === 'result';
   const myTurn = isMyTurn(g, currentEmail);
+  // [jogos 2026-10-19] estado final sempre visível: Cancelado · Expirado · Recusado · Empate · Venceu · Perdeu · Abandonou
+  const badge = gameEndBadge(t, g, currentEmail);
+  const BADGE_BG = { won: '#16A34A', resigned_other: '#16A34A', lost: 'rgba(255,255,255,0.16)', draw: 'rgba(255,255,255,0.22)', abandoned: '#B45309', expired: 'rgba(255,255,255,0.16)', cancelled: 'rgba(255,255,255,0.16)', declined: 'rgba(255,255,255,0.16)' };
 
   const header = (
     <View style={[st.head, { backgroundColor: isResult ? '#000' : '#111' }]}>
@@ -42,6 +45,7 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
         <Text style={st.headSub} numberOfLines={1}>{isResult ? tr(t, 'games.resultLabel', 'Resultado') : tr(t, 'games.cardLabel', 'Jogo na conversa')}</Text>
       </View>
       {myTurn ? <View style={st.turnPill}><Text style={st.turnPillTx}>{tr(t, 'games.status.yourTurn', 'Sua vez')}</Text></View> : null}
+      {!myTurn && badge ? <View style={[st.endPill, { backgroundColor: BADGE_BG[badge.kind] || 'rgba(255,255,255,0.16)' }]}><Text style={st.endPillTx}>{badge.label}</Text></View> : null}
     </View>
   );
 
@@ -101,8 +105,8 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
             const prim = PRIMARY.has(a);
             return (
               <Pressable key={a} onPress={() => press(a)} style={({ pressed }) => [st.btn, prim ? { backgroundColor: isOwn ? '#fff' : (isDark ? '#fff' : '#111') } : { borderWidth: 1, borderColor: line }, pressed && { opacity: 0.7 }]}
-                accessibilityRole="button" accessibilityLabel={gameActionLabel(t, a)}>
-                <Text style={[st.btnTx, { color: prim ? (isOwn || isDark ? '#111' : '#fff') : ink }]}>{gameActionLabel(t, a)}</Text>
+                accessibilityRole="button" accessibilityLabel={gameActionLabel(t, a, g, currentEmail)}>
+                <Text style={[st.btnTx, { color: prim ? (isOwn || isDark ? '#111' : '#fff') : ink }]}>{gameActionLabel(t, a, g, currentEmail)}</Text>
               </Pressable>
             );
           })}
@@ -120,6 +124,8 @@ const st = StyleSheet.create({
   headSub: { color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 1 },
   turnPill: { backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   turnPillTx: { color: '#000', fontSize: 11, fontWeight: '800' },
+  endPill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  endPillTx: { color: '#fff', fontSize: 11, fontWeight: '800' },
   body: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 8 },
   players: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8 },
   pl: { alignItems: 'center', width: 54 },

@@ -1,8 +1,10 @@
 // components/games/RulesSheet.js — [jogos 2026-10-18] "Como jogar" de cada jogo (texto original do Chatyy).
 import React from 'react';
-import { View, Text, Pressable, Modal, ScrollView, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { GameTypeIcon } from './GameIcons';
+import GameSheet from './GameSheet';
+import { hTap } from './fx';
+import { PressScale } from './motion';
 import { gameTitle, tr } from '../../services/games';
 
 export const RULES_FB = {
@@ -47,38 +49,41 @@ export function rulesFor(t, type) {
   return fb.map((line, i) => tr(t, `games.rules.${type}.${i + 1}`, line));
 }
 
-export default function RulesSheet({ visible, onClose, type, t, pal }) {
-  const ins = useSafeAreaInsets();
-  if (!visible || !type) return null;
+/** Corpo das regras (usado na folha própria e como passo do seletor de jogos). */
+export function RulesBody({ type, t, pal, maxH = 460 }) {
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={st.backdrop} onPress={onClose} accessibilityLabel={tr(t, 'common.close', 'Fechar')} />
-      <View style={[st.sheet, { backgroundColor: pal.bg, paddingBottom: Math.max(ins.bottom, 16) }]}>
-        <View style={st.grab} />
-        <View style={st.head}>
-          <GameTypeIcon type={type} size={22} color={pal.ink} />
-          <Text style={[st.title, { color: pal.ink }]}>{tr(t, 'games.rules.title', 'Como jogar {game}', { game: gameTitle(t, type) })}</Text>
-        </View>
-        <ScrollView style={{ maxHeight: 460 }} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 8 }}>
-          {rulesFor(t, type).map((line, i) => (
-            <View key={i} style={st.row}>
-              <View style={[st.num, { backgroundColor: pal.strong }]}><Text style={{ color: pal.onStrong, fontWeight: '800', fontSize: 12 }}>{i + 1}</Text></View>
-              <Text style={[st.tx, { color: pal.ink }]}>{line}</Text>
-            </View>
-          ))}
-        </ScrollView>
-        <Pressable onPress={onClose} style={[st.ok, { backgroundColor: pal.strong }]} accessibilityRole="button">
-          <Text style={{ color: pal.onStrong, fontWeight: '800', fontSize: 15 }}>{tr(t, 'games.rules.ok', 'Entendi')}</Text>
-        </Pressable>
+    <>
+      <View style={st.head}>
+        <GameTypeIcon type={type} size={22} color={pal.ink} />
+        <Text style={[st.title, { color: pal.ink }]}>{tr(t, 'games.rules.title', 'Como jogar {game}', { game: gameTitle(t, type) })}</Text>
       </View>
-    </Modal>
+      <ScrollView style={{ maxHeight: maxH }} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 8 }}>
+        {rulesFor(t, type).map((line, i) => (
+          <View key={i} style={st.row}>
+            <View style={[st.num, { backgroundColor: pal.strong }]}><Text style={{ color: pal.onStrong, fontWeight: '800', fontSize: 12 }}>{i + 1}</Text></View>
+            <Text style={[st.tx, { color: pal.ink }]}>{line}</Text>
+          </View>
+        ))}
+      </ScrollView>
+    </>
+  );
+}
+
+// [jogos 2026-10-19] folha NATIVA (GameSheet: detents + grabber do sistema; web = folha deslizante)
+export default function RulesSheet({ visible, onClose, type, t, pal }) {
+  if (!visible || !type) return null;
+  const close = () => { hTap(); onClose && onClose(); };
+  return (
+    <GameSheet visible onClose={onClose} bg={pal.bg}>
+      <RulesBody type={type} t={t} pal={pal} />
+      <PressScale onPress={close} style={[st.ok, { backgroundColor: pal.strong }]} accessibilityRole="button">
+        <Text style={{ color: pal.onStrong, fontWeight: '800', fontSize: 15 }}>{tr(t, 'games.rules.ok', 'Entendi')}</Text>
+      </PressScale>
+    </GameSheet>
   );
 }
 
 const st = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.42)' },
-  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 8 },
-  grab: { alignSelf: 'center', width: 38, height: 5, borderRadius: 3, backgroundColor: 'rgba(127,127,127,0.4)', marginBottom: 8 },
   head: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 18, marginBottom: 10 },
   title: { fontSize: 18, fontWeight: '800', flex: 1 },
   row: { flexDirection: 'row', gap: 12, marginBottom: 12 },

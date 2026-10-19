@@ -21484,11 +21484,17 @@ function ChatConversationInner() {
     if (!g || !g.g) return;
     const open = (id) => { try { router.push({ pathname: '/game/[id]', params: { id: String(id), cid: String(conversationId) } }); } catch {} };
     if (act === 'open' || act === 'play' || act === 'watch') { open(g.g); return; }
-    const fn = { accept: G.gameAccept, join: G.gameJoin, decline: G.gameDecline, start: G.gameStart, cancel: G.gameResign, rematch: G.gameRematch }[act];
+    const fn = { accept: G.gameAccept, join: G.gameJoin, decline: G.gameDecline, start: G.gameStart, cancel: G.gameCancel || G.gameResign, rematch: G.gameRematch }[act]; // [jogos 2026-10-19] cancelar = chat_game_cancel
     if (!fn) { open(g.g); return; }
     try { Haptics.selectionAsync(); } catch {}
     const r = await fn(g.g);
-    if (!r || !r.success) { setScheduleToast(G.gameErrorText(t, r)); setTimeout(() => setScheduleToast(''), 2400); return; }
+    if (!r || !r.success) {
+      try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error); } catch {}
+      // [jogos 2026-10-19] convite expirado/cancelado: o cartão já volta com o estado final
+      const gv0 = r && r.data && r.data.game; if (gv0 && gv0.message_id) { try { _gamePatchCardRef.current(gv0.message_id, G.cardContentFromView(gv0)); } catch {} }
+      setScheduleToast(G.gameErrorText(t, r)); setTimeout(() => setScheduleToast(''), 2400); return;
+    }
+    if (act === 'accept' || act === 'join' || act === 'start') { try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {} }
     const gv = r.data && r.data.game;
     if (gv && gv.message_id) { try { _gamePatchCardRef.current(gv.message_id, G.cardContentFromView(gv)); } catch {} }
     const nv = r.data && (r.data.rematch || r.data.game);

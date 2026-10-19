@@ -135,6 +135,43 @@ export function IconClockSmall(p) {
   );
 }
 
+// [jogos 2026-10-19] empate combinado (dois discos iguais com "="), mais opções, cancelar/expirado
+export function IconDrawOffer(p) {
+  return (
+    <S {...p}>
+      <Circle cx="8" cy="12" r="5" />
+      <Circle cx="16" cy="12" r="5" />
+      <Line x1="10.6" y1="10.6" x2="13.4" y2="10.6" />
+      <Line x1="10.6" y1="13.4" x2="13.4" y2="13.4" />
+    </S>
+  );
+}
+export function IconMore(p) {
+  return (
+    <S {...p}>
+      <Circle cx="5.5" cy="12" r="1.2" />
+      <Circle cx="12" cy="12" r="1.2" />
+      <Circle cx="18.5" cy="12" r="1.2" />
+    </S>
+  );
+}
+export function IconBan(p) {
+  return (
+    <S {...p}>
+      <Circle cx="12" cy="12" r="8.5" />
+      <Line x1="6.2" y1="17.8" x2="17.8" y2="6.2" />
+    </S>
+  );
+}
+export function IconHourglass(p) {
+  return (
+    <S {...p}>
+      <Path d="M7 3.5h10M7 20.5h10" />
+      <Path d="M8 3.5c0 4.5 4 5.5 4 8.5s-4 4-4 8.5M16 3.5c0 4.5-4 5.5-4 8.5s4 4 4 8.5" />
+    </S>
+  );
+}
+
 export function GameTypeIcon({ type, ...p }) {
   switch (type) {
     case 'damas': return <IconGameDamas {...p} />;
