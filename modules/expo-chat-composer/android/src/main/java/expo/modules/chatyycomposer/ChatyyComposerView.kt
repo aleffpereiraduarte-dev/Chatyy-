@@ -422,6 +422,7 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   internal val onReplyCancel by EventDispatcher()
   internal val onSendMenu by EventDispatcher()
   internal val onKeyboardFrame by EventDispatcher()
+  internal val onKeyboardSync by EventDispatcher() // [2026-10-19 kb-native]
 
   private val density = resources.displayMetrics.density
   private fun dp(v: Float): Int = (v * density + 0.5f).toInt()
@@ -517,6 +518,8 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     }
 
     internal fun notifyForeground() {
+      // [2026-10-19 kb-native] voltou: cada composer vivo confere o IME real.
+      try { synchronized(live) { live.toList() }.forEach { it.scheduleKeyboardSync("active", 80L); it.scheduleKeyboardSync("active-settled", 800L) } } catch (_: Throwable) {}
       if (!appInBackground) return
       appInBackground = false
       appForegroundAt = android.os.SystemClock.uptimeMillis()
@@ -1200,6 +1203,42 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
       try { shadowNodeProxy.setStyleSize(null, hDp.toDouble()) } catch (t: Throwable) { Log.w(TAG, "setStyleSize: ${t.message}") }
       onHeightChange(mapOf("height" to hDp.toDouble()))
     }
+  }
+
+  // ── [2026-10-19 kb-native] Altura REAL do IME → JS (ThreadKeyboardAvoider) ──
+  // O padding da conversa vem do react-native-keyboard-controller; se um evento
+  // se perde (fundo/troca de tela) o composer ficava "no meio da tela" com o
+  // teclado fechado. O nativo manda o valor verdadeiro (WindowInsets) ao voltar
+  // do fundo, ao ganhar foco de janela e ao entrar na janela; o JS corrige.
+  // Kill switch: prop nativeTransitions=false.
+  var nativeTransitions = true
+
+  internal fun scheduleKeyboardSync(reason: String, delayMs: Long) {
+    if (!nativeTransitions) return
+    postDelayed({ emitKeyboardSync(reason) }, delayMs)
+  }
+
+  private fun emitKeyboardSync(reason: String) {
+    if (!nativeTransitions || !isAttachedToWindow) return
+    val insets = ViewCompat.getRootWindowInsets(this) ?: return
+    val visible = try { insets.isVisible(WindowInsetsCompat.Type.ime()) } catch (_: Throwable) { false }
+    val ime = if (visible) insets.getInsets(WindowInsetsCompat.Type.ime()).bottom else 0
+    onKeyboardSync(mapOf(
+      "height" to (ime / density).toDouble(),
+      "visible" to (ime > 0),
+      "focused" to (try { edit.hasFocus() } catch (_: Throwable) { false }),
+      "reason" to reason,
+    ))
+  }
+
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    scheduleKeyboardSync("window", 120L)
+  }
+
+  override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+    super.onWindowFocusChanged(hasWindowFocus)
+    if (hasWindowFocus) scheduleKeyboardSync("focus", 120L)
   }
 
   override fun onDetachedFromWindow() {

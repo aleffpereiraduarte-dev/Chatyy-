@@ -152,15 +152,21 @@ public class ChatyyComposerModule: Module {
     // 3 = [2026-10-18 voz-pausa] gravação travada com PAUSAR/CONTINUAR + prévia
     //     (play) antes de enviar; novos onVoiceState "paused"/"resumed" e labels
     //     pauseRecording/resumeRecording/playPreview/pausePreview.
+    // 4 = [2026-10-19 kb-native] onKeyboardSync{height, visible, reason} (quadro
+    //     REAL do teclado: keyboardLayoutGuide/notificações, emitido ao voltar
+    //     do fundo, ao reaparecer a tela, na janela e a cada did show/hide) +
+    //     prop nativeTransitions (resign ANIMADO no viewWillDisappear = teclado
+    //     acompanha o swipe-back / push, como o UIKit/WhatsApp).
     Function("apiVersion") { () -> Int in
-      return 3
+      return 4
     }
 
     View(ChatyyComposerView.self) {
       Events(
         "onChangeText", "onSend", "onAttach", "onCamera", "onEmoji", "onVideoNote",
         "onVoiceRecorded", "onVoiceState", "onHeightChange", "onSelectionChange",
-        "onPasteImage", "onFocusChange", "onReplyCancel", "onSendMenu", "onKeyboardFrame"
+        "onPasteImage", "onFocusChange", "onReplyCancel", "onSendMenu", "onKeyboardFrame",
+        "onKeyboardSync" // [2026-10-19 kb-native]
       )
 
       Prop("placeholder") { (view: ChatyyComposerView, v: String?) in view.placeholderText = v ?? "" }
@@ -188,6 +194,7 @@ public class ChatyyComposerModule: Module {
       Prop("keyboardTracking") { (view: ChatyyComposerView, v: String?) in view.keyboardTracking = v ?? "none" }
       Prop("motion") { (view: ChatyyComposerView, v: Bool?) in view.motion = v ?? true } // [2026-10-16 motion-composer]
       Prop("focusGuard") { (view: ChatyyComposerView, v: Bool?) in view.focusGuard = v ?? true } // [2026-10-18 kb-resume]
+      Prop("nativeTransitions") { (view: ChatyyComposerView, v: Bool?) in view.nativeTransitions = v ?? true } // [2026-10-19 kb-native]
 
       OnViewDidUpdateProps { (view: ChatyyComposerView) in
         view.didUpdateProps()

@@ -76,6 +76,8 @@ export type ComposerEvents = {
   onFocusChange: { focused: boolean };
   onSendMenu: { key: string };
   onKeyboardFrame: { height: number; lift: number };
+  /** [2026-10-19 kb-native] apiVersion >= 4: quadro REAL do teclado (pt/dp acima da base; 0 = fechado). */
+  onKeyboardSync: { height: number; visible: boolean; focused: boolean; reason: string };
 };
 
 export type ComposerHandle = {
@@ -123,7 +125,7 @@ export function isAvailable(): boolean {
   return !!getNativeComposerView();
 }
 
-/** Versão do contrato nativo (0 = sem módulo). 2 = cartão de resposta iOS corrigido. 3 = voz pausar/continuar + prévia. */
+/** Versão do contrato nativo (0 = sem módulo). 2 = cartão de resposta iOS corrigido. 3 = voz pausar/continuar + prévia. 4 = onKeyboardSync + nativeTransitions (kb-native). */
 let _api: number | null = null;
 export function apiVersion(): number {
   if (_api != null) return _api;

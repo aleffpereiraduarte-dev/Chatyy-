@@ -431,7 +431,7 @@ function initGlobalErrorHandlers() {
 // ─── End crash reporter ───
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Stack, useRouter, usePathname } from 'expo-router';
+import { Stack, useRouter, usePathname, useNavigationContainerRef } from 'expo-router';
 import { ThemeProvider as NavThemeProvider, DarkTheme as NavDarkTheme, DefaultTheme as NavDefaultTheme } from '@react-navigation/native'; // [2026-10-14 nav-nativa]
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
@@ -453,6 +453,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 // passthrough via utils/threadKeyboard.js). Mounted disabled — the chat thread
 // switches it on while mounted. See utils/threadKeyboard.native.js.
 import { ChatyyKeyboardProvider } from '../utils/threadKeyboard';
+import { useKbNavGuard } from '../utils/kbNavGuard'; // [2026-10-19 kb-native]
 import ErrorBoundary from '../components/ErrorBoundary';
 import { ToastHost } from '../components/ui/Toast'; // [2026-10-12 overlays] snackbar global único
 import { hasDialogHost as _hasDialogHost, showDialog as _showDialog } from '../utils/confirm';
@@ -1992,6 +1993,8 @@ function ShareIntentWatcher() {
 }
 
 export default function RootLayout() {
+  // [2026-10-19 kb-native] voltar/troca de aba solta o TextInput RN no 1º frame.
+  useKbNavGuard(useNavigationContainerRef());
   const [toastNotif, setToastNotif] = useState(null);
   const [otaToast, setOtaToast] = useState(null);
   // [2026-09-24 sem flash entre telas] Fundo do navegador pintado com a cor do

@@ -22,6 +22,7 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, processColor } from 'react-native';
 import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
+import { kbNativeTransitionsOn, reportKeyboardSync } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native]
 
 let _failed = false;
 
@@ -331,6 +332,10 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
   const _onKeyboardFrame = useCallback((e) => {
     try { cbRef.current.onKeyboardFrame?.(e?.nativeEvent || {}); } catch {}
   }, []);
+  // [2026-10-19 kb-native] quadro REAL do teclado → ThreadKeyboardAvoider.
+  const _onKeyboardSync = useCallback((e) => {
+    try { reportKeyboardSync(e?.nativeEvent || null); } catch {}
+  }, []);
 
   // Altura inicial estimada (o nativo corrige no 1º layout via onHeightChange
   // + setStyleSize síncrono): linha 44 + respiro 6 + inset inferior.
@@ -366,6 +371,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
       keyboardTracking={keyboardTracking}
       motion={_motionOff() ? false : undefined}
       focusGuard={kbResumeGuardOn() ? undefined : false /* [2026-10-18 kb-resume] kill __chatyy_kb_resume_guard */}
+      nativeTransitions={kbNativeTransitionsOn() ? undefined : false /* [2026-10-19 kb-native] kill __chatyy_kb_native_transitions */}
       onChangeText={_onChangeText}
       onSend={_onSend}
       onAttach={_onAttach}
@@ -381,6 +387,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
       onReplyCancel={_onReplyCancel}
       onSendMenu={_onSendMenu}
       onKeyboardFrame={_onKeyboardFrame}
+      onKeyboardSync={_onKeyboardSync}
     />
   );
 });

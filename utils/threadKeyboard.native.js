@@ -22,6 +22,18 @@
 import React, { useEffect } from 'react';
 import { AppState, Keyboard, KeyboardAvoidingView, Platform, TurboModuleRegistry } from 'react-native';
 import { isAppResuming, kbResumeGuardOn as isAppResumingGuardOn } from './kbResumeGuard';
+import { kbNativeTransitionsOn, subscribeKeyboardSync } from './kbNativeTransitions'; // [2026-10-19 kb-native]
+
+// [2026-10-19 kb-native] Navegação opcional (signup/parental também usam o
+// avoider; fora de um navigator o hook lança → sem ouvintes de foco).
+function _useOptionalNavigation() {
+  try {
+    // eslint-disable-next-line global-require
+    return require('@react-navigation/native').useNavigation();
+  } catch {
+    return null;
+  }
+}
 
 let KC = null;
 let Rea = null;
@@ -124,6 +136,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
   // (o effect abaixo só depende de setEnabled).
   const insetRef = React.useRef(bottomInset || 0);
   insetRef.current = bottomInset || 0;
+  const nav = _useOptionalNavigation(); // [2026-10-19 kb-native]
 
   // [2026-10-13 android-kbd-flicker] ANDROID: o KC só sai do `settled` quando
   // uma ABERTURA começa (onStart com altura > 0) ou num arraste interativo — no
@@ -154,6 +167,57 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
     const settleIfHidden = () => {
       try { if (!Keyboard.isVisible()) settle(); } catch {}
     };
+    // [2026-10-19 kb-native] "Fechado" pelas DUAS fontes JS (RN + KC) → assenta
+    // se ainda há padding de teclado (valor velho do KC / restore perdido).
+    let lastShowAt = 0; // willShow/didShow recente = abertura em curso (não é valor velho)
+    const settleIfHiddenStrict = () => {
+      if (Date.now() - lastShowAt < 700) return;
+      let rn = false;
+      let kc = false;
+      try { rn = !!Keyboard.isVisible(); } catch {}
+      try { kc = !!(KC.KeyboardController && KC.KeyboardController.isVisible && KC.KeyboardController.isVisible()); } catch {}
+      if (rn || kc) return;
+      let cur = 0;
+      try { cur = Math.abs(height.value); } catch {}
+      if (cur > 1 || settled.value !== 1) settle();
+    };
+    // [2026-10-19 kb-native] Quadro REAL do teclado vindo do composer nativo
+    // (apiVersion >= 4: keyboardLayoutGuide no iOS, IME insets no Android) →
+    // o padding nunca fica preso num valor velho.
+    const onNativeSync = (e) => {
+      const h = Math.max(0, Number(e && e.height) || 0);
+      let cur = 0;
+      try { cur = Math.abs(height.value); } catch {}
+      if (h <= 1) {
+        if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+        if (cur > 1 || settled.value !== 1) settle();
+        return;
+      }
+      // Aberto: só corrige se o teclado é DO composer (teclado de outra tela
+      // ainda descendo no push não pode levantar a conversa — android-kbd-flicker).
+      if (!(e && e.focused)) return;
+      if (showTimer) { clearTimeout(showTimer); showTimer = null; }
+      if (Math.abs(cur - h) > 2) {
+        try { height.value = -h; progress.value = 1; } catch {}
+      }
+      settled.value = 0;
+    };
+    const unsubSync = subscribeKeyboardSync(onNativeSync);
+    // [2026-10-19 kb-native] Tela voltou a ser a de cima / fim de transição:
+    // confere (binários sem onKeyboardSync dependem só disto).
+    let navTimer = null;
+    const checkAfterNav = () => {
+      if (!kbNativeTransitionsOn()) return;
+      if (navTimer) clearTimeout(navTimer);
+      navTimer = setTimeout(() => { navTimer = null; if (!isAppResuming()) settleIfHiddenStrict(); }, 450);
+    };
+    const navSubs = [];
+    try {
+      if (nav && typeof nav.addListener === 'function') {
+        navSubs.push(nav.addListener('focus', checkAfterNav));
+        navSubs.push(nav.addListener('transitionEnd', checkAfterNav));
+      }
+    } catch {}
     // [2026-10-13 android-kbd-flicker] Android: assenta SEMPRE na montagem (a
     // conversa faz Keyboard.dismiss() ao montar; o teclado da tela anterior que
     // ainda está fechando não pode levantar o composer). Se depois do push o
@@ -187,7 +251,22 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
       // (ou processado na volta): o sistema devolve o teclado aberto sozinho.
       // Assentar aqui jogava o composer pra baixo e ele subia de novo = pisca.
       // A checagem do AppState 'active' abaixo decide depois da volta.
-      if (isAppResuming()) return;
+      // [2026-10-19 kb-native] Founder (729): composer PRESO no meio da tela com
+      // o teclado fechado. Ignorar este didHide de vez deixava o padding velho
+      // valendo quando o teclado NÃO voltava (só o AppState decidia, com o JS
+      // da volta ainda ocupado). Agora adia: depois da janela de volta confere
+      // o teclado de verdade e assenta se continuar fechado.
+      if (isAppResuming()) {
+        if (!kbNativeTransitionsOn()) return;
+        if (hideTimer) clearTimeout(hideTimer);
+        const later = () => {
+          hideTimer = null;
+          if (isAppResuming()) { hideTimer = setTimeout(later, 400); return; }
+          settleIfHiddenStrict();
+        };
+        hideTimer = setTimeout(later, 900);
+        return;
+      }
       if (showTimer) { clearTimeout(showTimer); showTimer = null; }
       if (hideTimer) clearTimeout(hideTimer);
       hideTimer = setTimeout(() => {
@@ -202,6 +281,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
       }, 120);
     };
     const onWillShow = () => {
+      lastShowAt = Date.now(); // [2026-10-19 kb-native]
       if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
       settled.value = 0;
     };
@@ -254,7 +334,11 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
         let kcOpen = false;
         try { kcOpen = Math.abs(height.value) > 1; } catch {}
         if (!kcOpen || !isAppResumingGuardOn()) { settleIfHidden(); return; }
-        appStateTimer = setTimeout(() => { appStateTimer = null; settleIfHidden(); }, 600);
+        appStateTimer = setTimeout(() => {
+          appStateTimer = null;
+          // [2026-10-19 kb-native] RN + KC concordam que está fechado → assenta.
+          if (kbNativeTransitionsOn()) settleIfHiddenStrict(); else settleIfHidden();
+        }, 600);
       }, 700);
     });
     return () => {
@@ -266,6 +350,9 @@ function KCThreadKeyboardAvoider({ style, bottomInset, children }) {
       if (mountTimer) clearTimeout(mountTimer);
       try { subApp.remove(); } catch {}
       if (appStateTimer) clearTimeout(appStateTimer);
+      try { unsubSync(); } catch {}
+      navSubs.forEach((u) => { try { if (typeof u === 'function') u(); } catch {} });
+      if (navTimer) clearTimeout(navTimer);
       _enabledRefs = Math.max(0, _enabledRefs - 1);
       if (_enabledRefs === 0) {
         setEnabled(false);

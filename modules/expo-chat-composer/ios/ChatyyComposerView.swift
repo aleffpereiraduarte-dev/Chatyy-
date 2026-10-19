@@ -425,6 +425,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   let onReplyCancel = EventDispatcher()
   let onSendMenu = EventDispatcher()
   let onKeyboardFrame = EventDispatcher()
+  let onKeyboardSync = EventDispatcher() // [2026-10-19 kb-native]
 
   // MARK: Props
   var placeholderText: String = "" { didSet { textView.placeholderLabel.text = placeholderText } }
@@ -517,6 +518,21 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   private var resumeHadFocus = false
   private var attachGuard = false
   private var internalFocusOp = false
+  // [2026-10-19 kb-native] Teclado 100% nativo nas trocas de tela.
+  //  • nativeTransitions: a tela saindo (push/pop/swipe-back) solta o teclado
+  //    ANIMADO dentro do viewWillDisappear — o UIKit amarra a descida do
+  //    teclado à transição (swipe interativo = teclado segue o dedo; cancelou
+  //    = volta). Antes: resign SEM animação = teclado sumia de uma vez e o
+  //    composer despencava ("pisca" ao trocar de tela).
+  //  • onKeyboardSync: o JS (ThreadKeyboardAvoider) deixa de confiar em estado
+  //    velho. O nativo lê o quadro REAL do teclado (keyboardLayoutGuide da
+  //    janela + último keyboardWillChangeFrame) e emite ao voltar do fundo,
+  //    ao reaparecer a tela, ao entrar na janela e a cada did show/hide →
+  //    composer "preso no meio da tela" com o teclado fechado se corrige.
+  // Kill switch: prop nativeTransitions=false (JS: __chatyy_kb_native_transitions=false).
+  var nativeTransitions = true
+  private var kbNoteOverlap: CGFloat = 0
+  private var kbSyncGen = 0
 
   private static let mentionRegex = try? NSRegularExpression(pattern: "@[\\w.\\-]+", options: [])
 
@@ -926,9 +942,26 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       self.appInactive = true
     })
     appObservers.append(nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-      guard let self = self, self.appInactive else { return }
+      guard let self = self else { return }
+      // [2026-10-19 kb-native] voltou: confere o teclado REAL logo e depois que
+      // a restauração do UIKit (se houver) terminar.
+      self.scheduleKeyboardSync("active", after: 0.05)
+      self.scheduleKeyboardSync("active-settled", after: 0.8)
+      guard self.appInactive else { return }
       self.appInactive = false
       self.resumeUntil = CACurrentMediaTime() + 0.6
+    })
+    // [2026-10-19 kb-native] quadro real do teclado (fonte de verdade p/ o sync).
+    appObservers.append(nc.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] n in
+      self?.noteKeyboardFrame(n)
+    })
+    appObservers.append(nc.addObserver(forName: UIResponder.keyboardDidShowNotification, object: nil, queue: .main) { [weak self] n in
+      self?.noteKeyboardFrame(n)
+      self?.scheduleKeyboardSync("didShow", after: 0)
+    })
+    appObservers.append(nc.addObserver(forName: UIResponder.keyboardDidHideNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.kbNoteOverlap = 0
+      self?.scheduleKeyboardSync("didHide", after: 0)
     })
   }
 
@@ -1250,6 +1283,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       relayout(animated: false)
       updateKeyboardTracking()
       attachLifecycleProxy()
+      scheduleKeyboardSync("window", after: 0.05) // [2026-10-19 kb-native]
       if focusBlocked {
         // voltou à janela: libera o foco quando a transição em curso acabar.
         if let coord = nearestViewController()?.transitionCoordinator {
@@ -1311,7 +1345,13 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     let gen = hostTransitionGen
     focusBlocked = true
     if wasFirst {
-      withInternalFocus { UIView.performWithoutAnimation { _ = self.textView.resignFirstResponder() } }
+      if nativeTransitions {
+        // [2026-10-19 kb-native] ANIMADO: dentro do viewWillDisappear o UIKit
+        // anima o teclado junto com a transição (interativa inclusive).
+        withInternalFocus { _ = self.textView.resignFirstResponder() }
+      } else {
+        withInternalFocus { UIView.performWithoutAnimation { _ = self.textView.resignFirstResponder() } }
+      }
     }
     guard let coord = coord else { return }
     _ = coord.animate(alongsideTransition: nil, completion: { [weak self] ctx in
@@ -1325,6 +1365,68 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
 
   fileprivate func hostDidAppear() {
     focusBlocked = false
+    scheduleKeyboardSync("appear", after: 0) // [2026-10-19 kb-native]
+  }
+
+  // MARK: Keyboard truth (kb-native)
+
+  private func noteKeyboardFrame(_ n: Notification) {
+    guard let end = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
+    guard let win = window else { return }
+    let r = win.convert(end, from: win.screen.coordinateSpace)
+    if r.isEmpty || r.minY >= win.bounds.maxY - 0.5 || r.maxY <= win.bounds.minY {
+      kbNoteOverlap = 0
+    } else {
+      kbNoteOverlap = max(0, win.bounds.maxY - r.minY)
+    }
+  }
+
+  /// Altura REAL do teclado acima da base da janela (pt; 0 = fechado). Mesma
+  /// medida do `height` do react-native-keyboard-controller (inclui a área do
+  /// home indicator quando aberto).
+  private func currentKeyboardOverlap() -> CGFloat {
+    guard let win = window else { return 0 }
+    let safe = win.safeAreaInsets.bottom
+    let g = win.keyboardLayoutGuide.layoutFrame
+    if g.width > 0 || g.height > 0 {
+      let fromGuide = max(0, win.bounds.maxY - g.minY)
+      // fechado: o guia encosta no safe area (home indicator), não é teclado.
+      if fromGuide <= safe + 1 { return 0 }
+      return fromGuide
+    }
+    return kbNoteOverlap > safe + 1 ? kbNoteOverlap : 0
+  }
+
+  private func scheduleKeyboardSync(_ reason: String, after delay: TimeInterval) {
+    guard nativeTransitions else { return }
+    kbSyncGen += 1
+    let gen = kbSyncGen
+    let fire = { [weak self] in
+      guard let self = self else { return }
+      // didShow/didHide em sequência: só o último conta (os "active" usam gens
+      // próprias via reason distinto, mas o último quadro é o que vale).
+      if gen != self.kbSyncGen && !reason.hasPrefix("active") { return }
+      self.emitKeyboardSync(reason)
+    }
+    if delay <= 0 {
+      DispatchQueue.main.async(execute: fire)
+    } else {
+      DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: fire)
+    }
+  }
+
+  private func emitKeyboardSync(_ reason: String) {
+    guard nativeTransitions, window != nil else { return }
+    // No meio de uma transição a medida é transitória — a sync do fim (appear/
+    // didHide/didShow) traz o valor final.
+    if let vc = nearestViewController(), vc.transitionCoordinator != nil, reason != "appear" { return }
+    let h = currentKeyboardOverlap()
+    onKeyboardSync([
+      "height": Double(h),
+      "visible": h > 0,
+      "focused": textView.isFirstResponder,
+      "reason": reason,
+    ])
   }
 
   /// Bloqueio só vale enquanto a tela está saindo/fora da janela; sem transição

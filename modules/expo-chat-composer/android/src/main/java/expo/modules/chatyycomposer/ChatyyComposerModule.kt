@@ -89,7 +89,8 @@ class ChatyyComposerModule : Module() {
     //     (play) antes de enviar; novos onVoiceState "paused"/"resumed" e labels
     //     pauseRecording/resumeRecording/playPreview/pausePreview. (Pula o 2 p/
     //     alinhar com o iOS; o gate `>= 2` do cartão de resposta é só iOS.)
-    Function("apiVersion") { 3 }
+    // 4 = [2026-10-19 kb-native] onKeyboardSync{height, visible, focused, reason} + prop nativeTransitions.
+    Function("apiVersion") { 4 }
 
     // [2026-10-18 kb-resume] fundo/frente → guarda de foco do compositor.
     OnActivityEntersBackground { ChatyyComposerView.notifyBackground() }
@@ -99,7 +100,8 @@ class ChatyyComposerModule : Module() {
       Events(
         "onChangeText", "onSend", "onAttach", "onCamera", "onEmoji", "onVideoNote",
         "onVoiceRecorded", "onVoiceState", "onHeightChange", "onSelectionChange",
-        "onPasteImage", "onFocusChange", "onReplyCancel", "onSendMenu", "onKeyboardFrame"
+        "onPasteImage", "onFocusChange", "onReplyCancel", "onSendMenu", "onKeyboardFrame",
+        "onKeyboardSync" // [2026-10-19 kb-native]
       )
 
       Prop("placeholder") { view: ChatyyComposerView, v: String? -> view.setPlaceholder(v ?: "") }
@@ -127,6 +129,7 @@ class ChatyyComposerModule : Module() {
       Prop("keyboardTracking") { view: ChatyyComposerView, v: String? -> view.setKeyboardTracking(v ?: "none") }
       Prop("motion") { view: ChatyyComposerView, v: Boolean? -> view.setMotion(v ?: true) } // [2026-10-16 motion-composer]
       Prop("focusGuard") { view: ChatyyComposerView, v: Boolean? -> view.focusGuard = v ?: true } // [2026-10-18 kb-resume]
+      Prop("nativeTransitions") { view: ChatyyComposerView, v: Boolean? -> view.nativeTransitions = v ?: true } // [2026-10-19 kb-native]
 
       OnViewDidUpdateProps { view: ChatyyComposerView -> view.didUpdateProps() }
 

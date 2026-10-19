@@ -11327,9 +11327,28 @@ function ChatConversationInner() {
     }
     _kbLeavingRef.current = true;
     if (Platform.OS === 'web') return;
+    // [2026-10-19 kb-native] iOS + composer nativo: quem solta o teclado é o
+    // próprio UITextView no viewWillDisappear (ANIMADO, amarrado à transição —
+    // swipe-back interativo leva o teclado junto e o cancelamento o devolve).
+    // blur/KeyboardController.dismiss do JS chegavam DEPOIS e brigavam com isso
+    // (swipe cancelado → teclado voltava e o dismiss atrasado derrubava = pisca).
+    if (_kbNativeOwns()) { try { Keyboard.dismiss(); } catch {} return; }
     try { inputRef.current?.blur?.(); } catch {}
     try { Keyboard.dismiss(); } catch {}
     try { require('react-native-keyboard-controller').KeyboardController?.dismiss?.(); } catch {}
+  };
+  // [2026-10-19 kb-native] true = o composer NATIVO (iOS, apiVersion >= 3, já
+  // com o proxy de ciclo de vida kb-pop) é dono do teclado nas transições.
+  // Kill switch: globalThis.__chatyy_kb_native_transitions = false.
+  const _kbNativeOwns = () => {
+    if (Platform.OS !== 'ios') return false;
+    try {
+      const kn = require('../utils/kbNativeTransitions');
+      if (!kn.kbNativeTransitionsOn()) return false;
+      const r = inputRef.current;
+      if (!r || typeof r.cancelVoice !== 'function') return false; // composer JS
+      return kn.nativeComposerApi() >= 3;
+    } catch { return false; }
   };
   const _kbPopDismissRef = useRef(null);
   _kbPopDismissRef.current = _kbPopDismiss;
@@ -11343,6 +11362,9 @@ function ChatConversationInner() {
       const had = _kbHadFocusRef.current;
       _kbHadFocusRef.current = false;
       if (!restore || !had) return;
+      // [2026-10-19 kb-native] swipe cancelado: o nativo já devolveu o teclado
+      // (completion do transitionCoordinator) — foco JS extra = pisca.
+      if (_kbNativeOwns()) return;
       setTimeout(() => {
         if (_kbLeavingRef.current || !mountedRef.current) return;
         if (isAppResuming()) return; // [2026-10-18 kb-resume]
@@ -11358,6 +11380,19 @@ function ChatConversationInner() {
     add('transitionEnd', (e) => { if (e && e.data && e.data.closing === false) stay(true); });
     // voltou a ser a tela de cima (push por cima e voltou) → libera sem devolver
     add('focus', () => { stay(false); });
+    // [2026-10-19 kb-native] outra rota por cima SEM viewWillDisappear na
+    // conversa (folhas 'modal'/pageSheet do iOS: encaminhar, info em folha…) →
+    // o composer nativo solta o teclado uma vez, sem re-foco depois. Push em
+    // card: o nativo já soltou no viewWillDisappear e isto vira no-op.
+    // Atraso curto: no push em card o viewWillDisappear chega primeiro e o
+    // onFocusChange(false) já terá zerado o isFocused (sem JS brigando).
+    add('blur', () => {
+      if (!_kbNativeOwns()) return;
+      setTimeout(() => {
+        try { if (_kbNav.isFocused && _kbNav.isFocused()) return; } catch {}
+        try { if (inputRef.current?.isFocused?.()) inputRef.current.blur(); } catch {}
+      }, 120);
+    });
     return () => { subs.forEach((u) => { try { u(); } catch {} }); };
   }, [_kbNav]);
 

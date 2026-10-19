@@ -134,6 +134,20 @@ try { if (typeof globalThis !== 'undefined') globalThis.__chatyyConvStack = getC
 // Reset the time window (e.g. tests or after an explicit close).
 export function resetConversationOpenGuard() { _last = null; }
 
+// [2026-10-19 kb-native] Lista → conversa sem teclado piscando: o campo de
+// busca (ou qualquer TextInput RN) da tela de origem solta o teclado JÁ, no
+// mesmo frame em que o push começa — ele desce junto com a transição em vez de
+// aparecer por cima da conversa e só cair no Keyboard.dismiss() do mount. Não
+// alcança o composer nativo (conversa → conversa: o UITextView solta sozinho no
+// viewWillDisappear). Kill switch: globalThis.__chatyy_kb_native_transitions=false.
+function _kbDismissForOpen() {
+  try {
+    if (!require('../utils/kbNativeTransitions').kbNativeTransitionsOn()) return;
+    const RN = require('react-native');
+    if (RN.Platform.OS !== 'web') RN.Keyboard.dismiss();
+  } catch {}
+}
+
 /**
  * Open a conversation without ever stacking a duplicate.
  * @param href   string or { pathname, params } — same shapes router.push takes.
@@ -204,6 +218,7 @@ export function openConversation(href, opts = {}) {
       if (found >= 0 && nav) {
         try {
           const { StackActions } = require('@react-navigation/native');
+          _kbDismissForOpen();
           nav.dispatch({ ...StackActions.pop(topIdx - found), target: stack.key });
           if (hasAction) { r.replace(href); return 'replace'; }
           const soft = {};
@@ -213,6 +228,7 @@ export function openConversation(href, opts = {}) {
         } catch {}
       }
     }
+    _kbDismissForOpen();
     if (opts.replace || (top && top.name === 'chat-conversation' && !opts.router)) {
       r.replace(href);
       return 'replace';
@@ -224,6 +240,7 @@ export function openConversation(href, opts = {}) {
   // No readable nav state: fall back to the active-conversation tracker.
   const id = parseInt(params.id, 10);
   if (id > 0 && activeId != null && String(activeId) === String(id) && !hasAction) return 'same';
+  _kbDismissForOpen();
   if (opts.replace || (activeId != null && !opts.router)) { r.replace(href); return 'replace'; }
   r.push(href);
   return 'push';
