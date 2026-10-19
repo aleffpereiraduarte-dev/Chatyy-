@@ -914,6 +914,8 @@ function AppInit({ onNotification, setOtaToast }) {
   const _tRef = useRef(null);
   _tRef.current = _langCtx?.t || null;
   const pathname = usePathname();
+  // [2026-10-19 push-fg] rota atual p/ a telemetria fg_push (services/pushNotifications).
+  try { globalThis.__chatyyCurrentRoute = pathname || ''; } catch {}
   const pathnameRef = useRef(null);
   const prefetchedRef = useRef(false);
   useDeepLinking();

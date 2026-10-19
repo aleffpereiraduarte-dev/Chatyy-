@@ -215,8 +215,10 @@ function _toastNavigate(data) {
   }
 }
 
-function _playAlert(notifType) {
-  if (Platform.OS !== 'web') {
+function _playAlert(notifType, data) {
+  // [2026-10-19 push-fg] __sysSound = o iOS já toca o som do push (e vibra
+  // no silencioso) → sem haptic extra por cima.
+  if (Platform.OS !== 'web' && !(data && data.__sysSound)) {
     try { triggerHaptic(notifType); } catch {}
   }
   let notifPrefs = {};
@@ -294,7 +296,7 @@ export default function NotificationToast({ notification, onDismiss }) {
     const id = `b${++_bannerSeq}`;
     nativeIdRef.current = id;
     nativeDataRef.current.set(id, data);
-    _playAlert(notifType);
+    _playAlert(notifType, data);
     const canReply = !!(data.conversation_id && CHAT_REPLY_TYPES.test(String(data.type || '')));
     const reply = t('chatConv.reply');
     const enter = t('live.enter');
@@ -315,7 +317,16 @@ export default function NotificationToast({ notification, onDismiss }) {
       actionLabel: notifType === 'live' ? ((enter && enter !== 'live.enter') ? enter : 'Entrar') : '',
       closeLabel: t('common.close'),
     }).then((ok) => {
+      // [2026-10-19 push-fg] telemetria: o banner nativo apareceu? (fg_banner_ok|fail)
+      try { require('../services/pushNotifications').reportForegroundBanner?.(!!ok, `nb=1 t=${data.type || '-'} cid=${data.conversation_id || '-'} as=${require('react-native').AppState.currentState || '-'}`); } catch {}
       if (!ok && nativeIdRef.current === id) {
+        nativeIdRef.current = null;
+        setJsFallbackFor(notification);
+      }
+    }, () => {
+      // Rejeição inesperada do módulo → toast JS (nunca "só vibrou").
+      try { require('../services/pushNotifications').reportForegroundBanner?.(false, `nb=1 rej t=${data.type || '-'}`); } catch {}
+      if (nativeIdRef.current === id) {
         nativeIdRef.current = null;
         setJsFallbackFor(notification);
       }
@@ -342,7 +353,7 @@ export default function NotificationToast({ notification, onDismiss }) {
 
     const notifType = getNotificationType(notification.data);
     // jsFallbackFor: o efeito nativo já tocou som/vibração.
-    if (jsFallbackFor !== notification) _playAlert(notifType);
+    if (jsFallbackFor !== notification) _playAlert(notifType, notification.data);
 
     // Slide in. Why: SPRING_BOUNCY overshot then bobbed for ~600ms — felt like
     // a notification "fell out of the sky". Tightened to a snappy spring

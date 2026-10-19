@@ -531,6 +531,65 @@ async function _diagPush(step, info) {
   } catch {}
 }
 
+// [2026-10-19 push-fg] Decisão de apresentação do push com o app em 1º plano.
+// Relato do founder 19/10 22:40Z: "só vibrou" — o iOS só chama willPresent com o
+// app em 1º plano e aí o handler tirava banner E som do sistema e deixava o
+// toast in-app (haptic leve, sem som; e invisível com o app 'inactive').
+const _FG_CHAT_TYPES = new Set(['chat_message', 'chat_mention', 'chat_keyword']);
+let _fgLagMs = -1;
+// Handler respondeu depois dos 3 s do expo-notifications → o iOS já descartou a
+// apresentação. Reapresenta 1x como notificação local (mesmo título/corpo/
+// thread; data.__fgRepost faz o handler só mostrar). Kill: __chatyy_fg_repost=false.
+const _fgReposted = new Set();
+function _fgRepostIfLate(notification, data) {
+  try {
+    if (globalThis.__chatyy_fg_repost === false || !Notifications || Platform.OS !== 'ios') return false;
+    if (!(_fgLagMs > 2800)) return false;
+    const key = String(data?.message_id || notification?.request?.identifier || '');
+    if (!key || _fgReposted.has(key)) return false;
+    _fgReposted.add(key);
+    if (_fgReposted.size > 100) _fgReposted.clear();
+    const c = notification?.request?.content || {};
+    Notifications.scheduleNotificationAsync({
+      content: {
+        title: c.title || '', body: c.body || '', sound: 'default',
+        data: { ...(data || {}), __fgRepost: 1 },
+        ...(data?.conversation_id ? { threadIdentifier: 'chat_' + data.conversation_id } : {}),
+        ...(c.categoryIdentifier ? { categoryIdentifier: c.categoryIdentifier } : {}),
+      },
+      trigger: null,
+    }).catch(() => {});
+    return true;
+  } catch { return false; }
+}
+function _fgCallActive() {
+  try {
+    const { isCallActive } = require('../components/IncomingCallListener');
+    return typeof isCallActive === 'function' && !!isCallActive();
+  } catch { return false; }
+}
+// Beacon fg_push (push_diag): como o push foi mostrado. 1 por mensagem; o
+// _diagPush já limita 20/min e dedupe 5 s por passo → o passo leva o desfecho.
+// Kill: globalThis.__chatyy_fg_push_beacon = false.
+function _fgPushBeacon(data, how, why, appState, sound) {
+  try {
+    if (globalThis.__chatyy_fg_push_beacon === false) return;
+    const t = String(data?.type || '-');
+    if (!_FG_CHAT_TYPES.has(t) && t !== 'chat_reaction') return;
+    let route = '-';
+    try { route = String(globalThis.__chatyyCurrentRoute || '-').slice(0, 40); } catch {}
+    const nb = (() => { try { return require('../modules/expo-inapp-banner').isAvailable() ? 1 : 0; } catch { return 0; } })();
+    _diagPush('fg_push_' + how, `why=${why} as=${appState || '-'} t=${t} cid=${data?.conversation_id || '-'} mid=${String(data?.message_id || '-').slice(-8)} snd=${sound ? 1 : 0} lag=${_fgLagMs} nb=${nb} call=${_fgCallActive() ? 1 : 0} act=${_activeConversationId != null ? 1 : 0} r=${route}`);
+  } catch {}
+}
+// NotificationToast → resultado do banner nativo (ok=false cai no toast JS).
+export function reportForegroundBanner(ok, info) {
+  try {
+    if (globalThis.__chatyy_fg_push_beacon === false) return;
+    _diagPush(ok ? 'fg_banner_ok' : 'fg_banner_fail', String(info || '').slice(0, 200));
+  } catch {}
+}
+
 // Trigger the foreground toast directly (used on web where native notifications are unavailable)
 export function _triggerForegroundToast(notif) {
   if (_onForegroundNotification && notif) {
@@ -548,6 +607,17 @@ async function loadModules() {
     Notifications.setNotificationHandler({
       handleNotification: async (notification) => {
         const data = notification.request?.content?.data;
+        // [2026-10-19 push-fg] o expo-notifications iOS espera esta resposta só
+        // 3 s (SingleNotificationHandlerTask) e depois NÃO apresenta nada. Lag =
+        // chegada → JS rodar (JS ocupado na volta do 2º plano / render pesado).
+        try {
+          const _d = Number(notification?.date || 0);
+          _fgLagMs = _d > 1e11 ? Math.max(0, Date.now() - _d) : (_d > 0 ? Math.max(0, Date.now() - _d * 1000) : -1);
+        } catch { _fgLagMs = -1; }
+        // Reapresentação local de um push perdido pelo timeout (abaixo) → mostra.
+        if (data?.__fgRepost) {
+          return { shouldShowAlert: true, shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false };
+        }
 
         // Silent sync push — background data refresh, no visible notification
         // [2026-10-12 push-parity] read elsewhere / deleted → clear banners,
@@ -708,14 +778,48 @@ async function loadModules() {
           return { shouldShowAlert: false, shouldPlaySound: false, shouldSetBadge: false };
         }
 
+        // [2026-10-19 push-fg] Como apresentar com o app "em primeiro plano"
+        // para o iOS (willPresent). Regra nível WhatsApp: NUNCA engolir em
+        // silêncio. Só o app ATIVO (tela visível) usa banner in-app; 'inactive'
+        // (Central de Notificações/Controle puxada, troca de app, bloqueando a
+        // tela, alerta do sistema/CallKit por cima) = o usuário NÃO está vendo
+        // o app → banner + som do sistema. Telemetria: passo fg_push.
+        const _fgAs = AppState.currentState;
+        const _fgActive = Platform.OS === 'web' || _fgAs === 'active' || _fgAs == null;
+        const _fgChat = _FG_CHAT_TYPES.has(String(data?.type || ''));
+        const _fgSys = (sound, why) => {
+          const _rp = _fgRepostIfLate(notification, data);
+          _fgPushBeacon(data, _rp ? 'repost' : 'sys', why, _fgAs, sound);
+          return { shouldShowAlert: true, shouldShowBanner: true, shouldShowList: true, shouldPlaySound: !!sound, shouldSetBadge: true };
+        };
+
         // Suppress notification if the user is already viewing this conversation
         if (_activeConversationId && data?.conversation_id &&
             String(data.conversation_id) === String(_activeConversationId)) {
+          if (!_fgActive && _fgChat && globalThis.__chatyy_fg_inactive_sys !== false) {
+            // Conversa aberta mas app fora de vista → igual app em 2º plano.
+            return _fgSys(!_fgCallActive(), 'same_conv_inactive');
+          }
+          _fgPushBeacon(data, 'drop', 'same_conv', _fgAs, false);
           return {
             shouldShowAlert: false,
             shouldPlaySound: false,
             shouldSetBadge: false,
           };
+        }
+
+        if (!_fgActive && _fgChat && globalThis.__chatyy_fg_inactive_sys !== false) {
+          // Silenciada/desligada na conversa continua valendo.
+          const cs = data?.conversation_id ? await _readConvSettings(data.conversation_id) : null;
+          if (cs && cs.notify_messages === false) {
+            _fgPushBeacon(data, 'drop', 'conv_off_inactive', _fgAs, false);
+            return { shouldShowAlert: false, shouldPlaySound: false, shouldSetBadge: true };
+          }
+          if (cs && _isMutedNow(cs.mute_until) && data?.type !== 'chat_mention') {
+            _fgPushBeacon(data, 'drop', 'muted_inactive', _fgAs, false);
+            return { shouldShowAlert: false, shouldPlaySound: false, shouldSetBadge: true };
+          }
+          return _fgSys(!_fgCallActive() && !(cs && cs.sound === 'silent'), 'inactive');
         }
 
         // [2026-05-19] WhatsApp-parity foreground gate.
@@ -753,15 +857,37 @@ async function loadModules() {
           if (data?.type === 'new_email' || data?.type === 'email') {
             try { require('./websocket').default?._emit?.('silent_sync', { type: 'email' }); } catch {}
           }
+          // [2026-10-19 push-fg] Banner in-app + SOM. Antes o iOS ficava só com o
+          // haptic leve do toast (playNotificationSound é no-op no nativo) =
+          // "só vibrou". Agora o próprio iOS toca o som do push (respeita
+          // silencioso/Foco como o WhatsApp) sem banner do sistema (o in-app
+          // desenha). Sem som se: ligação ativa, conversa com som 'silent',
+          // tom "Nenhum" ou a lista/conversa já tocou o som de chegada (WS
+          // chegou antes do push) há < 3 s.
+          let _fgSound = false;
+          const _fgRxRecent = (Date.now() - (globalThis.__chatyyRxSoundAt || 0)) <= 3000;
+          if (Platform.OS === 'ios' && _fgChat && globalThis.__chatyy_fg_push_sound !== false) {
+            _fgSound = !_fgCallActive() && !_fgRxRecent;
+            if (_fgSound && data?.conversation_id) {
+              try {
+                const cs = await _readConvSettings(data.conversation_id);
+                if (cs && (cs.sound === 'silent' || cs.notify_messages === false || (_isMutedNow(cs.mute_until) && data?.type !== 'chat_mention'))) _fgSound = false;
+              } catch {}
+            }
+          }
+          let _fgToast = false;
           if (_onForegroundNotification && data) {
             try {
               _onForegroundNotification({
                 title: notification.request?.content?.title,
                 body: notification.request?.content?.body,
-                data,
+                data: (_fgSound || (_fgChat && _fgRxRecent)) ? { ...data, __sysSound: 1 } : data,
               });
+              _fgToast = true;
             } catch {}
           }
+          _fgPushBeacon(data, _fgToast ? 'toast' : 'none', 'active', _fgAs, _fgSound);
+          if (_fgSound) { try { globalThis.__chatyyRxSoundAt = Date.now(); } catch {} }
           // WhatsApp parity: ack delivered the moment the push lands in
           // foreground too. addNotificationReceivedListener also fires this,
           // but the receivedSub path runs AFTER handleNotification on some
@@ -778,6 +904,10 @@ async function loadModules() {
                 }
               }
             } catch {}
+          }
+          if (_fgSound) {
+            // Só o SOM do sistema (sem banner/lista: o in-app desenha).
+            return { shouldShowAlert: false, shouldShowBanner: false, shouldShowList: false, shouldPlaySound: true, shouldSetBadge: true };
           }
           return {
             shouldShowAlert: false,

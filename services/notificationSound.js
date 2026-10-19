@@ -307,6 +307,16 @@ export async function playChatReceiveSound() {
     _webChatReceive();
     return;
   }
+  // [2026-10-19 push-fg] o handler de push em 1º plano (services/pushNotifications)
+  // não toca o som do push se este som de chegada tocou há < 3 s (sem som duplo),
+  // e vice-versa: push já tocou → aqui só o haptic.
+  const _now = Date.now();
+  const _pushSoundRecent = (_now - (globalThis.__chatyyRxSoundAt || 0)) < 3000;
+  try { if (!_pushSoundRecent) globalThis.__chatyyRxSoundAt = _now; } catch {}
+  if (_pushSoundRecent) {
+    try { const h = await getHaptics(); if (h) await h.impactAsync(h.ImpactFeedbackStyle.Soft); } catch {}
+    return;
+  }
   // iOS: real system sound (1003 = mail sent pop)
   const native = getNativeChat();
   try { native?.playReceiveSound?.(); } catch {}
