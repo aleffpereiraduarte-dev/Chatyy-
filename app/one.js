@@ -247,11 +247,48 @@ async function speakElevenLabs(text, lang, onDone) {
   }
 }
 
+// [bia-lenta 2026-10-19] Resposta longa virava 1 TTS só (700+ chars = 3-5 s de
+// geração antes do 1º som). Agora: 1ª frase sozinha (começa a falar em ~1 s) e o
+// resto em blocos; o próximo bloco é PRÉ-BUSCADO enquanto o atual toca (o servidor
+// guarda em cache 15 min por voz+texto e responde Range), então não há buraco.
+let _speakGen = 0;
+function prefetchTTS(text) {
+  if (Platform.OS === 'web' || !text) return;
+  try { fetch(api.oneTTSUrl(text), { headers: { Range: 'bytes=0-1' } }).catch(() => {}); } catch {}
+}
+function ttsChunks(plain) {
+  const sentences = splitIntoSentences(plain);
+  if (sentences.length <= 1) return sentences.length ? sentences : (plain ? [plain] : []);
+  const out = [sentences[0]];
+  let cur = '';
+  for (let i = 1; i < sentences.length; i++) {
+    const s = sentences[i];
+    if (cur && (cur.length + 1 + s.length) > 350) { out.push(cur); cur = s; }
+    else cur = cur ? cur + ' ' + s : s;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
 function speakText(text, lang, onDone) {
-  // Fire-and-forget the async ElevenLabs call
-  speakElevenLabs(text, lang, onDone).catch(() => {
-    speakFallback(text, lang, onDone);
-  });
+  if (Platform.OS === 'web') {
+    // Fire-and-forget the async TTS call
+    speakElevenLabs(text, lang, onDone).catch(() => {
+      speakFallback(text, lang, onDone);
+    });
+    return true;
+  }
+  const gen = ++_speakGen;
+  const chunks = ttsChunks(text);
+  if (!chunks.length) { if (onDone) onDone(); return true; }
+  let idx = 0;
+  const next = () => {
+    if (gen !== _speakGen) return; // parado pelo usuário / outra fala começou
+    if (idx >= chunks.length) { if (onDone) onDone(); return; }
+    const c = chunks[idx++];
+    if (idx < chunks.length) prefetchTTS(chunks[idx]);
+    speakElevenLabs(c, lang, next).catch(() => { speakFallback(c, lang, next); });
+  };
+  next();
   return true;
 }
 
@@ -296,6 +333,7 @@ async function stopSpeakAsync() {
 }
 
 function stopSpeak() {
+  _speakGen++; // [bia-lenta 2026-10-19] cancela os blocos seguintes do speakText
   stopSpeakAsync().catch(() => {});
 }
 
@@ -343,6 +381,7 @@ async function speakSentenceBysentence(fullText, lang, onAllDone) {
       return;
     }
     const sentence = sentences[idx++];
+    if (idx < sentences.length) prefetchTTS(sentences[idx]); // [bia-lenta 2026-10-19] sem buraco entre frases
     speakElevenLabs(sentence, lang, speakNext).catch(() => {
       // Fallback per sentence
       speakFallback(sentence, lang, speakNext);
@@ -1638,15 +1677,15 @@ export default function OneScreen() {
           extension: '.m4a',
           sampleRate: 44100,
           numberOfChannels: 1,
-          bitRate: 128000,
+          bitRate: 64000,
           isMeteringEnabled: true,
           ios: {
             extension: '.m4a',
-            outputFormat: 'MPEG4AAC',
+            outputFormat: 'aac ', // [bia-lenta 2026-10-19] FourCC real (IOSOutputFormat.MPEG4AAC); 'MPEG4AAC' virava PCM 88 KB/s → upload 5x maior
             audioQuality: 96, // HIGH
             sampleRate: 44100,
             numberOfChannels: 1,
-            bitRate: 128000,
+            bitRate: 64000,
             linearPCMBitDepth: 16,
             linearPCMIsBigEndian: false,
             linearPCMIsFloat: false,
@@ -1657,7 +1696,7 @@ export default function OneScreen() {
             audioEncoder: 'aac',
             sampleRate: 44100,
             numberOfChannels: 1,
-            bitRate: 128000,
+            bitRate: 64000,
           },
           web: {
             mimeType: 'audio/webm',
@@ -1672,7 +1711,12 @@ export default function OneScreen() {
         //   3. JS VAD polling loop with its own drift/silence detection
         // If any of the three fire, the mic stops. User doesn't have to tap
         // the mic button a second time.
-        rec.record({ forDuration: 12 });
+        // [bia-lenta 2026-10-19] teto era 12 s: fala longa era CORTADA no meio
+        // ("tô falando horrores e ela não captou a mensagem toda"). Agora 120 s
+        // (estilo nota de voz do WhatsApp); o usuário para tocando no mic ou o
+        // silêncio (2,5 s depois de ter falado) encerra.
+        const PTT_CAP_S = 120;
+        rec.record({ forDuration: PTT_CAP_S });
         audioRecordingRef.current = rec;
         setIsListening(true);
         if (__DEV__) console.log('[one] Recording started — 12s hard cap');
@@ -1681,10 +1725,10 @@ export default function OneScreen() {
         // path silently fails to call our event handler. This is the guarantee.
         setTimeout(() => {
           if (audioRecordingRef.current === rec) {
-            if (__DEV__) console.log('[one] JS hard-stop at 12s');
+            if (__DEV__) console.log('[one] JS hard-stop at cap');
             stopListening();
           }
-        }, 12000);
+        }, PTT_CAP_S * 1000);
 
         // ─── Voice Activity Detection (tries to stop BEFORE the 12s cap) ─
         // Two strategies running in parallel:
@@ -1693,8 +1737,10 @@ export default function OneScreen() {
         //   2. Metering poll (best effort). On builds where it works,
         //      cuts recording ~1.4s after user stops speaking.
         const SILENCE_DB = -45;     // louder room → more forgiving
-        const SILENCE_MS = 1400;
+        const SILENCE_MS = 2500;    // [bia-lenta 2026-10-19] 1,4 s cortava quem respira/pensa no meio da frase
         const MIN_SPEECH_MS = 700;
+        const SPEECH_DB = -35;      // só conta silêncio DEPOIS de ter ouvido fala de verdade
+        let heardSpeech = false;
         const t0 = Date.now();
         vadStateRef.current = { startedAt: t0, lastVoiceAt: t0 };
         let lastTime = 0;
@@ -1715,9 +1761,10 @@ export default function OneScreen() {
           } catch {}
           voiceLevelRef.current = dbToLevel(level); // [bia-design] orb reage à voz
           if (level != null) {
+            if (level > SPEECH_DB) heardSpeech = true;
             if (level > SILENCE_DB) {
               vadStateRef.current.lastVoiceAt = now;
-            } else if (elapsed > MIN_SPEECH_MS && (now - vadStateRef.current.lastVoiceAt) > SILENCE_MS) {
+            } else if ((heardSpeech || elapsed > 10000) && elapsed > MIN_SPEECH_MS && (now - vadStateRef.current.lastVoiceAt) > SILENCE_MS) {
               if (__DEV__) console.log('[one] VAD metering silence → stop');
               stopListening();
               return;
@@ -1907,8 +1954,8 @@ export default function OneScreen() {
       //     stalls silently when Whisper / permissions / audio errors hit.
       const SILENCE_DB = -50;   // quieter than this = probably silence
       const VOICE_DB   = -35;   // louder than this = user is speaking
-      const SILENCE_MS = 1400;  // hold silent this long → stop
-      const HARD_CAP_MS = 20000;
+      const SILENCE_MS = 1800;  // [bia-lenta 2026-10-19] 1,4 s cortava pausas naturais
+      const HARD_CAP_MS = 90000; // [bia-lenta 2026-10-19] 20 s cortava fala longa
 
       // Empty-transcription guard: if we re-listen 3× in a row with no
       // speech detected, stop re-listening and surface a hint instead of
@@ -1984,17 +2031,17 @@ export default function OneScreen() {
             extension: '.m4a',
             sampleRate: 44100,
             numberOfChannels: 1,
-            bitRate: 128000,
+            bitRate: 64000,
             isMeteringEnabled: true,
             ios: {
-              extension: '.m4a', outputFormat: 'MPEG4AAC',
+              extension: '.m4a', outputFormat: 'aac ', // [bia-lenta 2026-10-19] FourCC real
               audioQuality: 96, sampleRate: 44100,
-              numberOfChannels: 1, bitRate: 128000,
+              numberOfChannels: 1, bitRate: 64000,
               linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false,
             },
             android: {
               extension: '.m4a', outputFormat: 'mpeg4', audioEncoder: 'aac',
-              sampleRate: 44100, numberOfChannels: 1, bitRate: 128000,
+              sampleRate: 44100, numberOfChannels: 1, bitRate: 64000,
             },
             web: { mimeType: 'audio/webm', bitsPerSecond: 128000 },
           };
