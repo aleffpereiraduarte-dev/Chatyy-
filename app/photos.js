@@ -56,6 +56,8 @@ import NativePhotosGrid, { isNativePhotosGridAvailable, isNativePhotosDatasetAva
 // [2026-10-18 photos-native-always] viewer NATIVO sempre (JS = reserva); kill switch __chatyy_photos_native_always = false
 import { nativeMediaAlways, openNativeMediaList, setNativeActionState, setNativeReturnRect, closeNativeMedia } from '../services/nativeMediaOpen';
 import NativeBackupBanner from '../components/photos/NativeBackupBanner';
+import BackupStatusCard from '../components/photos/BackupStatusCard'; // [2026-10-19 fotos-backup]
+import * as backupSummary from '../services/photosBackupSummary'; // [2026-10-19 fotos-backup]
 let photosBackupNative = null;
 try { photosBackupNative = require('../services/photosBackupNative'); } catch {}
 
@@ -701,6 +703,7 @@ function PhotosScreenInner() {
       setDevicePhotos([]);
       setStorageInfo(null);
       setBackedUpTotal(0);
+      try { setCloudSummary(null); setReconInfo(null); setReconProgress(null); } catch {} // [2026-10-19 fotos-backup]
       cloudLoadRequestIdRef.current++;
       backupInFlightRef.current = false;
       cleanupBackupRefresh();
@@ -839,6 +842,64 @@ function PhotosScreenInner() {
   }, []);
 
   const [backupStats, setBackupStats] = useState(null); // { backed_up, backup_source, total_size, total_size_formatted }
+
+  // [2026-10-19 fotos-backup] Números reais do card: nuvem (servidor) +
+  // comparação aparelho × nuvem por asset id (services/photosBackupSummary).
+  // O índice local estava vazio (backup desligado = nada reconciliava) e o
+  // card mostrava "Backup feito 0 / Pendente 59.080" com tudo já no R2.
+  const [cloudSummary, setCloudSummary] = useState(null);
+  const [reconInfo, setReconInfo] = useState(null);
+  const [reconProgress, setReconProgress] = useState(null);
+  const backedUpTotalRef = useRef(0);
+  backedUpTotalRef.current = backedUpTotal;
+  const reconInfoRef = useRef(null);
+  reconInfoRef.current = reconInfo;
+  const reconLastForceRef = useRef(0);
+  const refreshBackupSummary = useCallback(async ({ force = false } = {}) => {
+    if (Platform.OS === 'web') {
+      backupSummary.getCloudSummary().then(c => { if (c) setCloudSummary(c); }).catch(() => {});
+      return;
+    }
+    try {
+      const [c0, r0] = await Promise.all([backupSummary.getCachedCloudSummary(), backupSummary.getCachedReconcile()]);
+      if (c0) setCloudSummary(prev => prev || c0);
+      if (r0) setReconInfo(prev => prev || r0);
+    } catch {}
+    backupSummary.getCloudSummary().then(c => {
+      if (!c) return;
+      setCloudSummary(c);
+      // contador legado (pílula do topo / "liberar espaço") nunca fica em 0 com nuvem cheia
+      if (c.total > 0 && !(backedUpTotalRef.current > 0)) setBackedUpTotal(c.total);
+    }).catch(() => {});
+    const throttled = force && Date.now() - reconLastForceRef.current < 60000;
+    if (throttled) return;
+    if (force) reconLastForceRef.current = Date.now();
+    let progTimer = null;
+    let lastProg = null;
+    const r = await backupSummary.reconcileDevice({
+      force,
+      onProgress: (pr) => {
+        lastProg = pr;
+        if (progTimer) return;
+        progTimer = setTimeout(() => { progTimer = null; setReconProgress(lastProg); }, 250);
+      },
+    }).catch(() => null);
+    if (progTimer) clearTimeout(progTimer);
+    setReconProgress(null);
+    if (r) setReconInfo(r);
+  }, []);
+  useEffect(() => {
+    if (activeTab === 'backup') refreshBackupSummary();
+  }, [activeTab, refreshBackupSummary]);
+  // Fim de um envio → recompara (com trava de 60 s dentro de refreshBackupSummary).
+  const prevBackupStatusRef = useRef(backupStatus);
+  useEffect(() => {
+    const prev = prevBackupStatusRef.current;
+    prevBackupStatusRef.current = backupStatus;
+    if (prev === 'backing_up' && backupStatus !== 'backing_up' && activeTab === 'backup') {
+      refreshBackupSummary({ force: true });
+    }
+  }, [backupStatus, activeTab, refreshBackupSummary]);
 
   // GAP 9 — surface backup failures in a banner
   const [backupErrorCount, setBackupErrorCount] = useState(0);
@@ -2038,7 +2099,12 @@ function PhotosScreenInner() {
       const serverCount = preCheck?.data?.count || preCheck?.data?.total || 0;
       const dt = deviceTotalCount || devicePhotos.length || 0;
       if (serverCount > 0) setBackedUpTotal(serverCount);
-      if (dt > 0 && serverCount >= dt) {
+      // [2026-10-19 fotos-backup] contagem da conta inteira >= rolo NÃO quer dizer
+      // que ESTE rolo subiu (outro aparelho, blobs perdidos). Se a comparação por
+      // asset id achou pendentes, segue para o envio.
+      const _rc = reconInfoRef.current;
+      const _reconPending = _rc && _rc.at && (Date.now() - _rc.at) < 24 * 60 * 60 * 1000 ? (_rc.pending || 0) : 0;
+      if (dt > 0 && serverCount >= dt && _reconPending === 0) {
         // Tudo já no servidor — marca complete e sai sem rodar o native.
         console.log('[backup] Pre-check: device=' + dt + ' server=' + serverCount + ' — nothing pending, skipping');
         setBackupStatus('complete');
@@ -4418,111 +4484,42 @@ function PhotosScreenInner() {
         contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
         renderItem={() => (
           <View style={{ padding: Spacing.lg }}>
-            {/* Backup progress banner */}
-            {backupStatus === 'backing_up' && (() => {
-              const total = deviceTotalCount || devicePhotos.length || 0;
-              const cur = Math.min(backedUpTotal || 0, total || (backedUpTotal || 0));
-              const pct = total > 0 ? Math.min((cur / total) * 100, 100) : 0;
-              return (
-                <View style={[s.card, { backgroundColor: isDark ? '#1C1C1E' : '#F1F3F5', borderColor: colors.primary + '40', marginBottom: Spacing.md }]}>
-                  <View style={{ padding: 16 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                      <ActivityIndicator size="small" color={colors.primary} />
-                      <Text style={{ color: colors.text, fontWeight: '600', fontSize: 15, flex: 1 }}>
-                        {t('photosUi.countOfPhotos', { done: cur, total })}
-                      </Text>
-                      <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 14 }}>
-                        {Math.round(pct)}%
-                      </Text>
-                    </View>
-                    <View style={[s.progressBar, { backgroundColor: colors.border }]}>
-                      <View style={[s.progressFill, { width: `${pct}%`, backgroundColor: colors.primary }]} />
-                    </View>
-                  </View>
-                </View>
-              );
-            })()}
-            {backupStatus === 'complete' && pendingPhotos === 0 && (
-              <View style={[s.card, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: '#22c55e40', marginBottom: Spacing.md }]}>
-                <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <IconCheck size={20} color="#22c55e" />
-                  <Text style={{ color: '#22c55e', fontWeight: '600' }}>{tr(t, 'photos.ux.backupComplete', 'Backup completo!')}</Text>
-                </View>
-              </View>
-            )}
-            {backupStatus === 'paused' && (
-              <View style={[s.card, { backgroundColor: isDark ? '#451a03' : '#fef3c7', borderColor: '#d97706', marginBottom: Spacing.md }]}>
-                <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <IconPause size={20} color={isDark ? '#fbbf24' : '#92400e'} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ color: isDark ? '#fbbf24' : '#92400e', fontWeight: '700', fontSize: 14 }}>{tr(t, 'photos.ux.backupPaused', 'Backup pausado')}</Text>
-                    <Text style={{ color: isDark ? '#fde68a' : '#78350f', fontSize: 12, marginTop: 2 }}>{tr(t, 'photos.ux.noProgress', 'Sem progresso há alguns minutos.')}</Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => {
-                      // User-initiated "Continuar" — bypass post-complete cooldown (#1126)
-                      backupCompletedAtRef.current = 0;
-                      setBackupStatus('idle');
-                      startBackup();
-                    }}
-                    style={{ backgroundColor: '#d97706', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
-                    accessibilityLabel={t('photosUi.resumeBackup')}
-                    accessibilityRole="button"
-                  >
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{tr(t, 'photos.ux.resume', 'Continuar')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={repairBackup}
-                    style={{ backgroundColor: '#b91c1c', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
-                    accessibilityLabel={t('photosUi.repairBackup')}
-                    accessibilityRole="button"
-                  >
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{tr(t, 'photos.ux.repair', 'Reparar')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
+            {/* [2026-10-19 fotos-backup] Card P&B com números reais (nuvem × aparelho) */}
+            <BackupStatusCard
+              colors={colors}
+              isDark={isDark}
+              t={t}
+              cloud={cloudSummary || (backupStats ? { total: backupStats.backed_up || 0, photos: backupStats.photos ?? null, videos: backupStats.videos ?? null, size: backupStats.total_size ?? null, lastBackupAt: backupStats.last_backup_at || null } : null)}
+              recon={reconInfo}
+              reconProgress={reconProgress}
+              deviceTotal={deviceCount}
+              backupEnabled={backupEnabled}
+              backupStatus={backupStatus}
+              liveDone={backupStatus === 'backing_up' ? Math.min(rawBackedUp, deviceCount || rawBackedUp) : 0}
+              sizeFallback={storageInfo ? (storageInfo.drive_used || null) : null}
+              onEnable={() => { try { haptic.select(); } catch {} toggleBackup(true); }}
+              onBackupNow={() => {
+                backupCompletedAtRef.current = 0;
+                setBackupStatus('backing_up');
+                startBackup();
+              }}
+              onResume={() => {
+                // User-initiated "Continuar" — bypass post-complete cooldown (#1126)
+                backupCompletedAtRef.current = 0;
+                setBackupStatus('idle');
+                startBackup();
+              }}
+              onRepair={repairBackup}
+              onRecheck={Platform.OS === 'web' ? undefined : () => refreshBackupSummary({ force: true })}
+            />
 
-            {/* Status card */}
-            <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <View style={s.cardHeader}>
-                <IconCloud size={24} color={colors.primary} />
-                <Text style={[s.cardTitle, { color: colors.text }]}>{t('photos.backupStatus')}</Text>
+            {/* Storage — [2026-10-17 smart-storage] medidor único segmentado por tipo + aviso 80/95% */}
+            {storageInfo ? (
+              <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: Spacing.md }]}>
+                <StorageMeter meter={meterFromDriveInfo(storageInfo)} legend="dots" />
+                <StorageNudgeCard style={{ marginTop: Spacing.md }} testID="photos-storage-nudge" />
               </View>
-
-              <View style={s.statsGrid}>
-                <View style={s.statItem}>
-                  <Text style={[s.statValue, { color: colors.text }]}>{totalPhotos}</Text>
-                  <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('photos.totalPhotos')}</Text>
-                </View>
-                <View style={s.statItem}>
-                  <Text style={[s.statValue, { color: colors.success || '#16a34a' }]}>{backedUpCount}</Text>
-                  <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('photos.backedUp')}</Text>
-                </View>
-                <View style={s.statItem}>
-                  <Text style={[s.statValue, { color: pendingPhotos > 0 ? (colors.warning || '#d97706') : colors.text }]}>{pendingPhotos}</Text>
-                  <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('photos.pending')}</Text>
-                </View>
-                <View style={s.statItem}>
-                  <Text style={[s.statValue, { color: colors.text }]}>
-                    {backupStats?.total_size_formatted
-                      ? backupStats.total_size_formatted
-                      : (backupStats?.total_size != null
-                          ? formatBytes(backupStats.total_size)
-                          : (storageInfo ? formatBytes(storageInfo.drive_used || 0) : '—'))}
-                  </Text>
-                  <Text style={[s.statLabel, { color: colors.textSecondary }]}>{t('photos.spaceUsed')}</Text>
-                </View>
-              </View>
-
-              {/* Storage bar — [2026-10-17 smart-storage] medidor único segmentado por tipo + aviso 80/95% */}
-              {storageInfo ? (
-                <View style={{ marginTop: Spacing.md }}>
-                  <StorageMeter meter={meterFromDriveInfo(storageInfo)} legend="dots" />
-                  <StorageNudgeCard style={{ marginTop: Spacing.md }} testID="photos-storage-nudge" />
-                </View>
-              ) : null}
-            </View>
+            ) : null}
 
             {/* Settings card */}
             <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: Spacing.md }]}>
@@ -4591,9 +4588,12 @@ function PhotosScreenInner() {
                     setUploadQuality(next);
                     AsyncStorage.setItem('backup_quality', next).catch(() => {});
                   }}
-                  style={[s.qualityBadge, { backgroundColor: uploadQuality === 'original' ? '#11111120' : '#16a34a20' }]}
+                  style={[s.qualityBadge, uploadQuality === 'original'
+                    ? { backgroundColor: colors.text }
+                    : { backgroundColor: 'transparent', borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.16)' }]}
+                  accessibilityRole="button"
                 >
-                  <Text style={{ color: uploadQuality === 'original' ? '#111111' : '#16a34a', fontSize: 12, fontWeight: '700' }}>
+                  <Text style={{ color: uploadQuality === 'original' ? colors.surface : colors.text, fontSize: 12, fontWeight: '700' }}>
                     {uploadQuality === 'original' ? t('photos.qualityOriginal') : t('photos.qualityEconomy')}
                   </Text>
                 </TouchableOpacity>
@@ -5154,21 +5154,27 @@ function PhotosScreenInner() {
   // and the native header's headerRight.
   const renderStatusPill = () => {
                 const dc = deviceTotalCount || devicePhotos.length || 0;
-                const realPending = Math.max(0, dc - (backedUpTotal || 0));
+                const realPending = reconInfo && !reconProgress
+                  ? Math.max(0, Math.max(dc, reconInfo.deviceTotal || 0) - (reconInfo.matched || 0))
+                  : Math.max(0, dc - (backedUpTotal || 0));
                 let mode = null;
                 if (backupStatus === 'backing_up') mode = 'uploading';
-                else if (backupEnabled === false || backupStatus === 'paused') mode = 'paused';
+                else if (backupStatus === 'paused') mode = 'paused';
+                else if (backupEnabled === false) mode = 'off';
                 else if (dc > 0 && realPending === 0) mode = 'synced';
                 if (!mode) return null;
+                // [2026-10-19 fotos-backup] P&B: sem verde/laranja; estado pelo texto + ponto.
                 const palette = mode === 'synced'
-                  ? { bg: isDark ? 'rgba(34,197,94,0.14)' : '#DCFCE7', fg: '#16A34A', dot: '#22C55E' }
+                  ? { bg: isDark ? 'rgba(255,255,255,0.12)' : '#F1F3F5', fg: colors.text, dot: colors.text }
                   : mode === 'uploading'
                   ? { bg: isDark ? 'rgba(255,255,255,0.12)' : '#F1F3F5', fg: colors.text, dot: colors.text }
-                  : { bg: isDark ? 'rgba(245,158,11,0.16)' : '#FEF3C7', fg: '#D97706', dot: '#F59E0B' };
+                  : { bg: isDark ? 'rgba(255,255,255,0.08)' : '#F1F3F5', fg: colors.textSecondary, dot: colors.textSecondary };
                 const label = mode === 'synced'
                   ? (t('photos.allSynced') || 'Sincronizado')
                   : mode === 'uploading'
                   ? `${t('photos.uploadingShort') || 'Enviando'} ${Math.max(realPending, 1)}`
+                  : mode === 'off'
+                  ? tr(t, 'photos.bk.pillOff', 'Backup desligado')
                   : (t('photos.paused') || 'Pausado');
                 return (
                   <Pressable
