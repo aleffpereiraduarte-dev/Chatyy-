@@ -12711,14 +12711,20 @@ export async function parentalResolveRequest(id, decision) {
 // Convenience wrappers used by /parental dashboard quick-actions.
 // These all hit existing endpoints (`parental_update_restrictions` /
 // `parental_set_time_limits`) — no new backend handler needed.
+// [2026-10-19 parental-premium] Pausar/Retomar e +15 min usavam endpoints que
+// NÃO gravavam nada: parental_update_restrictions ignora `locked` (fora da
+// lista permitida) e parental_set_time_limits é stub — o app mostrava sucesso
+// e o estado sumia no próximo refresh. Agora vão nos handlers reais
+// (parental_lock_child / parental_unlock_child gravam locked+locked_at e avisam
+// a criança via WS; parental_grant_extra_time soma o bônus do dia).
 export async function parentalLockChild(childEmail) {
-  return apiCall('parental_update_restrictions', { child_email: childEmail, locked: true, locked_at: Date.now() }, 'POST');
+  return apiCall('parental_lock_child', { child_email: childEmail }, 'POST');
 }
 export async function parentalUnlockChild(childEmail) {
-  return apiCall('parental_update_restrictions', { child_email: childEmail, locked: false }, 'POST');
+  return apiCall('parental_unlock_child', { child_email: childEmail }, 'POST');
 }
 export async function parentalGrantExtraTime(childEmail, minutes = 15) {
-  return apiCall('parental_set_time_limits', { child_email: childEmail, bonus_minutes: minutes, granted_at: Date.now() }, 'POST');
+  return apiCall('parental_grant_extra_time', { child_email: childEmail, minutes }, 'POST');
 }
 
 // Kids — Achievements + Daily quest

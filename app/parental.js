@@ -1,6 +1,6 @@
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, FlatList, Alert, ActivityIndicator, TextInput, ScrollView, Image, Animated, Easing, KeyboardAvoidingView, Modal, Vibration, Dimensions, RefreshControl, Linking, Share, BackHandler, Keyboard } from 'react-native';
+import { View, Text, Pressable, TouchableOpacity, StyleSheet, Platform, FlatList, Alert, ActivityIndicator, TextInput, ScrollView, Image, Animated, Easing, KeyboardAvoidingView, Modal, Vibration, Dimensions, RefreshControl, Linking, Share, BackHandler, Keyboard } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
@@ -21,6 +21,10 @@ import AvatarCircle from '../components/AvatarCircle';
 import useIsMounted from '../hooks/useIsMounted';
 import * as haptics from '../services/haptics';
 import ErrorBoundary from '../components/ErrorBoundary';
+import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-19 parental-premium] "Mais"/Pedidos = sheet do sistema
+import { runAfterNativeSheet } from '../components/NativeSheet';
+import { useFamilyColors } from '../components/family/familyUi';
+import { ScreenTimeRing, StatusPill, MetaChip, ActionSegments, PausedBanner, VerifyCallout, AddChildCard, SummaryCard, fmtMinutes, agoLabel, parseTs, AMBER } from '../components/parental/ParentalDashKit';
 
 const ACCENT = '#111111';
 const STEPS = ['info', 'document', 'verifying', 'credentials'];
@@ -231,6 +235,8 @@ function ParentalScreenInner() {
   const [dateSheetOpen, setDateSheetOpen] = useState(false);
   const [nameFocused, setNameFocused] = useState(false);
   const gw = useGroupedColors();
+  const fc = useFamilyColors(); // [2026-10-19 parental-premium]
+  const scrollY = useRef(new Animated.Value(0)).current; // título grande recolhível (web)
   const { ink, onInk } = useInk();
   const wizardBackRef = useRef(null);
   // Android: voltar do sistema volta um passo do wizard (antes saía da tela).
@@ -431,21 +437,42 @@ function ParentalScreenInner() {
     const active = list.filter(c => c.status === 'active');
     await Promise.all(active.map(async (c) => {
       try {
-        const [stRes, restRes] = await Promise.all([
-          api.parentalScreenTime(c.child_email).catch(() => null),
+        // [2026-10-19 parental-premium] Só dados que a API entrega de verdade:
+        //  - parental_child_today: atividade de hoje (mensagens/chamadas) +
+        //    screen_time_minutes ESTIMADO pela atividade (parental_screen_time
+        //    é stub que sempre devolve 0 → só cai nele se o today falhar);
+        //  - parental_get_restrictions: daily_limit_minutes, bedtime, locked/locked_at;
+        //  - parental_get_location: último ping (created_at + bateria).
+        const [todayRes, restRes, locRes] = await Promise.all([
+          api.parentalChildToday(c.child_email).catch(() => null),
           api.parentalGetRestrictions(c.child_email).catch(() => null),
+          api.parentalGetLocation(c.child_email).catch(() => null),
         ]);
+        let stRes = null;
+        if (!todayRes?.success) stRes = await api.parentalScreenTime(c.child_email).catch(() => null);
         if (!isMountedRef.current) return;
+        const td = todayRes?.success ? (todayRes.data || {}) : null;
+        const rd = restRes?.success ? (restRes.data || {}) : {};
+        const ld = locRes?.success ? locRes.data : null;
+        const loc = ld && !Array.isArray(ld) ? (ld.location || ld) : null;
+        const hasLoc = !!(loc && loc.latitude != null && loc.longitude != null);
+        const usedRaw = td ? td.screen_time_minutes : (stRes?.data?.minutes_today ?? stRes?.data?.used_minutes);
+        const lk = rd.locked;
         const meta = {
-          screen_time_used: stRes?.data?.minutes_today ?? stRes?.data?.used_minutes ?? null,
-          screen_time_limit: stRes?.data?.daily_limit ?? restRes?.data?.screen_time_limit ?? null,
-          bedtime_start: restRes?.data?.bedtime_start || null,
-          bedtime_end: restRes?.data?.bedtime_end || null,
-          locked: !!(restRes?.data?.locked),
-          messages_today: stRes?.data?.messages_today ?? null,
-          last_location: restRes?.data?.last_location || null,
+          screen_time_used: usedRaw == null ? null : Number(usedRaw) || 0,
+          screen_time_estimated: !!td,
+          screen_time_limit: Number(rd.daily_limit_minutes || rd.screen_time_limit || 0) || 0,
+          bedtime_start: rd.bedtime_start || null,
+          bedtime_end: rd.bedtime_end || null,
+          locked: lk === true || lk === 1 || lk === '1' || lk === 'true',
+          locked_at: rd.locked_at || null,
+          messages_today: td ? (Number(td.messages_sent || 0) + Number(td.messages_received || 0)) : null,
+          calls_today: td ? Number(td.calls_count || 0) : null,
+          loc_at: hasLoc ? (loc.created_at || null) : null,
+          battery: hasLoc && loc.battery_level != null && Number(loc.battery_level) > 0 ? Number(loc.battery_level) : null,
+          has_location: hasLoc,
         };
-        setChildMeta(prev => ({ ...prev, [c.child_email]: meta }));
+        setChildMeta(prev => ({ ...prev, [c.child_email]: { ...meta, bonus_today: prev[c.child_email]?.bonus_today || 0 } }));
       } catch {}
     }));
   }, [isMountedRef]);
@@ -727,7 +754,7 @@ function ParentalScreenInner() {
           onPress: async () => {
             haptics.warning();
             const prev = childMeta[child.child_email];
-            setChildMeta(p => ({ ...p, [child.child_email]: { ...(p[child.child_email] || {}), locked: true } }));
+            setChildMeta(p => ({ ...p, [child.child_email]: { ...(p[child.child_email] || {}), locked: true, locked_at: new Date().toISOString() } }));
             try {
               const r = await api.parentalLockChild(child.child_email);
               if (!r?.success) throw new Error('lock failed');
@@ -770,12 +797,15 @@ function ParentalScreenInner() {
           t('parental.bonusGranted') || 'Tempo concedido!',
           (t('parental.bonusGrantedDesc') || '+15 minutos liberados para').concat(' ', child.child_name)
         );
-        // Optimistic: bump the limit on screen so progress bar reflects it.
+        // [2026-10-19 parental-premium] bônus do dia separado do limite (antes
+        // somava 15 no limite → criava um "limite de 15 min" falso p/ quem não
+        // tinha limite). parental_grant_extra_time devolve o total do dia.
+        const total = Number(r?.data?.minutes_today_total);
         setChildMeta(p => ({
           ...p,
           [child.child_email]: {
             ...(p[child.child_email] || {}),
-            screen_time_limit: (p[child.child_email]?.screen_time_limit || 0) + 15,
+            bonus_today: Number.isFinite(total) && total > 0 ? total : (p[child.child_email]?.bonus_today || 0) + 15,
           },
         }));
       } else {
@@ -1145,10 +1175,11 @@ function ParentalScreenInner() {
     );
   };
   // [2026-10-08 parental-redesign] Tokens do painel (grouped bg + cards brancos, hairline).
-  const PAGE_BG = isDark ? colors.background : '#F4F5F7';
-  const CARD_BG = isDark ? colors.surface : '#FFFFFF';
-  const HAIR = isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.07)';
-  const TILE_BG = isDark ? 'rgba(255,255,255,0.07)' : '#F2F3F5';
+  // [2026-10-19 parental-premium] mesmos tokens do hub Família / Configurações.
+  const PAGE_BG = fc.pageBg;
+  const CARD_BG = fc.cardBg;
+  const HAIR = fc.separator;
+  const TILE_BG = fc.chipBg;
 
   // ─── Child Card Renderer ───
   // [2026-10-08 parental-redesign] Card do filho reescrito no padrão B&W
@@ -1163,11 +1194,51 @@ function ParentalScreenInner() {
     router.push(`/parental-monitor?child_email=${encodeURIComponent(child.child_email)}&child_name=${encodeURIComponent(child.child_name)}`);
   };
 
+  // [2026-10-19 parental-premium] atalhos do "Mais" p/ o monitor do filho:
+  // open=restrictions abre direto Limites/Hora de dormir; tab=contacts abre
+  // Contatos permitidos.
+  const openChildMonitorAt = (child, extra) => {
+    router.push(`/parental-monitor?child_email=${encodeURIComponent(child.child_email)}&child_name=${encodeURIComponent(child.child_name)}${extra ? `&${extra}` : ''}`);
+  };
+
+  const confirmRemoveChild = (child) => {
+    Alert.alert(
+      t('parentalDash.removeTitle', { name: child.child_name }),
+      t('parentalDash.removeDesc'),
+      [
+        { text: t('parentalDash.cancel'), style: 'cancel' },
+        {
+          text: t('parentalDash.removeConfirm'),
+          style: 'destructive',
+          onPress: async () => {
+            haptics.warning();
+            try {
+              const r = await api.parentalRevokeChild(child.child_email);
+              if (!r?.success) throw new Error('revoke failed');
+              if (!isMountedRef.current) return;
+              setChildren(prev => {
+                const next = (prev || []).filter(c => c.child_email !== child.child_email);
+                setCache('parental_children', next, 2592000000).catch(() => {});
+                return next;
+              });
+              setChildMeta(p => { const n = { ...p }; delete n[child.child_email]; return n; });
+            } catch {
+              if (isMountedRef.current) Alert.alert(t('parental.error'), t('parental.connectionError'));
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleChildAction = (key, child) => {
-    haptics.tap('light');
     const meta = childMeta[child.child_email] || {};
     if (key === 'messages' || key === 'screenTime' || key === 'message' || key === 'activity') {
       openChildMonitor(child);
+    } else if (key === 'limits' || key === 'bedtime') {
+      openChildMonitorAt(child, 'open=restrictions');
+    } else if (key === 'contacts') {
+      openChildMonitorAt(child, 'tab=contacts');
     } else if (key === 'location') {
       openChildLocation(child);
     } else if (key === 'lock') {
@@ -1177,111 +1248,100 @@ function ParentalScreenInner() {
       grantBonusTime(child);
     } else if (key === 'summary') {
       openAiSummary(child);
+    } else if (key === 'remove') {
+      confirmRemoveChild(child);
     } else if (key === 'more') {
       setMoreChild(child);
     }
   };
 
   // "Mais" sheet — fecha o sheet ANTES de abrir o próximo modal (iOS não
-  // apresenta dois Modals ao mesmo tempo).
+  // apresenta dois Modals ao mesmo tempo); runAfterNativeSheet espera a
+  // animação de saída do sheet do sistema.
   const runMoreAction = (key) => {
     const child = moreChild;
     setMoreChild(null);
     if (!child) return;
-    setTimeout(() => { if (isMountedRef.current) handleChildAction(key, child); }, Platform.OS === 'ios' ? 380 : 60);
+    haptics.selection();
+    runAfterNativeSheet(() => { if (isMountedRef.current) handleChildAction(key, child); });
   };
 
-  const seenLabel = (item) => {
-    if (!item?.last_active) return '';
-    const last = new Date(item.last_active).getTime();
-    if (!Number.isFinite(last)) return '';
-    const diffMin = Math.max(0, Math.floor((now - last) / 60000));
-    if (diffMin < 3) return t('parentalDash.onlineNow');
-    if (diffMin < 60) return t('parentalDash.seenMin', { n: diffMin });
-    const diffH = Math.floor(diffMin / 60);
-    if (diffH < 24) return t('parentalDash.seenHour', { n: diffH });
-    return t('parentalDash.seenDay', { n: Math.floor(diffH / 24) });
+  // ─── [2026-10-19 parental-premium] Cartão do filho (nível Tempo de Uso) ───
+  // Avatar real (AvatarCircle → foto com fallback de iniciais), nome + idade,
+  // pílula de status (Ativo / Pausado / Modo noturno / Aguardando aprovação),
+  // anel de tempo de tela de hoje (usado x limite, estimado pela atividade),
+  // chips (horário de dormir, último local + bateria, mensagens de hoje) e
+  // barra segmentada de ações. Pausado = faixa escura + conteúdo esmaecido +
+  // "Retomar". Pendente = chamada com os passos da verificação.
+  const childAgeOf = (item) => {
+    const a = Number(item?.age);
+    if (Number.isFinite(a) && a > 0 && a < 30) return a;
+    const b = String(item?.child_birthday || '');
+    const iso = b.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return getAge(iso ? `${iso[3]}/${iso[2]}/${iso[1]}` : b) || null;
   };
 
-  const childStatusLine = (item, meta) => {
-    switch (item.status) {
-      case 'active':
-        if (meta.locked) return { dot: '#ef4444', label: t('parentalDash.statusPaused') };
-        if (isOnline(item)) return { dot: '#22c55e', label: t('parentalDash.onlineNow') };
-        if (item.last_active) return { dot: null, label: seenLabel(item) };
-        return { dot: '#22c55e', label: t('parentalDash.statusActive') };
-      case 'pending_verification':
-        return { dot: '#F59E0B', label: t('parentalDash.statusPending') };
-      case 'suspended':
-        return { dot: '#ef4444', label: t('parental.suspended') };
-      case 'revoked':
-        return { dot: colors.textSecondary, label: t('parental.revoked') };
-      case 'graduated':
-        return { dot: colors.textSecondary, label: t('parental.graduated') };
-      default:
-        return { dot: '#F59E0B', label: t('parentalDash.statusPending') };
-    }
+  const fmtClock = (d) => {
+    try { return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; } catch { return ''; }
   };
 
-  // Tile de ação (ícone + rótulo). `active` = estado ligado (Pausado).
-  const renderActionTile = ({ key, Icon, label, onPress, active = false, badge = 0, a11y }) => (
-    <View key={key} style={s.actTileWrap}>
-      <PressableScale
-        onPress={onPress}
-        haptic={false}
-        scaleTo={0.95}
-        style={[s.actTile, { backgroundColor: active ? colors.text : TILE_BG }]}
-        accessibilityRole="button"
-        accessibilityLabel={a11y || label}
-        accessibilityState={key === 'lock' ? { checked: !!active } : undefined}
-      >
-        <View>
-          <Icon size={20} color={active ? CARD_BG : colors.text} />
-          {badge > 0 && (
-            <View style={[s.miniBadge, { borderColor: active ? colors.text : TILE_BG }]}>
-              <Text style={s.miniBadgeText} allowFontScaling={false}>{badge > 99 ? '99+' : badge}</Text>
-            </View>
-          )}
-        </View>
-        <Text
-          style={[s.actTileText, { color: active ? CARD_BG : colors.text }]}
-          numberOfLines={1}
-          adjustsFontSizeToFit
-          minimumFontScale={0.8}
-          maxFontSizeMultiplier={1.2}
-        >
-          {label}
-        </Text>
-      </PressableScale>
-    </View>
-  );
-
-  const renderMetaItem = (key, Icon, text, tone) => (
-    <View key={key} style={s.metaItem}>
-      <Icon size={14} color={tone || colors.textSecondary} />
-      <Text style={[s.metaText, { color: tone || colors.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{text}</Text>
-    </View>
-  );
+  const pausedSince = (meta) => {
+    const d = parseTs(meta?.locked_at);
+    if (!d) return '';
+    const sameDay = new Date(now).toDateString() === d.toDateString();
+    return sameDay ? t('parentalDash.pausedSince', { time: fmtClock(d) }) : t('parentalDash.pausedSinceAgo', { ago: agoLabel(meta.locked_at, t, now) || '' });
+  };
 
   const renderChild = ({ item }) => {
     const isGraduated = item.status === 'graduated';
     const isActive = item.status === 'active';
     const isPending = item.status === 'pending_verification';
     const meta = childMeta[item.child_email] || {};
-    const online = isActive && !meta.locked && isOnline(item);
+    const paused = isActive && !!meta.locked;
+    const online = isActive && !paused && isOnline(item);
     const bedtime = isActive ? bedtimeStatus(meta) : { active: false };
-    const status = childStatusLine(item, meta);
+    const age = childAgeOf(item);
+
+    let pill;
+    if (paused) pill = { kind: 'paused', label: t('parentalDash.statusPaused') };
+    else if (isActive && bedtime.active) pill = { kind: 'bedtime', label: t('parentalDash.bedtimeUntil', { time: bedtime.endLabel }) };
+    else if (isActive) pill = { kind: 'active', label: online ? t('parentalDash.onlineNow') : t('parentalDash.statusActive') };
+    else if (isPending) pill = { kind: 'pending', label: t('parentalDash.statusPending') };
+    else if (item.status === 'suspended') pill = { kind: 'suspended', label: t('parental.suspended') };
+    else if (item.status === 'revoked') pill = { kind: 'revoked', label: t('parental.revoked') };
+    else if (isGraduated) pill = { kind: 'graduated', label: t('parental.graduated') };
+    else pill = { kind: 'pending', label: t('parentalDash.statusPending') };
+
+    // Tempo de tela de hoje (só quando a API respondeu algo).
+    const hasST = isActive && meta.screen_time_used != null;
     const stUsed = Number(meta.screen_time_used || 0);
-    const stLimit = Number(meta.screen_time_limit || 0);
-    const stPct = stLimit > 0 ? Math.min(100, Math.round((stUsed / stLimit) * 100)) : 0;
+    const baseLimit = Number(meta.screen_time_limit || 0);
+    const bonus = Number(meta.bonus_today || 0);
+    const stLimit = baseLimit > 0 ? baseLimit + bonus : 0;
     const stOver = stLimit > 0 && stUsed >= stLimit;
-    const locLabel = (meta.last_location && (meta.last_location.label || meta.last_location.name || meta.last_location.address)) || '';
+    const stPct = stLimit > 0 ? Math.min(100, Math.round((stUsed / stLimit) * 100)) : 0;
+    let stSub;
+    if (stLimit > 0) stSub = stOver ? t('parentalDash.limitReached', { limit: fmtMinutes(stLimit, t) }) : t('parentalDash.ofLimitLeft', { limit: fmtMinutes(stLimit, t), left: fmtMinutes(stLimit - stUsed, t) });
+    else stSub = t('parentalDash.noDailyLimit');
+    if (bonus > 0) stSub = `${stSub} · ${t('parentalDash.bonusToday', { n: bonus })}`;
+
+    // Chips de contexto.
+    const chips = [];
+    if (isActive && !bedtime.active && meta.bedtime_start && meta.bedtime_end) {
+      chips.push(<MetaChip key="bed" Icon={IconMoon} label={t('parentalDash.bedtimeRange', { start: meta.bedtime_start, end: meta.bedtime_end })} />);
+    }
+    if (isActive && meta.has_location) {
+      const ago = meta.loc_at ? agoLabel(meta.loc_at, t, now) : null;
+      const parts = [ago ? t('parentalDash.locationAgo', { ago }) : t('parentalDash.moreLocation')];
+      if (meta.battery != null) parts.push(t('parentalDash.battery', { n: meta.battery }));
+      chips.push(<MetaChip key="loc" Icon={IconMapPin} label={parts.join(' · ')} onPress={() => openChildLocation(item)} a11y={t('parentalDash.openLocationA11y', { name: item.child_name })} />);
+    }
+    if (isActive && meta.messages_today != null && meta.messages_today > 0) {
+      chips.push(<MetaChip key="msg" Icon={IconMessageSquare} label={meta.messages_today === 1 ? t('parentalDash.msgsTodayOne') : t('parentalDash.msgsTodayMany', { n: meta.messages_today })} />);
+    }
     const alerts = Number(item.unread_alerts || 0);
-    const metaItems = [];
-    if (isActive && bedtime.active) metaItems.push(renderMetaItem('bed', IconMoon, t('parentalDash.bedtimeUntil', { time: bedtime.endLabel })));
-    if (isActive && locLabel) metaItems.push(renderMetaItem('loc', IconMapPin, String(locLabel)));
-    if (alerts > 0) metaItems.push(renderMetaItem('alerts', IconAlertCircle, alerts === 1 ? t('parentalDash.alertOne') : t('parentalDash.alertsMany', { n: alerts }), '#ef4444'));
-    const showSummary = isActive && (stLimit > 0 || stUsed > 0 || metaItems.length > 0);
+    if (alerts > 0) chips.push(<MetaChip key="alerts" Icon={IconAlertCircle} label={alerts === 1 ? t('parentalDash.alertOne') : t('parentalDash.alertsMany', { n: alerts })} />);
+    if (isGraduated) chips.push(<MetaChip key="grad" Icon={IconStar} label={t('parental.turnedThirteen')} />);
 
     const onCardPress = () => {
       haptics.tap('light');
@@ -1293,96 +1353,103 @@ function ParentalScreenInner() {
       }
     };
 
+    const a11yParts = [item.child_name, age ? t('parentalDash.ageYears', { n: age }) : null, pill.label].filter(Boolean);
+
     return (
-      <View style={[s.childCard, { backgroundColor: CARD_BG, borderColor: HAIR }]}>
-        <TouchableOpacity
-          style={s.childCardMain}
-          onLongPress={() => { if (isActive) { haptics.tap('medium'); openAiSummary(item); } }}
-          onPress={onCardPress}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel={`${item.child_name}, ${status.label}`}
-        >
-          <View style={s.avatarWrap}>
-            <AvatarCircle email={item.child_email} name={item.child_name} size={52} />
-            {online && (
-              <OnlineDot
-                key={`online-${item.child_email}-${onlineFlashes[item.child_email] || 0}`}
-                ringColor={CARD_BG}
-                justWentOnline={!!onlineFlashes[item.child_email]}
-              />
-            )}
-            {meta.locked && (
-              <View style={[s.lockBadge, { backgroundColor: colors.text, borderColor: CARD_BG }]}>
-                <IconLock size={10} color={CARD_BG} />
-              </View>
-            )}
+      <View style={[s.childCard, { backgroundColor: fc.cardBg }]}>
+        {paused && (
+          <View style={{ paddingHorizontal: 12, paddingTop: 12 }}>
+            <PausedBanner
+              title={t('parentalDash.pausedTitle')}
+              sub={pausedSince(meta) || t('parentalDash.pausedSub')}
+              cta={t('parentalDash.actResume')}
+              onResume={() => unlockChildNow(item)}
+            />
           </View>
+        )}
 
-          <View style={s.childInfo}>
-            <Text style={[s.childName, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{item.child_name}</Text>
-            <Text style={[s.childEmail, { color: colors.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{item.child_email}</Text>
-            <View style={s.statusRow}>
-              {status.dot ? <View style={[s.statusDot, { backgroundColor: status.dot }]} /> : null}
-              <Text style={[s.statusText, { color: colors.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{status.label}</Text>
-            </View>
-          </View>
-          <IconChevronRight size={18} color={colors.textTertiary || colors.textSecondary} />
-        </TouchableOpacity>
-
-        {showSummary && (
-          <View style={[s.summaryBlock, { borderTopColor: HAIR }]}>
-            {(stLimit > 0 || stUsed > 0) && (
-              <View>
-                <View style={s.stHead}>
-                  <View style={s.metaItem}>
-                    <IconClock size={14} color={colors.textSecondary} />
-                    <Text style={[s.metaText, { color: colors.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{t('parentalDash.screenTimeLabel')}</Text>
-                  </View>
-                  <Text style={[s.stValue, { color: stOver ? '#ef4444' : colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>
-                    {stLimit > 0 ? t('parentalDash.screenTimeOf', { used: stUsed, limit: stLimit }) : t('parentalDash.screenTimeMin', { used: stUsed })}
-                  </Text>
+        <View style={paused ? { opacity: 0.45 } : null}>
+          <TouchableOpacity
+            style={s.childCardMain}
+            onLongPress={() => { if (isActive) { haptics.tap('medium'); openAiSummary(item); } }}
+            onPress={onCardPress}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={a11yParts.join(', ')}
+          >
+            <View style={s.avatarWrap}>
+              <AvatarCircle email={item.child_email} name={item.child_name} size={56} />
+              {online && (
+                <OnlineDot
+                  key={`online-${item.child_email}-${onlineFlashes[item.child_email] || 0}`}
+                  ringColor={fc.cardBg}
+                  justWentOnline={!!onlineFlashes[item.child_email]}
+                />
+              )}
+              {paused && (
+                <View style={[s.lockBadge, { backgroundColor: fc.text, borderColor: fc.cardBg }]}>
+                  <IconLock size={10} color={fc.onInk} />
                 </View>
-                {stLimit > 0 && (
-                  <View style={[s.stTrack, { backgroundColor: TILE_BG }]}>
-                    <View style={[s.stFill, { width: `${stPct}%`, backgroundColor: stOver ? '#ef4444' : colors.text }]} />
-                  </View>
-                )}
-              </View>
-            )}
-            {metaItems.length > 0 && <View style={s.metaRow}>{metaItems}</View>}
-          </View>
-        )}
+              )}
+            </View>
 
-        {isGraduated && (
-          <View style={[s.summaryBlock, { borderTopColor: HAIR }]}>
-            {renderMetaItem('grad', IconStar, t('parental.turnedThirteen'))}
-          </View>
-        )}
+            <View style={s.childInfo}>
+              <Text style={[s.childName, { color: fc.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>
+                {item.child_name}
+                {age ? <Text style={[s.childAge, { color: fc.secondary }]}>{`  ${t('parentalDash.ageYears', { n: age })}`}</Text> : null}
+              </Text>
+              <Text style={[s.childEmail, { color: fc.secondary }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{item.child_email}</Text>
+              <StatusPill kind={pill.kind} label={pill.label} />
+            </View>
+            <IconChevronRight size={18} color={fc.tertiary} />
+          </TouchableOpacity>
+
+          {hasST && (
+            <View style={[s.stBlock, { borderTopColor: fc.separator }]}>
+              <ScreenTimeRing size={58} stroke={6} used={stUsed} limit={stLimit}>
+                {stLimit > 0 ? (
+                  <Text style={[s.ringPct, { color: stOver ? fc.danger : fc.text }]} allowFontScaling={false}>{`${stPct}%`}</Text>
+                ) : (
+                  <IconClock size={18} color={fc.secondary} />
+                )}
+              </ScreenTimeRing>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={[s.stLabel, { color: fc.secondary }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>{t('parentalDash.screenTimeLabel')}</Text>
+                <Text style={[s.stBig, { color: stOver ? fc.danger : fc.text }]} numberOfLines={1} maxFontSizeMultiplier={1.25}>{fmtMinutes(stUsed, t)}</Text>
+                <Text style={[s.stSub, { color: fc.secondary }]} numberOfLines={2} maxFontSizeMultiplier={1.3}>{stSub}</Text>
+              </View>
+            </View>
+          )}
+
+          {chips.length > 0 && <View style={[s.chipsRow, !hasST && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: fc.separator, paddingTop: 12 }]}>{chips}</View>}
+        </View>
 
         {isActive && (
-          <View style={s.actRow}>
-            {renderActionTile({ key: 'messages', Icon: IconMessageSquare, label: t('parentalDash.actMessages'), badge: Number(meta.messages_today || 0), onPress: () => handleChildAction('messages', item) })}
-            {renderActionTile({ key: 'lock', Icon: meta.locked ? IconPlay : IconPause, label: meta.locked ? t('parentalDash.actResume') : t('parentalDash.actPause'), active: !!meta.locked, onPress: () => handleChildAction('lock', item) })}
-            {renderActionTile({ key: 'bonus', Icon: IconPlus, label: t('parentalDash.actBonus'), a11y: t('parentalDash.actBonusA11y'), onPress: () => handleChildAction('bonus', item) })}
-            {renderActionTile({ key: 'more', Icon: IconMoreHorizontal, label: t('parentalDash.actMore'), a11y: t('parentalDash.moreA11y'), onPress: () => handleChildAction('more', item) })}
+          <View style={s.actWrap}>
+            <ActionSegments
+              items={[
+                { key: 'messages', Icon: IconMessageSquare, label: t('parentalDash.actMessages'), onPress: () => handleChildAction('messages', item) },
+                { key: 'lock', Icon: paused ? IconPlay : IconPause, label: paused ? t('parentalDash.actResume') : t('parentalDash.actPause'), active: paused, onPress: () => handleChildAction('lock', item) },
+                { key: 'bonus', Icon: IconPlus, label: t('parentalDash.actBonus'), a11y: t('parentalDash.actBonusA11y'), onPress: () => handleChildAction('bonus', item) },
+                { key: 'more', Icon: IconMoreHorizontal, label: t('parentalDash.actMore'), a11y: t('parentalDash.moreA11y'), onPress: () => handleChildAction('more', item) },
+              ]}
+            />
           </View>
         )}
 
         {isPending && (
-          <View style={s.actRow}>
-            <View style={{ flex: 1 }}>
-              <PressableScale
-                onPress={onCardPress}
-                haptic={false}
-                style={[s.pendingCta, { backgroundColor: TILE_BG }]}
-                accessibilityRole="button"
-                accessibilityLabel={t('parentalDash.finishVerification')}
-              >
-                <IconShield size={18} color={colors.text} />
-                <Text style={[s.pendingCtaText, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>{t('parentalDash.finishVerification')}</Text>
-              </PressableScale>
-            </View>
+          <View style={s.actWrap}>
+            <VerifyCallout
+              title={t('parentalDash.verifyTitle')}
+              sub={t('parentalDash.verifySub', { name: item.child_name })}
+              steps={[
+                { label: t('parentalDash.verifyStep1'), state: 'done' },
+                { label: t('parentalDash.verifyStep2'), state: 'current' },
+                { label: t('parentalDash.verifyStep3'), state: 'todo' },
+              ]}
+              cta={t('parentalDash.finishVerification')}
+              onPress={onCardPress}
+            />
           </View>
         )}
       </View>
@@ -1701,145 +1768,145 @@ function ParentalScreenInner() {
       chat_unlock: 'parentalDash.reasonChat',
       contact: 'parentalDash.reasonContact',
       contact_approval: 'parentalDash.reasonContact',
+      contact_blocked: 'parentalDash.reasonContact',
+      new_contact: 'parentalDash.reasonContact',
+      feed_disabled: 'parentalDash.reasonFeed',
+      calls_disabled: 'parentalDash.reasonCalls',
+      new_app: 'parentalDash.reasonApp',
     };
     const k = map[String(req?.reason || '').toLowerCase()];
     return k ? t(k) : t('parentalDash.reasonGeneric');
   };
 
-  const renderPendingBanner = () => {
-    if (pendingCount === 0) return null;
-    const names = pendingChildNames.slice(0, 2).join(', ') + (pendingChildNames.length > 2 ? '…' : '');
-    const title = pendingCount === 1 ? t('parentalDash.requestsOne') : t('parentalDash.requestsMany', { n: pendingCount });
+  const reqName = (req) => ((req?.child_name && !String(req.child_name).includes('@')) ? req.child_name : String(req?.child_email || '').split('@')[0]);
+
+  // ─── [2026-10-19 parental-premium] Folhas do sistema (NativeSheetDialog) ───
+  // iOS/Android: UISheetPresentationController / BottomSheet (grabber, arrastar,
+  // fundo nativo); web: Modal com painel inferior.
+  const SHEET_OVERLAY = { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' };
+  const sheetPanel = { backgroundColor: PAGE_BG, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 22, paddingBottom: Math.max(insets.bottom, 12) + 8, width: '100%', maxWidth: 560, alignSelf: 'center' };
+
+  const renderSheetHead = (title, subtitle, avatar) => (
+    <View style={s.sheetHead}>
+      {avatar ? <AvatarCircle email={avatar.email} name={avatar.name} size={44} /> : null}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[s.sheetTitle, { color: fc.text }]} numberOfLines={1} accessibilityRole="header">{title}</Text>
+        {subtitle ? <Text style={[s.sheetSub, { color: fc.secondary }]} numberOfLines={1}>{subtitle}</Text> : null}
+      </View>
+    </View>
+  );
+
+  const MORE_GROUPS = [
+    [
+      { key: 'limits', Icon: IconClock, label: t('parentalDash.moreLimits') },
+      { key: 'bedtime', Icon: IconMoon, label: t('parentalDash.moreBedtime') },
+      { key: 'contacts', Icon: IconUsers, label: t('parentalDash.moreContacts') },
+      { key: 'location', Icon: IconMapPin, label: t('parentalDash.moreLocation') },
+    ],
+    [
+      { key: 'activity', Icon: IconBarChart, label: t('parentalDash.moreActivity') },
+      { key: 'summary', Icon: IconSparkles, label: t('parentalDash.moreSummary') },
+    ],
+    [
+      { key: 'remove', Icon: IconX, label: t('parentalDash.moreRemove'), destructive: true },
+    ],
+  ];
+
+  const renderMoreSheet = () => {
+    const moreMeta = moreChild ? (childMeta[moreChild.child_email] || {}) : {};
+    const moreAge = moreChild ? childAgeOf(moreChild) : null;
+    const sub = [moreAge ? t('parentalDash.ageYears', { n: moreAge }) : null, moreMeta.locked ? t('parentalDash.statusPaused') : null, moreChild?.child_email].filter(Boolean).join(' · ');
     return (
-      <PressableScale
-        onPress={() => { haptics.tap('light'); setRequestsModal(true); }}
-        haptic={false}
-        style={[s.reqBanner, { backgroundColor: CARD_BG, borderColor: HAIR }]}
-        accessibilityLabel={title}
-        accessibilityRole="button"
+      <NativeSheetDialog
+        visible={!!moreChild}
+        onClose={() => setMoreChild(null)}
+        overlayStyle={SHEET_OVERLAY}
+        panelStyle={sheetPanel}
+        animationType="slide"
       >
-        <View style={[s.reqIcon, { backgroundColor: TILE_BG }]}>
-          <IconAlertCircle size={18} color={colors.text} />
-          <View style={[s.reqDot, { borderColor: CARD_BG }]} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={[s.reqTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{title}</Text>
-          {names ? <Text style={[s.reqSub, { color: colors.textSecondary }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{names}</Text> : null}
-        </View>
-        <IconChevronRight size={18} color={colors.textTertiary || colors.textSecondary} />
-      </PressableScale>
+        {moreChild ? renderSheetHead(moreChild.child_name, sub, { email: moreChild.child_email, name: moreChild.child_name }) : null}
+        {MORE_GROUPS.map((group, gi) => (
+          <View key={gi} style={[s.sheetGroup, { backgroundColor: CARD_BG }]}>
+            {group.map((it, i) => {
+              const tone = it.destructive ? fc.danger : fc.text;
+              return (
+                <Pressable
+                  key={it.key}
+                  onPress={() => runMoreAction(it.key)}
+                  style={({ pressed }) => [s.sheetRow, pressed && { backgroundColor: fc.highlightBg }]}
+                  accessibilityRole="button"
+                  accessibilityLabel={it.label}
+                >
+                  <View style={[s.sheetRowIcon, { backgroundColor: it.destructive ? 'transparent' : TILE_BG }]}>
+                    <it.Icon size={18} color={tone} />
+                  </View>
+                  <View style={[s.sheetRowBody, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: HAIR }]}>
+                    <Text style={[s.sheetRowText, { color: tone }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{it.label}</Text>
+                    {!it.destructive && <IconChevronRight size={16} color={fc.tertiary} />}
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
+      </NativeSheetDialog>
     );
   };
 
-  // Bottom sheet genérico (Modal transparente) — usado pelo "Mais" e pelos pedidos.
-  const renderSheet = ({ visible, onClose, title, subtitle, children: body }) => (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={s.sheetRoot}>
-        <TouchableOpacity style={s.sheetBackdrop} activeOpacity={1} onPress={onClose} accessibilityRole="button" accessibilityLabel={t('parentalDash.cancel')} />
-        <View style={[s.sheet, { backgroundColor: CARD_BG, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
-          <View style={[s.sheetGrabber, { backgroundColor: HAIR }]} />
-          {title ? (
-            <View style={s.sheetHead}>
-              <Text style={[s.sheetTitle, { color: colors.text }]} numberOfLines={1}>{title}</Text>
-              {subtitle ? <Text style={[s.sheetSub, { color: colors.textSecondary }]} numberOfLines={1}>{subtitle}</Text> : null}
-            </View>
-          ) : null}
-          {body}
-        </View>
-      </View>
-    </Modal>
-  );
-
-  const MORE_ITEMS = [
-    { key: 'activity', Icon: IconBarChart, label: t('parentalDash.moreActivity') },
-    { key: 'screenTime', Icon: IconClock, label: t('parentalDash.moreScreenTime') },
-    { key: 'location', Icon: IconMapPin, label: t('parentalDash.moreLocation') },
-    { key: 'summary', Icon: IconSparkles, label: t('parentalDash.moreSummary') },
-    { key: 'message', Icon: IconMessageSquare, label: t('parentalDash.moreSendMessage') },
-  ];
-
-  const renderMoreSheet = () => renderSheet({
-    visible: !!moreChild,
-    onClose: () => setMoreChild(null),
-    title: moreChild?.child_name || '',
-    subtitle: moreChild?.child_email || '',
-    children: (
-      <View>
-        {MORE_ITEMS.map((it, i) => (
-          <TouchableOpacity
-            key={it.key}
-            style={[s.sheetRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: HAIR }]}
-            onPress={() => runMoreAction(it.key)}
-            activeOpacity={0.6}
-            accessibilityRole="button"
-            accessibilityLabel={it.label}
-          >
-            <View style={[s.sheetRowIcon, { backgroundColor: TILE_BG }]}>
-              <it.Icon size={18} color={colors.text} />
-            </View>
-            <Text style={[s.sheetRowText, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{it.label}</Text>
-            <IconChevronRight size={16} color={colors.textTertiary || colors.textSecondary} />
-          </TouchableOpacity>
-        ))}
-        <TouchableOpacity
-          style={[s.sheetCancel, { backgroundColor: TILE_BG }]}
-          onPress={() => setMoreChild(null)}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-        >
-          <Text style={[s.sheetCancelText, { color: colors.text }]}>{t('parentalDash.cancel')}</Text>
-        </TouchableOpacity>
-      </View>
-    ),
-  });
-
-  const renderRequestsSheet = () => renderSheet({
-    visible: requestsModal,
-    onClose: () => setRequestsModal(false),
-    title: t('parentalDash.requestsTitle'),
-    children: (
-      <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 4 }}>
+  const renderRequestsSheet = () => (
+    <NativeSheetDialog
+      visible={requestsModal}
+      onClose={() => setRequestsModal(false)}
+      overlayStyle={SHEET_OVERLAY}
+      panelStyle={sheetPanel}
+      animationType="slide"
+    >
+      {renderSheetHead(t('parentalDash.requestsTitle'), pendingCount > 0 ? (pendingCount === 1 ? t('parentalDash.requestsOne') : t('parentalDash.requestsMany', { n: pendingCount })) : '')}
+      <ScrollView style={{ maxHeight: 460 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 4 }}>
         {pendingCount === 0 ? (
-          <Text style={[s.sheetSub, { color: colors.textSecondary, textAlign: 'center', paddingVertical: 24 }]}>{t('parentalDash.requestsEmpty')}</Text>
-        ) : (pendingRequests || []).map((req, i) => {
-          const nm = (req.child_name && !String(req.child_name).includes('@')) ? req.child_name : String(req.child_email || '').split('@')[0];
+          <Text style={[s.sheetSub, { color: fc.secondary, textAlign: 'center', paddingVertical: 24 }]}>{t('parentalDash.requestsEmpty')}</Text>
+        ) : (pendingRequests || []).map((req) => {
+          const nm = reqName(req);
           const busy = resolvingId === req.id;
+          const ago = agoLabel(req.created_at, t, now);
           return (
-            <View key={String(req.id)} style={[s.reqItem, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: HAIR }]}>
+            <View key={String(req.id)} style={[s.reqItem, { backgroundColor: CARD_BG }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                <AvatarCircle email={req.child_email} name={nm} size={36} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.reqTitle, { color: colors.text }]} numberOfLines={1}>{nm}</Text>
-                  <Text style={[s.reqSub, { color: colors.textSecondary }]} numberOfLines={1}>{requestReasonLabel(req)}</Text>
+                <AvatarCircle email={req.child_email} name={nm} size={40} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={[s.reqTitle, { color: fc.text }]} numberOfLines={1}>{nm}</Text>
+                  <Text style={[s.reqSub, { color: fc.secondary }]} numberOfLines={1}>{ago ? `${requestReasonLabel(req)} · ${ago}` : requestReasonLabel(req)}</Text>
                 </View>
               </View>
-              {req.note ? <Text style={[s.reqNote, { color: colors.text }]}>{req.note}</Text> : null}
+              {req.note ? <Text style={[s.reqNote, { color: fc.text, backgroundColor: TILE_BG }]}>{req.note}</Text> : null}
               <View style={s.reqBtns}>
-                <TouchableOpacity
+                <PressableScale
                   style={[s.reqBtn, { backgroundColor: TILE_BG }]}
                   disabled={busy}
+                  haptic={false}
                   onPress={() => resolveRequest(req, 'rejected')}
                   accessibilityRole="button"
                   accessibilityLabel={t('parentalDash.reject')}
                 >
-                  <Text style={[s.reqBtnText, { color: colors.text }]}>{t('parentalDash.reject')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[s.reqBtn, { backgroundColor: colors.text }]}
+                  <Text style={[s.reqBtnText, { color: fc.text }]}>{t('parentalDash.reject')}</Text>
+                </PressableScale>
+                <PressableScale
+                  style={[s.reqBtn, { backgroundColor: fc.pill }]}
                   disabled={busy}
+                  haptic={false}
                   onPress={() => resolveRequest(req, 'approved')}
                   accessibilityRole="button"
                   accessibilityLabel={t('parentalDash.approve')}
                 >
-                  {busy ? <ActivityIndicator size="small" color={CARD_BG} /> : <Text style={[s.reqBtnText, { color: CARD_BG }]}>{t('parentalDash.approve')}</Text>}
-                </TouchableOpacity>
+                  {busy ? <ActivityIndicator size="small" color={fc.onPill} /> : <Text style={[s.reqBtnText, { color: fc.onPill }]}>{t('parentalDash.approve')}</Text>}
+                </PressableScale>
               </View>
             </View>
           );
         })}
       </ScrollView>
-    ),
-  });
+    </NativeSheetDialog>
+  );
 
   const openWizard = () => { haptics.tap('medium'); setShowWizard(true); };
   const retryLoad = () => { haptics.tap('light'); setLoadError(false); setLoading(true); loadChildren(); loadPendingRequests(); };
@@ -1847,18 +1914,23 @@ function ParentalScreenInner() {
   // ─── Estados vazios / carregando / erro ───
   const renderSkeleton = () => (
     <View style={{ gap: 12 }}>
+      <View style={[s.childCard, { backgroundColor: CARD_BG, padding: 16, gap: 10 }]}>
+        <Skeleton width="30%" height={11} />
+        <Skeleton width="45%" height={28} />
+        <Skeleton width="100%" height={36} radius={10} />
+      </View>
       {[0, 1].map(i => (
-        <View key={i} style={[s.childCard, { backgroundColor: CARD_BG, borderColor: HAIR }]}>
+        <View key={i} style={[s.childCard, { backgroundColor: CARD_BG }]}>
           <View style={s.childCardMain}>
-            <Skeleton width={52} height={52} radius={26} delay={i * 120} />
+            <Skeleton width={56} height={56} radius={28} delay={i * 120} />
             <View style={{ flex: 1, gap: 8 }}>
               <Skeleton width="55%" height={14} delay={i * 120} />
               <Skeleton width="80%" height={11} delay={i * 120} />
-              <Skeleton width="35%" height={11} delay={i * 120} />
+              <Skeleton width="30%" height={18} radius={9} delay={i * 120} />
             </View>
           </View>
-          <View style={s.actRow}>
-            {[0, 1, 2, 3].map(j => <View key={j} style={s.actTileWrap}><Skeleton height={60} radius={12} delay={i * 120} /></View>)}
+          <View style={s.actWrap}>
+            <Skeleton height={58} radius={14} delay={i * 120} />
           </View>
         </View>
       ))}
@@ -1870,17 +1942,17 @@ function ParentalScreenInner() {
       <Svg width={148} height={148} viewBox="0 0 140 140" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
         <Circle cx="70" cy="70" r="68" fill={TILE_BG} />
         <Circle cx="70" cy="70" r="50" fill={CARD_BG} stroke={HAIR} strokeWidth="1" />
-        <Path d="M70 36 L94 45 V67 C94 84 83 95 70 101 C57 95 46 84 46 67 V45 Z" fill="none" stroke={colors.text} strokeWidth="3" strokeLinejoin="round" />
-        <Circle cx="64" cy="61" r="6" fill={colors.text} />
-        <Path d="M53.5 84 C53.5 75.5 58 71 64 71 C70 71 74.5 75.5 74.5 84 Z" fill={colors.text} />
-        <Circle cx="79" cy="68" r="4.5" fill={colors.textSecondary} />
-        <Path d="M71.5 86 C71.5 80 74.6 76.6 79 76.6 C83.4 76.6 86.5 80 86.5 86 Z" fill={colors.textSecondary} />
+        <Path d="M70 36 L94 45 V67 C94 84 83 95 70 101 C57 95 46 84 46 67 V45 Z" fill="none" stroke={fc.text} strokeWidth="3" strokeLinejoin="round" />
+        <Circle cx="64" cy="61" r="6" fill={fc.text} />
+        <Path d="M53.5 84 C53.5 75.5 58 71 64 71 C70 71 74.5 75.5 74.5 84 Z" fill={fc.text} />
+        <Circle cx="79" cy="68" r="4.5" fill={fc.secondary} />
+        <Path d="M71.5 86 C71.5 80 74.6 76.6 79 76.6 C83.4 76.6 86.5 80 86.5 86 Z" fill={fc.secondary} />
       </Svg>
-      <Text style={[s.emptyTitle, { color: colors.text }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.emptyTitle')}</Text>
-      <Text style={[s.emptyDesc, { color: colors.textSecondary }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.emptyDesc')}</Text>
-      <PressableScale onPress={openWizard} haptic={false} style={[s.primaryBtn, { backgroundColor: colors.text }]} accessibilityRole="button" accessibilityLabel={t('parentalDash.addChild')}>
-        <IconPlus size={18} color={CARD_BG} />
-        <Text style={[s.primaryBtnText, { color: CARD_BG }]} maxFontSizeMultiplier={1.3}>{t('parentalDash.addChild')}</Text>
+      <Text style={[s.emptyTitle, { color: fc.text }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.emptyTitle')}</Text>
+      <Text style={[s.emptyDesc, { color: fc.secondary }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.emptyDesc')}</Text>
+      <PressableScale onPress={openWizard} haptic={false} style={[s.primaryBtn, { backgroundColor: fc.pill }]} accessibilityRole="button" accessibilityLabel={t('parentalDash.addChild')}>
+        <IconPlus size={18} color={fc.onPill} />
+        <Text style={[s.primaryBtnText, { color: fc.onPill }]} maxFontSizeMultiplier={1.3}>{t('parentalDash.addChild')}</Text>
       </PressableScale>
     </View>
   );
@@ -1888,22 +1960,68 @@ function ParentalScreenInner() {
   const renderError = () => (
     <View style={s.emptyWrap}>
       <View style={[s.errorIcon, { backgroundColor: TILE_BG }]}>
-        <IconAlertCircle size={28} color={colors.text} />
+        <IconAlertCircle size={28} color={fc.text} />
       </View>
-      <Text style={[s.emptyTitle, { color: colors.text }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.errorTitle')}</Text>
-      <Text style={[s.emptyDesc, { color: colors.textSecondary }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.errorDesc')}</Text>
-      <PressableScale onPress={retryLoad} haptic={false} style={[s.primaryBtn, { backgroundColor: colors.text }]} accessibilityRole="button" accessibilityLabel={t('parentalDash.retry')}>
-        <IconRefresh size={18} color={CARD_BG} />
-        <Text style={[s.primaryBtnText, { color: CARD_BG }]} maxFontSizeMultiplier={1.3}>{t('parentalDash.retry')}</Text>
+      <Text style={[s.emptyTitle, { color: fc.text }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.errorTitle')}</Text>
+      <Text style={[s.emptyDesc, { color: fc.secondary }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.errorDesc')}</Text>
+      <PressableScale onPress={retryLoad} haptic={false} style={[s.primaryBtn, { backgroundColor: fc.pill }]} accessibilityRole="button" accessibilityLabel={t('parentalDash.retry')}>
+        <IconRefresh size={18} color={fc.onPill} />
+        <Text style={[s.primaryBtnText, { color: fc.onPill }]} maxFontSizeMultiplier={1.3}>{t('parentalDash.retry')}</Text>
       </PressableScale>
     </View>
   );
 
+  // ─── Cartão-resumo do topo: tempo de tela somado, ativos, pedidos, verificações ───
+  const activeKids = children.filter(c => c.status === 'active');
+  const pendingVerify = children.filter(c => c.status === 'pending_verification').length;
+  const pausedCount = activeKids.filter(c => childMeta[c.child_email]?.locked).length;
+  const stKnown = activeKids.filter(c => childMeta[c.child_email]?.screen_time_used != null);
+  const totalToday = stKnown.reduce((acc, c) => acc + Number(childMeta[c.child_email]?.screen_time_used || 0), 0);
+  const anyEstimated = stKnown.some(c => childMeta[c.child_email]?.screen_time_estimated);
+  const summaryBigSub = activeKids.length === 0
+    ? t('parentalDash.summaryNoActive')
+    : (pausedCount > 0
+      ? t('parentalDash.summaryPaused', { n: pausedCount })
+      : (activeKids.length === 1 ? t('parentalDash.summaryAcrossOne') : t('parentalDash.summaryAcross', { n: activeKids.length })));
+
+  const renderSummary = () => {
+    if (children.length === 0) return null;
+    const stats = [
+      { key: 'kids', value: String(children.length), label: children.length === 1 ? t('parentalDash.statChild') : t('parentalDash.statChildren') },
+      { key: 'req', value: String(pendingCount), label: t('parentalDash.statRequests'), tone: pendingCount > 0 ? fc.danger : undefined, onPress: () => setRequestsModal(true) },
+      { key: 'ver', value: String(pendingVerify), label: t('parentalDash.statVerify'), tone: pendingVerify > 0 ? AMBER : undefined },
+    ];
+    const reqPreview = (pendingRequests || []).slice(0, 2).map(r => ({
+      key: String(r.id),
+      email: r.child_email,
+      name: reqName(r),
+      reason: requestReasonLabel(r),
+      ago: agoLabel(r.created_at, t, now),
+    }));
+    return (
+      <SummaryCard
+        eyebrow={t('parentalDash.summaryEyebrow')}
+        big={stKnown.length > 0 ? fmtMinutes(totalToday, t) : '—'}
+        bigSub={summaryBigSub}
+        avatars={children.map(c => ({ email: c.child_email, name: c.child_name }))}
+        stats={stats}
+        requests={reqPreview}
+        requestsTitle={pendingCount === 1 ? t('parentalDash.requestsOne') : t('parentalDash.requestsMany', { n: pendingCount })}
+        requestsCta={t('parentalDash.seeAll')}
+        onOpenRequests={() => setRequestsModal(true)}
+        footnote={anyEstimated ? t('parentalDash.estimatedNote') : ''}
+      />
+    );
+  };
+
   const listHeader = (
     <View>
-      {renderPendingBanner()}
+      {!USE_NATIVE_HEADER && (
+        <Text style={[s.largeTitle, { color: fc.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">{t('parental.dashboard')}</Text>
+      )}
+      {renderSummary()}
       {children.length > 0 && (
-        <Text style={[s.sectionLabel, { color: colors.textSecondary }]} maxFontSizeMultiplier={1.3}>
+        <Text style={[s.sectionLabel, { color: fc.header }]} maxFontSizeMultiplier={1.3}>
           {t('parentalDash.childrenSection', { n: children.length })}
         </Text>
       )}
@@ -1911,19 +2029,15 @@ function ParentalScreenInner() {
   );
 
   const listFooter = children.length > 0 ? (
-    <PressableScale onPress={openWizard} haptic={false} style={[s.addRow, { backgroundColor: CARD_BG, borderColor: HAIR }]} accessibilityRole="button" accessibilityLabel={t('parentalDash.addChild')}>
-      <View style={[s.addRowIcon, { backgroundColor: TILE_BG }]}>
-        <IconPlus size={20} color={colors.text} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={[s.addRowTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{t('parentalDash.addChild')}</Text>
-        <Text style={[s.addRowSub, { color: colors.textSecondary }]} numberOfLines={2} maxFontSizeMultiplier={1.4}>{t('parentalDash.addChildSub')}</Text>
-      </View>
-      <IconChevronRight size={18} color={colors.textTertiary || colors.textSecondary} />
-    </PressableScale>
+    <AddChildCard title={t('parentalDash.addChild')} sub={t('parentalDash.addChildSub')} onPress={openWizard} />
   ) : null;
 
   const listEmpty = loading ? renderSkeleton() : (loadError ? renderError() : renderEmpty());
+
+  // Web: título grande rola com a lista e o título pequeno aparece na barra.
+  const smallTitleOpacity = scrollY.interpolate({ inputRange: [24, 48], outputRange: [0, 1], extrapolate: 'clamp' });
+  const barHairOpacity = scrollY.interpolate({ inputRange: [40, 60], outputRange: [0, 1], extrapolate: 'clamp' });
+  const onListScroll = USE_NATIVE_HEADER ? undefined : Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false });
 
   // ─── Dashboard (Main Screen) ───
   return (
@@ -1952,32 +2066,36 @@ function ParentalScreenInner() {
         <View style={[s.webHeader, { paddingTop: insets.top + 6, backgroundColor: PAGE_BG }]}>
           <View style={s.webHeaderBar}>
             <TouchableOpacity onPress={() => router.back()} style={s.headerBtn} accessibilityLabel={t('parentalDash.back')} accessibilityRole="button">
-              <IconArrowLeft size={22} color={colors.text} />
+              <IconArrowLeft size={22} color={fc.text} />
             </TouchableOpacity>
+            <Animated.Text style={[s.smallTitle, { color: fc.text, opacity: smallTitleOpacity }]} numberOfLines={1}>{t('parental.dashboard')}</Animated.Text>
             <TouchableOpacity onPress={openWizard} style={[s.headerBtn, s.headerBtnRound, { backgroundColor: TILE_BG }]} accessibilityLabel={t('parentalDash.addChild')} accessibilityRole="button">
-              <IconPlus size={20} color={colors.text} />
+              <IconPlus size={20} color={fc.text} />
             </TouchableOpacity>
           </View>
-          <Text style={[s.largeTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3} accessibilityRole="header">{t('parental.dashboard')}</Text>
+          <Animated.View style={[s.webHeaderHair, { backgroundColor: HAIR, opacity: barHairOpacity }]} />
         </View>
       )}
 
-      <FlatList
+      <Animated.FlatList
         data={loading && children.length === 0 ? [] : children}
         keyExtractor={item => String(item.id ?? item.child_email)}
         renderItem={renderChild}
+        extraData={[childMeta, now, onlineFlashes]}
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={[s.listContent, { paddingBottom: 32 + insets.bottom }, children.length === 0 && !loading && { flexGrow: 1 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        onScroll={onListScroll}
+        scrollEventThrottle={16}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} colors={[colors.text]} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={fc.text} colors={[fc.text]} />
         }
         ListHeaderComponent={listHeader}
         ListEmptyComponent={listEmpty}
         ListFooterComponent={listFooter}
-        ListFooterComponentStyle={{ marginTop: 12 }}
+        ListFooterComponentStyle={{ marginTop: 14 }}
       />
 
       {renderSummaryModal()}
@@ -1997,59 +2115,42 @@ export default function ParentalScreen() {
 const s = StyleSheet.create({
   container: { flex: 1 },
 
-  // ─── [2026-10-08 parental-redesign] Painel ───
-  webHeader: { paddingHorizontal: 16, paddingBottom: 4 },
-  webHeaderBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginLeft: -6 },
+  // ─── [2026-10-19 parental-premium] Painel ───
+  webHeader: { paddingHorizontal: 16 },
+  webHeaderBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginLeft: -6, paddingBottom: 4 },
+  webHeaderHair: { height: StyleSheet.hairlineWidth, marginHorizontal: -16 },
+  smallTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600' },
   headerBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   headerBtnRound: { width: 36, height: 36, borderRadius: 18, marginRight: 2 },
-  largeTitle: { fontSize: 32, fontWeight: '700', letterSpacing: 0.2, marginTop: 2 },
+  largeTitle: { fontSize: 34, fontWeight: '700', letterSpacing: -0.6, marginTop: 2, marginBottom: 12, marginLeft: 2 },
   listContent: { paddingHorizontal: 16, paddingTop: 8 },
-  sectionLabel: { fontSize: 13, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8, marginLeft: 4 },
+  sectionLabel: { fontSize: 13, fontWeight: '600', letterSpacing: 0.3, textTransform: 'uppercase', marginTop: 22, marginBottom: 8, marginLeft: 4 },
 
-  childCard: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
-  childCardMain: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 14 },
-  avatarWrap: { width: 52, height: 52 },
+  childCard: { borderRadius: 22, overflow: 'hidden' },
+  childCardMain: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 16, paddingBottom: 14, gap: 14 },
+  avatarWrap: { width: 56, height: 56 },
   childInfo: { flex: 1, minWidth: 0 },
-  childName: { fontSize: 17, fontWeight: '600', letterSpacing: -0.2 },
-  childEmail: { fontSize: 14, marginTop: 2 },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
-  statusDot: { width: 7, height: 7, borderRadius: 4 },
-  statusText: { fontSize: 13, flexShrink: 1 },
-  lockBadge: { position: 'absolute', bottom: -1, right: -1, width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
+  childName: { fontSize: 18, fontWeight: '700', letterSpacing: -0.3 },
+  childAge: { fontSize: 14, fontWeight: '500', letterSpacing: 0 },
+  childEmail: { fontSize: 13.5, marginTop: 1 },
+  lockBadge: { position: 'absolute', bottom: -1, right: -1, width: 21, height: 21, borderRadius: 11, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
 
-  summaryBlock: { marginHorizontal: 16, paddingTop: 12, paddingBottom: 2, borderTopWidth: StyleSheet.hairlineWidth, gap: 10 },
-  stHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  stValue: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  stTrack: { height: 4, borderRadius: 2, overflow: 'hidden', marginTop: 8 },
-  stFill: { height: 4, borderRadius: 2 },
-  metaRow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 6 },
-  metaItem: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
-  metaText: { fontSize: 13, flexShrink: 1 },
+  stBlock: { flexDirection: 'row', alignItems: 'center', gap: 14, marginHorizontal: 16, paddingTop: 14, paddingBottom: 4, borderTopWidth: StyleSheet.hairlineWidth },
+  ringPct: { fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  stLabel: { fontSize: 12, fontWeight: '600', letterSpacing: 0.2, textTransform: 'uppercase' },
+  stBig: { fontSize: 22, fontWeight: '700', letterSpacing: -0.4, marginTop: 1, fontVariant: ['tabular-nums'] },
+  stSub: { fontSize: 12.5, marginTop: 1 },
+  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginHorizontal: 16, paddingTop: 10 },
 
-  actRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 12 },
-  actTileWrap: { flex: 1, minWidth: 0 },
-  actTile: { minHeight: 60, borderRadius: 12, alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 4, paddingVertical: 9 },
-  actTileText: { fontSize: 12, fontWeight: '600', textAlign: 'center' },
-  miniBadge: { position: 'absolute', top: -6, right: -11, minWidth: 17, height: 17, borderRadius: 9, backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, borderWidth: 2 },
-  miniBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
-  pendingCta: { minHeight: 48, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 12 },
-  pendingCtaText: { fontSize: 15, fontWeight: '600' },
+  actWrap: { paddingHorizontal: 12, paddingTop: 14, paddingBottom: 12 },
 
-  reqBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, marginBottom: 20 },
-  reqIcon: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
-  reqDot: { position: 'absolute', top: 1, right: 1, width: 10, height: 10, borderRadius: 5, backgroundColor: '#ef4444', borderWidth: 2 },
   reqTitle: { fontSize: 15, fontWeight: '600' },
   reqSub: { fontSize: 13, marginTop: 2 },
-  reqItem: { paddingVertical: 14, gap: 10 },
-  reqNote: { fontSize: 15, lineHeight: 21 },
+  reqItem: { padding: 14, gap: 12, borderRadius: 18, marginBottom: 10 },
+  reqNote: { fontSize: 15, lineHeight: 21, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, overflow: 'hidden' },
   reqBtns: { flexDirection: 'row', gap: 10 },
-  reqBtn: { flex: 1, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  reqBtn: { flex: 1, height: 44, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
   reqBtnText: { fontSize: 15, fontWeight: '600' },
-
-  addRow: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth },
-  addRowIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  addRowTitle: { fontSize: 16, fontWeight: '600' },
-  addRowSub: { fontSize: 13, marginTop: 2 },
 
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 40 },
   emptyTitle: { fontSize: 22, fontWeight: '700', textAlign: 'center', marginTop: 20 },
@@ -2058,18 +2159,14 @@ const s = StyleSheet.create({
   primaryBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 50, paddingHorizontal: 24, borderRadius: 25, marginTop: 24, minWidth: 200 },
   primaryBtnText: { fontSize: 16, fontWeight: '600' },
 
-  sheetRoot: { flex: 1, justifyContent: 'flex-end' },
-  sheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 8, width: '100%', maxWidth: 560, alignSelf: 'center' },
-  sheetGrabber: { width: 36, height: 5, borderRadius: 3, alignSelf: 'center', marginBottom: 8 },
-  sheetHead: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 10 },
-  sheetTitle: { fontSize: 17, fontWeight: '600' },
+  sheetHead: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingBottom: 14 },
+  sheetTitle: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3 },
   sheetSub: { fontSize: 13, marginTop: 2 },
-  sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 56, marginHorizontal: 16, paddingVertical: 8 },
-  sheetRowIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  sheetGroup: { marginHorizontal: 16, marginBottom: 12, borderRadius: 16, overflow: 'hidden' },
+  sheetRow: { flexDirection: 'row', alignItems: 'center', paddingLeft: 14 },
+  sheetRowIcon: { width: 32, height: 32, borderRadius: 9, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  sheetRowBody: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 52, paddingRight: 14 },
   sheetRowText: { flex: 1, fontSize: 16 },
-  sheetCancel: { height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginHorizontal: 16, marginTop: 10 },
-  sheetCancelText: { fontSize: 16, fontWeight: '600' },
 
   // Dashboard header
   backBtn: { padding: 6, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },

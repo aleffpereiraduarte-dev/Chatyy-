@@ -115,8 +115,16 @@ function ParentalMonitorScreenInner() {
   const mounted = useIsMounted();
 
   // 4 monitor tabs + restrictions sheet entry
-  const [tab, setTab] = useState('today');
+  // [2026-10-19 parental-premium] atalhos do "Mais" do Painel familiar:
+  // ?tab=contacts abre Contatos; ?open=restrictions abre Limites/Hora de dormir.
+  const [tab, setTab] = useState(() => (['today', 'week', 'apps', 'contacts'].includes(String(params.tab || '')) ? String(params.tab) : 'today'));
   const [showRestrictions, setShowRestrictions] = useState(false);
+  useEffect(() => {
+    if (String(params.open || '') !== 'restrictions') return undefined;
+    const id = setTimeout(() => { if (mounted.current) setShowRestrictions(true); }, Platform.OS === 'ios' ? 350 : 0);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Existing datasets
   const [chats, setChats] = useState([]);
