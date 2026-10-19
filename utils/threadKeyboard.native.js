@@ -165,7 +165,54 @@ const _healFns = new Set();
 /** Composer perdeu o foco: cada conversa montada confere (depois da descida do
  *  teclado) se ainda há "lift" sem teclado nenhum e o leva a 0. */
 export function threadKbNoteComposerBlur() {
+  _composerFocused = false; // [2026-10-19 attach-hold]
   _healFns.forEach((fn) => { try { fn('blur'); } catch {} });
+}
+
+// [2026-10-19 attach-hold] "+" com o teclado aberto (founder, vídeo iPhone):
+//  ABRIR — o teclado sumia e a lista + barra DESPENCAVAM até o fim da tela
+//  (barra no meio/baixo sem nada embaixo) e só depois a folha nativa subia.
+//  FECHAR — ~0,5 s depois de a folha sumir a barra SUBIA a altura do teclado
+//  (vão branco embaixo, sem teclado) e caía de novo ("levanta e abaixa").
+//  RAIZ (fechar): o lift é um DEGRAU no iOS (KC só escreve `height` no
+//  willShow/willHide/interativo) e qualquer escrita de −altura do teclado sem
+//  teclado de verdade (devolução de foco 'did' do composer api 5/6 seguida do
+//  blur do ouvinte do menu = willShow sem teclado visível; didShow/sync
+//  atrasados) vale até o hideTimer do didHide (120 + 450 ms) assentar = os
+//  ~530 ms do vídeo.
+//  AGORA (WhatsApp): ao tocar no "+", a conversa fica PARADA na altura do
+//  teclado (hold) enquanto o teclado desce e a folha sobe por cima; com a
+//  folha cobrindo a barra, o lift vai a 0 por baixo dela. Da abertura até
+//  ~0,7 s depois de a folha fechar o lift fica TRAVADO em 0 (clamp): nada
+//  levanta a barra sem teclado; foco no composer (toque/foco explícito) solta
+//  na hora. Ao soltar: sem teclado ⇒ assenta (zera o valor velho do KC).
+//  Composer nativo api >= 8: o resign do "+" espera o JS armar o hold
+//  (releaseForAttach) → zero quadro de queda. Binários antigos: o hold entra
+//  1-2 quadros depois do willHide (queda mínima, volta na hora).
+// Kill switches OTA: globalThis.__chatyy_attach_hold = false (sem hold, sem
+// adiar o resign) · globalThis.__chatyy_attach_clamp = false (sem trava).
+const _attachFns = new Set();
+let _composerFocused = false;
+function _attachHoldOn() {
+  try { if (globalThis.__chatyy_attach_hold === false) return false; } catch {}
+  return Platform.OS === 'ios';
+}
+function _attachClampOn() {
+  try { if (globalThis.__chatyy_attach_clamp === false) return false; } catch {}
+  return Platform.OS === 'ios';
+}
+/** "+" do composer (folha nativa abrindo agora). hadKeyboard = teclado do composer estava aberto. */
+export function threadKbAttachBegin(hadKeyboard) {
+  _attachFns.forEach((o) => { try { o.begin(!!hadKeyboard); } catch {} });
+}
+/** Folha do "+" fechou (qualquer motivo) ou não abriu (immediate = solta já). */
+export function threadKbAttachEnd(immediate) {
+  _attachFns.forEach((o) => { try { o.end(!!immediate); } catch {} });
+}
+/** Composer ganhou foco (toque/foco explícito) → trava solta na hora. */
+export function threadKbNoteComposerFocus() {
+  _composerFocused = true;
+  _attachFns.forEach((o) => { try { o.focus(); } catch {} });
 }
 const _clipStyle = { flex: 1, overflow: 'hidden' };
 const _flex1 = { flex: 1 };
@@ -202,6 +249,10 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
   // keyboardHeight - bottomInset for the composer to sit flush on the keyboard.
   const { height, progress } = KC.useReanimatedKeyboardAnimation();
   const settled = Rea.useSharedValue(0);
+  // [2026-10-19 attach-hold] hold = lift fixo (px) durante a abertura da folha
+  // do "+"; clamp = 1 → lift 0 (nada levanta a barra sem teclado).
+  const hold = Rea.useSharedValue(0);
+  const clamp = Rea.useSharedValue(0);
   // [2026-10-13 android-kbd-flicker] bottomInset atual p/ o restore do Android
   // (o effect abaixo só depende de setEnabled).
   const insetRef = React.useRef(bottomInset || 0);
@@ -283,7 +334,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
     let lastNativeSync = null; // { h, at } do composer nativo (quadro REAL)
     const liftNow = () => {
       try {
-        if (settled.value === 1) return 0;
+        if (settled.value === 1 || clamp.value === 1) return 0; // [attach-hold]
         return Math.max(0, -height.value - (insetRef.current || 0));
       } catch { return 0; }
     };
@@ -376,6 +427,72 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
       try { pubRest.current(h); } catch {} // [kb-translate]
     };
     const unsubSync = subscribeKeyboardSync(onNativeSync);
+    // [2026-10-19 attach-hold] ver threadKbAttachBegin (topo do arquivo).
+    let lastOpenKh = 0; // última altura REAL do teclado aberto (didShow / sync nativa)
+    let attachOn = false;
+    let holdTimer = null;
+    let clampTimer = null;
+    const ATTACH_HOLD_MS = 400; // folha (mola 0,52 s) já cobre a barra
+    const ATTACH_CLAMP_TAIL_MS = 700; // depois de a folha fechar
+    const releaseClamp = () => {
+      if (clampTimer) { clearTimeout(clampTimer); clampTimer = null; }
+      let was = 0;
+      try { was = clamp.value; } catch {}
+      if (was !== 1) return;
+      // Sem teclado do composer: assenta (zera −altura velha do KC) ANTES de
+      // destravar — a trava sai sem levantar nada.
+      let vis = false;
+      try { vis = !!Keyboard.isVisible(); } catch {}
+      if (!_composerFocused && !vis) settle();
+      try { clamp.value = 0; } catch {}
+    };
+    const attachObj = {
+      begin: (had) => {
+        attachOn = true;
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        if (clampTimer) { clearTimeout(clampTimer); clampTimer = null; }
+        if (_attachClampOn()) { try { clamp.value = 1; } catch {} }
+        if (!had || !_attachHoldOn()) return;
+        const ins = insetRef.current || 0;
+        let kh = 0;
+        try { kh = settled.value === 1 ? 0 : -height.value; } catch {}
+        if (!(kh > ins + 1)) { try { kh = Number(Keyboard.metrics()?.height) || 0; } catch {} }
+        if (!(kh > ins + 1)) kh = lastOpenKh;
+        const h = Math.max(0, kh - ins);
+        if (h <= 1) return;
+        try { hold.value = h; } catch {}
+        holdTimer = setTimeout(() => {
+          holdTimer = null;
+          // Folha por cima da barra: desce o lift POR BAIXO dela (suave, a
+          // lista visível sob o escurecido não pula).
+          try {
+            if (Rea.withTiming) hold.value = Rea.withTiming(0, { duration: 240 });
+            else hold.value = 0;
+          } catch { try { hold.value = 0; } catch {} }
+        }, ATTACH_HOLD_MS);
+      },
+      end: (immediate) => {
+        if (!attachOn) return;
+        attachOn = false;
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        try { if (hold.value !== 0) hold.value = 0; } catch {}
+        // composer já focado (modo 'did'/'will' por override devolveu o teclado) = segue o KC já.
+        if (immediate || _composerFocused) { releaseClamp(); return; }
+        if (clampTimer) clearTimeout(clampTimer);
+        clampTimer = setTimeout(() => { clampTimer = null; releaseClamp(); }, ATTACH_CLAMP_TAIL_MS);
+      },
+      focus: () => {
+        // Foco no composer = teclado dele vindo de verdade → segue o KC já.
+        if (attachOn) return; // folha ainda aberta (foco não chega por baixo dela)
+        if (clampTimer) { clearTimeout(clampTimer); clampTimer = null; }
+        try { clamp.value = 0; } catch {}
+      },
+    };
+    _attachFns.add(attachObj);
+    const unsubKh = subscribeKeyboardSync((e) => {
+      const h = Number(e && e.height) || 0;
+      if (h > 1 && e && e.focused) lastOpenKh = h;
+    });
     // [2026-10-19 kb-native] Tela voltou a ser a de cima / fim de transição:
     // confere (binários sem onKeyboardSync dependem só disto).
     let navTimer = null;
@@ -478,6 +595,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
     const onDidShow = (e) => {
       onWillShow();
       const kh = Number(e?.endCoordinates?.height) || 0;
+      if (kh > 1) lastOpenKh = kh; // [2026-10-19 attach-hold]
       // [2026-10-13 android-kbd-flicker] ANDROID: o RN emite keyboardDidShow no
       // 1º global layout com o IME visível = INÍCIO da animação
       // (ReactRootView.checkForKeyboardEvents), quando o KC (que no Android só
@@ -533,6 +651,10 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
       try { subApp.remove(); } catch {}
       if (appStateTimer) clearTimeout(appStateTimer);
       try { unsubSync(); } catch {}
+      try { unsubKh(); } catch {} // [2026-10-19 attach-hold]
+      _attachFns.delete(attachObj);
+      if (holdTimer) clearTimeout(holdTimer);
+      if (clampTimer) clearTimeout(clampTimer);
       _healFns.delete(healFn); // [2026-10-19 kb-heal]
       clearInterval(watchdog);
       if (healTimer) clearTimeout(healTimer);
@@ -566,7 +688,8 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
   // [2026-10-19 kb-translate] lift = quanto a barra sobe (teclado − inset).
   const lift = Rea.useDerivedValue(() => {
     'worklet';
-    if (settled.value === 1) return 0;
+    if (hold.value > 0.5) return hold.value; // [2026-10-19 attach-hold] conversa parada sob a folha
+    if (settled.value === 1 || clamp.value === 1) return 0;
     return Math.max(0, -height.value - inset);
   }, [inset]);
   // Troca padding ↔ transform: o shared value muda no UI thread e TODOS os

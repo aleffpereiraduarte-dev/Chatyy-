@@ -49,12 +49,34 @@ export function attachInstantOn() {
 // [2026-10-19 attach-none] Founder: fechar a folha do "+" deixa o teclado
 // FECHADO. Composer api >= 7 entende 'none'; api 5/6 (734/737) trataria 'none'
 // como 'will' → lá fica 'did' (sobe 1x no fim). Override: __chatyy_attach_restore.
+// [2026-10-19 attach-hold] api 5/6 (734/737) também ficam 'none': lá não há
+// prop p/ isso, então o JS manda attachInstant=false (o nativo deixa de devolver
+// o foco ao fechar a folha) e abre a folha na hora ele mesmo (ver
+// attachLegacyNoneActive). Antes: 'did' = foco devolvido no fim do dismiss →
+// willShow + blur do ouvinte do menu = barra "levanta e abaixa" sem teclado.
+// Voltar ao 'did' nesses binários: globalThis.__chatyy_attach_legacy_none = false.
 export function attachRestoreMode() {
   try {
     const v = globalThis.__chatyy_attach_restore;
     if (v === 'will' || v === 'did') return v;
   } catch {}
-  return nativeComposerApi() >= 7 ? 'none' : 'did';
+  if (nativeComposerApi() >= 7) return 'none';
+  try { if (globalThis.__chatyy_attach_legacy_none === false) return 'did'; } catch {}
+  return 'none';
+}
+
+/** iOS composer api 5/6 com modo 'none': attachInstant=false no nativo + abertura instantânea pelo JS. */
+export function attachLegacyNoneActive() {
+  const api = nativeComposerApi();
+  return api >= 5 && api < 7 && attachInstantOn() && attachRestoreMode() === 'none';
+}
+
+// [2026-10-19 attach-hold] composer iOS api >= 8: com o teclado aberto o "+"
+// NÃO solta o teclado sozinho; o JS arma o hold da conversa e chama
+// releaseForAttach() (rede nativa 350 ms). Kill: __chatyy_attach_hold = false.
+export function attachHoldOn() {
+  try { if (globalThis.__chatyy_attach_hold === false) return false; } catch {}
+  return true;
 }
 
 // [2026-10-19 android-parity] "+" no Android nível WhatsApp Android: a folha

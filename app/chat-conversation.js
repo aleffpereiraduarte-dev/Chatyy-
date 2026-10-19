@@ -54,7 +54,7 @@ import { wasImageLoaded, seenAwareTransition, markImageLoaded } from '../utils/i
 import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, getCachedLocalPrefs, setCachedLocalPrefs, getCachedPresence, setCachedPresence } from '../utils/chatOpenHandoff'; // [2026-10-08 chat-open-flicker]
 // [2026-10-06 keyboard-controller] Keyboard glued to the composer on the UI
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
-import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, ThreadKeyboardBar, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
+import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, ThreadKeyboardBar, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID, threadKbAttachBegin, threadKbAttachEnd } from '../utils/threadKeyboard';
 import { isAppResuming, kbResumeGuardOn } from '../utils/kbResumeGuard'; // [2026-10-18 kb-resume]
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
 import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal, nativeSearchOn, nativeDragSelectOn, nativeOverlayOn, nativeQuickReactOn, tgBubblesOn, nativeTgStyleOn } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
@@ -13114,7 +13114,11 @@ function ChatConversationInnerBody() {
   const [showAttachMenu, setShowAttachMenu] = _useStateT(false);
   // [2026-10-09] Enquanto o menu de anexos estiver aberto, o teclado não pode reaparecer por cima.
   useEffect(() => {
-    if (!showAttachMenu) { _attachInstantRef.current = false; return undefined; } // [2026-10-19 attach-instant]
+    if (!showAttachMenu) {
+      _attachInstantRef.current = false; // [2026-10-19 attach-instant]
+      try { threadKbAttachEnd(false); } catch {} // [2026-10-19 attach-hold] rede (folha JS/fallback)
+      return undefined;
+    }
     const ev = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const sub = Keyboard.addListener(ev, () => {
       // [2026-10-18 kb-resume] volta do fundo com o menu aberto: o iOS
@@ -13148,18 +13152,37 @@ function ChatConversationInnerBody() {
   // Kill switch: globalThis.__chatyy_attach_instant = false (= 18/10).
   const _attachInstantRef = useRef(false);
   const _attachInstantOpenRef = useRef(null); // preenchido pelo NativeAttachSheet
+  // [2026-10-19 attach-hold] + hold/trava da conversa (utils/threadKeyboard
+  // threadKbAttachBegin): abrir com o teclado aberto = conversa PARADA enquanto
+  // a folha sobe (sem despencar); fechar = barra no fim da tela, sem
+  // "levanta e abaixa". Composer api 5/6 com 'none' (attachLegacyNoneActive)
+  // chega com instant=false (prop attachInstant=false = sem devolução nativa
+  // do foco) e também abre na hora. api >= 8: e.deferred = o teclado só desce
+  // quando o JS chama releaseForAttach (hold armado antes).
   const _openAttachInstant = (e) => {
     if (Platform.OS === 'android') return _openAttachInstantAndroid(e); // [2026-10-19 android-parity]
-    if (Platform.OS !== 'ios' || !e || e.instant !== true) return false;
-    try { if (!require('../utils/kbNativeTransitions').attachInstantOn()) return false; } catch { return false; }
-    if (!mountedRef.current || _kbLeavingRef.current) return false;
+    if (Platform.OS !== 'ios' || !e) return false;
+    let kn = null;
+    try { kn = require('../utils/kbNativeTransitions'); } catch { return false; }
+    if (!kn || !kn.attachInstantOn()) return false;
+    const legacyNone = e.instant === false && typeof kn.attachLegacyNoneActive === 'function' && kn.attachLegacyNoneActive();
+    const deferred = e.deferred === true;
+    const release = () => { if (deferred) { try { inputRef.current?.releaseForAttach?.(); } catch {} } };
+    if (e.instant !== true && !legacyNone) { release(); return false; }
+    if (!mountedRef.current || _kbLeavingRef.current) { release(); return false; }
     const open = _attachInstantOpenRef.current;
-    if (typeof open !== 'function') return false;
+    if (typeof open !== 'function') { release(); return false; }
     _attachInstantRef.current = true;
     _attachKbRef.current = { had: false, at: 0 };
+    try { threadKbAttachBegin(e.hadKeyboard === true); } catch {}
+    release(); // hold já armado → agora o teclado desce (folha sobe junto)
     let ok = false;
     try { ok = !!open(); } catch { ok = false; }
-    if (!ok) { _attachInstantRef.current = false; return false; }
+    if (!ok) {
+      _attachInstantRef.current = false;
+      try { threadKbAttachEnd(true); } catch {}
+      return false;
+    }
     setShowAttachMenu(true);
     return true;
   };
@@ -13192,7 +13215,10 @@ function ChatConversationInnerBody() {
   const _openAttachMenuKb = (had) => {
     const legacy = () => setTimeout(() => setShowAttachMenu(true), Platform.OS === 'android' ? 80 : 60);
     if (!kbResumeGuardOn()) { legacy(); return; }
-    _attachKbRef.current = { had: !!had, at: Date.now() };
+    // [2026-10-19 attach-hold] iOS modo 'none' (founder): fechar a folha deixa o teclado fechado também neste caminho.
+    let _noneKb = false;
+    try { _noneKb = Platform.OS === 'ios' && require('../utils/kbNativeTransitions').attachRestoreMode() === 'none'; } catch {}
+    _attachKbRef.current = { had: !!had && !_noneKb, at: Date.now() };
     let vis = false;
     try { vis = !!Keyboard.isVisible?.(); } catch {}
     if (Platform.OS !== 'ios' || !vis) { legacy(); return; }
@@ -13214,6 +13240,7 @@ function ChatConversationInnerBody() {
     try {
       sub = require('react-native').DeviceEventEmitter.addListener('chatyy:attachSheetClosed', (e) => {
         _attachInstantRef.current = false; // [2026-10-19 attach-instant]
+        try { threadKbAttachEnd(false); } catch {} // [2026-10-19 attach-hold]
         const st = _attachKbRef.current;
         _attachKbRef.current = { had: false, at: 0 };
         if (!kbResumeGuardOn() || !st.had || !e || e.action !== 'cancel') return;

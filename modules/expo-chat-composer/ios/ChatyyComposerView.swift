@@ -567,6 +567,16 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   private var restoreParked = false
   private var attachRestorePending = false
   private var attachRestoreAt: CFTimeInterval = 0
+  // [2026-10-19 attach-hold] "+" com o teclado aberto: a conversa (JS,
+  // utils/threadKeyboard threadKbAttachBegin) precisa travar a altura ANTES
+  // de o teclado começar a descer — senão o KC zera o lift no willHide e a
+  // lista + barra despencam até a folha cobrir. Com attachDeferResign o
+  // resign espera o JS (releaseForAttach, logo depois de armar o hold); rede
+  // nativa: solta sozinho em 350 ms. Kill switch: prop attachDeferResign=false
+  // (JS: globalThis.__chatyy_attach_hold = false).
+  var attachDeferResign = false { didSet { if !attachDeferResign { releaseForAttach() } } }
+  private var attachDeferPending = false
+  private var attachDeferGen = 0
   private var kbNoteOverlap: CGFloat = 0
   private var kbSyncGen = 0
 
@@ -887,9 +897,31 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     // teclado desce junto com a folha subindo.
     attachRestorePending = attachInstant && had
     attachRestoreAt = CACurrentMediaTime()
+    // [2026-10-19 attach-hold] adia o resign até o JS armar o hold da conversa.
+    if had && attachDeferResign && attachInstant {
+      attachDeferPending = true
+      attachDeferGen &+= 1
+      let gen = attachDeferGen
+      onAttach(["hadKeyboard": true, "instant": true, "deferred": true])
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+        guard let self = self, self.attachDeferGen == gen else { return }
+        self.releaseForAttach()
+      }
+      return
+    }
     if had { withInternalFocus { _ = textView.resignFirstResponder() } }
     let body: [String: Any] = ["hadKeyboard": had, "instant": attachInstant]
     onAttach(body)
+  }
+
+  /// [2026-10-19 attach-hold] JS armou o hold (ou rede de 350 ms): agora o
+  /// teclado desce, ANIMADO, antes da folha ser apresentada (ela não acha
+  /// first responder p/ guardar e devolver).
+  func releaseForAttach() {
+    guard attachDeferPending else { return }
+    attachDeferPending = false
+    attachDeferGen &+= 1
+    if textView.isFirstResponder { withInternalFocus { _ = textView.resignFirstResponder() } }
   }
 
   @objc private func emojiTapped() {
@@ -1041,6 +1073,10 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   // MARK: Attach sheet (attach-instant)
 
   private func attachSheetClosing(_ n: Notification, final: Bool) {
+    // [2026-10-19 attach-hold] folha fechou: quadro REAL do teclado p/ o JS
+    // (fechado ⇒ assenta o lift na hora; nada de barra "levantada" sem teclado).
+    if final { scheduleKeyboardSync("attach-closed", after: 0.05) }
+    releaseForAttach()
     guard attachRestorePending else { return }
     let info: [AnyHashable: Any] = n.userInfo ?? [:]
     let action: String = (info["action"] as? String) ?? ""

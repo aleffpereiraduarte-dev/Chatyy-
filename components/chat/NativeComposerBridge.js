@@ -22,8 +22,8 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, processColor } from 'react-native';
 import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
-import { threadKbNoteComposerBlur } from '../../utils/threadKeyboard'; // [2026-10-19 kb-heal]
-import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi, androidAttachInstantOn } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
+import { threadKbNoteComposerBlur, threadKbNoteComposerFocus } from '../../utils/threadKeyboard'; // [2026-10-19 kb-heal] · [2026-10-19 attach-hold]
+import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi, androidAttachInstantOn, attachLegacyNoneActive, attachHoldOn } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
 
 let _failed = false;
 
@@ -62,9 +62,16 @@ function _motionOff() {
 // restoreGuard só vai quando desligado (api >= 6 nasce ligado).
 function _attachInstantProps() {
   const o = {};
+  const api = nativeComposerApi();
   if (!attachInstantOn()) o.attachInstant = false;
-  else o.attachRestore = attachRestoreMode();
-  if (!kbRestoreGuardOn() && nativeComposerApi() >= 6) o.restoreGuard = false;
+  // [2026-10-19 attach-hold] api 5/6: 'none' = sem devolução nativa do foco
+  // (attachInstant=false); a conversa abre a folha na hora mesmo assim.
+  else if (attachLegacyNoneActive()) o.attachInstant = false;
+  else {
+    o.attachRestore = attachRestoreMode();
+    if (api >= 8 && attachHoldOn()) o.attachDeferResign = true; // [2026-10-19 attach-hold]
+  }
+  if (!kbRestoreGuardOn() && api >= 6) o.restoreGuard = false;
   return o;
 }
 // [2026-10-19 android-parity] Android: props só quando desligadas (api 5 =
@@ -205,6 +212,15 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
   useImperativeHandle(ref, () => ({
     focus: () => { try { nativeRef.current?.focus?.()?.catch?.(() => {}); } catch {} },
     blur: () => { try { nativeRef.current?.blur?.()?.catch?.(() => {}); } catch {} },
+    // [2026-10-19 attach-hold] iOS api >= 8: solta o teclado adiado pelo "+".
+    releaseForAttach: () => {
+      try {
+        const f = nativeRef.current?.releaseForAttach;
+        if (typeof f !== 'function') return false;
+        f.call(nativeRef.current)?.catch?.(() => {});
+        return true;
+      } catch { return false; }
+    },
     isFocused: () => focusedRef.current,
     clear: () => {
       lastNativeText.current = '';
@@ -323,6 +339,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
     focusedRef.current = f;
     try { (f ? cbRef.current.onFocus : cbRef.current.onBlur)?.(); } catch {}
     if (!f) { try { threadKbNoteComposerBlur(); } catch {} } // [2026-10-19 kb-heal] sem foco + sem teclado ⇒ lift 0
+    else { try { threadKbNoteComposerFocus(); } catch {} } // [2026-10-19 attach-hold] foco real solta a trava
   }, []);
   const _onVoiceRecorded = useCallback((e) => {
     const d = voicePayloadToAudioData(e?.nativeEvent || {});

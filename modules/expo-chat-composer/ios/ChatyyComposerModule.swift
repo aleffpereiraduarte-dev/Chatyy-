@@ -165,8 +165,12 @@ public class ChatyyComposerModule: Module {
     //     abre mais o teclado sozinho; attachRestore padrão "did".
     // 7 = [2026-10-19 attach-none] attachRestore "none" (padrão): fechar a
     //     folha do "+" deixa o teclado fechado.
+    // 8 = [2026-10-19 attach-hold] prop attachDeferResign + releaseForAttach():
+    //     "+" com o teclado aberto manda onAttach{deferred:true} e só solta o
+    //     teclado quando o JS armou o hold da conversa (rede 350 ms) — conversa
+    //     parada enquanto a folha sobe; sync "attach-closed" ao fechar a folha.
     Function("apiVersion") { () -> Int in
-      return 7
+      return 8
     }
 
     View(ChatyyComposerView.self) {
@@ -206,6 +210,7 @@ public class ChatyyComposerModule: Module {
       Prop("attachInstant") { (view: ChatyyComposerView, v: Bool?) in view.attachInstant = v ?? true } // [2026-10-19 attach-instant]
       Prop("attachRestore") { (view: ChatyyComposerView, v: String?) in view.attachRestore = v ?? "did" } // [2026-10-19 attach-instant] · [2026-10-19 kb-restore] padrão "did"
       Prop("restoreGuard") { (view: ChatyyComposerView, v: Bool?) in view.restoreGuard = v ?? true } // [2026-10-19 kb-restore]
+      Prop("attachDeferResign") { (view: ChatyyComposerView, v: Bool?) in view.attachDeferResign = v ?? false } // [2026-10-19 attach-hold]
 
       OnViewDidUpdateProps { (view: ChatyyComposerView) in
         view.didUpdateProps()
@@ -217,6 +222,11 @@ public class ChatyyComposerModule: Module {
 
       AsyncFunction("blur") { (view: ChatyyComposerView) in
         view.blurInput()
+      }.runOnQueue(.main)
+
+      // [2026-10-19 attach-hold] solta o teclado adiado pelo "+" (api 8).
+      AsyncFunction("releaseForAttach") { (view: ChatyyComposerView) in
+        view.releaseForAttach()
       }.runOnQueue(.main)
 
       AsyncFunction("setText") { (view: ChatyyComposerView, text: String) in
