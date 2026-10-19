@@ -439,15 +439,19 @@ class ChatyyPerfModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("ChatyyPerf")
-    Events("onPerfWindow")
+    Events("onPerfWindow", "onMemoryTrim")
 
     OnCreate {
       ctx?.let { c -> try { ChatyyPerfCore.init(c) } catch (_: Throwable) {} }
       ChatyyPerfCore.emit = { body -> try { sendEvent("onPerfWindow", body) } catch (_: Throwable) {} }
+      // [2026-10-19 perf-android] onTrimMemory → Glide + JS (independe do start/telemetria)
+      ctx?.let { c -> try { ChatyyMemTrim.bind(c) } catch (_: Throwable) {} }
+      ChatyyMemTrim.emit = { level -> try { sendEvent("onMemoryTrim", mapOf("level" to level)) } catch (_: Throwable) {} }
     }
 
     OnDestroy {
       ChatyyPerfCore.emit = null
+      ChatyyMemTrim.emit = null
     }
 
     OnActivityEntersForeground {
@@ -459,7 +463,8 @@ class ChatyyPerfModule : Module() {
     }
 
     // 1 = quadros/memória/prev/saídas (2026-10-18)
-    Function("apiVersion") { 1 }
+    // 2 = evento onMemoryTrim {level} + Glide clearMemory/MemoryCategory.LOW (2026-10-19)
+    Function("apiVersion") { 2 }
 
     Function("start") { opts: Map<String, Any?> ->
       val c = ctx

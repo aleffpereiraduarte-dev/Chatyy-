@@ -622,7 +622,7 @@ test('corrupção na leitura do boot (malformed) → apaga .db, boot pelo AsyncS
 
 test('trava de crash: 3 boots seguidos sem sobreviver 30 s → desliga local; kv_sqlite_reset remoto religa', async () => {
   seed();
-  setMeta({ bucket: '1', boot_inflight: '3' });
+  setMeta({ bucket: '1', boot_inflight: '3', guard_v: '2' });
   let { mmkv } = freshLaunch(); await mmkv.waitForCacheReady();
   assert.strictEqual(mmkv.getKvDecision().why, 'crash_guard');
   assert.strictEqual(getMeta().local_off, 'crash:3');
@@ -635,6 +635,22 @@ test('trava de crash: 3 boots seguidos sem sobreviver 30 s → desliga local; kv
   // boot que sobrevive limpa o contador
   await mmkv.waitForCacheReady(); await settle(50);
   assert.strictEqual(getMeta().boot_inflight, undefined);
+});
+
+test('trava v2: trava v1 (boots em 2º plano) é solta 1× por aparelho; boot em 2º plano não conta', async () => {
+  seed();
+  setMeta({ bucket: '1', local_off: 'crash:3' });
+  let { mmkv } = freshLaunch(); await mmkv.waitForCacheReady();
+  assert.strictEqual(mmkv.getKvDecision().why, 'cohort');
+  assert.strictEqual(getMeta().guard_v, '2');
+  setMeta({ bucket: '1', guard_v: '2' });
+  const rn = require(path.join(mockDir, 'react-native.js'));
+  rn.AppState.currentState = 'background';
+  try {
+    for (let i = 0; i < 4; i++) { ({ mmkv } = freshLaunch()); await mmkv.waitForCacheReady(); }
+    assert.notStrictEqual(mmkv.getKvDecision().why, 'crash_guard');
+    assert.strictEqual(getMeta().boot_inflight, undefined);
+  } finally { rn.AppState.currentState = 'active'; }
 });
 
 test('dados grandes (Android): 400 conversas + blobs de 1.4 MB migram íntegros; boot SQLite só hidrata o ansioso', async () => {

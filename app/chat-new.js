@@ -43,6 +43,7 @@ import { nativeGroupCreateEnabled, markNativeGroupCreateFailed, setGroupDraft, G
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import { sortByText } from '../utils/fastCollate'; // [2026-10-19 perf-android]
 
 // Megaphone SVG for broadcast list rows — UI rule bans emoji glyphs, so
 // this draws the icon inline via react-native-svg. Matches the stroke
@@ -974,13 +975,9 @@ export default function ChatNewScreen() {
         }
       }
     }
-    const arr = Array.from(merged.values());
-    arr.sort((a, b) => {
-      if (a.hasRecentChat && !b.hasRecentChat) return -1;
-      if (!a.hasRecentChat && b.hasRecentChat) return 1;
-      return (a.name || a.email || '').localeCompare(b.name || b.email || '');
-    });
-    return arr;
+    // [2026-10-19 perf-android] localeCompare por par = Collator via JNI a cada
+    // chamada no Hermes Android (quadro máx. 2 s no /chat-new) → chave 1× por item.
+    return sortByText(Array.from(merged.values()), (u) => u.name || u.email || '', undefined, (u) => !!u.hasRecentChat);
   }, [recentContacts, phoneContacts, directoryUsers, pickMode]);
 
   // Build sections - MUST be declared before handleAlphabetPress
@@ -1030,11 +1027,7 @@ export default function ChatNewScreen() {
     // A-Z sub-sections so the AlphabetSidebar can jump precisely to a letter.
     if (phoneContacts.length > 0) {
       // Sort A-Z by name (or email username when name missing)
-      const sorted = [...phoneContacts].sort((a, b) => {
-        const an = (a.name || a.email || '').toLowerCase();
-        const bn = (b.name || b.email || '').toLowerCase();
-        return an.localeCompare(bn);
-      });
+      const sorted = sortByText(phoneContacts, (c) => String(c.name || c.email || '').toLowerCase());
       // First section keeps the "Contacts on Chatyy (N)" hero header +
       // the pinned "Message yourself" row + every contact whose first
       // letter is non-alphabetic (numbers/emojis etc.). This way the
@@ -1077,9 +1070,13 @@ export default function ChatNewScreen() {
     if (suggestionsSection && phoneContacts.length > 0) sections.push(suggestionsSection);
     // Then show the broader directory under a separate header so users can
     // still browse Chatyy beyond their own phone book.
-    const directoryRest = phoneContacts.length > 0
-      ? allChatyyUsers.filter(u => !phoneContacts.some(p => (p.email || '').toLowerCase() === (u.email || '').toLowerCase()))
-      : allChatyyUsers;
+    // [2026-10-19 perf-android] Set em vez de phoneContacts.some() por usuário (O(N×M)).
+    let directoryRest = allChatyyUsers;
+    if (phoneContacts.length > 0) {
+      const phoneEmails = new Set();
+      for (const p of phoneContacts) { const e = String(p.email || '').toLowerCase(); if (e) phoneEmails.add(e); }
+      directoryRest = allChatyyUsers.filter(u => !phoneEmails.has(String(u.email || '').toLowerCase()));
+    }
     if (directoryRest.length > 0) {
       sections.push({
         key: 'chatyy',
@@ -1908,6 +1905,7 @@ export default function ChatNewScreen() {
     () => (onlyChatyy ? sections.filter(sec => String(sec.key).startsWith('phone_chatyy')) : sections),
     [onlyChatyy, sections]
   );
+  const _rowCacheRef = useRef({ sections: null, map: new WeakMap() });
   const _nativeNewList = useMemo(() => {
     if (!_useNativeContacts) return { rows: [], meta: new Map() };
     const titleColor = isDark ? '#F5F5F7' : '#111111';
@@ -1936,6 +1934,29 @@ export default function ChatNewScreen() {
       community: { gl: 'community', t: t('groupNew.newCommunity') || 'Nova comunidade' },
       channel: { gl: 'megaphone', t: t('chat.newChannel') || 'Novo canal' },
     };
+    // [2026-10-19 perf-android] Marcar/desmarcar um contato (grupo) ou o
+    // spinner de convite refazia TODAS as linhas (tile, "visto por último"…)
+    // → cache por item; só a linha cujo estado (check/convite) mudou é refeita.
+    // Cache zera quando a lista/tema/idioma/modo mudam.
+    const rc = _rowCacheRef.current;
+    if (rc.sections !== _nativeSections || rc.t !== t || rc.dark !== isDark || rc.glyph !== glyphBg || rc.mode !== mode) {
+      _rowCacheRef.current = { sections: _nativeSections, t, dark: isDark, glyph: glyphBg, mode, map: new WeakMap() };
+    }
+    const _rcMap = _rowCacheRef.current.map;
+    const _selState = (item) => {
+      if (!item || item._isSearchHeader || item._ngcShortcut || item._isPhoneInvite || item._isMessageYourself || item._isInvitePlaceholder) return 0;
+      if (item.isRegistered !== true) return (invitingEmail != null && invitingEmail === item.email) ? 3 : 0;
+      return picking && item.email ? (selectedSet.has(item.email) ? 2 : 1) : 0;
+    };
+    const _cachedRow = (fn) => (item, sec, ii) => {
+      if (!item || typeof item !== 'object') return fn(item, sec, ii);
+      const st = _selState(item);
+      const hit = _rcMap.get(item);
+      if (hit && hit.st === st) return hit.r;
+      const r = fn(item, sec, ii);
+      _rcMap.set(item, { st, r });
+      return r;
+    };
     return buildFlatRows(
       _ngcTop.length ? [..._ngcTop, ..._nativeSections] : _nativeSections,
       (sec) => (sec._ngcNoHeader ? null : sec._letterBucket ? {
@@ -1946,7 +1967,7 @@ export default function ChatNewScreen() {
         t: String(sec.title || ''), sbg: isDark ? '#111' : '#f8f8fa', sfg: titleColor,
         up: true, fs: 12, fw: 700, ls: 0.8, pt: 8, pb: 8, ph: Spacing.md,
       }),
-      (item) => {
+      _cachedRow((item) => {
         if (!item || item._isSearchHeader) return null;
         if (item._ngcShortcut) {
           const sc = _ngcShort[item._ngcShortcut];
@@ -1998,7 +2019,7 @@ export default function ChatNewScreen() {
           on: !!item.online,
           ck: picking && item.email ? (selectedSet.has(item.email) ? 2 : 1) : 0,
         } };
-      },
+      }),
     );
   }, [_useNativeContacts, _nativeSections, isDark, colors.onPrimary, t, mode, selectedMembers, invitingEmail, _ngc, onlyChatyy, recentContacts]);
   const _nativeContactColors = useMemo(() => ({

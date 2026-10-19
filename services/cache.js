@@ -42,6 +42,18 @@ function _memSet(key, data) {
   _memCache.set(key, data);
 }
 
+// [2026-10-19 perf-android] pressão de memória (services/memoryPressure) → mantém só os `keep` mais recentes
+export function trimMemCache(keep = 0) {
+  try {
+    const k = Math.max(0, keep | 0);
+    for (const key of Array.from(_memCache.keys())) {
+      if (_memCache.size <= k) break;
+      _memCache.delete(key);
+    }
+  } catch {}
+  return _memCache.size;
+}
+
 /**
  * Set the current user for cache isolation.
  * Must be called after login/account switch BEFORE any cache reads.

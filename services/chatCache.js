@@ -113,6 +113,7 @@ function _kvSet(key, value) {
   // blob loaded saw [] and would overwrite the whole stored history with just
   // the new rows → load it first, merge (new rows win), then write.
   if (typeof key === 'string' && key.startsWith('chat_msgs_') && isKeyPending(key)) {
+    _hotPinned.add(key);
     ensureLoaded(key).then(() => {
       let merged = value;
       try {
@@ -121,12 +122,13 @@ function _kvSet(key, value) {
         if (Array.isArray(persisted) && Array.isArray(incoming) && persisted.length) {
           let arr = mergeMessages(persisted, incoming);
           if (arr.length > MAX_CACHED_MESSAGES) arr = arr.slice(-MAX_CACHED_MESSAGES);
-          _hotCache.set(key, arr);
+          _hotSet(key, arr);
           merged = JSON.stringify(arr);
         }
       } catch {}
       setString(key, merged);
-    }).catch(() => { try { setString(key, value); } catch {} });
+      _hotPinned.delete(key);
+    }).catch(() => { try { setString(key, value); } catch {} _hotPinned.delete(key); });
     return;
   }
   setString(key, value);
@@ -157,6 +159,29 @@ function _kvGetAllKeys() {
 const _hotCache = new Map(); // key → array of messages
 const _pendingWrites = new Map(); // key → timeout handle
 const HOT_WRITE_DEBOUNCE_MS = 500;
+// [2026-10-19 perf-android] Sem teto, cada conversa aberta na sessão ficava
+// parseada aqui (até MAX_CACHED_MESSAGES objetos) — pico Android p50 ~470 MB.
+// LRU por conversa: passa de HOT_MAX → solta as mais antigas (a cópia em KV/
+// SQLite continua; a próxima leitura reparseia). Nunca solta chave com escrita
+// adiada pendente (o flush lê daqui). trimHotCache(n) = pressão de memória.
+const HOT_MAX = 16;
+const _hotPinned = new Set(); // escrita KV assíncrona em voo (blob lazy) → não solta
+function _hotSet(key, val) {
+  if (_hotCache.has(key)) _hotCache.delete(key);
+  _hotCache.set(key, val);
+  if (_hotCache.size > HOT_MAX) _hotEvict(HOT_MAX, key);
+}
+function _hotEvict(max, keepKey) {
+  for (const k of Array.from(_hotCache.keys())) {
+    if (_hotCache.size <= max) break;
+    if (k === keepKey || _pendingWrites.has(k) || _hotPinned.has(k)) continue;
+    _hotCache.delete(k);
+  }
+}
+export function trimHotCache(keep = 3) {
+  try { _hotEvict(Math.max(0, keep | 0)); } catch {}
+  return _hotCache.size;
+}
 
 function _readMessages(key) {
   const hot = _hotCache.get(key);
@@ -167,7 +192,7 @@ function _readMessages(key) {
     // the next read after the async load returns the real history.
     if (!raw && !_mmkvAvailable && isKeyPending(key)) return [];
     const parsed = raw ? JSON.parse(raw) : [];
-    _hotCache.set(key, parsed);
+    _hotSet(key, parsed);
     return parsed;
   } catch { return []; }
 }
@@ -175,7 +200,7 @@ function _readMessages(key) {
 function _writeMessages(key, msgs) {
   // Trim + store in hot cache immediately so subsequent reads see the update.
   const trimmed = msgs.length > MAX_CACHED_MESSAGES ? msgs.slice(-MAX_CACHED_MESSAGES) : msgs;
-  _hotCache.set(key, trimmed);
+  _hotSet(key, trimmed);
   // Debounce MMKV write so a burst of N messages in the same conversation
   // collapses into a single serialization + write. The prior pattern wrote
   // on every cacheSingleMessage — ~20 writes/sec in active group chats.
@@ -745,7 +770,7 @@ export async function savePendingMessage(conversationId, message) {
     // only worthwhile for incoming bursts; user-typed outgoing must be durable
     // before we hand control back to the caller.
     const trimmed = filtered.length > MAX_CACHED_MESSAGES ? filtered.slice(-MAX_CACHED_MESSAGES) : filtered;
-    _hotCache.set(key, trimmed);
+    _hotSet(key, trimmed);
     const prev = _pendingWrites.get(key);
     if (prev) { clearTimeout(prev); _pendingWrites.delete(key); }
     try { _kvSet(key, JSON.stringify(trimmed)); } catch {}
@@ -858,7 +883,7 @@ export async function clearPendingMessages(conversationId, opts = null) {
     } catch {}
   }
   if (_keepPending.length) {
-    try { _hotCache.set(key, _keepPending); _kvSet(key, JSON.stringify(_keepPending)); } catch {}
+    try { _hotSet(key, _keepPending); _kvSet(key, JSON.stringify(_keepPending)); } catch {}
   }
 }
 

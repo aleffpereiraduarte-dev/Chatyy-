@@ -29,12 +29,20 @@ const PERF_STALL_MS = 400;
 const PERF_START_DELAY_MS = 8000;
 const SNAP_MS = 5000;
 const PREV_MAX_AGE_MS = 30 * 60 * 1000;
+// [2026-10-19 perf-android] Atraso > 60 s com AppState 'active' = processo
+// suspenso/congelado (Doze, freezer de apps em cache, tela desligada sem
+// onPause) — não é JS travado (uma trava real dessas vira prev_end). Em campo
+// saiu js "stall" de 931 s em 2º plano. Idem quando o relógio monotônico
+// (performance.now, não anda em sono profundo) andou bem menos que o de parede.
+const SUSPEND_MS = 60000;
 
 let _started = false;
 let _route = '';
 let _lastTouch = 0;
 let _appState = 'active';
 let _lastTick = 0;
+let _lastMono = 0;
+let _suspends = 0;
 let _lastSnap = 0;
 let _stalls = 0;
 let _maxStall = 0;
@@ -81,7 +89,7 @@ function _snap(now) {
   const o = {
     t: now, as: _appState, r: _route, m: m.slice(0, 4).join(','), n: m.length,
     tap: _lastTouch ? Math.round((now - _lastTouch) / 1000) : -1,
-    st: _stalls, mx: _maxStall, s4: _stalls4, up: Math.round((now - _bootAt) / 1000),
+    st: _stalls, mx: _maxStall, s4: _stalls4, sp: _suspends, up: Math.round((now - _bootAt) / 1000),
   };
   try { AS.setItem(KEY, JSON.stringify(o)).catch(() => {}); } catch {}
 }
@@ -105,11 +113,21 @@ function _reportPrev(raw) {
   _report('prev_end', `as=${o.as} gap=${Math.round(age / 1000)}s r=${o.r || '-'} n=${o.n || 0} m=${o.m || '-'} tap=${o.tap} st=${o.st || 0} mx=${o.mx || 0} up=${o.up || 0}`);
 }
 
+function _mono() {
+  try { return (typeof performance !== 'undefined' && typeof performance.now === 'function') ? performance.now() : 0; } catch { return 0; }
+}
+
 function _tick() {
   const now = Date.now();
   const late = _lastTick ? now - _lastTick - _tickMs : 0;
   _lastTick = now;
+  const mono = _mono();
+  const monoLate = (_lastMono && mono) ? mono - _lastMono - _tickMs : late;
+  _lastMono = mono;
   if (_appState !== 'active') return;
+  // evento de AppState perdido/atrasado → confia no estado atual
+  try { const cs = AppState.currentState; if (cs && cs !== 'active' && cs !== 'unknown') { _appState = cs; return; } } catch {}
+  if (late > SUSPEND_MS || (late >= PERF_STALL_MS && monoLate < late / 2)) { _suspends += 1; return; }
   if (late >= PERF_STALL_MS) {
     _stalls4 += 1;
     try { _perf()?.notePerfStall?.(late, _route); } catch {}
@@ -145,6 +163,7 @@ export function startFreezeWatch() {
     AppState.addEventListener('change', (s) => {
       _appState = s;
       _lastTick = 0; // 2º plano congela timers → não é stall
+      _lastMono = 0;
       _snap(Date.now());
     });
   } catch {}

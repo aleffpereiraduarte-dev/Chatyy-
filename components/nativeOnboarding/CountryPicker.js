@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COUNTRIES, countryDisplayName } from '../../constants/countries';
 import { IconX, IconCheck, IconSearch } from '../Icons';
 import FlagIcon from './FlagIcon';
+import { foldText, sortByText } from '../../utils/fastCollate';
 // [2026-10-18 onboarding-native-picker] Lista em NATIVO (ChatyyResultList:
 // UICollectionView / RecyclerView, destaque do termo sem acento) dentro da
 // MESMA folha (pageSheet iOS). Seletor ÚNICO: app/signup-phone.js também usa
@@ -29,8 +30,9 @@ export function onboardingNativePickerOn() {
 
 const ROW_H = 56;
 
+// [2026-10-19 perf-android] sem String#normalize (JNI por chamada no Hermes Android)
 function _norm(s) {
-  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  return foldText(s).trim();
 }
 
 export default function CountryPicker({ visible, onClose, onSelect, selected, suggested = [], colors, t, language, isDark }) {
@@ -38,8 +40,16 @@ export default function CountryPicker({ visible, onClose, onSelect, selected, su
   const [q, setQ] = useState('');
   const inputRef = useRef(null);
   useEffect(() => { if (!visible) setQ(''); }, [visible]);
+  // [2026-10-19 perf-android] A folha fica montada (visible=false) desde a 1ª
+  // tela do cadastro: montar a lista de ~250 países (nome localizado + chave de
+  // busca + ordenação com localeCompare = Collator via JNI A CADA par no Hermes
+  // Android) rodava no boot do /login — js_stall 2,5–9,8 s no 1º boot. Agora só
+  // na 1ª abertura (e fica pronta depois), ordenação por chave dobrada.
+  const [armed, setArmed] = useState(!!visible);
+  useEffect(() => { if (visible && !armed) setArmed(true); }, [visible, armed]);
 
   const all = useMemo(() => {
+    if (!armed && !visible) return [];
     const loc = language || 'pt-BR';
     const seen = new Set();
     const list = [];
@@ -49,9 +59,9 @@ export default function CountryPicker({ visible, onClose, onSelect, selected, su
       const label = countryDisplayName(c, loc, t);
       list.push({ ...c, label, _k: `${_norm(label)} ${_norm(c.name)} ${c.code.toLowerCase()} ${c.dial} ${c.dial.replace('+', '')}` });
     }
-    try { list.sort((a, b) => a.label.localeCompare(b.label, loc)); } catch { list.sort((a, b) => (a.label > b.label ? 1 : -1)); }
+    try { return sortByText(list, (c) => c.label, loc); } catch { list.sort((a, b) => (a.label > b.label ? 1 : -1)); }
     return list;
-  }, [language, t]);
+  }, [language, t, armed, visible]);
 
   const data = useMemo(() => {
     const nq = _norm(q).replace(/^\+/, '');

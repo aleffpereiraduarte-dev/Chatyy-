@@ -1,6 +1,8 @@
 package expo.modules.chatyywallpaper
 
+import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapShader
@@ -132,6 +134,7 @@ class ChatyyWallpaperView(context: Context, appContext: AppContext) :
     isFocusable = false
     importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
     dimPaint.color = Color.BLACK
+    ensureTrimHook(context)
   }
 
   // ── props ────────────────────────────────────────────────────────────────
@@ -438,6 +441,31 @@ class ChatyyWallpaperView(context: Context, appContext: AppContext) :
     }
     private val imageCache = object : LruCache<String, Bitmap>(28 * 1024 * 1024) {
       override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
+
+    // [2026-10-19 perf-android] 44 MB de bitmaps ignoravam onTrimMemory (pico
+    // Android p50 ~470 MB). Solta tudo ao sair da tela (UI_HIDDEN+) e metade sob
+    // pressão em 1º plano. Views visíveis seguram a própria referência (shader).
+    @Volatile private var trimHooked = false
+    private fun ensureTrimHook(ctx: Context) {
+      if (trimHooked) return
+      trimHooked = true
+      try {
+        ctx.applicationContext.registerComponentCallbacks(object : ComponentCallbacks2 {
+          override fun onTrimMemory(level: Int) {
+            try {
+              if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+                tileCache.evictAll(); imageCache.evictAll()
+              } else if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+                tileCache.trimToSize(tileCache.maxSize() / 2); imageCache.trimToSize(imageCache.maxSize() / 2)
+              }
+            } catch (_: Throwable) {}
+          }
+          override fun onConfigurationChanged(newConfig: Configuration) {}
+          @Deprecated("Deprecated in Java")
+          override fun onLowMemory() { try { tileCache.evictAll(); imageCache.evictAll() } catch (_: Throwable) {} }
+        })
+      } catch (_: Throwable) { trimHooked = false }
     }
 
     private val BASE = floatArrayOf(

@@ -44,7 +44,7 @@
 //      aparelho, flag remota via bootstrap config (kv_sqlite=false kill,
 //      kv_sqlite_pct, kv_sqlite_reset), trava de crash, migração do zero,
 //      kill/falha apagam o marcador na hora, telemetria nativeBeacon('kv_store').
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import { MMKV_LAZY_IOS, KV_SQLITE_ENABLED, KV_SQLITE_ROLLOUT_PCT, KV_SQLITE_KILL } from '../constants/featureFlags';
 
 const PFX = 'mmkv_';
@@ -211,18 +211,38 @@ function _kvPrepare() {
     bucket = Math.floor(Math.random() * 100);
     _metaSet('bucket', bucket);
   }
+  // [2026-10-19 perf-android] Trava v2: a v1 contava boot em 2º plano (VoIP/
+  // push acorda o app e o SO suspende antes dos 30 s) como "crash" → 17 boots
+  // de 1 iPhone presos em AsyncStorage. Uma vez por aparelho, solta a trava v1
+  // (crash de verdade volta a travar em 3 boots em 1º plano).
+  if (_metaGet('guard_v') !== '2') {
+    if (_metaGet('local_off')) { _metaSet('local_off', null); _kvTele('crash_guard_v2_reset', ''); }
+    _metaSet('boot_inflight', null);
+    _metaSet('guard_v', '2');
+  }
   const meta = { bucket, remote_kill: _metaGet('remote_kill'), remote_pct: _metaGet('remote_pct'), local_off: _metaGet('local_off') };
   let d = _kvDecide(meta, { override: ov });
   if (d.on && ov === undefined) {
-    // trava de crash: n boots seguidos com KV sem sobreviver 30 s → desliga local
+    // trava de crash: n boots seguidos EM 1º PLANO com KV sem sobreviver 30 s
+    // (nem chegar ao 2º plano) → desliga local
+    let fg = true;
+    try { if (AppState.currentState === 'background') fg = false; } catch {}
     const n = parseInt(_metaGet('boot_inflight') || '0', 10) || 0;
     if (n >= KV_CRASH_LIMIT) {
       _metaSet('local_off', 'crash:' + n);
       _metaSet('boot_inflight', null);
       _kvTele('crash_guard', `boots=${n}`);
       d = { ...d, on: false, why: 'crash_guard', src: 'local' };
-    } else {
+    } else if (fg) {
       _metaSet('boot_inflight', n + 1);
+      // chegou ao 2º plano vivo = não foi crash de boot
+      try {
+        const sub = AppState.addEventListener('change', (st) => {
+          if (st !== 'background') return;
+          _metaSet('boot_inflight', null);
+          try { sub?.remove?.(); } catch {}
+        });
+      } catch {}
     }
   }
   if (!d.on) {

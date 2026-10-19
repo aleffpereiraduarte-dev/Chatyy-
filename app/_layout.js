@@ -232,8 +232,23 @@ function _registerLiveKitGlobals() {
 // registration ORDER is unchanged: this opts-registration always runs before
 // the screen's own registerGlobals(), exactly as when it ran at boot.
 try { if (typeof globalThis !== 'undefined') globalThis.__chatyyEnsureLiveKitGlobals = _registerLiveKitGlobals; } catch {}
+// [2026-10-19 perf-android] Deslogado (/login, 58 de 70 boots Android) não há
+// chamada possível: o require do LiveKit/WebRTC (~200 ms) ia p/ a janela do
+// 1º boot do /login (js_stall 2,5–9,8 s). Sem token → reconfere a cada 5 s e
+// registra ~1,2 s após haver sessão. Caminhos de chamada continuam chamando
+// __chatyyEnsureLiveKitGlobals() síncrono antes (ordem inalterada).
+function _hasSessionToken() {
+  try { return !!require('../services/api').getToken?.(); } catch { return true; }
+}
+function _whenSignedIn(fn, ms) {
+  const go = () => {
+    if (_hasSessionToken()) { setTimeout(fn, ms); return; }
+    setTimeout(go, 5000);
+  };
+  go();
+}
 if (Platform.OS !== 'web' && typeof setTimeout === 'function') {
-  afterFirstPaint(_registerLiveKitGlobals, 1200);
+  afterFirstPaint(() => _whenSignedIn(_registerLiveKitGlobals, 1200), 1200);
 }
 
 // Web has no native Animated module — force useNativeDriver:false globally
@@ -554,9 +569,21 @@ let _lateReady = (() => { try { return globalThis.__chatyy_late_overlays === fal
 const _lateSubs = new Set();
 if (!_lateReady) {
   afterFirstPaint(() => {
-    _lateReady = true;
-    for (const fn of Array.from(_lateSubs)) { try { fn(); } catch {} }
+    // [2026-10-19 perf-android] Liberava os 17 overlays no MESMO tick (require
+    // + montagem de todos = 1 tarefa longa logo após a 1ª pintura). Agora 1 por
+    // fatia de 32 ms; quem montar depois já nasce pronto (_lateReady).
+    const subs = Array.from(_lateSubs);
     _lateSubs.clear();
+    const step = () => {
+      const fn = subs.shift();
+      if (fn) { try { fn(); } catch {} }
+      if (subs.length) { setTimeout(step, 32); return; }
+      _lateReady = true;
+      // montou durante a escada → avisa agora
+      for (const f of Array.from(_lateSubs)) { try { f(); } catch {} }
+      _lateSubs.clear();
+    };
+    step();
   }, 0);
 }
 const _lateCache = {};
@@ -684,6 +711,8 @@ if (Platform.OS !== 'web' && typeof setTimeout === 'function') {
   // its first line while NATIVE_CORE_ENABLED is false and the test allowlist
   // is empty (default) — nothing else runs.
   afterFirstPaint(() => { try { require('../services/nativeCore').init(); } catch {} }, 4000);
+  // [2026-10-19 perf-android] onTrimMemory (ChatyyPerf api ≥ 2) / memoryWarning iOS → limpa caches de imagem/JS.
+  afterFirstPaint(() => { try { require('../services/memoryPressure').startMemoryPressure(); } catch {} }, 5000);
 }
 // [2026-10-09 open-instant] Foreground catch-up (AppState 'active' → one
 // immediate chat_sync for push-touched/unread conversations, outside the
