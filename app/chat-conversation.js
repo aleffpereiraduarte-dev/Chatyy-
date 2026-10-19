@@ -26265,7 +26265,6 @@ function ChatConversationInner() {
           try { if (r?.data) _ic?.ingestProfile?.(peer, r.data); } catch {}
         })
         .catch(() => {});
-      try { _ic?.prefetchConversationInfo && require('../services/avatarCache').revalidateAvatar(require('../services/avatar').buildAvatarUrl(peer)); } catch {}
     }
     // Últimas fotos p/ a faixa de miniaturas de "Mídia, links e docs".
     _sharedOrGallery('image', 6) // [busca-conversa 2026-10-16]
@@ -26297,19 +26296,27 @@ function ChatConversationInner() {
     try { ic = require('../services/infoCache'); } catch { return undefined; }
     if (!ic.infoCacheEnabled()) return undefined;
     const same = (a, b) => { try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; } };
-    const apply = () => {
+    const _idSig = (o) => (o ? ['email', 'name', 'bio', 'phone', 'username', 'avatar_version'].map((k) => String(o[k] == null ? '' : o[k])).join('\u0001').toLowerCase() : '');
+    // fresh=false (abrir): só preenche o que está vazio; fresh=true (pré-busca voltou): troca se mudou.
+    const apply = (fresh) => {
       try {
         if (_icPeer) {
           const c = ic.getContactInfo(_icPeer);
-          if (c && c.identity && c.identity.email) setContactIdentity((p) => (p && (same(p, c.identity) || String(p.email || '').toLowerCase() === _icPeer && p.phone !== undefined && Object.keys(p).length > Object.keys(c.identity).length) ? p : c.identity));
-          if (c && Array.isArray(c.groups)) setContactCommonGroups((p) => (same(p, c.groups) || (p && p.length && !c.groups.length) ? p : c.groups));
+          if (c && c.identity && c.identity.email) {
+            setContactIdentity((p) => {
+              const mine = p && String(p.email || '').toLowerCase() === _icPeer;
+              if (mine && (!fresh || _idSig(p) === _idSig(c.identity))) return p;
+              return c.identity;
+            });
+          }
+          if (c && Array.isArray(c.groups)) setContactCommonGroups((p) => (same(p, c.groups) || (!fresh && p && p.length) ? p : c.groups));
         }
         const ci = ic.getConvInfo(conversationId);
-        if (ci && Array.isArray(ci.thumbs) && ci.thumbs.length) setInfoMediaThumbs((p) => (p && p.length ? p : ci.thumbs));
+        if (ci && Array.isArray(ci.thumbs) && ci.thumbs.length) setInfoMediaThumbs((p) => (same(p, ci.thumbs) || (!fresh && p && p.length) ? p : ci.thumbs));
       } catch {}
     };
-    apply();
-    return ic.prefetchConversationInfo({ conversationId, type: conversationType, peer: _icPeer }, apply);
+    apply(false);
+    return ic.prefetchConversationInfo({ conversationId, type: conversationType, peer: _icPeer }, () => apply(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId, conversationType, _icPeer]);
   // [2026-10-10 contact-info] mesma faixa de miniaturas em "Dados do grupo".
