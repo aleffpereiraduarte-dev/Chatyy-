@@ -31,7 +31,7 @@ export function nativeTabsAvailable() {
   // cima do ícone, sem trocar imagem de UITabBarItem; checagem de visibilidade real).
   try {
     if (Platform.OS === 'ios' && globalThis.__chatyy_native_tabs !== true
-      && m && m.apiVersion && (Number(m.apiVersion()) >= 3 && Number(m.apiVersion()) <= 6)) return false;
+      && m && m.apiVersion && (Number(m.apiVersion()) >= 3 && Number(m.apiVersion()) <= 5)) return false;
   } catch {}
   try { return !!(m && m.isAvailable && m.isAvailable()); } catch { return false; }
 }
