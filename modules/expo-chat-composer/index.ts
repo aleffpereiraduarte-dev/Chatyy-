@@ -125,7 +125,7 @@ export function isAvailable(): boolean {
   return !!getNativeComposerView();
 }
 
-/** Versão do contrato nativo (0 = sem módulo). 2 = cartão de resposta iOS corrigido. 3 = voz pausar/continuar + prévia. 4 = onKeyboardSync + nativeTransitions (kb-native). */
+/** Versão do contrato nativo (0 = sem módulo). 2 = cartão de resposta iOS corrigido. 3 = voz pausar/continuar + prévia. 4 = onKeyboardSync + nativeTransitions (kb-native). 5 = iOS attach-instant (onAttach{hadKeyboard,instant} + attachInstant/attachRestore; teclado devolvido no nativo ao cancelar a folha do "+"). */
 let _api: number | null = null;
 export function apiVersion(): number {
   if (_api != null) return _api;

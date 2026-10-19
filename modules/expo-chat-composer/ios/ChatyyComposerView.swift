@@ -531,6 +531,20 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   //    composer "preso no meio da tela" com o teclado fechado se corrige.
   // Kill switch: prop nativeTransitions=false (JS: __chatyy_kb_native_transitions=false).
   var nativeTransitions = true
+  // [2026-10-19 attach-instant] "+" nível WhatsApp/Telegram: a folha abre NA
+  // HORA (o JS não espera mais o keyboardDidHide) e o teclado desce junto com
+  // ela; ao CANCELAR a folha (toque fora, arrastar, X) com o teclado aberto
+  // antes do "+", o próprio composer devolve o foco UMA vez, no nativo, quando
+  // a folha começa a descer (Notification ChatyyAttachSheetWillClose do
+  // expo-chat-attach) → teclado sobe enquanto a folha desce, sem ida-e-volta
+  // pelo JS (promessa → render → focus 30 ms depois = composer "pisca").
+  // Rede: no fim do dismiss (ChatyyAttachSheetDidClose) confere de novo.
+  // attachRestore "did" = só no fim do dismiss (ajuste OTA).
+  // Kill switch: prop attachInstant=false (JS: globalThis.__chatyy_attach_instant = false).
+  var attachInstant = true { didSet { if !attachInstant { attachRestorePending = false } } }
+  var attachRestore: String = "will"
+  private var attachRestorePending = false
+  private var attachRestoreAt: CFTimeInterval = 0
   private var kbNoteOverlap: CGFloat = 0
   private var kbSyncGen = 0
 
@@ -845,8 +859,15 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
 
   @objc private func plusTapped() {
     if focusGuard { attachGuard = true } // [2026-10-18 kb-resume]
-    if textView.isFirstResponder { withInternalFocus { _ = textView.resignFirstResponder() } }
-    onAttach()
+    let had = textView.isFirstResponder
+    // [2026-10-19 attach-instant] resign ANIMADO neste mesmo runloop, ANTES da
+    // folha existir: a apresentação não acha first responder p/ "guardar" e o
+    // teclado desce junto com a folha subindo.
+    attachRestorePending = attachInstant && had
+    attachRestoreAt = CACurrentMediaTime()
+    if had { withInternalFocus { _ = textView.resignFirstResponder() } }
+    let body: [String: Any] = ["hadKeyboard": had, "instant": attachInstant]
+    onAttach(body)
   }
 
   @objc private func emojiTapped() {
@@ -963,6 +984,41 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       self?.kbNoteOverlap = 0
       self?.scheduleKeyboardSync("didHide", after: 0)
     })
+    // [2026-10-19 attach-instant] folha do "+" (expo-chat-attach) fechando.
+    appObservers.append(nc.addObserver(forName: Notification.Name("ChatyyAttachSheetWillClose"), object: nil, queue: .main) { [weak self] n in
+      self?.attachSheetClosing(n, final: false)
+    })
+    appObservers.append(nc.addObserver(forName: Notification.Name("ChatyyAttachSheetDidClose"), object: nil, queue: .main) { [weak self] n in
+      self?.attachSheetClosing(n, final: true)
+    })
+  }
+
+  // MARK: Attach sheet (attach-instant)
+
+  private func attachSheetClosing(_ n: Notification, final: Bool) {
+    guard attachRestorePending else { return }
+    let info: [AnyHashable: Any] = n.userInfo ?? [:]
+    let action: String = (info["action"] as? String) ?? ""
+    let byUser: Bool = (info["user"] as? Bool) ?? false
+    // Só "cancelar" pelo usuário devolve o teclado (WhatsApp). Ação (Galeria,
+    // Câmera, Arquivo…), Enviar ou fechamento pelo JS (troca de tela) → fechado.
+    let restore = action == "cancel" && byUser
+    if !final {
+      if !restore { attachRestorePending = false; return }
+      if attachRestore != "did" { restoreFocusAfterAttach() }
+      return
+    }
+    attachRestorePending = false
+    guard restore else { return }
+    // modo "did" ou rede: a dispensa do UIKit derrubou o foco devolvido cedo.
+    if !textView.isFirstResponder { restoreFocusAfterAttach() }
+  }
+
+  private func restoreFocusAfterAttach() {
+    guard attachInstant, window != nil, !disabled, !appInactive, !voice.isActive else { return }
+    guard CACurrentMediaTime() - attachRestoreAt < 600 else { return }
+    guard !textView.isFirstResponder else { return }
+    withInternalFocus { _ = textView.becomeFirstResponder() }
   }
 
   private var inResumeWindow: Bool { appInactive || CACurrentMediaTime() < resumeUntil }

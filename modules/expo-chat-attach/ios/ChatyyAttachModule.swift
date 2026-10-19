@@ -31,8 +31,11 @@ public class ChatyyAttachModule: Module {
 
     // 2 = openVideoNote (gravador de vídeo-recado redondo) [2026-10-15 native-vnote]
     // 3 = câmera com statusModes (Texto · Normal · Boomerang) [2026-10-15 native-status-studio]
+    // 4 = [2026-10-19 attach-instant] folha posta ChatyyAttachSheetWillClose /
+    //     ChatyyAttachSheetDidClose {action, user} → o composer nativo devolve
+    //     o teclado sozinho ao cancelar (sem focus do JS).
     Function("apiVersion") { () -> Int in
-      return 3
+      return 4
     }
 
     Function("isVideoNoteSupported") { () -> Bool in

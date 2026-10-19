@@ -157,8 +157,11 @@ public class ChatyyComposerModule: Module {
     //     do fundo, ao reaparecer a tela, na janela e a cada did show/hide) +
     //     prop nativeTransitions (resign ANIMADO no viewWillDisappear = teclado
     //     acompanha o swipe-back / push, como o UIKit/WhatsApp).
+    // 5 = [2026-10-19 attach-instant] onAttach{hadKeyboard, instant} + props
+    //     attachInstant/attachRestore: "+" sem esperar o teclado descer e, ao
+    //     cancelar a folha nativa, foco devolvido no NATIVO (sem focus do JS).
     Function("apiVersion") { () -> Int in
-      return 4
+      return 5
     }
 
     View(ChatyyComposerView.self) {
@@ -195,6 +198,8 @@ public class ChatyyComposerModule: Module {
       Prop("motion") { (view: ChatyyComposerView, v: Bool?) in view.motion = v ?? true } // [2026-10-16 motion-composer]
       Prop("focusGuard") { (view: ChatyyComposerView, v: Bool?) in view.focusGuard = v ?? true } // [2026-10-18 kb-resume]
       Prop("nativeTransitions") { (view: ChatyyComposerView, v: Bool?) in view.nativeTransitions = v ?? true } // [2026-10-19 kb-native]
+      Prop("attachInstant") { (view: ChatyyComposerView, v: Bool?) in view.attachInstant = v ?? true } // [2026-10-19 attach-instant]
+      Prop("attachRestore") { (view: ChatyyComposerView, v: String?) in view.attachRestore = v ?? "will" } // [2026-10-19 attach-instant]
 
       OnViewDidUpdateProps { (view: ChatyyComposerView) in
         view.didUpdateProps()

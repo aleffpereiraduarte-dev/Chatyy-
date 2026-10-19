@@ -161,11 +161,12 @@ export async function openNativeCamera(t, opts = {}) {
 }
 
 export default function NativeAttachSheet({
-  visible, onClose, onPick, onSendMedia, onSendDirect, onFail, colors, items, t,
+  visible, onClose, onPick, onSendMedia, onSendDirect, onFail, colors, items, t, instantRef,
 }) {
   const openRef = useRef(false);
   const propsRef = useRef(null);
   propsRef.current = { onClose, onPick, onSendMedia, onSendDirect, onFail, colors, items, t };
+  const openNowRef = useRef(null);
 
   // Sessão de câmera pré-configurada: abrir a câmera/tile depois é "quente".
   useEffect(() => {
@@ -178,10 +179,13 @@ export default function NativeAttachSheet({
     };
   }, []);
 
-  useEffect(() => {
-    if (!visible || openRef.current) return;
+  // [2026-10-19 attach-instant] Abre a folha nativa JÁ (sem esperar o render da
+  // conversa com visible=true): true = apresentação começou. O pai seta o
+  // visible logo depois só para manter o estado; o efeito abaixo vê openRef.
+  openNowRef.current = () => {
+    if (openRef.current) return true;
     const m = getNA();
-    if (!m) { try { propsRef.current.onFail && propsRef.current.onFail(); } catch {} return; }
+    if (!m) return false;
     openRef.current = true;
     const p = propsRef.current;
     const th = themeFor(p.colors);
@@ -236,6 +240,20 @@ export default function NativeAttachSheet({
         if (__DEV__) console.warn('[native-attach] result handler failed', e?.message || e);
       }
     })();
+    return true;
+  };
+
+  useEffect(() => {
+    if (!instantRef || typeof instantRef !== 'object') return undefined;
+    const fn = () => { try { return !!(openNowRef.current && openNowRef.current()); } catch { return false; } };
+    instantRef.current = fn;
+    return () => { if (instantRef.current === fn) instantRef.current = null; };
+  }, [instantRef]);
+
+  useEffect(() => {
+    if (!visible || openRef.current) return;
+    if (!getNA()) { try { propsRef.current.onFail && propsRef.current.onFail(); } catch {} return; }
+    openNowRef.current();
   }, [visible]);
 
   // O pai fechou enquanto a folha nativa estava aberta (troca de tela etc.).

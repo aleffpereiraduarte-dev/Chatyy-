@@ -22,7 +22,7 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, processColor } from 'react-native';
 import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
-import { kbNativeTransitionsOn, reportKeyboardSync } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native]
+import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
 
 let _failed = false;
 
@@ -52,6 +52,15 @@ function _motionOff() {
   try { if (globalThis.__chatyy_motion_composer === false) return true; } catch {}
   try { if (globalThis.__chatyy_motion === false) return true; } catch {}
   return false;
+}
+
+// [2026-10-19 attach-instant] iOS (apiVersion >= 5): props só quando fogem do
+// padrão nativo (attachInstant=true, attachRestore='will').
+function _attachInstantProps() {
+  const o = {};
+  if (!attachInstantOn()) o.attachInstant = false;
+  else if (attachRestoreMode() === 'did') o.attachRestore = 'did';
+  return o;
 }
 
 function _tr(t, key, fb, vars) {
@@ -320,7 +329,8 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
     } catch {}
   }, []);
   const _simple = (name) => () => { try { cbRef.current[name]?.(); } catch {} };
-  const _onAttach = useMemo(() => _simple('onAttach'), []);
+  // [2026-10-19 attach-instant] api >= 5 manda { hadKeyboard, instant }.
+  const _onAttach = useCallback((e) => { try { cbRef.current.onAttach?.(e?.nativeEvent || null); } catch {} }, []);
   const _onCamera = useMemo(() => _simple('onCamera'), []);
   const _onEmoji = useMemo(() => _simple('onEmoji'), []);
   const _onVideoNote = useMemo(() => _simple('onVideoNote'), []);
@@ -373,6 +383,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
       motion={_motionOff() ? false : undefined}
       focusGuard={kbResumeGuardOn() ? undefined : false /* [2026-10-18 kb-resume] kill __chatyy_kb_resume_guard */}
       nativeTransitions={kbNativeTransitionsOn() ? undefined : false /* [2026-10-19 kb-native] kill __chatyy_kb_native_transitions */}
+      {...(Platform.OS === 'ios' ? _attachInstantProps() : null) /* [2026-10-19 attach-instant] */}
       onChangeText={_onChangeText}
       onSend={_onSend}
       onAttach={_onAttach}

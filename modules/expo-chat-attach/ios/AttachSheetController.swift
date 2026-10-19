@@ -911,6 +911,9 @@ final class AttachSheetController: UIViewController,
   // MARK: teclado
 
   @objc private func onKeyboard(_ n: Notification) {
+    // [2026-10-19 attach-instant] fechando: o teclado que sobe agora é o do
+    // composer (foco devolvido no nativo) — a folha não pode expandir/subir.
+    guard !finished else { return }
     guard let end = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
     let dur = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
     let local = view.convert(end, from: nil)
@@ -930,11 +933,25 @@ final class AttachSheetController: UIViewController,
 
   // MARK: fim
 
-  private func finish(_ result: [String: Any]) {
+  // [2026-10-19 attach-instant] Avisos p/ o composer nativo (expo-chat-composer)
+  // devolver o teclado sem passar pelo JS: WillClose no início da descida,
+  // DidClose no fim do dismiss (antes de resolver a promessa).
+  // userInfo: action (String), user (Bool: false = fechada pelo JS/substituída).
+  static let willCloseNote = Notification.Name("ChatyyAttachSheetWillClose")
+  static let didCloseNote = Notification.Name("ChatyyAttachSheetDidClose")
+
+  private func postClose(_ name: Notification.Name, _ result: [String: Any], byUser: Bool) {
+    let action: String = (result["action"] as? String) ?? ""
+    let info: [AnyHashable: Any] = ["action": action, "user": byUser]
+    NotificationCenter.default.post(name: name, object: nil, userInfo: info)
+  }
+
+  private func finish(_ result: [String: Any], byUser: Bool = true) {
     guard !finished else { return }
     finished = true
     if captionField.isFirstResponder { captionField.resignFirstResponder() }
     stopCamera()
+    postClose(AttachSheetController.willCloseNote, result, byUser: byUser)
     let h = view.bounds.height
     UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseIn, .beginFromCurrentState]) {
       self.dismissOffset = max(h - self.top, 1)
@@ -942,6 +959,7 @@ final class AttachSheetController: UIViewController,
       self.dimView.alpha = 0
     } completion: { _ in
       self.dismiss(animated: false) {
+        self.postClose(AttachSheetController.didCloseNote, result, byUser: byUser)
         self.onFinish?(result)
         self.onFinish = nil
       }
@@ -949,7 +967,7 @@ final class AttachSheetController: UIViewController,
   }
 
   func closeFromJS() {
-    finish(["action": "cancel"])
+    finish(["action": "cancel"], byUser: false)
   }
 
   /// Substituída por outra folha: some sem animação e resolve 'cancel'.
@@ -959,6 +977,11 @@ final class AttachSheetController: UIViewController,
     stopCamera()
     let cb = onFinish
     onFinish = nil
-    dismiss(animated: false) { cb?(["action": "cancel"]) }
+    let result: [String: Any] = ["action": "cancel"]
+    postClose(AttachSheetController.willCloseNote, result, byUser: false)
+    dismiss(animated: false) {
+      self.postClose(AttachSheetController.didCloseNote, result, byUser: false)
+      cb?(result)
+    }
   }
 }

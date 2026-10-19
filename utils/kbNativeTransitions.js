@@ -30,6 +30,23 @@ export function reportKeyboardSync(e) {
   _subs.forEach((fn) => { try { fn(e); } catch {} });
 }
 
+// [2026-10-19 attach-instant] "+" nível WhatsApp/Telegram (iOS, composer
+// nativo apiVersion >= 5 + folha nativa): a folha abre NA HORA (sem esperar o
+// keyboardDidHide) e, ao cancelar, o composer devolve o teclado no NATIVO
+// (sem focus/blur do JS). Kill switch OTA: globalThis.__chatyy_attach_instant
+// = false → volta ao comportamento de 18/10 (espera o didHide + focus JS).
+// Ajuste: globalThis.__chatyy_attach_restore = 'did' → teclado só volta no fim
+// do dismiss da folha (padrão 'will' = sobe enquanto a folha desce).
+export function attachInstantOn() {
+  try { if (globalThis.__chatyy_attach_instant === false) return false; } catch {}
+  return true;
+}
+
+export function attachRestoreMode() {
+  try { if (globalThis.__chatyy_attach_restore === 'did') return 'did'; } catch {}
+  return 'will';
+}
+
 export function subscribeKeyboardSync(fn) {
   _subs.add(fn);
   return () => { _subs.delete(fn); };

@@ -13086,12 +13086,16 @@ function ChatConversationInner() {
   const [showAttachMenu, setShowAttachMenu] = _useStateT(false);
   // [2026-10-09] Enquanto o menu de anexos estiver aberto, o teclado não pode reaparecer por cima.
   useEffect(() => {
-    if (!showAttachMenu) return undefined;
+    if (!showAttachMenu) { _attachInstantRef.current = false; return undefined; } // [2026-10-19 attach-instant]
     const ev = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const sub = Keyboard.addListener(ev, () => {
       // [2026-10-18 kb-resume] volta do fundo com o menu aberto: o iOS
       // restaura o teclado sozinho — derrubar aqui = abre-fecha.
       if (isAppResuming()) return;
+      // [2026-10-19 attach-instant] folha nativa do "+": o composer nativo é
+      // dono do teclado (recusa o re-foco do UIKit e devolve sozinho ao
+      // cancelar, com a folha descendo) — blur JS aqui = teclado pisca.
+      if (_attachInstantRef.current) return;
       try { inputRef.current?.blur?.(); } catch {}
       try { Keyboard.dismiss(); } catch {}
     });
@@ -13108,6 +13112,28 @@ function ChatConversationInner() {
   // nativo (focusGuard) recusa o re-foco automático do UIKit depois do "+".
   // Kill switch: globalThis.__chatyy_kb_resume_guard = false (= 60 ms antigo).
   const _attachKbRef = useRef({ had: false, at: 0 });
+  // [2026-10-19 attach-instant] "+" nível WhatsApp/Telegram (iOS, composer
+  // nativo apiVersion >= 5 → onAttach{instant:true}, folha nativa): abre a
+  // folha NA HORA (o nativo já fez resign no mesmo toque; o teclado desce
+  // junto com a folha) e quem devolve o teclado ao cancelar é o composer
+  // nativo — nada de esperar keyboardDidHide (até 320 ms) nem focus() do JS.
+  // Kill switch: globalThis.__chatyy_attach_instant = false (= 18/10).
+  const _attachInstantRef = useRef(false);
+  const _attachInstantOpenRef = useRef(null); // preenchido pelo NativeAttachSheet
+  const _openAttachInstant = (e) => {
+    if (Platform.OS !== 'ios' || !e || e.instant !== true) return false;
+    try { if (!require('../utils/kbNativeTransitions').attachInstantOn()) return false; } catch { return false; }
+    if (!mountedRef.current || _kbLeavingRef.current) return false;
+    const open = _attachInstantOpenRef.current;
+    if (typeof open !== 'function') return false;
+    _attachInstantRef.current = true;
+    _attachKbRef.current = { had: false, at: 0 };
+    let ok = false;
+    try { ok = !!open(); } catch { ok = false; }
+    if (!ok) { _attachInstantRef.current = false; return false; }
+    setShowAttachMenu(true);
+    return true;
+  };
   const _openAttachMenuKb = (had) => {
     const legacy = () => setTimeout(() => setShowAttachMenu(true), Platform.OS === 'android' ? 80 : 60);
     if (!kbResumeGuardOn()) { legacy(); return; }
@@ -13132,6 +13158,7 @@ function ChatConversationInner() {
     let sub = null;
     try {
       sub = require('react-native').DeviceEventEmitter.addListener('chatyy:attachSheetClosed', (e) => {
+        _attachInstantRef.current = false; // [2026-10-19 attach-instant]
         const st = _attachKbRef.current;
         _attachKbRef.current = { had: false, at: 0 };
         if (!kbResumeGuardOn() || !st.had || !e || e.action !== 'cancel') return;
@@ -39012,7 +39039,9 @@ function ChatConversationInner() {
             onBlur={_onComposerBlur}
             onSelectionChange={_onComposerSelection}
             onSend={() => { if (!sending) handleSend(); }}
-            onAttach={() => {
+            onAttach={(ev) => {
+              // [2026-10-19 attach-instant] api >= 5: folha já, teclado é do nativo.
+              if (_openAttachInstant(ev)) return;
               // [2026-10-18 kb-resume] o nativo já fez resign; teclado ainda descendo = estava aberto.
               let _had = false;
               try { _had = !!Keyboard.isVisible?.(); } catch {}
@@ -39576,6 +39605,7 @@ function ChatConversationInner() {
       {/* Attachment Menu Modal */}
       <AttachmentMenu
         visible={showAttachMenu}
+        instantRef={_attachInstantOpenRef /* [2026-10-19 attach-instant] */}
         onClose={() => setShowAttachMenu(false)}
         onPick={handlePickAttachment}
         onSendMedia={handleAttachRecentMedia}
