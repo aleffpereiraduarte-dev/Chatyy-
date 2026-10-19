@@ -83,6 +83,7 @@ function PLUS_NATIVE_ICON() { try { return settingsListApiVersion() >= 2 ? 'plus
 import SettingsCategoryScreen from '../components/settings/SettingsCategoryScreen';
 import BiaIcon from '../components/bia/BiaIcon';
 import { nativeIconKey } from '../components/settings/nativeCollect';
+import { useAdvPrivacyDefault } from '../services/captureBlock'; // [2026-10-19 capmember]
 import { pushOnce, useReleaseNavLockOnFocus } from '../services/navOnce';
 
 const CAT_ICONS = {
@@ -243,6 +244,7 @@ function SettingsScreenInner() {
 
   // ── Subtítulos de estado (snapshot local; sem montar as categorias) ─────
   const privData = usePeek('privacy');
+  const advPrivDefault = useAdvPrivacyDefault(); // [2026-10-19 capmember] linha "Privacidade avançada" no Você
   const notifData = usePeek('notif');
   const referral = usePeek('referral');
   const storageStats = usePeek('storage_stats');
@@ -489,6 +491,8 @@ function SettingsScreenInner() {
       { key: 'broadcast', type: 'r', icon: 'forward', Icon: IconBroadcast, title: tr('me.broadcast', 'Mensagens de transmissão'), route: '/chat-new' },
       { key: 'starred', type: 'r', icon: 'star', Icon: IconStar, title: t('chat.starredMessages') || 'Mensagens favoritas', route: '/starred-messages' },
       { key: 'devices', type: 'r', icon: 'device', Icon: IconMonitor, title: t('settings.linkedDevices') || 'Aparelhos conectados', route: '/linked-devices' },
+      // [2026-10-19 capmember] atalho p/ "Privacidade avançada em todas as conversas" (topo de Privacidade).
+      { key: 'advPriv', type: 'r', icon: 'shield', Icon: IconShield, title: tr('me.advPrivacy', 'Privacidade avançada'), value: advPrivDefault ? tr('advPriv.on', 'Ativada') : tr('advPriv.off', 'Desativada'), go: () => openCategory('privacy', 'adv_privacy_default') },
     ].filter(Boolean),
     CATEGORY_GROUPS[0].map(catRow),
     [

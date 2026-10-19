@@ -139,6 +139,7 @@ export function normalizePrivacy(d) {
     mute_call_ringtone: x.mute_call_ringtone !== undefined ? !!x.mute_call_ringtone : false,
     block_unknown: x.block_unknown === true,
     block_screenshots: x.block_screenshots === true || x.block_screenshots === 1 || x.block_screenshots === '1', // [2026-10-19 secure-view]
+    adv_privacy_default: x.adv_privacy_default === true || x.adv_privacy_default === 1 || x.adv_privacy_default === '1', // [2026-10-19 capmember]
     phone_visibility: x.phone_visibility || 'contacts',
     about: x.about || 'everyone',
     cloud_chats_default: x.cloud_chats_default !== false,

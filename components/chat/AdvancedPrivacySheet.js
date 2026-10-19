@@ -28,6 +28,7 @@ function Bullet({ Icon, text, color, sub }) {
 
 export default function AdvancedPrivacySheet({
   visible, onClose, enabled, screenshotNotice, canEdit, busy, onToggle, onToggleScreenshot, colors, isDark, t,
+  showNoticeToggle, lockedNote, // [2026-10-19 capmember] ligada por um membro p/ todas as conversas dele → switch travado + nota
 }) {
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
   const _drag108 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
@@ -75,7 +76,10 @@ export default function AdvancedPrivacySheet({
             accessibilityLabel={_tt(t, 'advPriv.toggle', 'Ativar privacidade avançada')}
           />
         </View>
-        {enabled ? (
+        {lockedNote ? (
+          <Text style={[s.note, { color: sub }]}>{lockedNote}</Text>
+        ) : null}
+        {enabled && showNoticeToggle !== false ? (
           <View style={[s.row, { borderTopColor: line }]}>
             <Text style={[s.rowLabel, { color: fg }]}>{_tt(t, 'advPriv.screenshotToggle', 'Avisar quando alguém tirar print')}</Text>
             <Switch
@@ -90,7 +94,7 @@ export default function AdvancedPrivacySheet({
             />
           </View>
         ) : null}
-        {!canEdit ? (
+        {!canEdit && !lockedNote ? (
           <Text style={[s.note, { color: sub }]}>{_tt(t, 'advPriv.adminOnly', 'Só administradores do grupo podem alterar.')}</Text>
         ) : null}
     </>

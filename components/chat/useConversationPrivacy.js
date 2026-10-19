@@ -3,7 +3,11 @@
 // só (o app/chat-conversation.js é enorme — lá ficam só chamadas pontuais):
 //   const advPriv = useConversationPrivacy({ conversationId, conversationType, isAdmin, currentEmail, colors, isDark, t });
 //   advPriv.enabled / advPriv.canEdit / advPriv.openSheet() / advPriv.guard('export'|'ai'|'forward')
-//   advPriv.captureProtected → <ChatyySecureView enabled> (privacidade avançada | vanishActive | ajuste global)
+//   advPriv.captureProtected → <ChatyySecureView enabled> (privacidade avançada | vanishActive | ajuste global | membro)
+// [2026-10-19 capmember] `enabled` = EFETIVO: flag da conversa OU outro membro com
+// "Privacidade avançada em todas as conversas" OU o meu ajuste. Proteção só de
+// captura também vem de membro ("Bloquear capturas de tela nas conversas" de
+// quem conversa comigo) → captureProtected + aviso de print.
 //   {advPriv.banner} {advPriv.watermark} {advPriv.sheet}
 // Proteção (só com a tela em foco): Android FLAG_SECURE; iOS escudo na gravação
 // + aviso de print; web sem clique direito/arrastar + marca d'água.
@@ -66,18 +70,30 @@ export function PrivacyWatermark({ handle, label, dark, style }) {
 export default function useConversationPrivacy({ conversationId, conversationType, isAdmin, currentEmail, colors, isDark, t, vanishActive }) {
   const cid = _realConvId(conversationId);
   const st = useAdvancedPrivacy(cid || null);
-  const enabled = !!cid && st.enabled;
+  const isSaved = conversationType === 'saved';
+  // "Mensagens salvas" (só eu): o meu "Privacidade avançada em todas as conversas" não vale.
+  const enabled = !!cid && (isSaved ? (!!st.convEnabled || !!st.memberAdv) : st.enabled);
+  const convEnabled = !!cid && !!st.convEnabled;
+  const memberAdv = !!cid && !!st.memberAdv;
+  const memberCap = !!cid && !!st.memberCap; // outro membro protege (adv ou só captura)
+  const mineAdv = !!cid && !isSaved && !!st.mineAdv;
+  const byName = st.byName || '';
   // [2026-10-19 secure-view] Proteção de captura da conversa = privacidade
   // avançada OU modo temporário OU o ajuste global "Bloquear capturas de tela
   // nas conversas" (de quem está vendo). iOS: <ChatyySecureView> → o print sai
   // "Captura de tela bloqueada"; Android: FLAG_SECURE.
   const globalBlock = useCaptureBlockGlobal();
   const vanishOn = !!vanishActive;
-  const globalOn = !!globalBlock && !enabled && !vanishOn;
-  const captureProtected = enabled || vanishOn || !!globalBlock;
-  const screenshotNotice = st.screenshotNotice !== false;
+  const convProtectedByMember = memberCap;
+  const globalOn = (!!globalBlock || convProtectedByMember) && !enabled && !vanishOn;
+  const captureProtected = enabled || vanishOn || !!globalBlock || convProtectedByMember;
+  // Aviso de print: o da conversa respeita o ajuste dela; vindo de membro/meu = sempre.
+  const screenshotNotice = convEnabled ? st.screenshotNotice !== false : true;
+  const convScreenshotNotice = st.screenshotNotice !== false;
   const isGroupish = conversationType === 'group' || conversationType === 'channel';
-  const canEdit = !!cid && conversationType !== 'saved' && (!isGroupish || !!isAdmin);
+  // Ligada por um membro / pelo meu ajuste (e não pela conversa): switch travado.
+  const lockedByMember = !convEnabled && (memberAdv || mineAdv);
+  const canEdit = !!cid && conversationType !== 'saved' && (!isGroupish || !!isAdmin) && !lockedByMember;
   const focused = useIsFocused();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -148,13 +164,13 @@ export default function useConversationPrivacy({ conversationId, conversationTyp
     });
     let sub = null;
     if (Platform.OS === 'ios' && cid && conversationType !== 'saved') {
-      sub = addScreenshotListener(() => sendScreenshotNotice(cid, { kind: 'screenshot', blocked: secureViewAvailable(), scope: 'global' }));
+      sub = addScreenshotListener(() => sendScreenshotNotice(cid, { kind: 'screenshot', blocked: secureViewAvailable(), scope: globalBlock ? 'global' : 'member' }));
     }
     return () => {
       try { release(); } catch {}
       try { sub && sub.remove(); } catch {}
     };
-  }, [globalOn, focused, cid, conversationType, t]);
+  }, [globalOn, focused, cid, conversationType, t, globalBlock]);
 
   // Escopo aberto (independe do foco): Dados do contato / visualizador
   // empurrados por cima desta conversa também protegem.
@@ -164,9 +180,10 @@ export default function useConversationPrivacy({ conversationId, conversationTyp
     if (enabled) reasons.push('adv');
     if (vanishOn) reasons.push('vanish');
     if (globalBlock) reasons.push('global');
+    if (convProtectedByMember) reasons.push('member'); // [2026-10-19 capmember]
     for (const r of reasons) setCaptureScope(cid, true, r);
     return () => { for (const r of reasons) setCaptureScope(cid, false, r); };
-  }, [cid, enabled, vanishOn, globalBlock]);
+  }, [cid, enabled, vanishOn, globalBlock, convProtectedByMember]);
 
   const openSheet = useCallback(() => {
     if (!cid) return;
@@ -201,17 +218,32 @@ export default function useConversationPrivacy({ conversationId, conversationTyp
   const fg = (colors && colors.text) || (isDark ? '#F1F3F5' : '#111111');
   const sub = (colors && colors.textSecondary) || (isDark ? '#A1A1AA' : '#555555');
 
-  const banner = enabled ? (
+  // [2026-10-19 capmember] Texto conforme a origem: conversa / outro membro
+  // (privacidade avançada ou só captura) / meu ajuste.
+  const _who = byName || _tt(t, 'advPriv.someone', 'Alguém');
+  const bannerText = convEnabled || (mineAdv && !memberAdv)
+    ? _tt(t, 'advPriv.bannerOn', 'Privacidade avançada ativada')
+    : memberAdv
+      ? _tt(t, 'advPriv.bannerMemberAdv', '{name} usa privacidade avançada').replace('{name}', _who)
+      : (memberCap && !vanishOn)
+        ? _tt(t, 'advPriv.bannerMemberCapture', '{name} ativou a proteção contra capturas de tela.').replace('{name}', _who)
+        : '';
+  const banner = bannerText ? (
     <Pressable
       onPress={openSheet}
       accessibilityRole="button"
-      accessibilityLabel={_tt(t, 'advPriv.bannerOn', 'Privacidade avançada ativada')}
+      accessibilityLabel={bannerText}
       style={[styles.banner, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' }]}
     >
       <IconShield size={13} color={fg} />
-      <Text style={[styles.bannerText, { color: sub }]} numberOfLines={1}>{_tt(t, 'advPriv.bannerOn', 'Privacidade avançada ativada')}</Text>
+      <Text style={[styles.bannerText, { color: sub }]} numberOfLines={1}>{bannerText}</Text>
     </Pressable>
   ) : null;
+  const lockedNote = lockedByMember
+    ? (memberAdv
+      ? _tt(t, 'advPriv.lockedByMember', 'Ativada por {name} para todas as conversas dele.').replace('{name}', _who)
+      : _tt(t, 'advPriv.lockedByMe', 'Ativada por você para todas as suas conversas (Configurações > Privacidade).'))
+    : '';
 
   const watermark = enabled && Platform.OS === 'web' ? (
     <PrivacyWatermark handle={viewerHandle(currentEmail)} label={_tt(t, 'advPriv.watermark', 'Protegido')} dark={!!isDark} />
@@ -221,11 +253,13 @@ export default function useConversationPrivacy({ conversationId, conversationTyp
     <AdvancedPrivacySheet
       visible={sheetOpen}
       onClose={() => setSheetOpen(false)}
-      enabled={enabled}
-      screenshotNotice={screenshotNotice}
+      enabled={convEnabled || lockedByMember}
+      screenshotNotice={convScreenshotNotice}
+      showNoticeToggle={convEnabled}
+      lockedNote={lockedNote}
       canEdit={canEdit}
       busy={busy}
-      onToggle={(v) => _apply(!!v, screenshotNotice)}
+      onToggle={(v) => _apply(!!v, convScreenshotNotice)}
       onToggleScreenshot={(v) => _apply(true, !!v)}
       colors={colors}
       isDark={isDark}
@@ -235,7 +269,7 @@ export default function useConversationPrivacy({ conversationId, conversationTyp
 
   const statusLabel = enabled ? _tt(t, 'advPriv.on', 'Ativada') : _tt(t, 'advPriv.off', 'Desativada');
 
-  return { enabled, screenshotNotice, canEdit, openSheet, guard, banner, watermark, sheet, statusLabel, captureProtected };
+  return { enabled, convEnabled, memberAdv, memberCap, byName, lockedByMember, screenshotNotice, canEdit, openSheet, guard, banner, watermark, sheet, statusLabel, captureProtected };
 }
 
 const styles = StyleSheet.create({

@@ -15,6 +15,16 @@
 // Store em memória + espelho persistido (MMKV/localStorage) para o 1º frame e
 // para o filtro da galeria (downloads em segundo plano). O flag é da conversa
 // (não do usuário), então não vaza nada entre contas.
+//
+// [2026-10-19 capmember] Proteção vinda de MEMBROS ("estou me protegendo"):
+// o servidor manda em chat_info / histórico / chat_list / chat_get_advanced_privacy
+//   adv_privacy_by_member, capture_protected_by_member, privacy_by_members[{email,name,adv}]
+// = alguém da conversa ligou "Privacidade avançada em todas as conversas"
+// (adv) ou "Bloquear capturas de tela nas conversas" (só captura). `enabled`
+// abaixo passa a ser o EFETIVO (conversa OU membro OU o meu ajuste) — assim
+// exportar/encaminhar/galeria/Bia seguem sozinhos; `convEnabled` = só o flag
+// da conversa (o switch da folha). WS `conversation_privacy_member` → re-busca
+// as conversas abertas.
 
 import { useEffect, useReducer } from 'react';
 import { Platform, DeviceEventEmitter } from 'react-native';
@@ -43,7 +53,7 @@ function _hydrate() {
       for (const k of Object.keys(obj)) {
         const v = obj[k];
         if (v && typeof v === 'object' && !_map.has(k)) {
-          _map.set(k, { enabled: !!v.e, screenshotNotice: v.s !== false, at: Number(v.t) || 0 });
+          _map.set(k, { enabled: !!v.e, screenshotNotice: v.s !== false, at: Number(v.t) || 0, members: Array.isArray(v.m) ? v.m : [] });
         }
       }
     }
@@ -60,7 +70,10 @@ function _persist() {
       // Só guarda as ligadas (+ desligadas recentes, para não "religar" com
       // cache velho). Teto de 400 conversas.
       const rows = [..._map.entries()].sort((a, b) => (b[1].at || 0) - (a[1].at || 0)).slice(0, 400);
-      for (const [k, v] of rows) out[k] = { e: v.enabled ? 1 : 0, s: v.screenshotNotice !== false, t: v.at || 0 };
+      for (const [k, v] of rows) {
+        out[k] = { e: v.enabled ? 1 : 0, s: v.screenshotNotice !== false, t: v.at || 0 };
+        if (v.members && v.members.length) out[k].m = v.members.slice(0, 5);
+      }
       require('./mmkv').setString?.(STORE_KEY, JSON.stringify(out));
     } catch {}
   }, 400);
@@ -74,13 +87,41 @@ function _truthy(v) {
   return v === true || v === 1 || v === '1' || v === 't' || v === 'true';
 }
 
+function _myEmail() {
+  try { return String(require('./api').getActiveAccountEmail?.() || '').trim().toLowerCase(); } catch { return ''; }
+}
+
+function _myAdvDefault() {
+  try { return !!require('./captureBlock').isAdvPrivacyDefault(); } catch { return false; }
+}
+
 // `_ver`: ignorado — versão do hook p/ o memo do React Compiler (useAdvancedPrivacy).
+// [2026-10-19 capmember] enabled = EFETIVO; convEnabled = flag da conversa;
+// memberAdv/memberCap/byName = outro membro protegendo; mineAdv = meu ajuste.
 export function getAdvancedPrivacy(cid, _ver) {
   _hydrate();
   const k = _key(cid);
-  if (!k) return { enabled: false, screenshotNotice: true, known: false };
+  const mineAdv = _myAdvDefault();
+  const base = { enabled: false, convEnabled: false, screenshotNotice: true, known: false, memberAdv: false, memberCap: false, byName: '', byEmail: '', mineAdv: false };
+  if (!k) return base;
   const v = _map.get(k);
-  return v ? { enabled: !!v.enabled, screenshotNotice: v.screenshotNotice !== false, known: true } : { enabled: false, screenshotNotice: true, known: false };
+  const me = _myEmail();
+  const others = ((v && v.members) || []).filter((m) => m && m.email && String(m.email).toLowerCase() !== me);
+  const advBy = others.find((m) => m.adv);
+  const by = advBy || others[0] || null;
+  const convEnabled = !!(v && v.enabled);
+  const memberAdv = !!advBy;
+  return {
+    enabled: convEnabled || memberAdv || mineAdv,
+    convEnabled,
+    screenshotNotice: v ? v.screenshotNotice !== false : true,
+    known: !!v,
+    memberAdv,
+    memberCap: others.length > 0,
+    byName: by ? String(by.name || String(by.email).split('@')[0]) : '',
+    byEmail: by ? String(by.email) : '',
+    mineAdv,
+  };
 }
 
 export function isAdvancedPrivacyOn(cid) {
@@ -92,6 +133,7 @@ export function noteAdvancedPrivacy(cid, data) {
   _hydrate();
   const k = _key(cid);
   if (!k || !data || typeof data !== 'object') return;
+  _noteMembers(k, data); // [2026-10-19 capmember]
   const hasFlag = Object.prototype.hasOwnProperty.call(data, 'advanced_privacy') || Object.prototype.hasOwnProperty.call(data, 'enabled');
   if (!hasFlag) return;
   const raw = Object.prototype.hasOwnProperty.call(data, 'advanced_privacy') ? data.advanced_privacy : data.enabled;
@@ -101,9 +143,55 @@ export function noteAdvancedPrivacy(cid, data) {
   const prev = _map.get(k);
   const screenshotNotice = (snRaw === null || snRaw === undefined) ? (prev ? prev.screenshotNotice !== false : true) : _truthy(snRaw);
   if (prev && prev.enabled === enabled && (prev.screenshotNotice !== false) === screenshotNotice) return;
-  _map.set(k, { enabled, screenshotNotice, at: Date.now() });
+  _map.set(k, { enabled, screenshotNotice, at: Date.now(), members: (prev && prev.members) || [] });
   _persist();
   _emit(k);
+}
+
+// [2026-10-19 capmember] privacy_by_members do servidor → store (sem mexer no flag da conversa).
+function _noteMembers(k, data) {
+  const hasM = Array.isArray(data.privacy_by_members);
+  const hasCap = Object.prototype.hasOwnProperty.call(data, 'capture_protected_by_member');
+  if (!hasM && !hasCap) return; // servidor antigo
+  const list = hasM
+    ? data.privacy_by_members
+      .filter((m) => m && m.email)
+      .slice(0, 5)
+      .map((m) => ({ email: String(m.email).toLowerCase(), name: String(m.name || ''), adv: _truthy(m.adv) }))
+    : (_truthy(data.capture_protected_by_member) ? null : []);
+  if (list === null) return; // flag sem lista: mantém o que tem
+  const prev = _map.get(k);
+  const prevList = (prev && prev.members) || [];
+  if (JSON.stringify(prevList) === JSON.stringify(list)) return;
+  _map.set(k, { enabled: !!(prev && prev.enabled), screenshotNotice: prev ? prev.screenshotNotice !== false : true, at: Date.now(), members: list });
+  _persist();
+  _emit(k);
+}
+
+// Conversas montadas agora (hook useAdvancedPrivacy) → re-busca no WS de membro.
+const _mounted = new Map(); // cid → contagem
+let _memberRefetchTimer = null;
+function _onMemberEvent(d) {
+  if (!d || !d.email) return;
+  const em = String(d.email).toLowerCase();
+  const adv = _truthy(d.adv);
+  const cap = _truthy(d.cap) || adv;
+  // Otimista nas conversas em que ele já aparece; as outras atualizam ao abrir.
+  for (const [k, v] of _map) {
+    const list = (v && v.members) || [];
+    const i = list.findIndex((m) => m.email === em);
+    if (i < 0) continue;
+    const next = list.slice();
+    if (!cap) next.splice(i, 1); else next[i] = { ...next[i], adv, name: d.name || next[i].name };
+    _map.set(k, { ...v, members: next, at: Date.now() });
+    _emit(k);
+  }
+  _persist();
+  if (_memberRefetchTimer) clearTimeout(_memberRefetchTimer);
+  _memberRefetchTimer = setTimeout(() => {
+    _memberRefetchTimer = null;
+    for (const k of _mounted.keys()) { try { fetchAdvancedPrivacy(k); } catch {} }
+  }, 250 + Math.floor(Math.random() * 500));
 }
 
 export function subscribeAdvancedPrivacy(cb) {
@@ -121,7 +209,16 @@ export function useAdvancedPrivacy(cid) {
   const [ver, force] = useReducer((x) => x + 1, 0);
   useEffect(() => {
     const k = _key(cid);
-    return subscribeAdvancedPrivacy((changed) => { if (!k || changed === k) force(); });
+    if (k) _mounted.set(k, (_mounted.get(k) || 0) + 1);
+    const un = subscribeAdvancedPrivacy((changed) => { if (!k || changed === k) force(); });
+    // [2026-10-19 capmember] meu ajuste "Privacidade avançada em todas as conversas" (local).
+    let un2 = null;
+    try { un2 = require('./captureBlock').subscribeCaptureBlock(force); } catch {}
+    return () => {
+      un();
+      try { un2 && un2(); } catch {}
+      if (k) { const n = (_mounted.get(k) || 1) - 1; if (n > 0) _mounted.set(k, n); else _mounted.delete(k); }
+    };
   }, [cid]);
   return getAdvancedPrivacy(cid, ver);
 }
@@ -136,6 +233,7 @@ function _wireWs() {
       if (!d || d.conversation_id == null) return;
       noteAdvancedPrivacy(d.conversation_id, d);
     });
+    ws?.on?.('conversation_privacy_member', _onMemberEvent); // [2026-10-19 capmember]
   } catch { _wsWired = false; }
   try {
     DeviceEventEmitter.addListener('chatyy:advPrivacy', (d) => {
@@ -172,10 +270,10 @@ export async function setAdvancedPrivacyRemote(cid, enabled, screenshotNotice) {
       if (r.data) noteAdvancedPrivacy(k, r.data);
       return { ok: true };
     }
-    noteAdvancedPrivacy(k, { advanced_privacy: before.enabled, screenshot_notice: before.screenshotNotice });
+    noteAdvancedPrivacy(k, { advanced_privacy: before.convEnabled, screenshot_notice: before.screenshotNotice });
     return { ok: false, error: (r && (r.error || r.message)) || '' };
   } catch (e) {
-    noteAdvancedPrivacy(k, { advanced_privacy: before.enabled, screenshot_notice: before.screenshotNotice });
+    noteAdvancedPrivacy(k, { advanced_privacy: before.convEnabled, screenshot_notice: before.screenshotNotice });
     return { ok: false, error: String((e && e.message) || '') };
   }
 }

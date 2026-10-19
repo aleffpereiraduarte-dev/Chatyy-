@@ -8,13 +8,21 @@
 // 2. "Escopos" de proteção abertos agora (conversa com privacidade avançada,
 //    modo temporário ou o ajuste global): as telas empurradas por cima da
 //    conversa (Dados do contato, visualizador) protegem também.
+//    [2026-10-19 capmember] Agora vale para TODOS os membros das conversas da
+//    pessoa (o servidor expõe capture_protected_by_member; ver chatPrivacy.js).
+// 1b. [2026-10-19 capmember] "Privacidade avançada em todas as conversas"
+//    (`adv_privacy_default`): toda conversa da pessoa se comporta como
+//    privacidade avançada p/ todos (captura, exportar, encaminhar mídia,
+//    galeria, Bia). Espelho local `chat_adv_default_v1` (mesmo formato).
 // 3. Gate da view nativa <ChatyySecureView> (iOS): print/gravação saem com
 //    "Captura de tela bloqueada". Kill switch globalThis.__chatyy_secure_view = false.
 import { useEffect, useReducer } from 'react';
 import { Platform } from 'react-native';
 
 const PREF_KEY = 'chat_capture_block_v1'; // { [email]: 0|1 }
+const ADV_KEY = 'chat_adv_default_v1'; // { [email]: 0|1 } [2026-10-19 capmember]
 let _prefs; // objeto | undefined
+let _adv; // objeto | undefined
 const _subs = new Set();
 let _wired = false;
 
@@ -37,6 +45,17 @@ function _save() {
   try { require('./mmkv').setString?.(PREF_KEY, JSON.stringify(_prefs || {})); } catch {}
 }
 
+function _loadAdv() {
+  if (_adv !== undefined) return _adv;
+  _adv = {};
+  try {
+    const raw = require('./mmkv').getString?.(ADV_KEY);
+    const o = raw ? JSON.parse(raw) : null;
+    if (o && typeof o === 'object') _adv = o;
+  } catch {}
+  return _adv;
+}
+
 function _emit() {
   for (const cb of [..._subs]) { try { cb(); } catch {} }
 }
@@ -54,6 +73,9 @@ function _wire() {
     const onPriv = (x) => {
       if (x && typeof x === 'object' && Object.prototype.hasOwnProperty.call(x, 'block_screenshots') && x.block_screenshots != null) {
         noteServerCaptureBlock(_truthy(x.block_screenshots));
+      }
+      if (x && typeof x === 'object' && Object.prototype.hasOwnProperty.call(x, 'adv_privacy_default') && x.adv_privacy_default != null) {
+        setAdvPrivacyDefault(_truthy(x.adv_privacy_default));
       }
     };
     sc.subscribe?.('privacy', onPriv);
@@ -79,6 +101,33 @@ export function setCaptureBlockGlobal(on) {
   p[e] = v;
   _save();
   _emit();
+}
+
+/** [2026-10-19 capmember] "Privacidade avançada em todas as conversas" ligada p/ a conta ativa? */
+export function isAdvPrivacyDefault() {
+  _wire();
+  const e = _email();
+  if (!e) return false;
+  return _truthy(_loadAdv()[e]);
+}
+
+/** Grava o espelho local (a tela de Privacidade manda `adv_privacy_default` ao servidor). */
+export function setAdvPrivacyDefault(on) {
+  const e = _email();
+  if (!e) return;
+  const p = _loadAdv();
+  const v = on ? 1 : 0;
+  if (p[e] === v) return;
+  p[e] = v;
+  try { require('./mmkv').setString?.(ADV_KEY, JSON.stringify(p)); } catch {}
+  _emit();
+}
+
+function _advAt(_v) { return isAdvPrivacyDefault(); }
+export function useAdvPrivacyDefault() {
+  const [ver, force] = useReducer((x) => x + 1, 0);
+  useEffect(() => subscribeCaptureBlock(force), []);
+  return _advAt(ver);
 }
 
 export function noteServerCaptureBlock(on) {

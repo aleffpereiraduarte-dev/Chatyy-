@@ -16463,7 +16463,7 @@ function ChatConversationInnerBody() {
         if (r.data?.disappearing_timer !== undefined) setDisappearingTimer(r.data.disappearing_timer);
         if (r.data?.disappearing_set_at !== undefined) setDisappearingSetAt(r.data.disappearing_set_at || null);
         if (r.data?.vanish_mode !== undefined) setVanishMode(!!r.data.vanish_mode);
-        try { if (r.data && r.data.advanced_privacy !== undefined) _advPrivNote(conversationId, r.data); } catch {} // [2026-10-14 adv-privacy]
+        try { if (r.data && (r.data.advanced_privacy !== undefined || r.data.privacy_by_members !== undefined)) _advPrivNote(conversationId, r.data); } catch {} // [2026-10-14 adv-privacy] [2026-10-19 capmember] + proteção vinda de membro
 
         if (!beforeId && newMsgs.length > 0 && chatyySettings.read_receipts !== false) {
           const lastMsg = newMsgs[newMsgs.length - 1];
@@ -25405,7 +25405,7 @@ function ChatConversationInnerBody() {
     if (typeof conv.members_hidden !== 'undefined') setMembersHiddenForMe(!!conv.members_hidden);
     if (typeof conv.member_count !== 'undefined') setGroupMemberCount(Number(conv.member_count || 0));
     if (typeof conv.forwarding_disabled !== 'undefined') setForwardingDisabled(!!conv.forwarding_disabled);
-    if (typeof conv.advanced_privacy !== 'undefined') { try { _advPrivNote(conversationId, conv); } catch {} } // [2026-10-14 adv-privacy]
+    if (typeof conv.advanced_privacy !== 'undefined' || typeof conv.privacy_by_members !== 'undefined') { try { _advPrivNote(conversationId, conv); } catch {} } // [2026-10-14 adv-privacy] [2026-10-19 capmember]
     if (typeof conv.require_approval !== 'undefined' || typeof conv.approval_required !== 'undefined') {
       setApprovalRequired(!!(conv.require_approval ?? conv.approval_required));
     }

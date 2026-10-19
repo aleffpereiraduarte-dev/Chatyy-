@@ -10,7 +10,7 @@ import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, Optio
 import { PrivacyExtrasGroup } from '../SettingsPanels';
 import { useSafeNav, useSettingsHost, useChatPrivacy, useChatDefaults, privacyValueLabel } from './shared';
 import { useSilenceUnknownCallers } from '../../calls/silenceUnknownCallers'; // [2026-10-16 wave12-D]
-import { useCaptureBlockGlobal, setCaptureBlockGlobal } from '../../../services/captureBlock'; // [2026-10-19 secure-view]
+import { useCaptureBlockGlobal, setCaptureBlockGlobal, useAdvPrivacyDefault, setAdvPrivacyDefault } from '../../../services/captureBlock'; // [2026-10-19 secure-view] [2026-10-19 capmember]
 
 const FIELDS = ['last_seen', 'online', 'profile_photo', 'about', 'phone_visibility', 'story_privacy', 'group_add'];
 
@@ -29,6 +29,14 @@ export default function PrivacyCategory() {
   const saveCaptureBlock = (v) => {
     setCaptureBlockGlobal(!!v);
     savePrivacy({ block_screenshots: !!v });
+  };
+  // [2026-10-19 capmember] "Privacidade avançada em todas as conversas" (principal):
+  // vale p/ TODOS os membros das minhas conversas. Inclui o bloqueio de captura
+  // (a linha de captura fica ligada e travada enquanto esta estiver ligada).
+  const advDefault = useAdvPrivacyDefault();
+  const saveAdvDefault = (v) => {
+    setAdvPrivacyDefault(!!v);
+    savePrivacy({ adv_privacy_default: !!v });
   };
 
   const fieldTitle = (field) => (
@@ -61,6 +69,30 @@ export default function PrivacyCategory() {
 
   return (
     <View>
+      {/* [2026-10-19 capmember] topo: privacidade avançada como padrão + só captura (sub-opção). */}
+      <View ref={registerAnchor('adv_privacy_default')}>
+        <SettingsGroup
+          footer={advDefault
+            ? (t('settings.advPrivacyDefaultDesc') || 'Em todas as suas conversas, para você e para quem conversa com você: sem prints nem gravação de tela, sem exportar, sem encaminhar ou salvar mídias na galeria, e a Bia não lê as mensagens.')
+            : `${t('settings.advPrivacyDefaultDesc') || 'Em todas as suas conversas, para você e para quem conversa com você: sem prints nem gravação de tela, sem exportar, sem encaminhar ou salvar mídias na galeria, e a Bia não lê as mensagens.'}${Platform.OS !== 'web' ? '\n\n' + (t('settings.blockScreenshotsDesc') || 'Ninguém consegue tirar print ou gravar a tela das suas conversas — nem você, nem quem conversa com você.') : ''}`}
+        >
+          <SettingsSwitchRow
+            title={t('settings.advPrivacyDefault') || 'Privacidade avançada em todas as conversas'}
+            value={!!advDefault}
+            onValueChange={saveAdvDefault}
+            testID="settings-row-adv-privacy-default"
+          />
+          {Platform.OS !== 'web' && (
+            <SettingsSwitchRow
+              title={t('settings.blockScreenshots') || 'Bloquear capturas de tela nas conversas'}
+              value={!!advDefault || !!captureBlock}
+              disabled={!!advDefault}
+              onValueChange={saveCaptureBlock}
+              testID="settings-row-block-screenshots"
+            />
+          )}
+        </SettingsGroup>
+      </View>
       <View ref={registerAnchor('privacy_granular')}>
         <SettingsGroup header={t('settings.rd2.whoCanSee') || 'Quem pode ver'} footer={t('settings.rd2.whoCanSeeFooter') || 'Escolha quem vê suas informações no Chatyy.'}>
           {FIELDS.map(field => (
@@ -86,16 +118,6 @@ export default function PrivacyCategory() {
           <SettingsSwitchRow title={t('settings.blockUnknown')} value={!!privacy.block_unknown} onValueChange={(v) => savePrivacy({ block_unknown: !!v })} />
           <SettingsRow title={t('settings.blockedContacts')} onPress={() => safeNav('/settings-blocked')} testID="settings-row-blocked" />
         </SettingsGroup>
-        {Platform.OS !== 'web' && (
-        <SettingsGroup footer={t('settings.blockScreenshotsDesc') || 'Suas conversas não aparecem em prints nem em gravações de tela neste aparelho. Se houver uma tentativa, a outra pessoa da conversa é avisada.'}>
-          <SettingsSwitchRow
-            title={t('settings.blockScreenshots') || 'Bloquear capturas de tela nas conversas'}
-            value={!!captureBlock}
-            onValueChange={saveCaptureBlock}
-            testID="settings-row-block-screenshots"
-          />
-        </SettingsGroup>
-        )}
         {/* [2026-10-16 wave12-D] mesmo ajuste do cartão da aba Ligações (estado compartilhado). */}
         <SettingsGroup header={t('chat.tabCalls')} footer={t('calls.silenceUnknownDesc')}>
           <SettingsSwitchRow title={t('calls.silenceUnknown')} value={silenceUnknown} onValueChange={setSilenceUnknown} testID="settings-row-silence-unknown" />
