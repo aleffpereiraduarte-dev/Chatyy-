@@ -50,7 +50,8 @@ export async function probeGames(force = false) {
       if (j && typeof j.v === 'boolean' && _cap === null) { _cap = j.v; _capAt = j.at || 0; for (const fn of Array.from(_capSubs)) { try { fn(_cap); } catch {} } }
     } catch {}
   }
-  if (!force && _cap !== null && Date.now() - _capAt < CAP_TTL) return _cap;
+  // [2026-10-18] 'não' só vale 5 min (antes 6 h: sonda feita antes do kit do servidor escondia Jogos o dia todo)
+  if (!force && _cap !== null && Date.now() - _capAt < (_cap ? CAP_TTL : 5 * 60 * 1000)) return _cap;
   if (_probe) return _probe;
   _probe = (async () => {
     try {
