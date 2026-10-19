@@ -6184,6 +6184,7 @@ export default {
   'config.7days': '7 dias',
   'config.90days': '90 dias',
   'chatConv.messageInfo': 'Informações da mensagem',
+  'chatConv.menuInfo': 'Informações',
   'chatConv.readBy': 'Lido por',
   'chatConv.deliveredTo': 'Entregue a',
   'chatConv.pendingTo': 'Pendente',

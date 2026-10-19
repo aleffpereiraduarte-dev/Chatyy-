@@ -2767,6 +2767,7 @@ export default {
   'group.filter.members': 'Membros',
   'chatConv.moreOptions': 'Mais opções',
   'chatConv.messageInfo': 'Informações da mensagem',
+  'chatConv.menuInfo': 'Informações',
   'chatConv.readBy': 'Lido por',
   'chatConv.deliveredTo': 'Entregue a',
   'chatConv.leaveGroup': 'Sair do grupo',

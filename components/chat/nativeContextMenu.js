@@ -108,7 +108,7 @@ export function buildNativeCtxMenu(key, msg, env) {
       else add('voiceTx', _tf(t, 'chatConv.voiceHideTranscript', 'Ocultar transcrição'), 'eye.slash', IconEyeOff);
     }
     if (isVoice && msg.file_url) add('transcribe', _tf(t, 'chatConv.transcribeSummarize', 'Transcrever + resumir'), 'sparkles', IconSparkles);
-    if (ownStrict && typeof msg.id === 'number') add('info', _tf(t, 'chatConv.messageInfo', 'Informações'), 'info.circle', IconInfo);
+    if (ownStrict && typeof msg.id === 'number') add('info', _tf(t, 'chatConv.menuInfo', _tf(t, 'chatConv.messageInfo', 'Informações')), 'info.circle', IconInfo);
     add('star', msg.starred ? _tf(t, 'chat.unstar', 'Desfavoritar') : _tf(t, 'chat.star', 'Favoritar'), msg.starred ? 'star.slash' : 'star', msg.starred ? IconStarFilled : IconStar);
   }
   if (!deleted && env.disappearingTimer > 0 && msg.id && typeof msg.id === 'number') {

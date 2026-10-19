@@ -5969,6 +5969,7 @@ export default {
   'chatConv.unpin': 'Desfijar',
   'chatConv.pinnedMessage': 'Mensaje fijado',
   'chatConv.messageInfo': 'Info del mensaje',
+  'chatConv.menuInfo': 'Información',
   'chatConv.readBy': 'Leído por',
   'chatConv.deliveredTo': 'Entregado a',
   'chatConv.pendingTo': 'Pendiente',
