@@ -942,7 +942,19 @@ function AppInit({ onNotification, setOtaToast }) {
         const update = await Updates.checkForUpdateAsync();
         if (!update.isAvailable) return;
         setOtaToast({ textKey: 'uiG.layout.downloadingUpdate', text: 'Baixando atualização…', kind: 'info' });
-        await Updates.fetchUpdateAsync();
+        // [2026-10-18 ota-stuck] o nativo (ON_LOAD) pode já estar baixando o mesmo
+        // update → fetch JS falhava/pendurava e o "Baixando…" ficava eterno.
+        // Teto de 90 s; erro/timeout = some o aviso (o nativo aplica no próximo boot).
+        let _fetchOk = false;
+        try {
+          const r = await Promise.race([
+            Updates.fetchUpdateAsync(),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('ota_fetch_timeout')), 90000)),
+          ]);
+          _fetchOk = !!r; // resolveu = baixado (isNew) ou já baixado pelo nativo → banner tocável
+        } catch (_e) { _fetchOk = false; }
+        if (otaCancelled) return;
+        if (!_fetchOk) { setOtaToast(null); return; }
         // [2026-10-04] Em vez de recarregar sozinho (invasivo + histórico de
         // "updates empilhados"), mostra um banner PERSISTENTE e TOCÁVEL: o
         // usuário VÊ que a nova versão chegou e aplica quando quiser.
