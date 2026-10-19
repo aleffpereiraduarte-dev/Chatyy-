@@ -141,7 +141,11 @@ export default function useVanishMode({
   return { eligible, active, rowTitle, rowValue };
 }
 
-const THRESH = 110;
+// [2026-10-19 vanish-forte] founder: entrava sem querer → zona morta 40 px, curso
+// 190 px e o gesto precisa durar ≥ 350 ms (rolagem rápida não arma).
+const DEAD = 40;
+const THRESH = 190;
+const MIN_MS = 350;
 
 /**
  * Área da lista com o gesto "arrastar para cima no fim da conversa".
@@ -172,7 +176,7 @@ export function VanishSwipeArea({ enabled, active, onActivate, isAtBottom, t, is
     if (!n || (n.touches && n.touches.length > 1)) { startRef.current = null; return; }
     let ok = false;
     try { ok = !!(isAtBottom && isAtBottom()); } catch {}
-    startRef.current = ok ? { x: n.pageX, y: n.pageY } : null;
+    startRef.current = ok ? { x: n.pageX, y: n.pageY, t: Date.now() } : null;
   };
   const onTouchMove = (e) => {
     const s = startRef.current;
@@ -182,10 +186,10 @@ export function VanishSwipeArea({ enabled, active, onActivate, isAtBottom, t, is
     const dy = s.y - n.pageY;
     const dx = Math.abs(n.pageX - s.x);
     if (dx > 36 && dx > Math.abs(dy)) { reset(); return; } // arrasto lateral = responder
-    if (dy <= 14) { if (phaseRef.current) { prog.setValue(0); setPh(0); } return; }
-    const p = Math.min(1, (dy - 14) / THRESH);
+    if (dy <= DEAD) { if (phaseRef.current) { prog.setValue(0); setPh(0); } return; }
+    const p = Math.min(1, (dy - DEAD) / THRESH);
     prog.setValue(p);
-    setPh(p >= 1 ? 2 : 1);
+    setPh(p >= 1 && Date.now() - s.t >= MIN_MS ? 2 : 1);
   };
   const onTouchEnd = () => {
     const armed = phaseRef.current === 2;
