@@ -49,14 +49,18 @@ export function useContactProfileExtras(email, enabled) {
   const em = String(email || '').trim().toLowerCase();
   const galOn = PP.isProfileGalleryEnabled();
   const postsOn = PP.isProfilePostsCiEnabled();
-  const [photos, setPhotos] = useState(() => (em ? (PP.getCachedProfilePhotos(em)?.photos || []) : []));
+  // [2026-10-19 audit] fotos marcadas com o e-mail do dono: trocar de contato sem
+  // remontar (setParams) mostrava a galeria do contato ANTERIOR até a busca nova
+  // voltar (ou p/ sempre, se ela falhasse offline).
+  const [photosSt, setPhotosSt] = useState(() => ({ email: em, list: em ? (PP.getCachedProfilePhotos(em)?.photos || []) : [] }));
+  const photos = photosSt.email === em ? photosSt.list : (em ? (PP.getCachedProfilePhotos(em)?.photos || []) : []);
   const [posts, setPosts] = useState({ email: '', items: [], page: 0, hasMore: false, loading: false });
   const reqRef = useRef(0);
 
   useEffect(() => {
     if (!enabled || !em || !galOn) return undefined;
     let alive = true;
-    PP.fetchProfilePhotos(em).then((r) => { if (alive && r) setPhotos(r.photos || []); }).catch(() => {});
+    PP.fetchProfilePhotos(em).then((r) => { if (alive && r) setPhotosSt({ email: em, list: r.photos || [] }); }).catch(() => {});
     return () => { alive = false; };
   }, [enabled, em, galOn]);
 
@@ -93,7 +97,7 @@ export function useContactProfileExtras(email, enabled) {
     email: em,
     photos: galOn && enabled ? photos : [],
     posts: postsOn && enabled && posts.email === em ? posts.items : [],
-    hasMore: posts.hasMore,
+    hasMore: posts.email === em ? posts.hasMore : false,
     loadMore,
   };
 }

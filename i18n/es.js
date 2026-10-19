@@ -2806,6 +2806,8 @@ export default {
   'undo.emailsTrashed': '{n} correos movidos a la papelera',
   'undo.emailArchived': 'Correo archivado',
   'undo.emailsArchived': '{n} correos archivados',
+  'undo.emailDeleted': 'Correo eliminado',
+  'undo.emailsDeleted': '{n} correos eliminados',
   'undo.button': 'Deshacer',
 
   // Snooze

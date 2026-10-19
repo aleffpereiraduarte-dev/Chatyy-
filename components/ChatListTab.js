@@ -38,7 +38,7 @@ import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
 import BiaHomeCard from './bia/BiaHomeCard'; // [2026-10-15 bia-design]
-import { homeCarouselOn, HC, CarouselSlot, CarouselDivider, PinBadge, SkeletonSlot, BiaCarouselItem, tc as _hcT } from './chatlist/HomeCarousel'; // [2026-10-19 home-carousel]
+import { homeCarouselOn, HC, CarouselSlot, CarouselDivider, PinBadge, SkeletonSlot, BiaCarouselItem, ThoughtBubble, tc as _hcT } from './chatlist/HomeCarousel'; // [2026-10-19 home-carousel]
 import SyncStatusTitle from './SyncStatusTitle'; // [2026-10-13 sync-status]
 import BackgroundSyncPill from './BackgroundSyncPill'; // [2026-10-18 bg-sync] "Sincronizando mensagens…" discreto
 import { noteUserActivity as _noteUserActivity } from '../services/userActivity'; // [2026-10-18 bg-sync]
@@ -3163,6 +3163,9 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
         {/* 1. Eu: "+" posta status; com status o anel aparece e o toque abre. */}
         <CarouselSlot
           key="own"
+          // [2026-10-19 audit] minha nota (Instagram Notes) volta no balão — o carrossel
+          // escondeu a faixa de notas e a nota sumia da home.
+          bubble={myNote?.content ? <ThoughtBubble text={myNote.content} isDark={isDark} /> : null}
           label={_ownLabel}
           labelColor={_sub}
           onPress={_onOwnStatusPress}
@@ -3268,6 +3271,21 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
             </CarouselSlot>
           );
         })}
+
+        {/* [2026-10-19 audit] Notas de contatos sem status: a faixa de notas some
+            no modo carrossel, então elas entram aqui (balão = a nota). */}
+        {notesOnly.map((n) => (
+          <CarouselSlot
+            key={`note-${n.email}`}
+            bubble={n.content ? <ThoughtBubble text={n.content} isDark={isDark} /> : null}
+            label={_firstName(n.name || n.email?.split('@')[0])}
+            labelColor={_lc}
+            onPress={() => { try { router.push(`/chat?newChat=${encodeURIComponent(n.email)}`); } catch {} }}
+            accessibilityLabel={`${n.name || n.email?.split('@')[0] || ''}. ${n.content || ''}`}
+          >
+            <AvatarCircle name={n.name || n.email} email={n.email} size={HC.avatar} />
+          </CarouselSlot>
+        ))}
 
         {/* Primeira carga sem cache: círculos de esqueleto com brilho. */}
         {_showSkel ? [0, 1, 2].map(i => <SkeletonSlot key={`sk-${i}`} isDark={isDark} />) : null}

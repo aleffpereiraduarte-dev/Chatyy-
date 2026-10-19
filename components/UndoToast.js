@@ -44,9 +44,14 @@ export default function UndoToast({ action, onUndo, onDismiss }) {
   // acima do botão de escrever (antes cobria o FAB e a última linha).
   const n = Array.isArray(action.uids) ? action.uids.length : 1;
   const tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+  // [2026-10-19 audit] Excluir DENTRO da Lixeira apaga de vez (email.php delete
+  // com folder=Trash expunge) → não é "movido para a lixeira".
+  const inTrash = /(^|[./])trash$|lixeira/i.test(String(action.folder || ''));
   const msg = action.type === 'archived'
     ? (n > 1 ? tr('undo.emailsArchived', '{n} e-mails arquivados').replace('{n}', String(n)) : tr('undo.emailArchived', 'E-mail arquivado'))
-    : (n > 1 ? tr('undo.emailsTrashed', '{n} e-mails movidos para a lixeira').replace('{n}', String(n)) : tr('undo.emailTrashed', 'E-mail movido para a lixeira'));
+    : inTrash
+      ? (n > 1 ? tr('undo.emailsDeleted', '{n} e-mails excluídos').replace('{n}', String(n)) : tr('undo.emailDeleted', 'E-mail excluído'))
+      : (n > 1 ? tr('undo.emailsTrashed', '{n} e-mails movidos para a lixeira').replace('{n}', String(n)) : tr('undo.emailTrashed', 'E-mail movido para a lixeira'));
 
   return (
     <Animated.View style={[

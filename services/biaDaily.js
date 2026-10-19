@@ -62,6 +62,7 @@ export function fetchBiaDaily(lang) {
       slot: String(d.slot || ''),
       expires_at: String(d.expires_at),
       req_lang: l,
+      _acct: acct,
     };
     if (_acct() === acct) { try { setJSON(_key(acct), c); } catch {} }
     return c;
@@ -73,10 +74,17 @@ export function fetchBiaDaily(lang) {
 // Hook: { name, line } do slot atual (null até a 1ª resposta; depois pinta do MMKV na hora).
 export function useBiaDaily(lang) {
   const on = biaDailyEnabled();
+  // [2026-10-19 audit] conta ativa nas deps: trocar de conta não pode deixar
+  // "Bom dia, <nome da outra conta>" até o slot vencer.
+  const acct = _acct();
   const [data, setData] = useState(() => (on ? readBiaDailyCache(lang) : null));
 
   useEffect(() => {
     if (!on) return undefined;
+    setData((prev) => {
+      const c = readBiaDailyCache(lang);
+      return c || (prev && prev._acct === acct ? prev : null);
+    });
     let alive = true;
     let timer = null;
     const arm = (c) => {
@@ -103,7 +111,7 @@ export function useBiaDaily(lang) {
       if (timer) clearTimeout(timer);
       try { sub?.remove?.(); } catch {}
     };
-  }, [on, lang]);
+  }, [on, lang, acct]);
 
   return on ? data : null;
 }

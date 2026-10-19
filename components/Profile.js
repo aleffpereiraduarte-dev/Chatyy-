@@ -2010,7 +2010,7 @@ export default function Profile({
     if (!_ppEmail || !_ppOn) return undefined;
     let alive = true;
     const c = ProfilePhotos.getCachedProfilePhotos(_ppEmail);
-    if (c) _setPpPhotos(c.photos);
+    _setPpPhotos(c ? c.photos : null); // [2026-10-19 audit] sem cache = limpa (não herda a galeria do perfil anterior)
     ProfilePhotos.fetchProfilePhotos(_ppEmail).then((r) => { if (alive && r) _setPpPhotos(r.photos); }).catch(() => {});
     const off = ProfilePhotos.subscribeProfilePhotos((ev) => { if (alive && ev && ev.email === _ppEmail) _setPpPhotos(ev.value?.photos || []); });
     return () => { alive = false; off(); };

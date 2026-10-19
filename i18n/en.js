@@ -2806,6 +2806,8 @@ export default {
   'undo.emailsTrashed': '{n} emails moved to Trash',
   'undo.emailArchived': 'Email archived',
   'undo.emailsArchived': '{n} emails archived',
+  'undo.emailDeleted': 'Email deleted',
+  'undo.emailsDeleted': '{n} emails deleted',
   'undo.button': 'Undo',
 
   // Snooze
