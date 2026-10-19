@@ -403,7 +403,11 @@ export function SettingsPickerRow({ title, subtitle, options = [], value, onChan
 // fica cortado por baixo dele) e o do teclado (automaticallyAdjustKeyboardInsets).
 // Web: header simples (voltar + título) acima do scroll.
 const IOS_NATIVE = USE_NATIVE_HEADER && Platform.OS === 'ios';
-export function SettingsScreen({ title, children, headerRight, onBack, contentStyle, overlay, testID }) {
+// [2026-10-19 manage-storage] opaqueHeader: barra SÓLIDA na cor da página (sem
+// vidro/transparente) com o título grande que colapsa — o conteúdo nunca passa
+// por baixo do título/voltar (no iOS 26 o vidro transparente deixava as linhas
+// visíveis atrás do título grande). A rota no _layout nasce com a mesma config.
+export function SettingsScreen({ title, children, headerRight, onBack, contentStyle, overlay, testID, opaqueHeader = false }) {
   const _lang = useLanguageOptional();
   const g = useGroupedColors();
   const { colors = {}, isDark } = useTheme() || {};
@@ -422,10 +426,15 @@ export function SettingsScreen({ title, children, headerRight, onBack, contentSt
           colors,
           isDark,
           title,
-          blur: true,
+          blur: !opaqueHeader,
           // [2026-10-17 settings-polish] título grande que colapsa (igual à rota no _layout).
           largeTitle: true,
           contentStyle: { backgroundColor: g.pageBg },
+          ...(opaqueHeader ? {
+            headerStyle: { backgroundColor: g.pageBg },
+            headerShadowVisible: false,
+            ...(Platform.OS === 'ios' ? { headerLargeStyle: { backgroundColor: g.pageBg } } : {}),
+          } : {}),
           ...(headerRight ? { headerRight } : {}),
           // [2026-10-12 settings-back] Aberta sem histórico (link/push/replace)
           // o header nativo fica SEM voltar → botão próprio que cai no hub.

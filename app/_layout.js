@@ -2428,7 +2428,7 @@ export default function RootLayout() {
                   <Stack.Screen name="wallet" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR, ...(Platform.OS === 'ios' && _nativeListLargeTitleOn() ? _LARGE_TITLE_HDR : {}) }} />{/* [2026-10-14 piscada-nav] header nativo desde o 1º frame (antes caía depois do push) */}
                   <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="storage" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-17 one-merge] = /settings-one (mesma tela) */ }} />
-                  <Stack.Screen name="manage-storage" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-17 smart-storage] Gerenciar armazenamento */ }} />
+                  <Stack.Screen name="manage-storage" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ..._LARGE_TITLE_HDR, ...(Platform.OS === 'web' ? {} : { headerStyle: { backgroundColor: _GROUPED_BG }, headerShadowVisible: false }) /* [2026-10-17 smart-storage] · [2026-10-19] barra sólida + título grande (= SettingsScreen opaqueHeader) — o vidro deixava as linhas atrás do título */ }} />
                   <Stack.Screen name="wallet-cashout" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="creator-earnings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="backup" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
