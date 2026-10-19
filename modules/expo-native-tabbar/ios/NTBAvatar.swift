@@ -13,7 +13,7 @@ final class NTBAvatarLoader {
   static let shared = NTBAvatarLoader()
 
   private let memory = NSCache<NSString, UIImage>()
-  private var inflight: [String: [(UIImage?) -> Void]] = [:]
+  private var inflight: [String: [(UIImage?, String?) -> Void]] = [:]
   private var failedAt: [String: Date] = [:]
   private let lock = NSLock()
   private let queue = DispatchQueue(label: "chatyy.ntb.avatar", qos: .utility)
