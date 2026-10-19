@@ -7,6 +7,8 @@ import { useRouter } from 'expo-router';
 import CachedImage from './CachedImage';
 import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconStarFilled, IconTrash, IconFilm, IconPackage, IconClock, IconPalette, IconImage, IconCamera, IconSend, IconChevronUp, IconGrid } from './Icons';
 import * as api from '../services/api';
+// [2026-10-19 sticker-cache] listas por conta no KV + arquivos no disco (LRU 300 MB).
+import * as stkCache from '../services/stickerCache';
 // [2026-10-08 sticker-maker] criador novo (recorte automático + contorno +
 // texto/desenho/emoji + WebP 512) substitui o StickerEditor antigo aqui.
 import StickerMaker, { pickStickerSourceImage } from './stickers/StickerMaker';
@@ -173,7 +175,45 @@ const RECENT_KEY = '@chatyy_recent_stickers';
 const MINE_KEY = '@chatyy_my_stickers';
 const FAV_KEY = '@chatyy_fav_stickers';
 
+// [2026-10-19 sticker-cache] Recentes / favoritas / minhas agora são POR CONTA
+// (KV do stickerCache). As chaves antigas eram globais (vazavam entre contas):
+// migrateLegacyStickerLists() adota na 1ª abertura e apaga.
+const _META_OF = { [RECENT_KEY]: 'st_recent', [MINE_KEY]: 'st_mine_urls', [FAV_KEY]: 'st_fav' };
+function _metaList(key) {
+  try { const v = stkCache.getStickerMeta(_META_OF[key]); return Array.isArray(v) ? v : []; } catch { return []; }
+}
 async function storageGet(key) {
+  if (_META_OF[key]) {
+    try { await stkCache.migrateLegacyStickerLists(); } catch {}
+    return _metaList(key);
+  }
+  return _legacyStorageGet(key);
+}
+async function storageSet(key, value) {
+  if (_META_OF[key]) {
+    try {
+      stkCache.setStickerMeta(_META_OF[key], Array.isArray(value) ? value : []);
+      if (key === FAV_KEY) stkCache.prefetchStickers((value || []).filter(u => typeof u === 'string'));
+    } catch {}
+    return;
+  }
+  return _legacyStorageSet(key, value);
+}
+// Mineração rápida das listas do KV p/ o 1º frame (sem esperar servidor).
+function _mineFullSync() { try { const v = stkCache.getStickerMeta('st_mine'); return Array.isArray(v) ? v : []; } catch { return []; } }
+function _metaArr(name) { try { const v = stkCache.getStickerMeta(name); return Array.isArray(v) ? v : []; } catch { return []; } }
+function _packItemsSync(packs) {
+  const out = {};
+  for (const p of packs || []) {
+    const id = p && p.id;
+    if (id == null) continue;
+    const v = stkCache.getStickerMeta('pack_' + id);
+    if (Array.isArray(v)) out[id] = v;
+  }
+  return out;
+}
+
+async function _legacyStorageGet(key) {
   try {
     if (Platform.OS === 'web') {
       const v = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
@@ -185,7 +225,7 @@ async function storageGet(key) {
   } catch { return []; }
 }
 
-async function storageSet(key, value) {
+async function _legacyStorageSet(key, value) {
   try {
     if (Platform.OS === 'web') {
       if (typeof localStorage !== 'undefined') localStorage.setItem(key, JSON.stringify(value));
@@ -204,11 +244,12 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
   const [activePack, setActivePack] = useState('recent');
   // [2026-10-13 sticker-one-create] ÚNICA entrada p/ criar: tile no início da
   // grade nas abas "Recentes" (abertura padrão) e "Minhas".
-  const [recents, setRecents] = useState([]);
-  const [mine, setMine] = useState([]);            // cached URL-only list for offline
-  const [mineFull, setMineFull] = useState([]);    // full sticker rows from server (with id, emoji_tags)
-  const [myPacks, setMyPacks] = useState([]);      // user's own packs
-  const [favorites, setFavorites] = useState([]);
+  // [2026-10-19 sticker-cache] 1º frame direto do KV da conta (offline também).
+  const [recents, setRecents] = useState(() => _metaList(RECENT_KEY));
+  const [mine, setMine] = useState(() => _metaList(MINE_KEY));            // cached URL-only list for offline
+  const [mineFull, setMineFull] = useState(_mineFullSync);    // full sticker rows from server (with id, emoji_tags)
+  const [myPacks, setMyPacks] = useState(() => _metaArr('my_packs'));      // user's own packs
+  const [favorites, setFavorites] = useState(() => _metaList(FAV_KEY));
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -221,8 +262,8 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
   // Marketplace (sticker_packs / sticker_pack_items) — Telegram Premium-style
   // store. installedMarketPacks holds pack metadata; marketPackItems caches
   // items per pack id (lazy-loaded when a pack tab is selected).
-  const [installedMarketPacks, setInstalledMarketPacks] = useState([]);
-  const [marketPackItems, setMarketPackItems] = useState({});
+  const [installedMarketPacks, setInstalledMarketPacks] = useState(() => _metaArr('mkt_packs'));
+  const [marketPackItems, setMarketPackItems] = useState(() => _packItemsSync(_metaArr('mkt_packs')));
   const searchRef = useRef(null);
   // Long-press preview: shows a large rendering + "Adicionar aos favoritos"
   // affordance. Tapping the backdrop or the close button dismisses it.
@@ -238,77 +279,52 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
   const closeStickerPreview = useCallback(() => setPreviewItem(null), []);
 
   useEffect(() => {
-    storageGet(RECENT_KEY).then(setRecents);
-    storageGet(MINE_KEY).then(setMine);
-    // Local cache for offline; server is the source of truth — hydrate from
-    // chat_sticker_favorites_list below to merge any favorites this user
-    // saved from another device.
-    // [2026-10-10] Lê o cache local ANTES de mesclar com o servidor. Antes os
-    // dois corriam em paralelo e, se o storage resolvesse depois, sobrescrevia
-    // a lista mesclada → favorita salva pelo chat "não aparecia".
-    (async () => {
-      try { const local = await storageGet(FAV_KEY); setFavorites(prev => (prev && prev.length ? prev : local)); } catch {}
-      try {
-        const r = await api.chatStickerFavoritesList();
-        const rows = r?.items || r?.data?.items || [];
-        if (Array.isArray(rows) && rows.length) {
-          const serverUrls = rows.map(x => x.sticker_url || x.url).filter(Boolean);
-          setFavorites(prev => {
-            // Merge: server union local, dedupe, keep server order first
-            // (most-recently favorited last server-side, prepended here).
-            const seen = new Set();
-            const merged = [];
-            for (const u of [...serverUrls, ...prev]) {
-              if (!seen.has(u)) { seen.add(u); merged.push(u); }
-            }
-            const next = merged.slice(0, 200);
-            storageSet(FAV_KEY, next);
-            return next;
-          });
-        }
-      } catch {}
-    })();
-    // Hydrate from backend — user's own stickers (across all their packs)
+    // [2026-10-19 sticker-cache] Já pintou do KV (useState acima). Aqui: adota as
+    // chaves antigas (1ª vez), revalida no servidor em 2º plano e só troca o
+    // estado do que MUDOU (diff por assinatura) — sem piscar a grade.
+    let alive = true;
+    const pull = (name) => {
+      if (!alive) return;
+      if (name === 'st_fav' || name === '*') setFavorites(_metaList(FAV_KEY));
+      if (name === 'st_mine' || name === '*') {
+        const full = _mineFullSync();
+        setMineFull(full);
+        const urls = full.map(s => s.url).filter(Boolean);
+        if (urls.length) { setMine(urls); storageSet(MINE_KEY, urls); }
+      }
+      if (name === 'my_packs' || name === '*') setMyPacks(_metaArr('my_packs'));
+      if (name === 'mkt_packs' || name === '*') setInstalledMarketPacks(_metaArr('mkt_packs'));
+      if (name === '*' || (typeof name === 'string' && name.startsWith('pack_'))) {
+        setMarketPackItems(prev => ({ ...prev, ..._packItemsSync(_metaArr('mkt_packs')) }));
+      }
+    };
     (async () => {
       try {
-        const r = await api.chatStickerMyStickers();
-        if (r?.success && Array.isArray(r.items || r.data?.items)) {
-          const items = r.items || r.data?.items || [];
-          setMineFull(items);
-          // Keep a URL-only cache for the local favorites/recents flow.
-          const urls = items.map(s => s.url).filter(Boolean);
-          if (urls.length) { setMine(urls); storageSet(MINE_KEY, urls); }
-        }
+        await stkCache.migrateLegacyStickerLists();
+        if (!alive) return;
+        setRecents(_metaList(RECENT_KEY));
+        setFavorites(prev => (prev && prev.length ? prev : _metaList(FAV_KEY)));
+        setMine(prev => (prev && prev.length ? prev : _metaList(MINE_KEY)));
       } catch {}
-      try {
-        const p = await api.chatStickerMyPacks();
-        if (p?.success && Array.isArray(p.items || p.data?.items)) {
-          setMyPacks(p.items || p.data?.items || []);
-        }
-      } catch {}
-      // Hydrate marketplace packs (sticker_pack_my). These are packs the user
-      // installed from /stickers/store. Each will get its own pill tab and
-      // grid view. Keep silent on failure — picker still works without it.
-      try {
-        const mp = await api.stickerPackMy();
-        if (mp?.success) {
-          const arr = mp.items || mp.data?.items || [];
-          if (Array.isArray(arr)) setInstalledMarketPacks(arr);
-        }
-      } catch {}
+      // Pessoais em qualquer rede; pacotes instalados só no Wi-Fi.
+      try { await stkCache.syncStickerLibrary({ onChange: pull }); } catch {}
     })();
+    return () => { alive = false; };
   }, []);
 
   // Lazy-load items for a marketplace pack when its tab activates.
   useEffect(() => {
     if (typeof activePack !== 'string' || !activePack.startsWith('mkt-')) return;
     const id = parseInt(activePack.slice(4), 10);
-    if (!id || marketPackItems[id]) return;
+    // [2026-10-19 sticker-cache] Itens do KV já estão na tela; revalida se vencido.
+    if (!id || (marketPackItems[id] && stkCache.packItemsFresh(id))) return;
     (async () => {
       try {
-        const r = await api.chatStickerPackStickers(id);
-        const items = r?.items || r?.data?.items || r?.stickers || [];
-        setMarketPackItems(prev => ({ ...prev, [id]: Array.isArray(items) ? items : [] }));
+        const items = await stkCache.revalidatePackItems(id, () => {
+          setMarketPackItems(prev => ({ ...prev, [id]: stkCache.getStickerMeta('pack_' + id) || [] }));
+        });
+        if (Array.isArray(items) && !marketPackItems[id]) setMarketPackItems(prev => ({ ...prev, [id]: items }));
+        if (Array.isArray(items)) stkCache.prefetchStickers(items.map(it => it.url).filter(Boolean));
       } catch {}
     })();
   }, [activePack, marketPackItems]);
@@ -326,6 +342,9 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
     if (typeof item === 'string' && item.startsWith('/data/')) {
       try { toSend = api.getMediaUrl(item); } catch { toSend = 'https://chatyy.com.br' + item; }
     }
+    // [2026-10-19 sticker-cache] recente = fixado no disco; a bolha (ChatMedia
+    // cacheKind="sticker" / lista nativa) acha o mesmo arquivo pela URL.
+    if (typeof toSend === 'string' && /^https?:/.test(toSend)) { try { stkCache.ensureStickerCached(toSend, { priority: 'high' }).catch(() => {}); } catch {} }
     onSelect(toSend);
   }, [recents, onSelect]);
 
@@ -662,8 +681,13 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
 
   // When the server returns a relative URL we need to resolve it to the
   // API origin so native `<Image>` can fetch it.
+  // [2026-10-19 sticker-cache] file:// do disco quando já baixado (instantâneo e
+  // offline); senão a URL remota + download p/ o disco (próxima vez é local).
   const resolveStickerUri = useCallback((s) => {
     if (typeof s !== 'string') return s;
+    if (/^https?:\/\//.test(s) || s.startsWith('/data/')) {
+      try { return stkCache.stickerDisplayUri(s); } catch {}
+    }
     if (/^https?:\/\//.test(s)) return s;
     if (s.startsWith('/data/')) {
       try { return api.getMediaUrl(s); } catch { return 'https://chatyy.com.br' + s; }
@@ -1038,7 +1062,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
               activeOpacity={0.6}
             >
               {cover ? (
-                <CachedImage source={{ uri: cover }} style={{ width: 24, height: 24, borderRadius: 4 }} resizeMode="contain" placeholder={STICKER_CLEAR_PLACEHOLDER} showSpinner={false} />
+                <CachedImage source={{ uri: stkCache.stickerDisplayUri(cover) || cover }} style={{ width: 24, height: 24, borderRadius: 4 }} resizeMode="contain" placeholder={STICKER_CLEAR_PLACEHOLDER} showSpinner={false} />
               ) : (
                 pack.animated ? <IconFilm size={20} color={colors.textSecondary} /> : <IconPackage size={20} color={colors.textSecondary} />
               )}

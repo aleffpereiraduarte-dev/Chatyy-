@@ -2,11 +2,14 @@ import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, FlatList, Platform, ActivityIndicator, StyleSheet,
 } from 'react-native';
-import { IconX, IconSearch } from './Icons';
+import { IconX, IconSearch, IconStarFilled } from './Icons';
 import * as api from '../services/api';
 import { cacheMedia, getLocalUriSyncJs, preCacheUrls } from '../services/mediaCache';
 import useIsMounted from '../hooks/useIsMounted';
 import { Overlay } from '../constants/theme';
+// [2026-10-19 sticker-cache] JSON das buscas (TTL) + recentes/favoritos POR CONTA
+// e as prévias no disco durável (LRU) — não mais no store de mídia das conversas.
+import * as stkCache from '../services/stickerCache';
 
 let ExpoImage = null;
 try { ExpoImage = require('expo-image').Image; } catch {}
@@ -65,14 +68,20 @@ const schedulePersist = () => {
   _persistTimer = setTimeout(() => { _persistTimer = null; persistGifCache(); }, 1500);
 };
 
-const GifItem = memo(({ item, onSelect, colors }) => {
+const GifItem = memo(({ item, onSelect, onLongPress, fav, colors }) => {
   // Prefer local file:// URI when mediaCache has downloaded this GIF to disk.
   // Guarantees offline availability + avoids re-downloading across picker opens.
-  const localUri = Platform.OS !== 'web' ? (getLocalUriSyncJs?.(item.preview) || null) : null;
+  let localUri = null;
+  if (Platform.OS !== 'web') {
+    try { localUri = stkCache.getStickerLocalSync(item.preview); } catch {}
+    if (!localUri) localUri = getLocalUriSyncJs?.(item.preview) || null;
+  }
   const src = localUri || item.preview;
   return (
     <TouchableOpacity
       onPress={() => onSelect(item)}
+      onLongPress={onLongPress ? () => onLongPress(item) : undefined}
+      delayLongPress={350}
       style={{ width: '33.33%', aspectRatio: 1, padding: 1.5 }}
       activeOpacity={0.7}
     >
@@ -82,6 +91,11 @@ const GifItem = memo(({ item, onSelect, colors }) => {
         resizeMode="cover"
         {...(ExpoImage ? { cachePolicy: 'memory-disk', recyclingKey: `gif-${item.id}` } : {})}
       />
+      {fav ? (
+        <View pointerEvents="none" style={{ position: 'absolute', top: 6, right: 6, width: 16, height: 16, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
+          <IconStarFilled size={9} color="#fff" />
+        </View>
+      ) : null}
     </TouchableOpacity>
   );
 });
@@ -97,6 +111,10 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
   const inputRef = useRef(null);
   const aliveRef = useIsMounted();
   const reqIdRef = useRef(0);
+  // [2026-10-19 sticker-cache] Recentes + favoritos (enviados antes) no topo da
+  // aba inicial — abrem na hora (prévia já está no disco).
+  const [pinned, setPinned] = useState(() => { try { return stkCache.getGifPinnedList(); } catch { return []; } });
+  const [favIds, setFavIds] = useState(() => { try { return new Set(stkCache.getGifFavorites().map(g => String(g.id || g.medium || g.preview))); } catch { return new Set(); } });
 
   useEffect(() => {
     loadGifs('');
@@ -120,8 +138,18 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
       setLoading(false);
       return;
     }
-
-    setLoading(true);
+    // [2026-10-19 sticker-cache] JSON salvo por conta: mostra na hora; vencido
+    // (tendências 6 h / buscas 24 h) → revalida em 2º plano sem spinner.
+    let _stale = null;
+    try { _stale = stkCache.getGifQueryCache(q); } catch {}
+    if (_stale && Array.isArray(_stale.gifs) && _stale.gifs.length) {
+      setGifs(_stale.gifs);
+      gifCache.set(cacheKey, _stale.gifs);
+      setLoading(false);
+      if (_stale.fresh) return;
+    } else {
+      setLoading(true);
+    }
     try {
       const r = await api.chatSearchGifs(q);
       // Race + unmount guards — descarta resposta velha ou após unmount.
@@ -138,6 +166,7 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
         });
         setGifs(results);
         gifCache.set(cacheKey, results);
+        try { stkCache.setGifQueryCache(q, results); } catch {}
         // Limit cache size
         if (gifCache.size > 50) {
           const first = gifCache.keys().next().value;
@@ -147,7 +176,11 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
         // Download previews to the app's filesystem via mediaCache. Persists
         // across app restarts. After the batch settles, re-set `gifs` to
         // trigger a re-render so GifItem reads the freshly-indexed local URIs.
-        if (Platform.OS !== 'web') {
+        if (Platform.OS !== 'web' && stkCache.stickerCacheOn()) {
+          // Prévias da 1ª tela p/ o disco do stickerCache (LRU próprio). Sem
+          // re-render no fim: trocar remoto→file:// no meio pisca; vale na próxima.
+          try { stkCache.prefetchGifPreviews(results.slice(0, 24)); } catch {}
+        } else if (Platform.OS !== 'web') {
           try {
             const urls = results.slice(0, 24).map(g => g.preview).filter(Boolean);
             preCacheUrls(urls).then(() => {
@@ -179,13 +212,40 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
   }, [loadGifs]);
 
   const handleSelect = useCallback((item) => {
-    // Kick off download of the full-size GIF to local FS so when the chat
-    // bubble renders, it reads from file:// instead of re-downloading.
-    if (Platform.OS !== 'web' && item?.url) {
-      try { cacheMedia(item.url).catch(() => {}); } catch {}
+    // [2026-10-19 sticker-cache] Recente (por conta) + prévia e o arquivo ENVIADO
+    // (medium — é o que a bolha mostra) no disco. Antes baixava o ORIGINAL
+    // gigante (item.url), que a conversa nem usa.
+    try { stkCache.pushGifRecent(item); } catch {}
+    let diskOn = false;
+    try { diskOn = stkCache.stickerCacheOn(); } catch {}
+    if (!diskOn && Platform.OS !== 'web') {
+      const sent = item?.medium || item?.tiny || item?.url;
+      if (sent) { try { cacheMedia(sent).catch(() => {}); } catch {} }
     }
+    try { setPinned(stkCache.getGifPinnedList()); } catch {}
     onSelect(item);
   }, [onSelect]);
+  const handleLongPress = useCallback((item) => {
+    try {
+      stkCache.toggleGifFavorite(item);
+      setFavIds(new Set(stkCache.getGifFavorites().map(g => String(g.id || g.medium || g.preview))));
+      setPinned(stkCache.getGifPinnedList());
+    } catch {}
+  }, []);
+  // Aba inicial (sem busca/categoria): favoritos + recentes primeiro, depois tendências.
+  const showPinned = !query && !activeCategory && pinned.length > 0;
+  const gridData = React.useMemo(() => {
+    if (!showPinned) return gifs;
+    const seen = new Set();
+    const out = [];
+    for (const g of [...pinned, ...gifs]) {
+      const id = String(g?.id || g?.medium || g?.preview || '');
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(g);
+    }
+    return out;
+  }, [showPinned, pinned, gifs]);
 
   return (
     <View style={{
@@ -242,15 +302,15 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
       </View>
 
       {/* GIF grid */}
-      {loading && gifs.length === 0 ? (
+      {loading && gridData.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={colors.primary} />
         </View>
       ) : (
         <FlatList
-          data={gifs}
+          data={gridData}
           numColumns={3}
-          keyExtractor={(g) => g.id}
+          keyExtractor={(g, i) => String(g.id || i)}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           removeClippedSubviews={true}
@@ -258,7 +318,7 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
           windowSize={5}
           initialNumToRender={18}
           renderItem={({ item }) => (
-            <GifItem item={item} onSelect={handleSelect} colors={colors} />
+            <GifItem item={item} onSelect={handleSelect} onLongPress={handleLongPress} fav={favIds.has(String(item.id || item.medium || item.preview))} colors={colors} />
           )}
           contentContainerStyle={{ paddingHorizontal: 2 }}
         />

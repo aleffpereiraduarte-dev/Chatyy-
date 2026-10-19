@@ -211,7 +211,7 @@ export default function StickerMyPacksScreen() {
           onPress: async () => {
             // Optimistic update.
             setPacks((prev) => prev.filter((p) => p.id !== pack.id));
-            try { await api.stickerPackUninstall(pack.id); }
+            try { await api.stickerPackUninstall(pack.id); /* [2026-10-19 sticker-cache] */ try { require('../../services/stickerCache').invalidateStickerLibrary(); } catch {} }
             catch (e) { Alert.alert(t?.('common.error') || 'Erro', e?.message || t('stickers.actionFailed')); refresh(); }
           },
         },
@@ -365,7 +365,7 @@ export default function StickerMyPacksScreen() {
                   alignItems: 'center', justifyContent: 'center',
                 }}>
                   {cover ? (
-                    <Image source={{ uri: cover }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    <Image source={{ uri: require('../../services/stickerCache').getStickerLocalSync(cover) || cover }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                   ) : (
                     item.animated ? <IconFilm size={26} color={colors.textSecondary || '#9ca3af'} /> : <IconPackage size={26} color={colors.textSecondary || '#9ca3af'} />
                   )}

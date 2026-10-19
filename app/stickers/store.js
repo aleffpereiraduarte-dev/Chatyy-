@@ -413,6 +413,7 @@ export default function StickerStoreScreen() {
     try {
       const r = wasInstalled ? await api.stickerPackUninstall(pack.id) : await api.stickerPackInstall(pack.id);
       if (!r?.success) throw new Error('toggle_failed');
+      try { require('../../services/stickerCache').invalidateStickerLibrary(); } catch {} // [2026-10-19 sticker-cache]
     } catch (e) {
       setInstalled((prev) => { const n = new Set(prev); if (wasInstalled) n.add(pack.id); else n.delete(pack.id); return n; });
       Alert.alert(t('stickerStore.errorTitle'), wasInstalled ? t('stickerStore.uninstallFailed') : t('stickerStore.installFailed'));

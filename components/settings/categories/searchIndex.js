@@ -87,6 +87,7 @@ const ENTRIES = [
   ['storage_data', 'settings.lowDataCalls.title', 'Usar menos dados em chamadas', 'mediaAutoDownload', 'chamadas calls dados'],
   ['storage_data', 'settings.storage.title', 'Uso do armazenamento', 'storage', 'cache armazenamento mídia', 'native'],
   ['storage_data', 'settings.storage.clearCache', 'Limpar cache', 'storage', 'cache limpar', 'native'],
+  ['storage_data', 'settings.storage.clearStickerCache', 'Limpar cache de figurinhas e GIFs', 'storage', 'figurinhas gifs stickers cache limpar', 'native'], // [2026-10-19 sticker-cache]
   ['accessibility', 'settings.fontSize', 'Tamanho da fonte', 'reading', 'fonte font texto'],
   ['accessibility', 'quickSettings.density', 'Densidade', 'reading', 'density compacto'],
   ['accessibility', 'settings.reduceMotion', 'Reduzir movimento', 'reading', 'animação animacao motion movimento'],

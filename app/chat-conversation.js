@@ -32231,6 +32231,7 @@ function ChatConversationInner() {
                 >
                   <ChatMedia
                     uri={_stickerUri}
+                    cacheKind="sticker" /* [2026-10-19 sticker-cache] mesmo disco do seletor */
                     style={{ width: 120, height: 120 }}
                     contentFit="contain"
                     // [2026-10-12 sticker-instant] Chave estável no tmp_→id do servidor (antes `msg.id` mudava
@@ -32283,10 +32284,20 @@ function ChatConversationInner() {
           let LottieView = null;
           try { const M = require('lottie-react-native'); LottieView = M.default || M; } catch {}
           if (!LottieView) return <IconFilm size={64} color="#111111" />;
+          // [2026-10-19 sticker-cache] JSON do Lottie já lido do disco → objeto (sem rede);
+          // senão a URL e o JSON vai p/ o disco (próxima abertura é local).
+          let _lottieSrc = null;
+          try {
+            const _sc = require('../services/stickerCache');
+            if (_sc.stickerCacheOn()) {
+              _lottieSrc = _sc.getLottieJsonSync(lottieUrl);
+              if (!_lottieSrc) _sc.loadLottieJson(lottieUrl).catch(() => {});
+            }
+          } catch {}
           return (
             <View>
               <LottieView
-                source={{ uri: lottieUrl }}
+                source={_lottieSrc || { uri: lottieUrl }}
                 style={{ width: 160, height: 160 }}
                 autoPlay
                 loop
@@ -32405,6 +32416,7 @@ function ChatConversationInner() {
             <View style={{ width: 220, height: 180, borderRadius: 12, overflow: 'hidden' }}>
               <ChatMedia
                 uri={gifUrl}
+                cacheKind="sticker" /* [2026-10-19 sticker-cache] GIF enviado/recente já no disco */
                 style={{ width: 220, height: 180 }}
                 contentFit="cover"
                 recyclingKey={`gif-${msg.id}`}

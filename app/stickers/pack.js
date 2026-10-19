@@ -144,6 +144,7 @@ export default function StickerPackScreen() {
     try {
       const r = pack.installed ? await api.stickerPackUninstall(pack.id) : await api.stickerPackInstall(pack.id);
       if (r?.success === false) throw new Error('x');
+      try { require('../../services/stickerCache').invalidateStickerLibrary(); } catch {} // [2026-10-19 sticker-cache]
       setPack({ ...pack, installed: !pack.installed });
     } catch { Alert.alert(t('common.error'), t('stickers.actionFailed')); }
     finally { setBusy(''); }
@@ -286,7 +287,7 @@ export default function StickerPackScreen() {
               accessibilityRole="imagebutton"
               accessibilityLabel={t('chat.sticker')}
             >
-              <ExpoImage source={{ uri: stickerAbsUrl(item.url) }} style={{ flex: 1 }} contentFit="contain" recyclingKey={`pk-${item.id}`} />
+              <ExpoImage source={{ uri: (pack.installed && require('../../services/stickerCache').getStickerLocalSync(stickerAbsUrl(item.url))) || stickerAbsUrl(item.url) }} style={{ flex: 1 }} contentFit="contain" recyclingKey={`pk-${item.id}`} />
             </TouchableOpacity>
           )}
         />

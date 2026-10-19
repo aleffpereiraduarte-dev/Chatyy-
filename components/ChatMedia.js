@@ -76,19 +76,31 @@ function resolveAbsolute(url) {
  * Web: passes through unchanged — browsers cache by Cache-Control headers
  * which already give us 1-year persistence on chatyy.com.br assets.
  */
-export function useChatMediaUri(url, { allowRemoteFallback = true } = {}) {
+// [2026-10-19 sticker-cache] cacheKind="sticker" (figurinha / GIF): consulta
+// também o disco do stickerCache (o mesmo do seletor — figurinha enviada ou
+// recente abre na hora) e, se faltar, baixa PARA ELE (LRU próprio, por conta)
+// em vez do store de mídia das conversas. Kill switch do stickerCache → antigo.
+let _stkMod;
+function _stk() {
+  if (_stkMod === undefined) { try { _stkMod = require('../services/stickerCache'); } catch { _stkMod = null; } }
+  return _stkMod && _stkMod.stickerCacheOn() ? _stkMod : null;
+}
+export function useChatMediaUri(url, { allowRemoteFallback = true, cacheKind } = {}) {
   const absolute = resolveAbsolute(url);
+  const stk = cacheKind === 'sticker' && Platform.OS !== 'web' ? _stk() : null;
   // Compute synchronously every render — never store in state. With
   // FlashList row recycling, useState's lazy initializer only fires on
   // the FIRST mount; recycled rows would carry stale file:// paths from
   // the previous item until useEffect overwrote them, producing a
   // 1-frame flash. Reading getLocalUriSyncJs directly here means each
   // render reflects the current URL's actual cache state.
-  const sync = (!absolute || Platform.OS === 'web') ? null : getLocalUriSyncJs(absolute);
+  const sync = (!absolute || Platform.OS === 'web') ? null
+    : ((stk && stk.getStickerLocalSync(absolute)) || getLocalUriSyncJs(absolute));
 
   useEffect(() => {
     if (Platform.OS === 'web' || !absolute) return;
     if (sync) return; // already cached → no need to download
+    if (stk && /^https?:/i.test(absolute)) { stk.ensureStickerCached(absolute).catch(() => {}); return; }
     // Fire-and-forget: download to documentDirectory + register in
     // syncIndex. INTENTIONALLY no forceUpdate here — swapping the URI
     // mid-session from remote→file:// causes a visible flicker as
@@ -99,7 +111,7 @@ export function useChatMediaUri(url, { allowRemoteFallback = true } = {}) {
     // lookup at the top of this hook returns file:// instantly with no
     // transition — that's where the WhatsApp-parity benefit lands.
     cacheMedia(absolute).catch(() => {});
-  }, [absolute, sync]);
+  }, [absolute, sync, stk]);
 
   if (Platform.OS === 'web') return absolute;
   if (sync) return sync;
@@ -125,6 +137,7 @@ export default function ChatMedia({
   messageId,
   fileSize,
   onLoad,
+  cacheKind,
   ...rest
 }) {
   // Allow remote fallback: ChatMedia is used in render closures (FlashList
@@ -134,7 +147,7 @@ export default function ChatMedia({
   // to look at while cacheMedia downloads. Once it lands, the sync
   // re-check + bump swap us to file://. Without the fallback, a single
   // miss leaves the bubble stuck on the spinner indefinitely.
-  const localUri = useChatMediaUri(uri, { allowRemoteFallback: true });
+  const localUri = useChatMediaUri(uri, { allowRemoteFallback: true, cacheKind });
   // Fora dos providers (overlay/preview isolado) → sem tema/idioma: cai nos padrões.
   let _theme = null;
   try { _theme = useTheme(); } catch { _theme = null; }

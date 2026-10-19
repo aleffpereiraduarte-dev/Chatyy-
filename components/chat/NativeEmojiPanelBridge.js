@@ -130,19 +130,33 @@ const MINE_KEY = '@chatyy_my_stickers';
 // Recentes Lottie à parte: o StickerPicker JS (mesma RECENT_KEY) não desenha .json.
 const RECENT_LOTTIE_KEY = '@chatyy_recent_stickers_lottie';
 
+// [2026-10-19 sticker-cache] Listas POR CONTA no KV do stickerCache (as chaves
+// AsyncStorage antigas eram globais → migrateLegacyStickerLists adota e apaga).
+// Imagens vão p/ o nativo como file:// quando já estão no disco (EPImageLoader /
+// Glide aceitam caminho local) — painel abre instantâneo e offline.
+function _stk() { try { return require('../../services/stickerCache'); } catch { return null; } }
+const _META_OF = { [RECENT_KEY]: 'st_recent', [FAV_KEY]: 'st_fav', [MINE_KEY]: 'st_mine_urls', [RECENT_LOTTIE_KEY]: 'st_recent_lottie' };
+function _metaSync(key) {
+  try { const v = _stk()?.getStickerMeta(_META_OF[key] || key); return Array.isArray(v) ? v : []; } catch { return []; }
+}
 async function _storageGet(key) {
-  try {
-    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-    const v = await AsyncStorage.getItem(key);
-    const arr = v ? JSON.parse(v) : [];
-    return Array.isArray(arr) ? arr : [];
-  } catch { return []; }
+  try { await _stk()?.migrateLegacyStickerLists(); } catch {}
+  return _metaSync(key);
 }
 async function _storageSet(key, value) {
-  try {
-    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-    await AsyncStorage.setItem(key, JSON.stringify(value));
-  } catch {}
+  try { _stk()?.setStickerMeta(_META_OF[key] || key, Array.isArray(value) ? value : []); } catch {}
+}
+function _packItemsSync(packs) {
+  const out = {};
+  const st = _stk();
+  if (!st) return out;
+  for (const p of packs || []) {
+    const id = p?.id ?? p?.pack_id;
+    if (id == null) continue;
+    const v = st.getStickerMeta('pack_' + id);
+    if (Array.isArray(v)) out[id] = v;
+  }
+  return out;
 }
 
 const _isImg = (s) => typeof s === 'string' && (/^https?:\/\//.test(s) || s.startsWith('/data/'));
@@ -166,6 +180,13 @@ function _mascotPack() {
     return null;
   }
 }
+/** Imagem p/ o nativo: file:// já baixado ou URL (e agenda o download p/ o disco). */
+function _disp(api, s, kick) {
+  const abs = _resolve(api, s);
+  if (!abs || _isLottie(abs)) return abs;
+  try { const st = _stk(); if (st) return st.stickerDisplayUri(abs, kick === false ? { kick: false } : undefined) || abs; } catch {}
+  return abs;
+}
 function _resolve(api, s) {
   if (typeof s !== 'string') return '';
   if (/^https?:\/\//.test(s)) return s;
@@ -176,12 +197,12 @@ function _resolve(api, s) {
 }
 
 function useStickerSections(enabled, t, rich) {
-  const [recents, setRecents] = useState([]);
-  const [recentsLottie, setRecentsLottie] = useState([]); // [{u, ts}]
-  const [favorites, setFavorites] = useState([]);
-  const [mine, setMine] = useState([]);
-  const [packs, setPacks] = useState([]);
-  const [packItems, setPackItems] = useState({});
+  const [recents, setRecents] = useState(() => _metaSync(RECENT_KEY));
+  const [recentsLottie, setRecentsLottie] = useState(() => _metaSync(RECENT_LOTTIE_KEY)); // [{u, ts}]
+  const [favorites, setFavorites] = useState(() => _metaSync(FAV_KEY));
+  const [mine, setMine] = useState(() => _metaSync(MINE_KEY));
+  const [packs, setPacks] = useState(() => _metaSync('mkt_packs'));
+  const [packItems, setPackItems] = useState(() => _packItemsSync(_metaSync('mkt_packs')));
   const loadingPacks = useRef(new Set());
   const loadedOnce = useRef(false);
 
@@ -198,33 +219,25 @@ function useStickerSections(enabled, t, rich) {
     }
     _storageGet(FAV_KEY).then((v) => { if (alive) setFavorites((p) => (p.length ? p : v)); });
     _storageGet(MINE_KEY).then((v) => { if (alive) setMine((p) => (p.length ? p : v)); });
+    // [2026-10-19 sticker-cache] revalida no servidor (diff) e pré-busca p/ o disco.
+    void api;
     (async () => {
-      try {
-        const r = await api.chatStickerFavoritesList();
-        const rows = r?.items || r?.data?.items || [];
-        if (alive && Array.isArray(rows) && rows.length) {
-          const urls = rows.map((x) => x.sticker_url || x.url).filter(Boolean);
-          setFavorites((prev) => {
-            const seen = new Set();
-            const out = [];
-            for (const u of [...urls, ...prev]) { if (!seen.has(u)) { seen.add(u); out.push(u); } }
-            return out.slice(0, 200);
-          });
+      const st = _stk();
+      if (!st) return;
+      const pull = (name) => {
+        if (!alive) return;
+        if (name === 'st_fav' || name === '*') setFavorites(_metaSync(FAV_KEY));
+        if (name === 'st_mine' || name === '*') {
+          const full = st.getStickerMeta('st_mine');
+          const urls = Array.isArray(full) ? full.map((x) => x && x.url).filter(Boolean) : [];
+          if (urls.length) { setMine(urls); _storageSet(MINE_KEY, urls); }
         }
-      } catch {}
-      try {
-        const r = await api.chatStickerMyStickers();
-        const items = r?.items || r?.data?.items;
-        if (alive && r?.success && Array.isArray(items)) {
-          const urls = items.map((s) => s.url).filter(Boolean);
-          if (urls.length) setMine(urls);
+        if (name === 'mkt_packs' || name === '*') setPacks(_metaSync('mkt_packs'));
+        if (name === '*' || (typeof name === 'string' && name.startsWith('pack_'))) {
+          setPackItems((prev) => ({ ...prev, ..._packItemsSync(_metaSync('mkt_packs')) }));
         }
-      } catch {}
-      try {
-        const mp = await api.stickerPackMy();
-        const arr = mp?.items || mp?.data?.items;
-        if (alive && mp?.success && Array.isArray(arr)) setPacks(arr);
-      } catch {}
+      };
+      try { await st.syncStickerLibrary({ onChange: pull }); } catch {}
     })();
     return () => { alive = false; };
   }, [enabled]);
@@ -232,16 +245,24 @@ function useStickerSections(enabled, t, rich) {
   const loadPack = useCallback((key) => {
     if (typeof key !== 'string' || !key.startsWith('mkt-')) return;
     const id = parseInt(key.slice(4), 10);
-    if (!id || packItems[id] || loadingPacks.current.has(id)) return;
+    const st = _stk();
+    const fresh = !!(st && st.packItemsFresh && st.packItemsFresh(id));
+    if (!id || (packItems[id] && fresh) || loadingPacks.current.has(id)) return;
     loadingPacks.current.add(id);
-    const api = require('../../services/api');
     (async () => {
       try {
-        const r = await api.chatStickerPackStickers(id);
-        const items = r?.items || r?.data?.items || r?.stickers || [];
-        setPackItems((prev) => ({ ...prev, [id]: Array.isArray(items) ? items : [] }));
+        // [2026-10-19 sticker-cache] KV já está na tela; servidor só se mudou.
+        const items = st ? await st.revalidatePackItems(id, () => {
+          setPackItems((prev) => ({ ...prev, [id]: st.getStickerMeta('pack_' + id) || [] }));
+        }) : null;
+        if (Array.isArray(items)) {
+          setPackItems((prev) => (prev[id] ? prev : { ...prev, [id]: items }));
+          try { st.prefetchStickers(items.map((it) => it && it.url).filter(Boolean)); } catch {}
+        } else {
+          setPackItems((prev) => (prev[id] ? prev : { ...prev, [id]: [] }));
+        }
       } catch {
-        setPackItems((prev) => ({ ...prev, [id]: [] }));
+        setPackItems((prev) => (prev[id] ? prev : { ...prev, [id]: [] }));
       }
       loadingPacks.current.delete(id);
     })();
@@ -261,13 +282,15 @@ function useStickerSections(enabled, t, rich) {
       _storageSet(RECENT_KEY, next);
       return next;
     });
+    try { _stk()?.ensureStickerCached(item, { priority: 'high' }).catch(() => {}); } catch {}
   }, []);
 
   const sections = useMemo(() => {
     const api = require('../../services/api');
     // binário sem Lottie (apiVersion 1): figurinha .json não desenha → fora.
-    const toItems = (list) => (list || []).filter(_isImg).filter((u) => rich || !_isLottie(u)).slice(0, 120)
-      .map((u) => (_isLottie(u) ? { key: u, uri: _resolve(api, u), lottie: true } : { key: u, uri: _resolve(api, u) }));
+    // kick=false (pacotes): o arquivo vai p/ o disco pela pré-busca do Wi-Fi (syncStickerLibrary).
+    const toItems = (list, kick) => (list || []).filter(_isImg).filter((u) => rich || !_isLottie(u)).slice(0, 120)
+      .map((u) => (_isLottie(u) ? { key: u, uri: _resolve(api, u), lottie: true } : { key: u, uri: _disp(api, u, kick) }));
     const out = [];
     const mascot = rich ? _mascotPack() : null;
     // recentes = imagens + Lottie (mais novos primeiro; Lottie só com rich)
@@ -286,14 +309,14 @@ function useStickerSections(enabled, t, rich) {
       const key = 'mkt-' + id;
       const raw = packItems[id];
       const items = Array.isArray(raw)
-        ? toItems(raw.map((it) => it?.url || it?.image_url || it?.sticker_id))
+        ? toItems(raw.map((it) => it?.url || it?.image_url || it?.sticker_id), false)
         : [];
       const cover = p?.cover_url || p?.cover || p?.thumb_url || p?.icon_url || p?.preview_url || '';
       out.push({
         key,
         title: String(p?.name || p?.title || ''),
         icon: 'pack',
-        coverUri: cover ? _resolve(api, cover) : null,
+        coverUri: cover ? _disp(api, cover, false) : null,
         loading: !Array.isArray(raw),
         items,
       });
@@ -316,12 +339,26 @@ function useGifs(enabled) {
   const load = useCallback(async (q) => {
     const my = ++reqId.current;
     const ck = q || '__trending__';
-    const apply = (list) => {
+    const st = _stk();
+    const apply = (list0) => {
       const m = new Map();
       const rows = [];
+      // [2026-10-19 sticker-cache] aba inicial: favoritos + recentes primeiro.
+      let list = list0;
+      if (!q && st) {
+        try {
+          const pin = st.getGifPinnedList();
+          if (pin.length) {
+            const seen = new Set();
+            list = [];
+            for (const g of [...pin, ...list0]) { const id = String(g?.id || g?.medium || g?.preview || ''); if (!id || seen.has(id)) continue; seen.add(id); list.push(g); }
+          }
+        } catch {}
+      }
       list.forEach((g, i) => {
-        const uri = g?.preview || g?.tiny || g?.url;
+        let uri = g?.preview || g?.tiny || g?.url;
         if (!uri) return;
+        try { const loc = st && st.getStickerLocalSync(uri); if (loc) uri = loc; } catch {}
         const key = String(g?.id || i) + ':' + i;
         m.set(key, g);
         rows.push({ key, uri, width: Number(g?.width) || 1, height: Number(g?.height) || 1 });
@@ -330,7 +367,20 @@ function useGifs(enabled) {
       setGifs(rows);
     };
     if (_gifCache.has(ck)) { apply(_gifCache.get(ck)); setLoading(false); return; }
-    setLoading(true);
+    // [2026-10-19 sticker-cache] JSON salvo por conta (TTL): na hora; vencido → 2º plano.
+    let stale = null;
+    try { stale = st && st.getGifQueryCache(q); } catch {}
+    if (stale && Array.isArray(stale.gifs) && stale.gifs.length) {
+      _gifCache.set(ck, stale.gifs);
+      apply(stale.gifs);
+      setLoading(false);
+      if (stale.fresh) return;
+    } else if (!q && st && st.getGifPinnedList().length) {
+      apply([]);
+      setLoading(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const api = require('../../services/api');
       const r = await api.chatSearchGifs(q);
@@ -343,6 +393,7 @@ function useGifs(enabled) {
         });
         _gifCache.set(ck, list);
         if (_gifCache.size > 40) _gifCache.delete(_gifCache.keys().next().value);
+        try { if (st) { st.setGifQueryCache(q, list); st.prefetchGifPreviews(list.slice(0, 24)); } } catch {}
         apply(list);
       }
     } catch {}
@@ -555,7 +606,11 @@ function NativeEmojiPanelInner(props) {
   const _onGif = useCallback((e) => {
     const g = getGif(String(e?.nativeEvent?.key || ''));
     if (!g) return;
-    try { if (g.url) require('../../services/mediaCache').cacheMedia(g.url).catch(() => {}); } catch {}
+    // [2026-10-19 sticker-cache] recente por conta + prévia e o arquivo ENVIADO
+    // (medium) no disco — antes baixava o original gigante (g.url).
+    let _disk = false;
+    try { const st = _stk(); if (st) { st.pushGifRecent(g); _disk = st.stickerCacheOn(); } } catch {}
+    if (!_disk) { try { const sent = g.medium || g.tiny || g.url; if (sent) require('../../services/mediaCache').cacheMedia(sent).catch(() => {}); } catch {} }
     try { cbRef.current.onSendGif?.(g); } catch {}
   }, [getGif]);
   const _onGifQuery = useCallback((e) => { loadGifs(String(e?.nativeEvent?.query || '')); }, [loadGifs]);

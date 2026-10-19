@@ -18,6 +18,7 @@ import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, Setti
 import StorageMeter, { StorageNudgeCard } from '../../storage/StorageMeter'; // [2026-10-17 smart-storage]
 import { PLAN_NAME } from '../../../services/brandPlan';
 import HistoryDownloadGroup from './HistoryDownloadGroup';
+import StickerGifCacheGroup from '../StickerGifCacheGroup'; // [2026-10-19 sticker-cache]
 import { useSafeNav, useSettingsHost, useChatDefaults, useLocalKeys, setStorage, useSettingsRefresh } from './shared';
 
 const isWeb = Platform.OS === 'web';
@@ -397,6 +398,8 @@ function DeviceStorage() {
           )}
         </SettingsGroup>
       )}
+
+      <StickerGifCacheGroup />
 
       <HistoryDownloadGroup />
 

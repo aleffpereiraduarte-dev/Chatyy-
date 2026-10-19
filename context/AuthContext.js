@@ -624,6 +624,8 @@ async function clearAllPerAccountCaches() {
     const { clearVideoDiskCache } = require('../services/videoCacheSource');
     await clearVideoDiskCache();
   } catch {}
+  // [2026-10-19 sticker-cache] figurinhas/GIFs no disco + listas (todas as contas).
+  try { await require('../services/stickerCache').purgeAllStickerCaches(); } catch {}
 
   // 1c. Email caches (MMKV list_/msg_ + web IDB). These are written by
   // services/offlineCache.js directly to MMKV, bypassing services/cache.js —
@@ -1353,6 +1355,8 @@ export function AuthProvider({ children }) {
     }, 4000);
     // [2026-10-14 offline-first] perfil/carteira/notificações/contatos salvos no aparelho.
     try { require('../services/screenPrefetch').scheduleScreenPrefetch(email); } catch {}
+    // [2026-10-19 sticker-cache] figurinhas (pacotes/minhas/favoritas) p/ o disco — Wi-Fi, pós-boot, ≤ 1×/6 h.
+    try { require('../services/stickerCache').scheduleStickerPrefetch(email); } catch {}
     // [perf 2026-10-17 boot-fanout] get_profile (p95 1,4 s) saía junto do
     // check_auth, no caminho crítico da 1ª lista. Só atualiza o nome exibido (já
     // vem do cache/conta guardada) → no boot espera 1ª pintura + ~8 s + ocioso.
@@ -2290,6 +2294,7 @@ export function AuthProvider({ children }) {
     // [2026-10-14 offline-first] dados salvos das telas DESTA conta (cache.js).
     try { require('../services/cache').clearUserCache?.(email); } catch {}
     try { require('../services/settingsCache').purgeAccount?.(email); } catch {}
+    try { require('../services/stickerCache').purgeStickerCacheForAccount(email); } catch {} // [2026-10-19 sticker-cache]
     loadAccounts();
   }, [user, doLogout, loadAccounts]);
 

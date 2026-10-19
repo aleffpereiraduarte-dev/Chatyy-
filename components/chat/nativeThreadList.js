@@ -987,6 +987,22 @@ function _mdlMod() {
   return _mdlModRef;
 }
 function _mc() { try { return require('../../services/mediaCache'); } catch { return null; } }
+// [2026-10-19 sticker-cache] Figurinha / GIF externo → file:// do disco durável do
+// stickerCache (o mesmo do seletor) quando já baixado; senão a URL e agenda o
+// download (figurinha: sempre, pequena; GIF: só no Wi-Fi). Kill switch → URL.
+let _stkM;
+function _stkLocal(u, gif) {
+  if (!u || !/^https?:\/\//i.test(u)) return u;
+  if (_stkM === undefined) { try { _stkM = require('../../services/stickerCache'); } catch { _stkM = null; } }
+  const st = _stkM;
+  if (!st || !st.stickerCacheOn()) return u;
+  try {
+    const loc = st.getStickerLocalSync(u);
+    if (loc) return loc;
+    st.prefetchStickers([u], { wifiOnly: !!gif, kind: gif ? 'gif' : 'sticker' });
+  } catch {}
+  return u;
+}
 // [2026-10-18 vthumb] 1º frame local p/ vídeo recebido sem poster (binário ≥ 9 extrai no nativo: campo `vf`)
 function _vff() { try { return require('../../services/videoFirstFrame'); } catch { return null; } }
 function _vfMedia(m, out, ctx) {
@@ -1254,7 +1270,7 @@ function _mediaFor(m, ctx) {
   if (!(w > 0 && h > 0) && r.w > 0 && r.h > 0) { w = r.w; h = r.h; }
   const gifUrl = m.type === 'gif' && !r.uri ? _gifContentUrl(m) : '';
   if (gifUrl && !(w > 0 && h > 0)) { w = 220; h = 180; } // mesmo quadro do render JS
-  const out = { t: m.type === 'gif' ? 'gif' : m.type, uri: r.uri || gifUrl || '', w: w || 0, h: h || 0 };
+  const out = { t: m.type === 'gif' ? 'gif' : m.type, uri: r.uri || (gifUrl ? _stkLocal(gifUrl, true) : '') || '', w: w || 0, h: h || 0 };
   if (r.thumb) out.th = r.thumb;
   if (m.type === 'gif') out.dur = 'GIF'; // pílula "GIF" (nativo desenha no canto, como a duração do vídeo)
   if (m.type === 'video') {
@@ -1513,7 +1529,7 @@ function _buildRowInner(item, key, ctx) {
   if (type === 'sticker') {
     if (item.file_url || /^(https?:\/\/|\/?data\/)/i.test(c)) {
       const r = (ctx.resolveSticker && ctx.resolveSticker(item)) || {};
-      row.media = { t: 'sticker', uri: r.uri || '', w: 120, h: 120 };
+      row.media = { t: 'sticker', uri: _stkLocal(r.uri || '', false), w: 120, h: 120 };
     } else {
       row.jumbo = 64; row.text = c;
     }
