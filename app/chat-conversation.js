@@ -42158,13 +42158,13 @@ function ChatConversationInnerBody() {
                   { Icon: IconImage, label: t('chatConv.media') || 'Mídia, links e docs', onPress: () => { closeMenu(); setShowMediaGallery(true); }},
                   { Icon: IconBell, label: mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa'), badge: !!mutedUntil, onPress: () => { closeMenu(); if (mutedUntil) { handleMuteChat(null); } else { setShowMuteModal(true); } }},
                   { Icon: IconClock, label: t('chat.disappearing') || 'Mensagens temporárias', subtitle: disappearingSummary, badge: disappearingTimer > 0 || !!vanishMode, onPress: () => { closeMenu(); setShowDisappearingModal(true); }},
+                  ...(_vanish.eligible ? [{ Icon: IconVanish, label: _vanish.rowTitle, subtitle: _vanish.rowValue, badge: _vanish.active, onPress: () => { closeMenu(); handleToggleVanishMode(); }}] : []), // [vanish 2026-10-19]
                   { Icon: IconImage, label: t('chatConv.wallpaper') || 'Papel de parede', onPress: () => { closeMenu(); setShowWallpaperPicker(true); }},
                 ]},
                 { divider: true, items: [
                   { Icon: IconMoreHorizontal, label: t('common.more') || 'Mais', chevron: true, keepOpen: true, onPress: () => setHeaderMenuMore(true) },
                 ]},
               ] : [
-                  ...(_vanish.eligible ? [{ Icon: IconVanish, label: _vanish.rowTitle, subtitle: _vanish.rowValue, badge: _vanish.active, onPress: () => { closeMenu(); handleToggleVanishMode(); }}] : []), // [vanish 2026-10-19]
                 { divider: false, items: [
                   { Icon: IconChevronLeft, label: t('chatConv.moreOptions') || 'Mais opções', back: true, keepOpen: true, onPress: () => setHeaderMenuMore(false) },
                 ]},
