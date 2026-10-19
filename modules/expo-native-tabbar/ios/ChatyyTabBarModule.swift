@@ -52,6 +52,63 @@ struct NTBThemeRecord: Record {
   @Field var ripple: Double? = nil
 }
 
+// [2026-10-19 tabbar-api7] items chegam como dicionários e são lidos SEM exceção:
+// com o Record do Expo, um único campo de tipo inesperado (ex.: badge "9+",
+// cabeçalho não-string) faz a conversão da LISTA inteira falhar e o setter nem é
+// chamado → barra sem itens (731 + OTA 01a152a3: it=0/0). Item sem `key` é
+// descartado (contado em `dropped` p/ o diagnóstico).
+func ntbString(_ v: Any?) -> String? {
+  if let s = v as? String { return s }
+  if let n = v as? NSNumber { return n.stringValue }
+  return nil
+}
+
+func ntbInt(_ v: Any?) -> Int {
+  if let n = v as? NSNumber {
+    let d = n.doubleValue
+    guard d.isFinite else { return 0 }
+    return Int(max(-1_000_000, min(1_000_000, d)))
+  }
+  if let s = v as? String {
+    let digits = s.filter { (c: Character) -> Bool in c.isNumber }
+    return Int(digits.prefix(7)) ?? 0
+  }
+  return 0
+}
+
+func ntbBool(_ v: Any?, _ fallback: Bool) -> Bool {
+  if let b = v as? Bool { return b }
+  if let n = v as? NSNumber { return n.intValue != 0 }
+  if let s = v as? String { return s == "true" || s == "1" }
+  return fallback
+}
+
+func ntbItem(from d: [String: Any]) -> NTBItemRecord? {
+  guard let key = ntbString(d["key"]), !key.isEmpty else { return nil }
+  var r = NTBItemRecord()
+  r.key = key
+  r.label = ntbString(d["label"]) ?? ""
+  r.sfSymbol = ntbString(d["sfSymbol"]) ?? ""
+  r.sfSymbolActive = ntbString(d["sfSymbolActive"])
+  r.androidIcon = ntbString(d["androidIcon"])
+  r.badge = ntbInt(d["badge"])
+  r.dot = ntbBool(d["dot"], false)
+  r.longPress = ntbBool(d["longPress"], false)
+  r.selectable = ntbBool(d["selectable"], true)
+  r.avatarUrl = ntbString(d["avatarUrl"])
+  if let h = d["avatarHeaders"] as? [String: Any] {
+    var out: [String: String] = [:]
+    for (k, v) in h {
+      if let sv = ntbString(v) { out[k] = sv }
+    }
+    r.avatarHeaders = out.isEmpty ? nil : out
+  }
+  r.hideLabel = ntbBool(d["hideLabel"], false)
+  r.avatarLocalPath = ntbString(d["avatarLocalPath"])
+  r.avatarKey = ntbString(d["avatarKey"])
+  return r
+}
+
 /// processColor() do RN entrega 0xAARRGGBB (número). nil → fallback.
 func ntbColor(_ v: Double?, _ fallback: UIColor) -> UIColor {
   guard let v = v, v.isFinite else { return fallback }
@@ -74,8 +131,12 @@ public class ChatyyTabBarModule: Module {
     // 6 = [2026-10-19 tabbar-offline] items[].avatarLocalPath + avatarKey: foto OFFLINE-FIRST (última
     //     foto boa por conta em disco, síncrona na montagem; rede só revalida; falha nunca volta ao
     //     ícone) e item transparente por baixo da foto (nada do SF Symbol aparece em volta).
+    // 7 = [2026-10-19 tabbar-api7] autochecagem de PIXEL (hitTest da janela nos ícones +
+    //     contraste do glifo na captura da tela) → onBarFail{reason:"vis_covered|vis_invisible"};
+    //     sem itens = falha "no_items"; items lidos como dicionários sem exceção; prop
+    //     visibilityCheck (kill switch); diagnóstico hit/vis/topHit/ancA/lay/pf/ps.
     Function("apiVersion") { () -> Int in
-      return 6
+      return 7
     }
 
     View(ChatyyTabBarView.self) {
@@ -83,8 +144,16 @@ public class ChatyyTabBarModule: Module {
       // onBarProbe{reason,frame,win,…} / onAvatarState{state,reason,scheme} = api 5.
       Events("onTabPress", "onTabLongPress", "onPreferredHeight", "onBarFail", "onBarProbe", "onAvatarState")
 
-      Prop("items") { (view: ChatyyTabBarView, v: [NTBItemRecord]?) in
-        view.setItems(v ?? [])
+      Prop("items") { (view: ChatyyTabBarView, v: [[String: Any]]?) in
+        let raw: [[String: Any]] = v ?? []
+        var list: [NTBItemRecord] = []
+        for d in raw {
+          if let r = ntbItem(from: d) { list.append(r) }
+        }
+        view.setItems(list, dropped: raw.count - list.count)
+      }
+      Prop("visibilityCheck") { (view: ChatyyTabBarView, v: Bool?) in
+        view.visibilityCheckEnabled = v ?? true
       }
       Prop("selectedKey") { (view: ChatyyTabBarView, v: String?) in
         view.setSelectedKeyProp(v)

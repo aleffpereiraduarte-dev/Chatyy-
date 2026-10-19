@@ -42,6 +42,18 @@ import UIKit
 //   layoutSubviews (bounds > 0). Autochecagem de VISIBILIDADE REAL (frame na
 //   janela, sem ancestral escondido, conteúdo com tamanho) + eventos
 //   onBarProbe (diagnóstico) e onAvatarState{state,reason}.
+// - [2026-10-19 tabbar-api7] Autochecagem de PIXEL (NTBVisibility.swift): o
+//   diagnóstico do 731 (api 5) dizia "fr/janela/alpha/itens ok" com a barra
+//   invisível p/ o founder — hierarquia não prova o que está na tela. Agora,
+//   ~3 s depois de entrar na janela / voltar ao 1º plano (e no máx. 1×/15 s
+//   quando os itens mudam): hitTest da janela nos ícones (algo da MESMA tela
+//   por cima → "covered") + captura da faixa dos ícones com contraste dentro ×
+//   fora de cada glifo ("invisible"). Falhou → 1 reparo (itens/aparência de
+//   novo) → falhou de novo → onBarFail{reason:"vis_…"} e o JS usa a barra JS.
+//   Também: sem itens (01a152a3 no 731: it=0/0 com hl=ok — a checagem antiga
+//   pulava tudo com records vazio) agora é falha ("no_items"); items chegam como
+//   dicionários e são lidos sem exceção (um campo de tipo errado não derruba a
+//   lista inteira); diagnóstico ganha hit/vis/ancA/lay/pf/ps.
 final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDelegate {
   let onTabPress = EventDispatcher()
   let onTabLongPress = EventDispatcher()
@@ -58,6 +70,16 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
   /// Foto chegou com a view fora da janela / app inativo → pinta ao voltar.
   private var avatarPaintPending = false
   private var reportedHeight: CGFloat = 0
+  /// [2026-10-19 tabbar-api7] Autochecagem de pixel (prop visibilityCheck, padrão true).
+  var visibilityCheckEnabled = true
+  private var visWork: DispatchWorkItem?
+  private var lastVisAt: Date = .distantPast
+  private var lastVis = "-"
+  private var lastHit = "-"
+  /// Quantas vezes o JS entregou `items` / quantos chegaram / quantos foram descartados.
+  private var itemsPropSets = 0
+  private var itemsPropLast = -1
+  private var itemsPropDropped = 0
 
   private let tabBar = NTBTabBar()
   /// [2026-10-19 tabbar-api5] Foto da aba (por cima do ícone; nunca dentro do item).
@@ -127,6 +149,7 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     healthWork?.cancel()
     probeWork?.cancel()
     anchorCheckWork?.cancel()
+    visWork?.cancel()
   }
 
   override func didMoveToWindow() {
@@ -146,7 +169,8 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     flushPendingAvatars()
     scheduleHealthCheck(delay: 0.35, attempt: 0)
     scheduleHealthCheck2(delay: 2.5)
-    scheduleProbe("window", delay: 2.0)
+    scheduleVisibilityCheck(delay: 3.0, attempt: 0)
+    scheduleProbe("window", delay: 3.6)
   }
 
   @objc private func appDidBecomeActive() {
@@ -155,7 +179,8 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     flushPendingAvatars()
     scheduleHealthCheck(delay: 0.35, attempt: 0)
     scheduleHealthCheck2(delay: 2.5)
-    scheduleProbe("active", delay: 1.5)
+    scheduleVisibilityCheck(delay: 3.0, attempt: 0)
+    scheduleProbe("active", delay: 3.6)
   }
 
   override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -259,10 +284,8 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
       self.lastHealth = problem
       if attempt == 0 {
         self.scheduleHealthCheck(delay: 0.3, attempt: 1)
-      } else if !self.barFailSent {
-        self.barFailSent = true
-        self.onBarFail(["reason": problem])
-        self.scheduleProbe("fail_" + problem, delay: 0)
+      } else {
+        self.failBar(problem)
       }
     }
     healthWork = work
@@ -283,6 +306,66 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     bringSubviewToFront(avatarOverlay)
     reportPreferredHeight()
     positionAvatarOverlay()
+  }
+
+  // MARK: - Visibilidade real (api 7)
+
+  private func failBar(_ reason: String) {
+    guard !barFailSent else { return }
+    barFailSent = true
+    onBarFail(["reason": reason])
+    scheduleProbe("fail_" + reason, delay: 0)
+  }
+
+  private func scheduleVisibilityCheck(delay: TimeInterval, attempt: Int) {
+    visWork?.cancel()
+    let work = DispatchWorkItem { [weak self] in
+      guard let self = self else { return }
+      self.visWork = nil
+      self.runVisibilityCheck(attempt: attempt)
+    }
+    visWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+  }
+
+  /// Itens mudaram (badge/foto): rechecagem barata, no máx. 1×/15 s.
+  private func maybeRecheckVisibility() {
+    guard visibilityCheckEnabled, !barFailSent, visWork == nil, window != nil else { return }
+    guard Date().timeIntervalSince(lastVisAt) > 15 else { return }
+    scheduleVisibilityCheck(delay: 1.0, attempt: 0)
+  }
+
+  private func runVisibilityCheck(attempt: Int) {
+    guard visibilityCheckEnabled, !barFailSent, let w = window,
+          UIApplication.shared.applicationState == .active else { return }
+    lastVisAt = Date()
+    // Sem itens = barra vazia (vidro sem nada) — antes passava como "ok".
+    if records.isEmpty {
+      lastVis = "no_items"
+      if attempt == 0 {
+        scheduleVisibilityCheck(delay: 1.5, attempt: 1)
+      } else {
+        failBar("no_items")
+      }
+      return
+    }
+    if bounds.width < 1 || bounds.height < 40 { return } // healthProblem cuida (zero_frame)
+    let res = NTBVisibility.check(bar: self, tabBar: tabBar, window: w)
+    lastVis = res.verdict + ":" + res.sample
+    lastHit = res.hit
+    guard res.failed else { return }
+    if attempt == 0 {
+      // 1 reparo: itens + aparência de novo, layout já.
+      structureSignature = ""
+      applyItems()
+      applyTheme()
+      tabBar.setNeedsLayout()
+      setNeedsLayout()
+      layoutIfNeeded()
+      scheduleVisibilityCheck(delay: 0.8, attempt: 1)
+    } else {
+      failBar("vis_" + res.verdict)
+    }
   }
 
   // MARK: - Diagnóstico (api 5)
@@ -321,6 +404,7 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
       depth += 1
     }
     let winFrame = window.map { ChatyyTabBarView.r(convert(bounds, to: $0)) } ?? "-"
+    let anc = NTBVisibility.ancestorAlpha(self)
     let winBounds = window.map { ChatyyTabBarView.r($0.bounds) } ?? "-"
     let ih = tabBar.sizeThatFits(CGSize(width: max(bounds.width, 1), height: CGFloat.greatestFiniteMagnitude)).height
     let st: String
@@ -348,7 +432,25 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
       "app": st,
       "health": lastHealth,
       "avatar": avatarState + (avatarReason.isEmpty ? "" : ":" + avatarReason),
+      // [2026-10-19 tabbar-api7]
+      "vis": lastVis,
+      "hit": lastHit,
+      "topHit": topHitNow(),
+      "ancA": Double(anc.alpha),
+      "ancH": anc.hidden,
+      "lay": "\(layer.isHidden ? 1 : 0)/\(String(format: "%.2f", layer.opacity))/\(tabBar.layer.isHidden ? 1 : 0)/\(String(format: "%.2f", tabBar.layer.opacity))",
+      "pf": layer.presentation().map { ChatyyTabBarView.r($0.frame) } ?? "-",
+      "ps": "\(itemsPropSets)/\(itemsPropLast)/\(itemsPropDropped)",
     ]
+  }
+
+  /// Quem está no topo AGORA no centro da barra (hitTest da janela).
+  private func topHitNow() -> String {
+    guard let w = window else { return "-" }
+    let c = convert(CGPoint(x: bounds.midX, y: bounds.midY), to: w)
+    let hit = w.hitTest(c, with: nil)
+    if let h = hit, h === self || h.isDescendant(of: self) { return "own" }
+    return NTBVisibility.describe(hit)
   }
 
   override func safeAreaInsetsDidChange() {
@@ -369,7 +471,10 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
 
   // MARK: - Props
 
-  func setItems(_ list: [NTBItemRecord]) {
+  func setItems(_ list: [NTBItemRecord], dropped: Int = 0) {
+    itemsPropSets += 1
+    itemsPropLast = list.count
+    itemsPropDropped = dropped
     records = list
     itemsDirty = true
   }
@@ -396,6 +501,7 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     if itemsDirty {
       itemsDirty = false
       applyItems()
+      maybeRecheckVisibility()
     }
     if themeDirty {
       themeDirty = false

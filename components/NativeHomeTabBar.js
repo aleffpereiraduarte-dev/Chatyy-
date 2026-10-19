@@ -29,6 +29,11 @@ export function nativeTabsAvailable() {
   // conectado ou não) e a autochecagem do api 4 não pega → api 3 E 4 no iOS = barra
   // JS (cápsula iOS 26, com a foto). Volta a nativa no build com api 5 (foto por
   // cima do ícone, sem trocar imagem de UITabBarItem; checagem de visibilidade real).
+  // [2026-10-19 tabbar-api7] DECISÃO: iOS api 3–5 = barra JS; api 6 (build 732) =
+  // nativa (founder confirmou que aparece; mesma checagem de hierarquia do api 5,
+  // que NÃO prova pixel — se voltar a sumir no 732, incluir o 6 aqui); api ≥ 7 =
+  // nativa COM a autochecagem de pixel (hitTest da janela nos ícones + contraste do
+  // glifo na captura da tela) → falhou → onBarFail{vis_*|no_items} → barra JS na hora.
   try {
     if (Platform.OS === 'ios' && globalThis.__chatyy_native_tabs !== true
       && m && m.apiVersion && (Number(m.apiVersion()) >= 3 && Number(m.apiVersion()) <= 5)) return false;
@@ -139,7 +144,7 @@ export function sendTabbarProbe(step, info) {
   const now = Date.now();
   if (now - _probeLastAt < 15000 && !/^fail|offscreen/.test(String(step))) return;
   _probeLastAt = now;
-  try { require('../services/nativeTelemetry').nativeBeacon('tabbar_probe', String(step || '-').slice(0, 24), String(info || '').slice(0, 360)); } catch {}
+  try { require('../services/nativeTelemetry').nativeBeacon('tabbar_probe', String(step || '-').slice(0, 24), String(info || '').slice(0, 380)); } catch {}
 }
 const _avatarSent = new Set();
 export function noteTabbarAvatarState(state, reason, scheme) {
@@ -270,6 +275,17 @@ function NativeHomeTabBarInner({
   // + o lado JS (layout, altura, extra do chat.js) num beacon só.
   const handleBarProbe = useCallback((e) => {
     const n = e?.nativeEvent || {};
+    // api 7: diagnóstico de PIXEL (vis/hit/top) — formato compacto (o beacon corta em 400).
+    if (n.vis != null) {
+      const v7 = `n:${n.reason || '-'} fr=${n.frame || '-'} pf=${n.pf || '-'} win=${n.win ? 1 : 0} hid=${n.hidden ? 1 : 0}`
+        + ` a=${n.alpha != null ? Number(n.alpha).toFixed(2) : '-'} ancA=${n.ancA != null ? Number(n.ancA).toFixed(2) : '-'} ancH=${n.ancH || '-'} lay=${n.lay || '-'}`
+        + ` it=${n.items ?? '-'}/${n.records ?? '-'} ps=${n.ps || '-'} ic=${n.icons ?? '-'} ct=${n.content ? 1 : 0} app=${n.app || '-'} hl=${n.health || '-'}`
+        + ` vis=${n.vis} hit=${n.hit || '-'} top=${n.topHit || '-'} av=${n.avatar || '-'}`;
+      let extra7 = '';
+      try { extra7 = extraRef.current ? String(extraRef.current() || '') : ''; } catch {}
+      sendTabbarProbe(String(n.reason || 'native'), `${v7} | js lh=${Math.round(layoutRef.current.h)} ${extra7}`);
+      return;
+    }
     const nat = `n:${n.reason || '-'} fr=${n.frame || '-'} wf=${n.winFrame || '-'} wb=${n.winBounds || '-'} win=${n.win ? 1 : 0}`
       + ` hid=${n.hidden ? 1 : 0} a=${n.alpha != null ? Number(n.alpha).toFixed(2) : '-'} anc=${n.hiddenAncestor || '-'} sup=${n.sup || '-'}`
       + ` bar=${n.bar || '-'} it=${n.items ?? '-'}/${n.records ?? '-'} ic=${n.icons ?? '-'} ct=${n.content ? 1 : 0} ih=${n.ih != null ? Math.round(n.ih) : '-'}`
@@ -350,6 +366,8 @@ function NativeHomeTabBarInner({
       onBarFail={handleBarFail}
       onBarProbe={handleBarProbe}
       onAvatarState={handleAvatarState}
+      // [2026-10-19 tabbar-api7] só iOS (Android não declara a prop). Kill switch: globalThis.__chatyy_tabbar_vischeck = false.
+      visibilityCheck={Platform.OS === 'ios' ? (() => { try { return globalThis.__chatyy_tabbar_vischeck !== false; } catch { return true; } })() : undefined}
       onLayout={handleLayout}
     />
   );
