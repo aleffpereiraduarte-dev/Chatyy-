@@ -352,7 +352,8 @@ async function _poll() {
   _emitChange();
   // Fim da janela "em voo segura o Conectando" não tem evento próprio → avisa.
   setTimeout(_emitChange, PENDING_SUPPRESS_MS + 50);
-  const base = (api.getOriginBase && api.getOriginBase()) || 'https://chatyy.com.br';
+  // [failover 2026-10-19] US marcado fora (api.js) → poll no edge de reserva (chat_ws_events local lá).
+  const base = (api.getRealtimeHttpBase && api.getRealtimeHttpBase()) || (api.getOriginBase && api.getOriginBase()) || 'https://chatyy.com.br';
   const timeoutMs = _degraded ? REQ_TIMEOUT_DEGRADED_MS : REQ_TIMEOUT_MS;
   let pages = 0;
   let gotEvents = 0;

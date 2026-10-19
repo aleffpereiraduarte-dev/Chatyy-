@@ -1666,13 +1666,72 @@ function _edgeFailed(r, readable) {
   const st = r.status;
   return st === 502 || st === 503 || (st === 504 && readable) || (st === 0 && readable && !r.aborted);
 }
+// [failover 2026-10-19] O US (master) desligou pelo painel do provedor 16 min. O LB do
+// Cloudflare leva ~2 min p/ jogar chatyy.com.br no BR (que serve leituras da réplica e
+// aceita chat_send no spool durável em modo limitado), e quem estava num edge insistia no
+// US a cada escrita recusada (até 25 s de prazo por tentativa). Agora:
+//  • request no US que falhou SEM ter chegado ao PHP (502/503/521/522/523/525/526/530) — ou
+//    timeout/transporte numa leitura ou num chat_send com client_message_id (idempotente:
+//    spool do edge UNIQUE(sender,cmi) + dedupe do US) — refaz UMA vez no edge de reserva
+//    (BR → BR2 → EU: réplica local + aceite em pane). Respondeu (<500) → US "fora" por
+//    _US_DOWN_MS: API/chat ficam no edge (que encaminha escritas quando o US volta).
+//  • com o US marcado fora, falha de gateway num edge NÃO tenta mais o US (era o atraso).
+// Kill switch (OTA): globalThis.__chatyy_us_failover_off = true.
+const _US_DOWN_MS = 2 * 60 * 1000;
+const _US_REACHED_PHP_NO = new Set([502, 503, 521, 522, 523, 525, 526, 530]);
+let _usDownUntil = 0;
+function _usFailoverOff() { try { return globalThis.__chatyy_us_failover_off === true; } catch { return false; } }
+function _usIsDown() { return !_usFailoverOff() && _usDownUntil > Date.now(); }
+function _isUsUrl(u) { return typeof u === 'string' && u.startsWith(US_FALLBACK_BASE + '/'); }
+function _usFailed(r, safeRetry) {
+  if (!r || r.aborted) return false;
+  const st = r.status;
+  if (_US_REACHED_PHP_NO.has(st)) return true;
+  return safeRetry && (st === 0 || st === 504 || st === 524 || st === 520);
+}
+function _failoverEdge() {
+  return _serverForRegion('br') || _serverForRegion('eu') || null;
+}
+// Base do realtime HTTP de reserva (httpFallback → chat_ws_events): origem US normalmente;
+// com o US marcado fora, o edge de reserva (chat_ws_events roda LOCAL no edge desde 19/10).
+export function getRealtimeHttpBase() {
+  try {
+    if (_usIsDown() && Platform.OS !== 'web') {
+      const e = _failoverEdge();
+      if (e && e.base) return e.base;
+    }
+  } catch {}
+  return ORIGIN_BASE;
+}
+export function isUsMarkedDown() { return _usIsDown(); }
+function _markUsDown(edge, why) {
+  _usDownUntil = Date.now() + _US_DOWN_MS;
+  if (edge) {
+    _bestServer = { ...edge, latency: null, ts: Date.now() - EDGE_CHOICE_TTL_MS + _US_DOWN_MS, net: _edgeNetKey(), src: 'us-down' };
+    _applySelectedServer(edge);
+  }
+  try { console.warn('[API] US fora (' + why + ') → ' + (edge ? _originOf(edge) : '-') + ' por ' + Math.round(_US_DOWN_MS / 60000) + ' min'); } catch {}
+}
 async function _rawApiCall(action, params = {}, method = 'GET') {
   const r = await _rawApiCallOnce(action, params, method, null);
   try {
     const srv = _edgeServerOfUrl(r && r.url);
-    if (!srv) return r;
-    const st = r.status;
+    const st = r && r.status;
     const readable = String(method || 'GET').toUpperCase() === 'GET' || _isReadablePost(action);
+    if (!srv) {
+      // Request no US (região 'us' ou sem escolha ainda).
+      if (_usFailoverOff() || Platform.OS === 'web' || !_isUsUrl(r && r.url)) return r;
+      const idem = readable || (action === 'chat_send' && !!(params && params.client_message_id));
+      if (!_usFailed(r, idem)) return r;
+      const edge = _failoverEdge();
+      if (!edge) return r;
+      const re = await _rawApiCallOnce(action, params, method, edge.url);
+      if (re && re.status > 0 && re.status < 500) {
+        _markUsDown(edge, st ? 'HTTP ' + st : 'transporte');
+        return re;
+      }
+      return r;
+    }
     if (!_edgeFailed(r, readable)) return r;
     const why = st ? 'HTTP ' + st : 'transporte';
     const sib = _serverForRegion(srv.region, _originOf(srv));
@@ -1685,11 +1744,17 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
       if (_edgeFailed(rs, readable)) _markEdgeDown(sib, 'irmã: ' + (rs.status ? 'HTTP ' + rs.status : 'transporte'));
       else return r; // irmã devolveu outra coisa (ex.: 500 do PHP) → não insiste no US
     }
+    // [failover 2026-10-19] US sabidamente fora (edge em modo limitado devolve 503 nas
+    // escritas): não paga mais um prazo inteiro tentando o US.
+    if (_usIsDown()) return r;
     const r2 = await _rawApiCallOnce(action, params, method, US_FALLBACK_BASE);
     if (r2 && r2.status > 0 && r2.status < 500) {
       _markEdgeDown(srv, why);
       return r2;
     }
+    // [failover 2026-10-19] edge E US falharam → US fora por _US_DOWN_MS (fica no edge, que serve
+    // leituras/aceite em pane; as próximas escritas recusadas não esperam o US de novo).
+    if (!_usFailoverOff() && _usFailed(r2, true)) _usDownUntil = Date.now() + _US_DOWN_MS;
   } catch {}
   return r;
 }
