@@ -506,6 +506,16 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     if let st = style, st.tg != CMLLook.tg { markStyleDirty() }
   }
 
+  /// [2026-10-19 tg-style, apiVersion 12] polimento Telegram (espaçamento, pílulas com
+  /// desfoque, nota de voz, hora sobre mídia) — ver CMLLook.style.
+  func setTgStyle(_ d: [String: Any]?) {
+    _ = CMLLook.applyStyle(d)
+    sticky.tgStyle = CMLLook.style
+    sticky.darkBlur = CMLLook.isDark(theme.wall)
+    stickyLabel = ""
+    if let st = style, st.ts != CMLLook.style { markStyleDirty() }
+  }
+
   func setStickyDate(_ d: [String: Any]?) {
     let dd = d ?? [:]
     stickyOn = CMLRow.bool(dd["on"])
@@ -629,6 +639,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
 
   func setTheme(_ d: [String: Any]) {
     theme = CMLTheme(dict: d)
+    sticky.darkBlur = CMLLook.isDark(theme.wall) // [tg-style]
     overlay.wall = theme.wall
     overlay.refreshLook()
     markStyleDirty()

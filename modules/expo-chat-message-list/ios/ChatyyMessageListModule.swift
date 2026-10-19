@@ -40,9 +40,13 @@ public class ChatyyMessageListModule: Module {
     //     prop overlay (↓/@/♥ nativos → onOverlayPress) · prepareSend(rect) (morph do
     //     envio) · motion.c (relógio do pendente gira após 300 ms) · prop quickReact
     //     (toque duplo em texto/figurinha → pop + onQuickReact).
+    // 12 = [2026-10-19 tg-style] prop `tgStyle` {on: 0/1} → 2/8 pt entre bolhas/grupos,
+    //     pílulas de data/sistema/flutuante em cápsula com desfoque (12 pt), hora e
+    //     duração sobre mídia com desfoque, nota de voz com botão cheio, "Encaminhada"
+    //     13 regular, citação com cantos 6, reações sem sombra.
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 11
+      return 12
       #else
       return 3
       #endif
@@ -111,6 +115,10 @@ public class ChatyyMessageListModule: Module {
       }
       Prop("quickReact") { (view: CMLListView, value: [String: Any]?) in
         view.setQuickReact(value)
+      }
+      // [2026-10-19 tg-style] apiVersion 12
+      Prop("tgStyle") { (view: CMLListView, value: [String: Any]?) in
+        view.setTgStyle(value)
       }
 
       AsyncFunction("setSearch") { (view: CMLListView, payload: [String: Any]) in

@@ -138,6 +138,14 @@
 //                 {key, messageId, emoji} + pop no balão. Kill:
 //                 __chatyy_native_quick_react = false.
 //
+//   tgStyle [apiVersion 12, tg-style 2026-10-19] prop tgStyle {on: 0/1} →
+//          polimento Telegram: 2/8 pt dentro/entre grupos, pílulas de data/
+//          sistema/flutuante em cápsula com desfoque (12 pt), hora e duração
+//          sobre mídia com desfoque, nota de voz com botão cheio (glifo na cor
+//          da bolha) e onda mais firme, "Encaminhada" 13 regular, citação com
+//          cantos 6, reações sem sombra. Binário < 12 não recebe a prop.
+//          Kill switch (também as cores/cartões JS): globalThis.__chatyy_tg_bubbles = false.
+//
 // Desligar (OTA):      globalThis.__chatyy_native_list = false
 // Links/menções/#:     globalThis.__chatyy_native_list_rich = false desliga
 //                      (fase 1 = opt-in com true)
@@ -205,6 +213,10 @@ export function nativeSendMorphOn() { _getNativeView(); return _api >= 11 && _sw
 /** [tg-look] visual Telegram (apiVersion 10) — padrão ligado; kill switch OTA. */
 export function tgLookOn() { try { return globalThis.__chatyy_tg_look !== false; } catch { return true; } }
 function _a11ySwitchOn() { try { return globalThis.__chatyy_native_list_a11y !== false; } catch { return true; } }
+/** [tg-style] polimento Telegram das bolhas (cores JS + nativo api 12) — padrão ligado; kill switch OTA. */
+export function tgBubblesOn() { try { return globalThis.__chatyy_tg_bubbles !== false; } catch { return true; } }
+/** [tg-style] binário desenha o polimento (api ≥ 12) e o kill switch está ligado. */
+export function nativeTgStyleOn() { _getNativeView(); return _api >= 12 && tgBubblesOn(); }
 /** apiVersion do módulo nativo (0 = ausente). */
 export function nativeListApi() { _getNativeView(); return _api; }
 
@@ -2140,6 +2152,9 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   // [tg-look] prop look (apiVersion 10): objeto estável por valor
   const _tg = _api >= 10 ? (tgLookOn() ? 1 : 0) : -1;
   const nativeLook = useMemo(() => (_tg < 0 ? undefined : { tg: _tg }), [_tg]);
+  // [tg-style] prop tgStyle (apiVersion 12): objeto estável por valor
+  const _ts = _api >= 12 ? (tgBubblesOn() ? 1 : 0) : -1;
+  const nativeTgStyle = useMemo(() => (_ts < 0 ? undefined : { on: _ts }), [_ts]);
   const nativeSticky = useMemo(() => {
     if (!stickyDate || _api < 2) return undefined;
     const o = { on: stickyDate.on ? 1 : 0, top: Number(stickyDate.top) || 0 };
@@ -2244,6 +2259,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       {...(nativeA11y ? { a11y: nativeA11y } : null)}
       {...(nativeMotion ? { motion: nativeMotion } : null)}
       {...(nativeLook ? { look: nativeLook } : null)}
+      {...(nativeTgStyle ? { tgStyle: nativeTgStyle } : null)}
       {...(_api >= 11 ? { dragSelect: _dragSel, quickReact: nativeQuickReact, overlay: nativeOverlay } : null)}
       {...handlers}
     />

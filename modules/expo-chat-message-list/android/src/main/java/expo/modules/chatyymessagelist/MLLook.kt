@@ -21,6 +21,22 @@ object MLLook {
     return true
   }
 
+  // [2026-10-19 tg-style, apiVersion 12] polimento "nível Telegram" — prop `tgStyle`
+  // {on: 0/1} (JS: nativeThreadList.js, kill switch globalThis.__chatyy_tg_bubbles = false).
+  //   on = 1: 2/8 dp dentro/entre grupos; pílulas de data/sistema/flutuante em cápsula
+  //   12sp; duração do vídeo em pílula (mesma linha da hora); nota de voz com botão
+  //   cheio na tinta e glifo na cor da bolha; "Encaminhada" 13sp regular; citação r 6.
+  @Volatile var style = false
+
+  /** true = mudou. */
+  fun applyStyle(m: Map<String, Any?>?): Boolean {
+    val v = m?.get("on")
+    val n = if (v == null) false else MLRow.bool(v)
+    if (n == style) return false
+    style = n
+    return true
+  }
+
   /** canto do lado do autor entre bolhas do mesmo grupo (dp) */
   const val GROUP_R = 6f
   /** altura da curva do rabicho (dp) */

@@ -946,7 +946,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
         c.drawRect(L.pillFrame, fill)
       } else if (r.text.isNotEmpty()) {
         fill.color = th.pillBg
-        val rad = min(s.dp(8f), L.pillFrame.height() / 2) // [2026-10-17 wa-pills]
+        // [2026-10-17 wa-pills] · [2026-10-19 tg-style] cápsula
+        val rad = if (s.ts) L.pillFrame.height() / 2 else min(s.dp(8f), L.pillFrame.height() / 2)
         c.drawRoundRect(L.pillFrame, rad, rad, fill)
       }
       drawText(c, L.pillText, L.pillTextFrame.left, L.pillTextFrame.top)
@@ -1033,7 +1034,18 @@ class MLCellView(context: Context) : ViewGroup(context) {
         fill.color = 0x73000000; c.drawCircle(cx, cy, rad, fill)
         drawPlay(c, RectF(cx - rad * 0.6f, cy - rad * 0.6f, cx + rad * 0.6f, cy + rad * 0.6f), 0xFFFFFFFF.toInt())
       }
-      L.durText?.let { drawText(c, it, L.mediaFrame.left + s.dp(8f), L.mediaFrame.bottom - it.height - s.dp(7f)) }
+      L.durText?.let {
+        if (s.ts) {
+          // [2026-10-19 tg-style] duração em pílula (mesma linha/altura da hora)
+          val ph = s.dp(18f)
+          tmpRect.set(L.mediaFrame.left + s.dp(5f), L.mediaFrame.bottom - ph - s.dp(5f), L.mediaFrame.left + s.dp(5f) + it.width + s.dp(12f), L.mediaFrame.bottom - s.dp(5f))
+          fill.color = 0x6B000000
+          c.drawRoundRect(tmpRect, ph / 2, ph / 2, fill)
+          drawText(c, it, tmpRect.left + s.dp(6f), tmpRect.top + (ph - it.height) / 2)
+        } else {
+          drawText(c, it, L.mediaFrame.left + s.dp(8f), L.mediaFrame.bottom - it.height - s.dp(7f))
+        }
+      }
       if (!snap) drawRing(c, 0, mode, done, L.mediaFrame.centerX(), L.mediaFrame.centerY(), true, 0xFFFFFFFF.toInt(), s)
     }
     if (L.albumFrames.isNotEmpty()) {
@@ -1303,7 +1315,7 @@ class MLCellView(context: Context) : ViewGroup(context) {
 
   private fun drawReply(c: Canvas, L: MLRowLayout, r: MLRow, s: MLStyle) {
     val f = L.replyFrame
-    val rad = s.dp(8f)
+    val rad = s.dp(if (s.ts) 6f else 8f) // [tg-style] = cantos do cartão de link
     c.save()
     tmpPath.reset()
     tmpPath.addRoundRect(f, rad, rad, Path.Direction.CW)
@@ -1549,19 +1561,25 @@ class MLCellView(context: Context) : ViewGroup(context) {
     // [native-media-dl] o botão play vira o anel enquanto baixa
     val (amode, adone) = xferMode(au.dl, null, false)
     val aBusy = amode != RingMode.Hidden
+    // [2026-10-19 tg-style] botão cheio na tinta, glifo na cor da bolha (Telegram)
+    val solid = s.ts
+    val glyph = if (solid) (if (r.own) s.theme.ownBubble else (r.bubbleBg ?: s.theme.otherBubble)) or (0xFF shl 24) else tint
     if (!aBusy) {
-    fill.color = (tint and 0x00FFFFFF) or (0x24 shl 24)
+    fill.color = if (solid) tint else (tint and 0x00FFFFFF) or (0x24 shl 24)
     c.drawCircle(cx, cy, b / 2, fill)
     if (loading) {
-      stroke.color = tint; stroke.strokeWidth = s.dp(2f)
+      stroke.color = glyph; stroke.strokeWidth = s.dp(2f)
       tmpRect.set(cx - s.dp(9f), cy - s.dp(9f), cx + s.dp(9f), cy + s.dp(9f))
       c.drawArc(tmpRect, (System.currentTimeMillis() % 1000) * 0.36f, 270f, false, stroke)
       postInvalidateOnAnimation()
     } else if (playing) {
-      fill.color = tint
+      fill.color = glyph
       val w = b * 0.16f; val h = b * 0.5f
       c.drawRect(cx - w - s.dp(2f), cy - h / 2, cx - s.dp(2f), cy + h / 2, fill)
       c.drawRect(cx + s.dp(2f), cy - h / 2, cx + s.dp(2f) + w, cy + h / 2, fill)
+    } else if (solid) {
+      val pr = b * 0.34f; val ox = s.dp(1f) // centro óptico do triângulo
+      drawPlay(c, RectF(cx - pr + ox, cy - pr, cx + pr + ox, cy + pr), glyph)
     } else {
       drawPlay(c, RectF(cx - b * 0.38f, cy - b * 0.38f, cx + b * 0.38f, cy + b * 0.38f), tint)
     }
@@ -1601,7 +1619,8 @@ class MLCellView(context: Context) : ViewGroup(context) {
     if (avail > s.dp(20f)) {
       val n = bars.size
       val step = avail / n
-      val bw = max(s.dp(1.5f), step * 0.58f)
+      // [tg-style] barras mais firmes (2–3 dp)
+      val bw = if (solid) min(s.dp(3f), max(s.dp(2f), step * 0.62f)) else max(s.dp(1.5f), step * 0.58f)
       val midY = f.top + s.dp(15f)
       val playedUpTo = n * progress
       for (i in 0 until n) {

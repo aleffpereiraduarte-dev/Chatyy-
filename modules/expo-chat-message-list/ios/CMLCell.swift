@@ -47,6 +47,12 @@ final class CMLCell: UICollectionViewCell {
   // pílulas
   let pillBg = UIView()
   let pillText = CMLTextView()
+  /// [2026-10-19 tg-style] desfoque atrás da pílula de data/sistema, da hora sobre
+  /// mídia e da duração do vídeo (só com CMLStyle.ts; criadas sob demanda).
+  private var pillBlur: UIVisualEffectView?
+  private var pillBlurDark: Bool?
+  private var metaBlur: UIVisualEffectView?
+  private var durBlur: UIVisualEffectView?
   // [fase 2]
   let blocks = CMLBlocksView()
   let failIcon = CMLIconView()
@@ -269,6 +275,19 @@ final class CMLCell: UICollectionViewCell {
     pillText.isHidden = !isPill
     slide.isHidden = isPill
     selIcon.isHidden = isPill || row.sel == 0
+    // [2026-10-19 tg-style] cápsula com desfoque (data/sistema)
+    let blurPill = isPill && s.ts && row.kind != .unread && !L.pillFrame.isEmpty
+    if blurPill {
+      let dark = CMLLook.isDark(th.wall)
+      let bv = ensurePillBlur()
+      if pillBlurDark != dark { bv.effect = CMLLook.pillBlur(dark: dark); pillBlurDark = dark }
+      bv.isHidden = false
+      bv.frame = L.pillFrame
+      bv.layer.cornerRadius = L.pillFrame.height / 2
+      bv.contentView.backgroundColor = th.pillBg
+    } else {
+      pillBlur?.isHidden = true
+    }
     if isPill {
       pillText.layout = L.pillText
       pillText.frame = L.pillTextFrame
@@ -278,8 +297,8 @@ final class CMLCell: UICollectionViewCell {
         pillBg.backgroundColor = th.unreadBg
         pillBg.layer.cornerRadius = 0
       default:
-        pillBg.backgroundColor = th.pillBg
-        pillBg.layer.cornerRadius = min(8, L.pillFrame.height / 2) // [2026-10-17 wa-pills]
+        pillBg.backgroundColor = blurPill ? .clear : th.pillBg
+        pillBg.layer.cornerRadius = blurPill ? L.pillFrame.height / 2 : min(8, L.pillFrame.height / 2) // [2026-10-17 wa-pills]
         if #available(iOS 13.0, *) { pillBg.layer.cornerCurve = .continuous }
       }
       if blocks.info != nil { blocks.apply(nil, key: key, placeholder: nil) }
@@ -334,6 +353,7 @@ final class CMLCell: UICollectionViewCell {
     // citação
     if let rp = row.reply, L.replyName != nil {
       reply.apply(name: L.replyName, text: L.replyText, barColor: CMLTheme.uiColor(rp.color), bg: row.own ? th.ownQuote : th.otherQuote, hasThumb: L.replyThumb)
+      reply.layer.cornerRadius = s.ts ? 6 : 8 // [tg-style] = cantos do cartão de link
       place(reply, L.replyFrame, true)
       if L.replyThumb {
         let tok = rp.thumb
@@ -389,13 +409,27 @@ final class CMLCell: UICollectionViewCell {
         durLabel.isHidden = false
         let dl = CMLLayoutBuilder.line(md.dur, font: s.meta, color: .white, maxWidth: 80)
         durLabel.layout = dl
-        durLabel.frame = CGRect(x: L.mediaFrame.minX + 8, y: L.mediaFrame.maxY - dl.size.height - 7, width: dl.size.width + 1, height: dl.size.height).offsetBy(dx: o.x, dy: o.y)
-        durLabel.layer.shadowColor = UIColor.black.cgColor
-        durLabel.layer.shadowOpacity = 0.6
-        durLabel.layer.shadowRadius = 2
-        durLabel.layer.shadowOffset = .zero
+        if s.ts {
+          // [2026-10-19 tg-style] duração em pílula com desfoque (mesma linha/altura da hora)
+          let ph: CGFloat = 18
+          let pr = CGRect(x: L.mediaFrame.minX + 5, y: L.mediaFrame.maxY - ph - 5, width: ceil(dl.size.width) + 12, height: ph).offsetBy(dx: o.x, dy: o.y)
+          let bv = ensureDurBlur()
+          bv.isHidden = false
+          bv.frame = pr
+          bv.layer.cornerRadius = ph / 2
+          durLabel.frame = CGRect(x: pr.minX + 6, y: pr.minY + floor((ph - dl.size.height) / 2), width: dl.size.width + 1, height: dl.size.height)
+          durLabel.layer.shadowOpacity = 0
+        } else {
+          durBlur?.isHidden = true
+          durLabel.frame = CGRect(x: L.mediaFrame.minX + 8, y: L.mediaFrame.maxY - dl.size.height - 7, width: dl.size.width + 1, height: dl.size.height).offsetBy(dx: o.x, dy: o.y)
+          durLabel.layer.shadowColor = UIColor.black.cgColor
+          durLabel.layer.shadowOpacity = 0.6
+          durLabel.layer.shadowRadius = 2
+          durLabel.layer.shadowOffset = .zero
+        }
       } else {
         durLabel.isHidden = true
+        durBlur?.isHidden = true
       }
       mediaDim.frame = media.frame
       applyCorners(mediaDim, L.mediaCorners, L.mediaRadius)
@@ -406,6 +440,7 @@ final class CMLCell: UICollectionViewCell {
       _ = trackVF(-1, "")
       playBadge.isHidden = true
       durLabel.isHidden = true
+      durBlur?.isHidden = true
       mediaDim.isHidden = true
     }
 
@@ -480,6 +515,9 @@ final class CMLCell: UICollectionViewCell {
       place(audio, L.audioFrame, true)
       audio.tint = row.own ? th.ownText : th.otherText
       audio.dim = (row.own ? th.ownText : th.otherText).withAlphaComponent(0.32)
+      // [2026-10-19 tg-style] botão cheio na tinta, glifo na cor da bolha (Telegram)
+      let bubbleC: UIColor = row.own ? th.ownBubble : (row.bubbleBg.map { CMLTheme.uiColor($0) } ?? th.otherBubble)
+      audio.solidGlyph = s.ts ? bubbleC : nil
       audio.wave = au.wave
       audio.unplayedDot = (!row.own && au.voice && !au.played) ? th.read : nil
       applyAudio(audioState, style: s)
@@ -504,9 +542,19 @@ final class CMLCell: UICollectionViewCell {
     // meta
     meta.meta = L.meta
     meta.pill = L.meta.onMedia
+    meta.pillAlpha = s.ts ? 0.26 : 0.42
     meta.readColor = th.read
     meta.failedColor = th.failed
     place(meta, L.metaFrame, !L.metaFrame.isEmpty)
+    // [2026-10-19 tg-style] hora sobre foto/vídeo/figurinha: pílula com desfoque atrás
+    if s.ts && L.meta.onMedia && !L.metaFrame.isEmpty {
+      let bv = ensureMetaBlur()
+      bv.isHidden = false
+      bv.frame = meta.frame
+      bv.layer.cornerRadius = meta.frame.height / 2
+    } else {
+      metaBlur?.isHidden = true
+    }
     // [motion-conv] status avançou na MESMA linha visível → transição animada
     if prevKey != key {
       meta.cancelStatusAnim()
@@ -530,6 +578,7 @@ final class CMLCell: UICollectionViewCell {
       reacts.center = CGPoint(x: L.reactsFrame.midX, y: L.reactsFrame.midY)
       reacts.bg = th.reactBg
       reacts.border = th.reactBorder
+      reacts.layer.shadowOpacity = s.ts ? 0 : 0.08 // [tg-style] chips chapados
       reacts.mineBg = th.selection.withAlphaComponent(0.9)
       reacts.mine = row.reacts.map { $0.mine }
       reacts.chips = L.reactChips
@@ -545,6 +594,43 @@ final class CMLCell: UICollectionViewCell {
     } else {
       reacts.isHidden = true
     }
+  }
+
+  // MARK: [2026-10-19 tg-style] desfoques sob demanda
+
+  private func makeBlur(_ effect: UIVisualEffect?) -> UIVisualEffectView {
+    let v = UIVisualEffectView(effect: effect)
+    v.isUserInteractionEnabled = false
+    v.clipsToBounds = true
+    if #available(iOS 13.0, *) { v.layer.cornerCurve = .continuous }
+    v.isHidden = true
+    return v
+  }
+
+  private func ensurePillBlur() -> UIVisualEffectView {
+    if let v = pillBlur { return v }
+    let v = makeBlur(nil)
+    contentView.insertSubview(v, belowSubview: pillBg)
+    pillBlur = v
+    pillBlurDark = nil
+    return v
+  }
+
+  private func ensureMetaBlur() -> UIVisualEffectView {
+    if let v = metaBlur { return v }
+    let v = makeBlur(CMLLook.mediaBlur)
+    slide.insertSubview(v, belowSubview: meta)
+    metaBlur = v
+    return v
+  }
+
+  private func ensureDurBlur() -> UIVisualEffectView {
+    if let v = durBlur { return v }
+    let v = makeBlur(CMLLook.mediaBlur)
+    v.contentView.backgroundColor = UIColor(white: 0, alpha: 0.26)
+    slide.insertSubview(v, belowSubview: durLabel)
+    durBlur = v
+    return v
   }
 
   /// [motion-conv] Alguém (não eu) reagiu: emoji novo ou contagem maior, e o

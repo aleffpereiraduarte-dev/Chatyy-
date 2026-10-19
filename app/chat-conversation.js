@@ -57,7 +57,7 @@ import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, get
 import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
 import { isAppResuming, kbResumeGuardOn } from '../utils/kbResumeGuard'; // [2026-10-18 kb-resume]
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
-import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal, nativeSearchOn, nativeDragSelectOn, nativeOverlayOn, nativeQuickReactOn } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
+import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal, nativeSearchOn, nativeDragSelectOn, nativeOverlayOn, nativeQuickReactOn, tgBubblesOn, nativeTgStyleOn } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
 import { useConvOpenMetric, noteConvOpen, noteSendAck, sendSocketSnapshot } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open + [wave10-D] send_ack
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
@@ -11912,8 +11912,10 @@ function ChatConversationInner() {
   const otherBubbleBg = isDark ? '#1C1C1E' : '#EEEEF0';
   const chatWallBg = isDark ? '#000000' : '#FFFFFF';
   let ownTextColor = isDark ? '#F5F5F7' : '#FFFFFF';
-  let ownMetaColor = isDark ? 'rgba(245,245,247,0.62)' : 'rgba(255,255,255,0.62)';
-  const otherMetaColor = isDark ? 'rgba(235,235,245,0.55)' : 'rgba(60,60,67,0.74)';
+  // [2026-10-19 tg-style] hora/✓ mais leves (Telegram); kill switch __chatyy_tg_bubbles = false
+  const _tgB = tgBubblesOn();
+  let ownMetaColor = isDark ? (_tgB ? 'rgba(245,245,247,0.56)' : 'rgba(245,245,247,0.62)') : (_tgB ? 'rgba(255,255,255,0.58)' : 'rgba(255,255,255,0.62)');
+  const otherMetaColor = isDark ? (_tgB ? 'rgba(235,235,245,0.50)' : 'rgba(235,235,245,0.55)') : (_tgB ? 'rgba(60,60,67,0.64)' : 'rgba(60,60,67,0.74)');
   // Tinta de destaque dentro da bolha RECEBIDA (links/ícones/menções). Antes
   // era colors.primary (#111 nos DOIS temas) → sumia no escuro.
   const otherInk = isDark ? '#F5F5F7' : '#111111';
@@ -34892,6 +34894,8 @@ function ChatConversationInner() {
     // [2026-10-17 polish-chat] pílula de data = a do JS/web (styles.dateTextLight/Dark):
     // quase opaca, lê sobre papel de parede (6% preto sumia no fundo branco).
     pillBg: isDark ? 'rgba(44,44,46,0.88)' : 'rgba(236,236,240,0.92)', pillText: isDark ? 'rgba(235,235,245,0.78)' : 'rgba(60,60,67,0.86)',
+    // [2026-10-19 tg-style] binário api 12 desenha a cápsula com DESFOQUE atrás → tinta translúcida
+    ...(nativeTgStyleOn() ? { pillBg: isDark ? 'rgba(44,44,46,0.66)' : 'rgba(228,228,234,0.74)', pillText: isDark ? 'rgba(235,235,245,0.86)' : 'rgba(60,60,67,0.90)' } : null),
     systemText: colors.textTertiary || (isDark ? '#8E8E93' : '#6B6B70'), accent: isDark ? '#F5F5F7' : '#111111',
     ownQuote: 'rgba(255,255,255,0.12)', otherQuote: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
     unreadBg: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', unreadText: isDark ? '#D1D1D6' : '#3C3C43',
@@ -35407,6 +35411,8 @@ function ChatConversationInner() {
     // [2026-10-18 tg-look] = pílula flutuante JS (vidro P&B)
     bg: isDark ? 'rgba(28,28,30,0.88)' : 'rgba(255,255,255,0.92)',
     fg: isDark ? 'rgba(255,255,255,0.86)' : 'rgba(0,0,0,0.68)',
+    // [2026-10-19 tg-style] api 12: cápsula com desfoque, sem sombra (= pílulas da lista)
+    ...(nativeTgStyleOn() ? { shadow: 0, bg: isDark ? 'rgba(44,44,46,0.66)' : 'rgba(228,228,234,0.74)', fg: isDark ? 'rgba(235,235,245,0.86)' : 'rgba(60,60,67,0.90)' } : null),
   } : undefined), [_nlSticky, isDark]);
   // Destaque do salto p/ citação/busca/fixada (o JS marca replyJumpHighlightId).
   useEffect(() => {
@@ -35831,7 +35837,7 @@ function ChatConversationInner() {
         <TouchableOpacity onPress={handleStartVideoCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('chat.videoCall') || 'Video call'} accessibilityRole="button">
           {startingCall
             ? <ActivityIndicator size="small" color={colors.text} />
-            : <IconVideo size={24} color={colors.text} />}
+            : <IconVideo size={_tgB ? 23 : 24} color={colors.text} />}{/* [tg-style] mesmo peso visual do telefone */}
         </TouchableOpacity>
         <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('chat.voiceCall') || 'Audio call'} accessibilityRole="button">{/* [2026-10-09 geo-qa] era call.callingAudio = "Chamando..." (leitor de tela) */}
           <IconPhone size={22} color={colors.text} />

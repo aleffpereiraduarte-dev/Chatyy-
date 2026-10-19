@@ -50,6 +50,8 @@ class MLStyle(
   val radius = dp(radiusDp)
   /** [2026-10-18 tg-look] visual Telegram (MLLook.tg na criação do estilo, na main) */
   val tg: Boolean = MLLook.tg
+  /** [2026-10-19 tg-style, apiVersion 12] polimento Telegram (MLLook.style na criação) */
+  val ts: Boolean = MLLook.style
 
   private fun paint(sizePx: Float, tf: Typeface = Typeface.DEFAULT): TextPaint =
     TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply { textSize = sizePx; typeface = tf; color = 0xFF000000.toInt() }
@@ -57,12 +59,14 @@ class MLStyle(
   val body = paint(fontPx)
   val meta = paint(sp(11f))
   val name = paint(sp(13f), Typeface.create(Typeface.DEFAULT, Typeface.BOLD))
-  val fwd = paint(sp(12f), Typeface.create(Typeface.DEFAULT, Typeface.ITALIC))
+  // [tg-style] "Encaminhada de …" 13 regular (Telegram) — antes 12 itálico
+  val fwd = if (ts) paint(sp(13f)) else paint(sp(12f), Typeface.create(Typeface.DEFAULT, Typeface.ITALIC))
   val quoteName = paint(sp(13f), Typeface.create(Typeface.DEFAULT, Typeface.BOLD))
   val quoteText = paint(sp(13f))
   // [2026-10-17 wa-pills] data e sistema = 12,5 medium (WhatsApp)
-  val pill = paint(sp(12.5f), Typeface.create("sans-serif-medium", Typeface.NORMAL))
-  val system = paint(sp(12.5f), Typeface.create("sans-serif-medium", Typeface.NORMAL))
+  // [tg-style] cápsula, fonte menor (12)
+  val pill = paint(sp(if (ts) 12f else 12.5f), Typeface.create("sans-serif-medium", Typeface.NORMAL))
+  val system = paint(sp(if (ts) 12f else 12.5f), Typeface.create("sans-serif-medium", Typeface.NORMAL))
   val unread = paint(sp(13f), Typeface.create(Typeface.DEFAULT, Typeface.BOLD))
   val react = paint(sp(13f))
   val fileName = paint(sp(14f), Typeface.create("sans-serif-medium", Typeface.NORMAL))
@@ -270,8 +274,9 @@ object MLLayoutBuilder {
     val maxW = floor(s.width * 0.8f) - s.dp(24f)
     val t = MLText.make(colored(row.text, color), p, maxW, 0f, if (row.kind == MLKind.DATE) 1 else 6)
     L.pillText = t
-    val pw = min(s.width - s.dp(32f), t.width + s.dp(24f))
-    val ph = max(s.dp(24f), t.height + s.dp(10f)) // [2026-10-17 wa-pills] ~5 vertical / 12 horizontal
+    // [2026-10-17 wa-pills] ~5 vertical / 12 horizontal · [2026-10-19 tg-style] cápsula 3,5/10, mín. 22
+    val pw = min(s.width - s.dp(32f), t.width + s.dp(if (s.ts) 20f else 24f))
+    val ph = if (s.ts) max(s.dp(22f), t.height + s.dp(7f)) else max(s.dp(24f), t.height + s.dp(10f))
     val top = s.dp(if (row.kind == MLKind.DATE) 8f else 6f)
     L.pillFrame.set(floor((s.width - pw) / 2), top, floor((s.width - pw) / 2) + pw, top + ph)
     val tx = L.pillFrame.left + floor((pw - t.width) / 2)
@@ -689,7 +694,8 @@ object MLLayoutBuilder {
       L.reactsFrame.set(rxx, L.bubble.bottom - s.dp(5f), rxx + total, L.bubble.bottom + s.dp(19f))
       h = L.reactsFrame.bottom
     }
-    h += s.dp(if (row.last) 7f else 2f)
+    // [2026-10-19 tg-style] 2 dp dentro do grupo, 8 dp entre grupos (6 + 2 do topo da 1ª)
+    h += s.dp(if (row.last) (if (s.ts) 6f else 7f) else 2f)
     L.height = ceil(h)
     if (row.sel > 0) {
       val cy = L.bubble.centerY()

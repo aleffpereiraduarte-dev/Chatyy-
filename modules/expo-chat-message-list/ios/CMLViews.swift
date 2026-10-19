@@ -193,6 +193,8 @@ final class CMLMetaView: UIView {
   var readColor: UIColor = .systemBlue { didSet { setNeedsDisplay() } }
   var failedColor: UIColor = .systemRed
   var pill = false { didSet { setNeedsDisplay() } }
+  /// [2026-10-19 tg-style] opacidade do fundo da pílula sobre mídia (0,42 antigo; com desfoque atrás, menos)
+  var pillAlpha: CGFloat = 0.42 { didSet { if pillAlpha != oldValue { setNeedsDisplay() } } }
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -377,7 +379,7 @@ final class CMLMetaView: UIView {
     let h = bounds.height
     if pill {
       let p = UIBezierPath(roundedRect: bounds, cornerRadius: h / 2)
-      ctx.setFillColor(UIColor(white: 0, alpha: 0.42).cgColor)
+      ctx.setFillColor(UIColor(white: 0, alpha: pillAlpha).cgColor)
       ctx.addPath(p.cgPath)
       ctx.fillPath()
       x = 6
@@ -851,9 +853,16 @@ final class CMLAudioView: UIView {
     let h: CGFloat = 22
     return CGRect(x: bounds.width - w - 2, y: 15 - h / 2, width: w, height: h)
   }
-  var tint: UIColor = .white { didSet { setNeedsDisplay() } }
+  var tint: UIColor = .white { didSet { setNeedsDisplay(); setNeedsLayout() } }
   var dim: UIColor = .gray
   var unplayedDot: UIColor? = nil
+  /// [2026-10-19 tg-style] botão play CHEIO na tinta com o glifo nesta cor (a da
+  /// bolha) — Telegram; nil = disco translúcido antigo.
+  var solidGlyph: UIColor? = nil {
+    didSet {
+      if solidGlyph != oldValue { setNeedsDisplay(); setNeedsLayout() }
+    }
+  }
   /// [native-media-dl] o anel de download ocupa o botão (play some)
   var glyphHidden = false { didSet { if glyphHidden != oldValue { setNeedsDisplay() } } }
   private let spinner = UIActivityIndicatorView(style: .medium)
@@ -931,19 +940,26 @@ final class CMLAudioView: UIView {
   override func layoutSubviews() {
     super.layoutSubviews()
     spinner.center = CGPoint(x: CMLAudioView.buttonSize / 2, y: CMLAudioView.buttonSize / 2 + 1)
-    spinner.color = tint
+    spinner.color = solidGlyph ?? tint
   }
 
   override func draw(_ rect: CGRect) {
     guard let ctx = UIGraphicsGetCurrentContext() else { return }
     let b = CMLAudioView.buttonSize
     let btn = CGRect(x: 0, y: 1, width: b, height: b)
+    let glyph: UIColor = solidGlyph ?? tint
     if !glyphHidden {
-      ctx.setFillColor(tint.withAlphaComponent(0.14).cgColor)
+      ctx.setFillColor((solidGlyph != nil ? tint : tint.withAlphaComponent(0.14)).cgColor)
       ctx.fillEllipse(in: btn)
     }
     if !loading && !glyphHidden {
-      if playing { CMLIcons.pause(ctx, rect: btn, color: tint) } else { CMLIcons.play(ctx, rect: btn.insetBy(dx: 4, dy: 4), color: tint) }
+      if playing {
+        CMLIcons.pause(ctx, rect: btn, color: glyph)
+      } else {
+        // [tg-style] triângulo cheio levemente à direita (centro óptico)
+        let pr = solidGlyph != nil ? btn.insetBy(dx: 5, dy: 5).offsetBy(dx: 1, dy: 0) : btn.insetBy(dx: 4, dy: 4)
+        CMLIcons.play(ctx, rect: pr, color: glyph)
+      }
     }
     // ondas
     let x0 = b + 10
@@ -959,7 +975,8 @@ final class CMLAudioView: UIView {
     let n = bars.count
     if n > 0 && avail > 20 {
       let step = avail / CGFloat(n)
-      let bw = max(1.5, step * 0.58)
+      // [tg-style] barras um pouco mais firmes (2–3 pt), como o Telegram
+      let bw: CGFloat = solidGlyph != nil ? max(2, min(3, step * 0.62)) : max(1.5, step * 0.58)
       let midY: CGFloat = 15
       let playedUpTo = CGFloat(n) * progress
       for i in 0..<n {

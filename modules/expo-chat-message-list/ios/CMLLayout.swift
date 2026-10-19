@@ -66,6 +66,8 @@ final class CMLStyle {
   let scale: CGFloat
   /// [2026-10-18 tg-look] visual Telegram (CMLLook.tg no momento da criação)
   let tg: Bool
+  /// [2026-10-19 tg-style, apiVersion 12] polimento Telegram (CMLLook.style na criação)
+  let ts: Bool
 
   let body: UIFont
   let bodyBold: UIFont
@@ -98,6 +100,8 @@ final class CMLStyle {
     self.theme = UIAccessibility.isDarkerSystemColorsEnabled ? theme.boostedContrast() : theme
     self.version = version
     self.tg = CMLLook.tg
+    let tsOn = CMLLook.style
+    self.ts = tsOn
     body = UIFont.systemFont(ofSize: fs)
     bodyBold = UIFont.systemFont(ofSize: fs, weight: .semibold)
     bodyItalic = UIFont.italicSystemFont(ofSize: fs)
@@ -109,13 +113,15 @@ final class CMLStyle {
     mono = UIFont.monospacedSystemFont(ofSize: fs * 0.88, weight: .regular)
     meta = UIFont.systemFont(ofSize: 11 * scale)
     name = UIFont.systemFont(ofSize: 13 * scale, weight: .semibold)
-    fwd = UIFont.italicSystemFont(ofSize: 12 * scale)
+    // [tg-style] "Encaminhada de …" 13 regular (Telegram) — antes 12 itálico
+    fwd = tsOn ? UIFont.systemFont(ofSize: 13 * scale) : UIFont.italicSystemFont(ofSize: 12 * scale)
     quoteName = UIFont.systemFont(ofSize: 13 * scale, weight: .semibold)
     quoteText = UIFont.systemFont(ofSize: 13 * scale)
     quoteItalic = UIFont.italicSystemFont(ofSize: 13 * scale)
     // [2026-10-17 wa-pills] data e sistema = 12,5 medium (WhatsApp iOS)
-    pill = UIFont.systemFont(ofSize: 12.5 * scale, weight: .medium)
-    system = UIFont.systemFont(ofSize: 12.5 * scale, weight: .medium)
+    // [tg-style] cápsula com desfoque, fonte menor (12)
+    pill = UIFont.systemFont(ofSize: (tsOn ? 12 : 12.5) * scale, weight: .medium)
+    system = UIFont.systemFont(ofSize: (tsOn ? 12 : 12.5) * scale, weight: .medium)
     unread = UIFont.systemFont(ofSize: 13 * scale, weight: .semibold)
     react = UIFont.systemFont(ofSize: 13 * scale)
     fileName = UIFont.systemFont(ofSize: 14 * scale, weight: .medium)
@@ -136,6 +142,7 @@ final class CMLStyle {
     self.version = version
     self.scale = p.scale
     self.tg = p.tg
+    self.ts = p.ts
     body = p.body; bodyBold = p.bodyBold; bodyItalic = p.bodyItalic; bodyBoldItalic = p.bodyBoldItalic
     mono = p.mono; meta = p.meta; name = p.name; fwd = p.fwd; quoteName = p.quoteName
     quoteText = p.quoteText; quoteItalic = p.quoteItalic; pill = p.pill; system = p.system
@@ -435,11 +442,12 @@ enum CMLLayoutBuilder {
     L.kind = row.kind
     let maxW = floor(s.width * 0.8) - 24
     // [2026-10-17 wa-pills] padding ~5 vertical / 12 horizontal
+    // [2026-10-19 tg-style] cápsula Telegram: ~3,5 vertical / 10 horizontal, mín. 22
     let lh = ceil(font.lineHeight + 1)
     let t = CMLTextLayout.make(plain(row.text, font: font, color: color), maxWidth: maxW, lineHeight: lh, font: font, maxLines: row.kind == .date ? 1 : 6)
     L.pillText = t
-    let pw = min(s.width - 32, t.size.width + 24)
-    let ph = max(24, t.size.height + 10)
+    let pw = min(s.width - 32, t.size.width + (s.ts ? 20 : 24))
+    let ph = s.ts ? max(22, t.size.height + 7) : max(24, t.size.height + 10)
     let top: CGFloat = row.kind == .date ? 8 : 6
     L.pillFrame = CGRect(x: floor((s.width - pw) / 2), y: top, width: pw, height: ph)
     L.pillTextFrame = CGRect(x: L.pillFrame.minX + floor((pw - t.size.width) / 2), y: L.pillFrame.minY + floor((ph - t.size.height) / 2), width: t.size.width + 1, height: t.size.height)
@@ -884,7 +892,8 @@ enum CMLLayoutBuilder {
       L.reactChips = chips
       h = L.reactsFrame.maxY
     }
-    h += row.last ? 7 : 2
+    // [2026-10-19 tg-style] 2 pt dentro do grupo, 8 pt entre grupos (6 + 2 do topo da 1ª)
+    h += row.last ? (s.ts ? 6 : 7) : 2
     L.height = ceil(h)
     if row.sel > 0 {
       L.selCircle = CGRect(x: 10, y: L.bubbleFrame.midY - 11, width: 22, height: 22)

@@ -43,6 +43,9 @@ import { previewForMessage, isFreshMessage, LP_SKELETON } from './linkPreviewSta
 import { IconTrophy as _IconGameTrophy, gameTypeIconComp as _gameIconComp } from '../games/GameIcons'; // [jogos 2026-10-18]
 
 // ─── utilidades ─────────────────────────────────────────────────────────────
+// [2026-10-19 tg-style] cartão de link com os cantos/tipografia da citação nativa
+// (cantos 6, domínio 12/600). Kill switch: globalThis.__chatyy_tg_bubbles = false.
+function _tgB() { try { return globalThis.__chatyy_tg_bubbles !== false; } catch { return true; } }
 const URL_RE = /(https?:\/\/[^\s<]+)/;
 const CALL_TEXT_RE = /^(Chamada de Voz|Videochamada|Voice Call|Video Call)\n/i;
 const PAD = [7, 12, 7, 12]; // styles.bubble paddingTop/H/Bottom
@@ -1216,7 +1219,7 @@ function linkSkeleton(url, C, own) {
       vstack([], { w: 230, h: 10, r: 5, bg: blk, m: [0, 0, 7, 0] }),
       vstack([], { w: 160, h: 10, r: 5, bg: blk }),
     ], { p: [8, 12, 8, 12], w: -1, h: LP_SKELETON.textH }),
-  ], { id: 'lp', w: LP_SKELETON.width, r: 10, m: [6, 0, 0, 0], bg: cardBg, a: 'lp:' + url });
+  ], { id: 'lp', w: LP_SKELETON.width, r: _tgB() ? 6 : 10, m: [6, 0, 0, 0], bg: cardBg, a: 'lp:' + url });
 }
 
 function linkCard(url, C, own, item) {
@@ -1270,14 +1273,14 @@ function linkCard(url, C, own, item) {
   if (domain) {
     tc.push(hstack([
       fav ? image(fav, { w: 14, h: 14, r: 3 }) : icon(IconGlobe, { s: 12, c: sub }),
-      text(domain, { fs: 12, fw: 500, c: sub, fl: 1, ml: 1 }),
+      text(domain, { fs: 12, fw: _tgB() ? 600 : 500, c: sub, fl: 1, ml: 1 }),
     ], { g: 6, m: [0, 0, 3, 0], al: 'c', w: -1 }));
   }
   if (pv.title) tc.push(text(String(pv.title), { fs: 14, fw: 600, m: [0, 0, 2, 0], lh: 19, ml: 2, c: ink }));
   if (pv.description) tc.push(text(String(pv.description), { fs: 13, lh: 17, ml: 2, c: sub }));
   if (!tc.length && !kids.length) return null;
   kids.push(vstack(tc, { p: [8, 12, 8, 12], w: -1 }));
-  return vstack(kids, { id: 'lp', w: 280, r: 10, m: [6, 0, 0, 0], bg: cardBg, a: 'lp:' + url });
+  return vstack(kids, { id: 'lp', w: 280, r: _tgB() ? 6 : 10, m: [6, 0, 0, 0], bg: cardBg, a: 'lp:' + url });
 }
 
 // ─── buildCard ──────────────────────────────────────────────────────────────

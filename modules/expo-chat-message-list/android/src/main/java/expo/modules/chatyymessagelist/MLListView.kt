@@ -378,21 +378,43 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     if (st != null && st.tg != MLLook.tg) markStyleDirty()
   }
 
+  /** [2026-10-19 tg-style, apiVersion 12] polimento Telegram — ver MLLook.style. */
+  fun setTgStyle(m: Map<String, Any?>?) {
+    MLLook.applyStyle(m)
+    styleSticky()
+    val st = style
+    if (st != null && st.ts != MLLook.style) markStyleDirty()
+  }
+
+  private var stickyBg = 0xF2FFFFFF.toInt()
+  private var stickyShadow = true
+
+  /** pílula flutuante: WhatsApp (raio 8, 12,5sp, sombra) ou Telegram (cápsula 12sp, chapada) */
+  private fun styleSticky() {
+    val ts = MLLook.style
+    val d = GradientDrawable()
+    d.cornerRadius = if (ts) dp(14f) else dp(8f)
+    d.setColor(stickyBg)
+    sticky.background = d
+    sticky.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, if (ts) 12f else 12.5f)
+    if (ts) sticky.setPadding(dp(10f).toInt(), dp(3.5f).toInt(), dp(10f).toInt(), dp(3.5f).toInt())
+    else sticky.setPadding(dp(12f).toInt(), dp(5f).toInt(), dp(12f).toInt(), dp(5f).toInt())
+    sticky.minHeight = if (ts) dp(22f).toInt() else 0
+    sticky.elevation = if (ts || !stickyShadow) 0f else dp(4f)
+  }
+
   fun setStickyDate(m: Map<String, Any?>?) {
     val on = m != null && MLRow.bool(m["on"])
     stickyOn = on
     if (!on) { hideSticky(); return }
     m!!
     stickyTopDp = (MLRow.num(m["top"]) ?: 8.0).toFloat()
-    val bg = MLRow.color(m["bg"]) ?: 0xF2FFFFFF.toInt()
+    stickyBg = MLRow.color(m["bg"]) ?: 0xF2FFFFFF.toInt()
     val fg = MLRow.color(m["fg"]) ?: 0xB3000000.toInt()
-    val d = GradientDrawable()
-    d.cornerRadius = dp(8f)
-    d.setColor(bg)
-    sticky.background = d
     sticky.setTextColor(fg)
     val sh = m["shadow"]
-    sticky.elevation = if (sh != null && !MLRow.bool(sh)) 0f else dp(4f)
+    stickyShadow = !(sh != null && !MLRow.bool(sh))
+    styleSticky()
     (sticky.layoutParams as? FrameLayout.LayoutParams)?.let { it.topMargin = dp(stickyTopDp).toInt(); sticky.layoutParams = it }
   }
 
