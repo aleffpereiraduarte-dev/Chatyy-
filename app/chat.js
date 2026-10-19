@@ -571,8 +571,18 @@ function ChatHub() {
   const YOU_TAB = !isKids && (() => { try { return globalThis.__chatyy_you_tab !== false; } catch { return true; } })();
   // Android: o vetor "you" só existe no binário com o módulo api 2+; antes disso a
   // aba nativa ficaria sem ícone → usa a barra JS (TabBarItem, com a foto) até o build.
-  const NATIVE_TABS = useMemo(() => !isKids && nativeTabsAvailable()
-    && !(YOU_TAB && Platform.OS === 'android' && nativeTabsApi() < 2), [isKids, YOU_TAB]);
+  // [2026-10-19 tabbar-fix] Barra nativa que lança ou não monta em 2,5 s → barra JS
+  // (TabBarItem) até o próximo boot. Nunca fica sem barra embaixo.
+  const [nativeTabsFailed, setNativeTabsFailed] = useState(false);
+  const onNativeTabsFail = useCallback((why) => {
+    setNativeTabsFailed(true);
+    try { require('../services/nativeTelemetry').noteNativeFallback('tabbar', String(why || '')); } catch {}
+  }, []);
+  const onNativeTabsReady = useCallback(() => {
+    try { require('../services/nativeTelemetry').noteNativeMount('tabbar'); } catch {}
+  }, []);
+  const NATIVE_TABS = useMemo(() => !isKids && !nativeTabsFailed && nativeTabsAvailable()
+    && !(YOU_TAB && Platform.OS === 'android' && nativeTabsApi() < 2), [isKids, YOU_TAB, nativeTabsFailed]);
   // [2026-10-18 you-tab-avatar] api 3+ (iOS/Android): foto do usuário na aba "Você"
   // (mesma URL/cache do AvatarCircle). Binário < 3 → ícone de antes.
   const NATIVE_YOU_AVATAR = useMemo(() => NATIVE_TABS && YOU_TAB && nativeTabsApi() >= 3
@@ -1573,7 +1583,8 @@ function ChatHub() {
   // [wave8-list] header sobreposto à lista (só Conversas, busca fechada).
   const homeOverlay = homeTopBar && LIST_LARGE_TITLE && activeTab === 'chats' && !searchOpen && !reelsImmersive && homeHeaderH > 0;
   // [2026-10-16 wave12-c] web/fallback: atalhos Comunidades/Canais numa linha sob o header.
-  const showDiscoverRow = !LIST_LARGE_TITLE && !isKids && activeTab === 'chats' && !searchOpen && !reelsImmersive;
+  // [2026-10-19 home-clean] pílulas foram p/ o Apps → linha desligada (código mantido p/ voltar).
+  const showDiscoverRow = false && !LIST_LARGE_TITLE && !isKids && activeTab === 'chats' && !searchOpen && !reelsImmersive;
   return (
     <View style={[styles.container, {
       backgroundColor: reelsImmersive ? '#000' : (isDark ? SHELL_DARK : '#ffffff'),
@@ -1673,15 +1684,11 @@ function ChatHub() {
             // [2026-10-07 native-ui-build] Nativo: o título grande foi p/ dentro
             // da lista (large title que colapsa); aqui fica vazio.
             // [2026-10-16 wave12-c] …e o vazio vira os atalhos Comunidades/Canais.
+            // [2026-10-19 home-clean] founder: home mais limpa — as pílulas Comunidades/
+            // Canais saíram do topo e moram no Apps (components/apps/AppsSheet.js). O
+            // chip-filtro "Canais" da lista e os deep links ?tab= seguem iguais.
             LIST_LARGE_TITLE ? (isKids || searchOpen ? null : (
-            <Animated.View
-              pointerEvents={chatTitleCollapsed ? 'none' : 'auto'}
-              accessibilityElementsHidden={chatTitleCollapsed}
-              importantForAccessibility={chatTitleCollapsed ? 'no-hide-descendants' : 'auto'}
-              style={{ flex: 1, minWidth: 0, opacity: discoverPillsOpacity }}
-            >
-              <HomeDiscoverPills t={t} isDark={isDark} colors={colors} onOpen={openDiscoverTab} />
-            </Animated.View>
+            <View style={{ flex: 1, minWidth: 0 }} />
             )) : (
             <SyncStatusTitle
               title={titles.chats}
@@ -1803,6 +1810,8 @@ function ChatHub() {
           onTabPress={handleTabPress}
           onTabLongPress={(key) => { if (key === 'chats') requestNewStatus(); /* [2026-10-09 status-composer] segurar = câmera do status */ }}
           onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined}
+          onNativeFail={onNativeTabsFail}
+          onNativeReady={onNativeTabsReady}
           style={GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : null}
         />
       ) : (

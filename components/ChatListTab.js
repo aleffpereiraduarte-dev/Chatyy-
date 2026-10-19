@@ -3073,7 +3073,9 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   // Toque para adicionar status", 52 pt) em vez de um círculo solto num bloco
   // de ~115 pt. A entrada pro status continua sempre visível (2026-10-09).
   const _LMs = listMetrics();
-  const _soloOwn = _LMs.compact && !hasLives && !myStatus && !myNote?.content
+  // [2026-10-19] também com status PRÓPRIO ativo (anel) e mais ninguém: linha fina
+  // "Seu status · Toque para ver" (WhatsApp) — antes caía no círculo solto de ~115 pt.
+  const _soloOwn = _LMs.compact && !hasLives && !myNote?.content
     && otherStatuses.length === 0 && notesOnly.length === 0 && liveOnlyEntries.length === 0
     && pubProgress == null && !pubFailed
     // sobreposições (nota, compositor, câmera, visualizador) moram no render completo
@@ -3086,7 +3088,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
           onLongPress={() => setShowNoteModal(true)}
           activeOpacity={0.7}
           accessibilityRole="button"
-          accessibilityLabel={`${t('status.yourStory')}. ${t('status.tapToAdd')}`}
+          accessibilityLabel={`${t('status.yourStory')}. ${myStatus ? (t('chatConv.tapToView') || 'Toque para ver') : t('status.tapToAdd')}`}
           testID="status-strip-own-slim"
           style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 6, minHeight: 52 }}
         >
@@ -3095,9 +3097,11 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               name={myDisplayName}
               email={user?.email}
               size={40}
-              ringStyle="none"
+              ringStyle={myStatus ? 'solid' : 'none'}
               badge="plus"
+              onBadgePress={myStatus ? () => { try { requestNewStatus?.(); } catch {} } : undefined}
               badgeAccessibilityLabel={t('status.ring.newStatus')}
+              textPreview={myStatus ? textPreviewOf(myStatus.items) : null}
               isDark={isDark}
               colors={colors}
             />
@@ -3107,7 +3111,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               {t('status.yourStory')}
             </Text>
             <Text maxFontSizeMultiplier={1.3} style={{ fontSize: 13, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>
-              {t('status.tapToAdd')}
+              {myStatus ? (t('chatConv.tapToView') || 'Toque para ver') : t('status.tapToAdd')}
             </Text>
           </View>
         </TouchableOpacity>

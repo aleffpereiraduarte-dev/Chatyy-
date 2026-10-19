@@ -167,6 +167,9 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, des
     { key: 'notes',       label: t('sidebar.notes'),     ic: I(IconStickyNote),  route: '/notes' },
     { key: 'tasks',       label: t('tasks.title'),       ic: I(IconCheckCircle), route: '/tasks' },
     { key: 'feed',        label: t('apps.feed'),         ic: I(IconGrid),        action: onOpenFeed },
+    // [2026-10-19 home-clean] Comunidades + Canais saíram das pílulas do topo da home → aqui.
+    { key: 'communities', label: t('community.title'),   ic: I(IconUsersSmall),  action: onOpenCommunities },
+    { key: 'channels',    label: t('channel.title'),     ic: I(IconMegaphone),   action: onOpenChannels },
     { key: 'live',        label: t('apps.goLive'),       ic: I(IconBroadcast),   route: '/live-broadcast' },
     { key: 'snapmap',     label: t('snapmap.tile'),      ic: I(IconMapPin),      route: '/snap-map' },
   // eslint-disable-next-line react-hooks/exhaustive-deps
