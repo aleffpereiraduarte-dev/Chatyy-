@@ -2092,6 +2092,24 @@ class MailWebSocket {
   }
 
   _parkHandshake(http, token) {
+    // [2026-10-19 proxy-400] 400 = proxy sem "Upgrade" (ex.: proxy do Google na
+    // revisão da Play), não é auth: nada de relogin. O HTTP de reserva
+    // (httpFallback) segue entregando; o WS tenta de novo com backoff longo.
+    if (http === 400 && (() => { try { return globalThis.__chatyy_ws400_soft !== false; } catch { return true; } })()) {
+      clearTimeout(this.reconnectTimer);
+      try { this._cleanup(); } catch {}
+      this._hs400Count = (this._hs400Count || 0) + 1;
+      const delay = Math.min(300000, 90000 * this._hs400Count) + Math.floor(Math.random() * 15000);
+      try { require('./crashReporter').reportStep?.('ws_handshake_400_soft', `n=${this._hs400Count} retry_ms=${delay}`); } catch {}
+      this._emit('connection', { status: 'disconnected', reason: 'proxy_400' });
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (this.destroyed || this._hsStopped) return;
+        this._hsRefreshTried = false;
+        try { this.connect(token); } catch {}
+      }, delay);
+      return;
+    }
     this._hsStopped = { http, token, at: Date.now() };
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
