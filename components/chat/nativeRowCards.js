@@ -26,7 +26,7 @@
 // Ações (`a` dos nós → onRowPress part 'action', url = ação):
 //   loc · loc_stop · jloc · ct_msg · ct_inv · ct_save · ct_call · ct_open · poll:<i> ·
 //   rsvp:<going|maybe|not_going> · pl_edit · pl_song:<i> · call_back:<v|a> ·
-//   call_join · st_open · vn_open · gift_thank · lp:<url>
+//   call_join · st_open · vn_open · gift_thank · lp:<url> · lr:<share|decline>
 import { Platform } from 'react-native';
 import {
   vstack, hstack, zstack, text, image, avatar, loader, videoNote, icon, toArgb, spacer, iconPaths,
@@ -385,6 +385,7 @@ function cardKind(item, ctx) {
     case 'voicemail': case 'lottie_sticker': // [2026-10-16 native-cover]
     case 'game': // [jogos 2026-10-18]
       return type;
+    case 'location_request': return _lrOn() ? type : null; // [loc-pedido 2026-10-19] desligado = cartao-resumo
     // [2026-10-16 native-cover] vídeo redondo antigo (200 px) → mesma nota de vídeo nativa
     case 'video_message': return (item.file_url || item._localUri) ? 'vn' : null;
     default: break;
@@ -1166,6 +1167,40 @@ function buildGame(m, row, ctx, C, own) {
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
 
+// [loc-pedido 2026-10-19] Pedido de localização — espelho de components/chat/LocationRequestCard.js.
+// Ações: lr:share · lr:decline (só p/ quem recebeu, pedido pendente).
+function _lrOn() { try { return require('../../services/locationRequest').locReqEnabled(); } catch { return false; } }
+function buildLocReq(m, row, ctx, C, own) {
+  const L = require('../../services/locationRequest');
+  const st = L.locReqState(m, ctx.myEmail, C.now);
+  const T = L.locReqTexts(C.t, st, C.peerName, m.sender_name);
+  const col = C.colors || {};
+  const ink = own ? C.ownText : (col.text || '#111111');
+  const sub = own ? C.ownMeta : (col.textSecondary || C.otherMeta || '#6b7280');
+  const line = own ? 'rgba(255,255,255,0.18)' : (C.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
+  const disc = inkAlpha(ink, C.isDark && !own ? 0.12 : 0.14);
+  const w = 260;
+  const StIc = st.status === 'shared' ? IconCheck : st.status === 'declined' ? IconX : st.status === 'expired' ? IconClock : null;
+  const kids = [hstack([
+    vstack([icon(IconMapPin, { s: 20, c: ink })], { w: 40, h: 40, r: 20, bg: disc, al: 'c', jc: 'c' }),
+    vstack([
+      text(T.title, { fs: 14.5, fw: 700, c: ink, lh: 19, ml: 3 }),
+      hstack([StIc ? icon(StIc, { s: 13, c: sub }) : null, text(T.sub, { fs: 12.5, c: sub, lh: 16, ml: 2, fl: 1 })], { g: 4, al: 'c', m: [2, 0, 0, 0] }),
+    ], { fl: 1 }),
+  ], { w: -1, g: 10, al: 'c', p: [2, 0, 0, 0] })];
+  if (L.locReqActionable(m, st)) {
+    const pbg = own || C.isDark ? '#FFFFFF' : '#111111';
+    const pink = own || C.isDark ? '#111111' : '#FFFFFF';
+    kids.push(vstack([], { w: -1, h: 0.5, bg: line, m: [10, 0, 8, 0] }));
+    kids.push(hstack([
+      vstack([text(T.decline, { fs: 13.5, fw: 700, c: ink })], { fl: 1, p: [8, 0, 8, 0], r: 10, al: 'c', bw: 1, bc: line, a: 'lr:decline' }),
+      vstack([text(T.share, { fs: 13.5, fw: 700, c: pink })], { fl: 1, p: [8, 0, 8, 0], r: 10, al: 'c', bg: pbg, a: 'lr:share' }),
+    ], { w: -1, g: 8 }));
+  }
+  row.bl = [vstack(kids, { w })];
+  row.cw = w; row.pad = PAD; row.mp = 'below';
+}
+
 export function buildFallbackCard(item, row, ctx, reason) {
   const C = ctx && ctx.cards;
   const isAlbum = item && item._type === 'album';
@@ -1323,6 +1358,7 @@ export function buildCard(item, row, ctx) {
       case 'voicemail': buildVoicemail(item, row, C, own); break;
       case 'lottie_sticker': buildLottie(item, row, C); break;
       case 'game': buildGame(item, row, ctx, C, own); break; // [jogos 2026-10-18]
+      case 'location_request': buildLocReq(item, row, ctx, C, own); break; // [loc-pedido 2026-10-19]
       default: return false;
     }
   } catch (e) {
@@ -1508,6 +1544,7 @@ export function runCardAction(item, action, D) {
       case 'st_open': { _openStatus(m, D, tt); return; }
       case 'gift_thank': { if (typeof D.thankGift === 'function') D.thankGift(m); return; } // [gift-premium 2026-10-16]
       case 'game': { if (typeof D.gameAction === 'function') D.gameAction(m, arg || 'open'); return; } // [jogos 2026-10-18]
+      case 'lr': { if (typeof D.locReqAction === 'function') D.locReqAction(m, arg); return; } // [loc-pedido 2026-10-19] lr:share|decline
       default: return;
     }
   } catch (e) {

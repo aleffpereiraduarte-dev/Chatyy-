@@ -3046,7 +3046,11 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
       // when present; fallback Alert if not wired.
       try {
         const api = require('../services/api');
-        if (typeof api.voipBlockCaller === 'function') {
+        // [2026-10-19 callinfo] voipBlockCaller/addBlockedCaller nunca existiram →
+        // bloquear não fazia nada. Contato Chatyy (e-mail) = chatBlockUser real.
+        if (caller && String(caller).includes('@') && typeof api.chatBlockUser === 'function') {
+          await api.chatBlockUser(String(caller));
+        } else if (typeof api.voipBlockCaller === 'function') {
           await api.voipBlockCaller(caller || number);
         } else if (typeof api.addBlockedCaller === 'function') {
           await api.addBlockedCaller(caller || number);

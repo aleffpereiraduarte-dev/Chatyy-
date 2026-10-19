@@ -5007,6 +5007,7 @@ function describeReplyTarget(rt, ref, t) {
       let lbl = ''; try { lbl = require('../services/games').gamePreviewText(t, m.content); } catch {}
       return { Icon: _IconGamepad, label: lbl || tr('games.preview', 'Jogo'), lines: 1, thumb: null };
     }
+    case 'location_request': return { Icon: IconMapPin, label: tr('locReq.preview', 'Pedido de localização'), lines: 1, thumb: null }; // [loc-pedido 2026-10-19]
     case 'meetup': {
       const ttl = String((m.meetup && m.meetup.title) || (_rtJSON(m.content) || {}).title || _rtField(content, 'title') || '').trim();
       return { Icon: IconCalendar, label: ttl || tr('chat.meetup', 'Reunião'), lines: 1, thumb: null };
@@ -21578,6 +21579,98 @@ function ChatConversationInner() {
     if (act === 'rematch' && nv) { open(nv.g); return; }
     if (nv && nv.status === 'active' && (act === 'accept' || act === 'join' || act === 'start')) open(nv.g);
   };
+  // [loc-pedido 2026-10-19] Pedido de localização na conversa (services/locationRequest.js):
+  // envio pelo caminho normal (outbox), cartão Compartilhar/Recusar, WS + checagem de pendentes.
+  useEffect(() => {
+    let off = null;
+    try {
+      const L = require('../services/locationRequest');
+      off = L.onLocReqUpdate((d) => {
+        if (!mountedRef.current || !d || String(d.conversation_id) !== String(conversationId) || !d.meta) return;
+        setMessages(prev => _mapKeep(prev, m => (String(m.id) === String(d.message_id) ? L.withMeta(m, d.meta) : m)));
+      });
+    } catch {}
+    return () => { try { off && off(); } catch {} };
+  }, [conversationId]);
+  useEffect(() => {
+    let alive = true;
+    try {
+      const L = require('../services/locationRequest');
+      if (!L.locReqEnabled() || !(messages || []).some(L.isLocReq)) return undefined;
+      L.refreshStatuses(messages, currentEmail).then((items) => {
+        if (!alive || !mountedRef.current || !items || !items.length) return;
+        const byId = new Map(items.map(i => [String(i.message_id), i.meta]));
+        setMessages(prev => _mapKeep(prev, m => (byId.has(String(m.id)) && byId.get(String(m.id)) ? L.withMeta(m, byId.get(String(m.id))) : m)));
+      }).catch(() => {});
+    } catch {}
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length, conversationId]);
+  const sendLocationRequestInChat = async () => {
+    let L; try { L = require('../services/locationRequest'); } catch { return false; }
+    if (!L.locReqEnabled() || !conversationId || conversationType === 'group' || conversationType === 'channel') return false;
+    const content = L.tr(t, 'locReq.fallbackText', 'Pediu sua localização');
+    const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const createdAt = new Date().toISOString();
+    try { Haptics.selectionAsync(); } catch {}
+    setMessages(prev => [...prev, { id: tempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail, content, type: 'location_request', created_at: createdAt, _pending: true, _client_id: msgId }]);
+    requestAnimationFrame(() => { try { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); } catch {} });
+    if (await _sendRichViaOutbox({ msgId, tempId, type: 'location_request', content, createdAt })) return true;
+    let r = null;
+    try { r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location_request', null, null, null, tempId, msgId)); } catch { r = null; }
+    if (r && r.success && r.data && r.data.id) {
+      const row = r.data;
+      setMessages(prev => { const rest = prev.filter(m => m.id !== tempId); return rest.some(m => String(m.id) === String(row.id)) ? rest : [...rest, row]; });
+    } else {
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+      setTimeout(() => safeAlert(t('common.error') || 'Erro', (r && r.message) || L.tr(t, 'locReq.sendFailed', 'Não foi possível enviar o pedido')), 350);
+    }
+    return true;
+  };
+  const _locReqActionRef = useRef(null);
+  _locReqActionRef.current = (msg, act) => {
+    let L; try { L = require('../services/locationRequest'); } catch { return; }
+    if (!msg || msg.id == null || typeof msg.id === 'string') return;
+    const st = L.locReqState(msg, currentEmail);
+    if (!L.locReqActionable(msg, st)) return;
+    const patch = (meta) => setMessages(prev => _mapKeep(prev, m => (String(m.id) === String(msg.id) ? L.withMeta(m, meta) : m)));
+    const toast = (k, fb) => { setScheduleToast(L.tr(t, k, fb)); setTimeout(() => setScheduleToast(''), 2400); };
+    const onFail = (r) => {
+      const meta = r && r.data && r.data.meta;
+      const err = String((r && r.data && r.data.error) || (r && r.message) || '');
+      if (meta && typeof meta === 'object' && Object.keys(meta).length) patch(err === 'expired' ? { ...meta, status: 'pending', expires_at: new Date(Date.now() - 1000).toISOString() } : meta);
+      else patch(st.meta || {});
+      if (err === 'expired') toast('locReq.expiredMsg', 'Este pedido expirou.');
+      else if (err.startsWith('already_')) toast('locReq.alreadyAnswered', 'Este pedido já foi respondido.');
+      else toast('common.error', 'Erro');
+    };
+    if (act === 'decline') {
+      try { Haptics.selectionAsync(); } catch {}
+      patch({ ...(st.meta || {}), status: 'declined', responded_at: new Date().toISOString() });
+      L.respond(msg.id, 'decline').then((r) => { if (!r || !r.success) onFail(r); else if (r.data && r.data.meta) patch(r.data.meta); }).catch(() => onFail(null));
+      return;
+    }
+    if (act !== 'share') return;
+    // Compartilhar = localização (atual ou ao vivo) RESPONDENDO ao pedido → o servidor marca 'shared'.
+    const go = async (sec) => {
+      try { setReplyTo(msg); replyToLatestRef.current = msg; } catch {}
+      try { if (sec) await startLiveLocation(sec); else await handleShareLocation(); } catch {}
+      // envio abortado (permissão/GPS): não deixa a citação do pedido presa na barra
+      try { if (replyToLatestRef.current && String(replyToLatestRef.current.id) === String(msg.id)) { setReplyTo(null); replyToLatestRef.current = null; } } catch {}
+    };
+    safeAlert(
+      L.tr(t, 'locReq.pickTitle', 'Compartilhar localização'),
+      L.tr(t, 'locReq.pickBody', 'Como você quer compartilhar?'),
+      [
+        { text: L.tr(t, 'locReq.current', 'Localização atual'), onPress: () => { go(0); } },
+        { text: L.tr(t, 'locReq.live15', 'Ao vivo por 15 min'), onPress: () => { go(15 * 60); } },
+        { text: L.tr(t, 'locReq.live1h', 'Ao vivo por 1 h'), onPress: () => { go(60 * 60); } },
+        { text: L.tr(t, 'locReq.live8h', 'Ao vivo por 8 h'), onPress: () => { go(8 * 60 * 60); } },
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+      ],
+    );
+  };
   const handlePickAttachment = async (type) => {
     // AttachmentMenu is now a plain <View> overlay (not a <Modal>), so we can
     // fire the picker modal immediately without waiting for a dismiss animation.
@@ -26468,6 +26561,7 @@ function ChatConversationInner() {
   };
   // [BUG B fix 2026-05-21] alertas adiados (Modal-over-Modal no iOS engolia o Alert).
   const requestPeerLiveLocation = async () => {
+    if (await sendLocationRequestInChat()) return; // [loc-pedido 2026-10-19] pedido vira mensagem na conversa (kill switch __chatyy_loc_request)
     const otherEmail = (params.email || '').toLowerCase();
     if (!otherEmail) {
       setTimeout(() => safeAlert(t('common.error') || 'Erro', 'No peer email — open this chat from contacts or chat list and try again.'), 350);
@@ -32816,6 +32910,12 @@ function ChatConversationInner() {
           );
         }
 
+        case 'location_request': { // [loc-pedido 2026-10-19] cartão Compartilhar/Recusar (desligado → texto legível)
+          let LRC = null; try { if (require('../services/locationRequest').locReqEnabled()) LRC = require('../components/chat/LocationRequestCard').default; } catch {}
+          if (!LRC) return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{msg.content}</Text>;
+          return <LRC msg={msg} isOwn={isOwn} currentEmail={currentEmail} colors={colors} isDark={isDark} t={t} peerName={conversationName}
+            onAction={(m, a) => { try { _locReqActionRef.current && _locReqActionRef.current(m, a); } catch {} }} />;
+        }
         case 'game': { // [jogos 2026-10-18] cartão do jogo (convite/andamento/resultado)
           return <GameChatCard msg={msg} isOwn={isOwn} currentEmail={currentEmail} colors={colors} isDark={isDark} t={t}
             onAction={(m, a) => { try { _gameCardActionRef.current && _gameCardActionRef.current(m, a); } catch {} }} />;
@@ -34908,8 +35008,9 @@ function ChatConversationInner() {
     resolve: (u) => { try { return _nlResolveRef.current ? _nlResolveRef.current(u) : u; } catch { return u; } },
     formatLiveTimeRemaining,
     lp: { get: _lpCacheGet, set: _lpCacheSet, skip: _lpShouldSkip, color: _lpHashColor },
+    peerName: String(conversationName || '').trim(), // [loc-pedido 2026-10-19] "Você pediu a localização de {name}"
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [_nlCardsRev, _nlLiveTick, isDark, colors, ownTextColor, ownMetaColor, otherMetaColor, otherInk, bubbleRadius, msgFontSize, t]);
+  }), [_nlCardsRev, _nlLiveTick, isDark, colors, ownTextColor, ownMetaColor, otherMetaColor, otherInk, bubbleRadius, msgFontSize, t, conversationName]);
   const _nlResolveRef = useRef(null);
   _nlResolveRef.current = resolveMediaUri;
   const _nlCtx = useMemo(() => {
@@ -35245,6 +35346,7 @@ function ChatConversationInner() {
         setMessages, mapKeep: _mapKeep, cacheOne: _cacheOne, pollVoteLocksRef,
         setMapModalData, setRoundVideoViewer, setPlaylistEditor, setScheduleToast, startCall, thankGift: _thankGift,
         gameAction: (m, a) => { try { _gameCardActionRef.current && _gameCardActionRef.current(m, a); } catch {} }, // [jogos 2026-10-18]
+        locReqAction: (m, a) => { try { _locReqActionRef.current && _locReqActionRef.current(m, a); } catch {} }, // [loc-pedido 2026-10-19]
         liveLocIntervalRef, liveLocTimeoutRef, liveLocMsgIdRef, setLiveLocActive,
         resolve: (u) => { try { return resolveMediaUri(u); } catch { return u; } },
       });
