@@ -30,6 +30,9 @@ export type NativeTabItem = {
   avatarUrl?: string | null;
   /** Cabeçalhos do download da foto (ex.: Authorization). */
   avatarHeaders?: Record<string, string> | null;
+  /** [2026-10-18 you-tab-nolabel] api 4+: sem rótulo (só ícone/foto, centralizado e maior);
+   *  `label` continua como accessibilityLabel/contentDescription. */
+  hideLabel?: boolean;
 };
 
 export type NativeTabTheme = {

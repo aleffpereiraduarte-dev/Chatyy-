@@ -6,11 +6,12 @@ import UIKit
 // sendo o JS (handleTabPress / requestNewStatus).
 //
 // Props: items[{key,label,sfSymbol,sfSymbolActive,badge,dot,longPress,selectable,
-//        avatarUrl,avatarHeaders (api 3+)}],
+//        avatarUrl,avatarHeaders (api 3+), hideLabel (api 4+)}],
 //        selectedKey (String|null), theme{dark,active,inactive,background,hairline,
 //        badgeBackground,badgeText,pill,ripple}, translucent, bounce.
 // Eventos: onTabPress{key}, onTabLongPress{key}, onPreferredHeight{height}
-//          (sizeThatFits do UITabBar, já com a safe area de baixo).
+//          (sizeThatFits do UITabBar, já com a safe area de baixo),
+//          onBarFail{reason} (api 4+: barra não se desenha → JS usa a barra JS).
 
 struct NTBItemRecord: Record {
   @Field var key: String = ""
@@ -27,6 +28,10 @@ struct NTBItemRecord: Record {
   @Field var avatarUrl: String? = nil
   /// Cabeçalhos do download (ex.: Authorization p/ foto restrita).
   @Field var avatarHeaders: [String: String]? = nil
+  /// [2026-10-18 you-tab-nolabel] api 4: sem rótulo embaixo (só ícone/foto,
+  /// centralizado e maior — aba de perfil do Instagram). `label` continua
+  /// sendo o accessibilityLabel (VoiceOver lê "Você").
+  @Field var hideLabel: Bool = false
 }
 
 struct NTBThemeRecord: Record {
@@ -57,12 +62,14 @@ public class ChatyyTabBarModule: Module {
     Name("ChatyyTabBar")
 
     // 3 = [2026-10-18 you-tab-avatar] items[].avatarUrl (foto redonda na aba Você).
+    // 4 = [2026-10-18 you-tab-nolabel] items[].hideLabel (sem rótulo; ícone/foto centralizado e maior).
     Function("apiVersion") { () -> Int in
-      return 3
+      return 4
     }
 
     View(ChatyyTabBarView.self) {
-      Events("onTabPress", "onTabLongPress", "onPreferredHeight")
+      // onBarFail{reason} = [2026-10-18 tabbar-invisivel] api 4: barra não se desenha → JS usa a barra JS.
+      Events("onTabPress", "onTabLongPress", "onPreferredHeight", "onBarFail")
 
       Prop("items") { (view: ChatyyTabBarView, v: [NTBItemRecord]?) in
         view.setItems(v ?? [])

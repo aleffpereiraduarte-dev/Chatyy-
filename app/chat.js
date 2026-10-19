@@ -590,6 +590,12 @@ function ChatHub() {
   const youTabAvatar = useNativeTabAvatar(user?.email, user?.name || user?.email, NATIVE_YOU_AVATAR);
   const youAvatarUrl = youTabAvatar?.uri || null;
   const youAvatarHeaders = youTabAvatar?.headers || null;
+  // [2026-10-18 you-tab-nolabel] api 4+: aba "Você" SÓ com a foto redonda (sem o
+  // rótulo embaixo, como a aba de perfil do Instagram), centralizada e um pouco
+  // maior; o label segue indo (accessibilityLabel/contentDescription "Você").
+  // Binário api < 4 ignora → continua com rótulo. Kill switch da foto
+  // (__chatyy_you_tab_avatar=false) → ícone + rótulo como antes.
+  const NATIVE_YOU_NOLABEL = NATIVE_YOU_AVATAR && nativeTabsApi() >= 4;
   const nativeTabItems = useMemo(() => {
     if (!NATIVE_TABS) return null;
     return [
@@ -599,10 +605,11 @@ function ChatHub() {
       { key: 'calls', label: t('chat.tabCalls') || 'Ligações', sfSymbol: 'phone', sfSymbolActive: 'phone.fill', androidIcon: 'calls', badge: missedCallBadge || 0 },
       YOU_TAB
         ? { key: 'you', label: t('chat.tabYou') || 'Você', sfSymbol: 'person.crop.circle', sfSymbolActive: 'person.crop.circle.fill', androidIcon: 'you', selectable: false,
+            ...(NATIVE_YOU_NOLABEL ? { hideLabel: true } : null),
             ...(youAvatarUrl ? { avatarUrl: youAvatarUrl, avatarHeaders: youAvatarHeaders } : null) }
         : { key: 'apps', label: t('chat.tabApps') || 'Apps', sfSymbol: 'square.grid.2x2', sfSymbolActive: 'square.grid.2x2.fill', androidIcon: 'apps' },
     ];
-  }, [NATIVE_TABS, YOU_TAB, t, chatsBadge, emailBadge, missedCallBadge, youAvatarUrl, youAvatarHeaders]);
+  }, [NATIVE_TABS, YOU_TAB, NATIVE_YOU_NOLABEL, t, chatsBadge, emailBadge, missedCallBadge, youAvatarUrl, youAvatarHeaders]);
 
   // Compute missed-call count from cached call history.
   // We gate by a persisted "calls last seen" timestamp — counting only missed
@@ -1944,21 +1951,29 @@ function ChatHub() {
               isDark={barDark}
               badge={missedCallBadge}
             />
-            {YOU_TAB ? (
+            {YOU_TAB ? (() => {
             // [2026-10-18 you-tab] "Você": a própria foto redonda (WhatsApp/Telegram),
             // anel fino na cor ativa enquanto a tela Você está aberta (push → nunca "ativa").
+            // [2026-10-18 you-tab-nolabel] Só a foto (30), centralizada, sem rótulo
+            // (aba de perfil do Instagram); VoiceOver/TalkBack leem "Você".
+            // Kill switch __chatyy_you_tab_avatar=false → foto 26 + rótulo (antes).
+            const noLabel = (() => { try { return globalThis.__chatyy_you_tab_avatar !== false; } catch { return true; } })();
+            const box = noLabel ? 30 : 26;
+            return (
             <TabBarItem
               icon={(active) => (
-                <View style={{ width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', borderWidth: active ? 1.5 : 0, borderColor: barDark ? TAB_ON_DARK : TAB_ON_LIGHT }}>
-                  <AvatarCircle name={user?.name || user?.email} email={user?.email} size={active ? 21 : 24} />
+                <View style={{ width: box, height: box, borderRadius: box / 2, alignItems: 'center', justifyContent: 'center', borderWidth: active ? 1.5 : 0, borderColor: barDark ? TAB_ON_DARK : TAB_ON_LIGHT }}>
+                  <AvatarCircle name={user?.name || user?.email} email={user?.email} size={active ? box - 5 : box - 2} />
                 </View>
               )}
               label={t('chat.tabYou') || 'Você'}
+              hideLabel={noLabel}
               active={false}
               onPress={() => handleTabPress('you')}
               isDark={barDark}
             />
-            ) : (
+            );
+            })() : (
             <TabBarItem
               icon={(active) => <IconAppsTab size={22} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabApps') || 'Apps'}
@@ -2108,7 +2123,7 @@ function PulseBadge({ badge, isDark, style }) {
 }
 
 // ── Mobile tab bar item with dot indicator ──
-function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, dot }) {
+function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, dot, hideLabel }) {
   const { colors } = useTheme();
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const bounceAnim = useRef(new Animated.Value(0)).current;
@@ -2198,14 +2213,15 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
           }} />
         )}
       </Animated.View>
-      <Text selectable={false} numberOfLines={1} maxFontSizeMultiplier={1.3} style={[styles.tabLabel, {
+      {/* [2026-10-18 you-tab-nolabel] sem rótulo → o tabItem (justifyContent center) centraliza o ícone na altura da barra. */}
+      {!hideLabel && <Text selectable={false} numberOfLines={1} maxFontSizeMultiplier={1.3} style={[styles.tabLabel, {
         color: active ? (isDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT),
         // [2026-10-17 wa-polish] 700↔500 made labels jump width on switch; UITabBar keeps one weight.
         fontWeight: active ? '600' : '500',
         ...(isWeb ? { transition: 'color 0.15s ease' } : {}),
       }]}>
         {label}
-      </Text>
+      </Text>}
     </Pressable>
   );
 }

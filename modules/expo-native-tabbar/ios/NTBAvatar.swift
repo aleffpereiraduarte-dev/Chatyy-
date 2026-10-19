@@ -113,8 +113,10 @@ final class NTBAvatarLoader {
 let ntbAvatarSide: CGFloat = 28
 
 /// Círculo pronto para UITabBarItem. `ring` = cor do anel (só selecionado).
-func ntbAvatarImage(_ photo: UIImage, ring: UIColor?, dark: Bool) -> UIImage {
-  let side = ntbAvatarSide
+/// [2026-10-18 you-tab-nolabel] Sem rótulo (api 4) a foto cresce para 30 pt.
+let ntbAvatarSideNoLabel: CGFloat = 30
+
+func ntbAvatarImage(_ photo: UIImage, ring: UIColor?, dark: Bool, side: CGFloat = ntbAvatarSide) -> UIImage {
   let fmt = UIGraphicsImageRendererFormat.preferred()
   fmt.opaque = false
   let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: fmt)

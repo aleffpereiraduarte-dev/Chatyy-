@@ -190,6 +190,13 @@ function NativeHomeTabBarInner({
       markReady('pref');
     }
   }, [markReady]);
+  // [2026-10-18 tabbar-invisivel] api 4+: o nativo checa a própria saúde ao entrar
+  // na janela / voltar ao 1º plano (frame, hidden/alpha, itens) e, se não conseguir
+  // reparar, avisa → o chat.js cai p/ a barra JS (nunca fica sem barra embaixo).
+  const handleBarFail = useCallback((e) => {
+    const why = String(e?.nativeEvent?.reason || 'unknown').slice(0, 40);
+    try { failRef.current && failRef.current('native_' + why); } catch {}
+  }, []);
   const handleLayout = useCallback((e) => {
     const h = Number(e?.nativeEvent?.layout?.height) || 0;
     const w = Number(e?.nativeEvent?.layout?.width) || 0;
@@ -220,6 +227,7 @@ function NativeHomeTabBarInner({
       onTabPress={handlePress}
       onTabLongPress={handleLongPress}
       onPreferredHeight={handlePreferredHeight}
+      onBarFail={handleBarFail}
       onLayout={handleLayout}
     />
   );

@@ -16,10 +16,31 @@ import UIKit
 // - [2026-10-18 you-tab-avatar] api 3: `avatarUrl` no item → foto redonda
 //   (NTBAvatar.swift) no lugar do SF Symbol; anel quando selecionado. Até a
 //   foto chegar (ou se falhar) fica o SF Symbol.
+// - [2026-10-18 you-tab-nolabel] api 4: `hideLabel` → item sem título (só a
+//   foto/ícone, como a aba de perfil do Instagram), imagem empurrada para o
+//   centro vertical (imageInsets, o espaço do rótulo some) e um pouco maior
+//   (foto 30 pt). accessibilityLabel continua = label ("Você").
+// - [2026-10-18 tabbar-invisivel] api 4: build 728 (api 3) montava a barra
+//   mas às vezes ela sumia ao reabrir o app. Única mudança nativa do 728 =
+//   foto da aba Você trocando `item.image/selectedImage` IN PLACE num
+//   UITabBarItem já exibido, chamada do callback do loader (que pode cair com
+//   o app em 2º plano / a view fora da janela). Agora: (1) a foto nunca muta o
+//   item exibido — o item é RECRIADO e reaplicado com setItems (o mesmo
+//   caminho do 1º mount, que sempre funcionou); (2) com a view fora da janela
+//   ou o app inativo a pintura fica pendente até voltar; (3) checagem de saúde
+//   ao entrar na janela / voltar ao 1º plano (frame, hidden/alpha, superview,
+//   itens) com reparo; se continuar quebrada → evento onBarFail{reason} e o
+//   JS troca p/ a barra JS.
 final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDelegate {
   let onTabPress = EventDispatcher()
   let onTabLongPress = EventDispatcher()
   let onPreferredHeight = EventDispatcher()
+  /// [2026-10-18 tabbar-invisivel] api 4: barra não consegue se desenhar → JS usa a barra JS.
+  let onBarFail = EventDispatcher()
+  private var barFailSent = false
+  private var healthWork: DispatchWorkItem?
+  /// Foto chegou com a view fora da janela / app inativo → pinta ao voltar.
+  private var avatarPaintPending = false
   private var reportedHeight: CGFloat = 0
 
   private let tabBar = UITabBar()
@@ -57,6 +78,100 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     tabBar.isTranslucent = true
     addSubview(tabBar)
     tabBar.addGestureRecognizer(longPress)
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(appDidBecomeActive),
+      name: UIApplication.didBecomeActiveNotification, object: nil)
+  }
+
+  deinit {
+    NotificationCenter.default.removeObserver(self)
+    healthWork?.cancel()
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    guard window != nil else { return }
+    // Nova janela (ou a mesma de volta): a altura preferida pode ter mudado e o
+    // JS pode ter remontado — reenvia.
+    reportedHeight = 0
+    setNeedsLayout()
+    flushPendingAvatars()
+    scheduleHealthCheck(delay: 0.35, attempt: 0)
+  }
+
+  @objc private func appDidBecomeActive() {
+    guard window != nil else { return }
+    flushPendingAvatars()
+    scheduleHealthCheck(delay: 0.35, attempt: 0)
+  }
+
+  private var canPaintNow: Bool {
+    return window != nil && UIApplication.shared.applicationState == .active
+  }
+
+  private func flushPendingAvatars() {
+    guard avatarPaintPending, canPaintNow else { return }
+    avatarPaintPending = false
+    applyAvatars()
+  }
+
+  // MARK: - Saúde (api 4)
+
+  /// nil = ok; senão o motivo do problema (já tentando reparar o que dá).
+  private func healthProblem(repair: Bool) -> String? {
+    if bounds.width < 1 || bounds.height < 40 { return "zero_frame" }
+    var problem: String? = nil
+    if isHidden || alpha < 0.01 {
+      problem = problem ?? "self_hidden"
+      if repair { isHidden = false; alpha = 1 }
+    }
+    if tabBar.superview !== self {
+      problem = problem ?? "detached"
+      if repair { addSubview(tabBar) }
+    }
+    if tabBar.isHidden || tabBar.alpha < 0.01 {
+      problem = problem ?? "bar_hidden"
+      if repair { tabBar.isHidden = false; tabBar.alpha = 1 }
+    }
+    if tabBar.frame != bounds {
+      problem = problem ?? "bar_frame"
+      if repair { tabBar.frame = bounds }
+    }
+    let itemCount = tabBar.items?.count ?? 0
+    if !records.isEmpty && (itemCount != records.count || tabBar.subviews.isEmpty) {
+      problem = problem ?? (itemCount != records.count ? "items_lost" : "no_subviews")
+      if repair {
+        structureSignature = "" // força recriar os itens
+        applyItems()
+        themeDirty = false
+        applyTheme()
+      }
+    }
+    if repair && problem != nil {
+      tabBar.setNeedsLayout()
+      setNeedsLayout()
+      layoutIfNeeded()
+    }
+    return problem
+  }
+
+  private func scheduleHealthCheck(delay: TimeInterval, attempt: Int) {
+    healthWork?.cancel()
+    let work = DispatchWorkItem { [weak self] in
+      guard let self = self else { return }
+      self.healthWork = nil
+      // Sem janela / app inativo: não dá p/ julgar — volta a checar quando entrar.
+      guard self.window != nil, UIApplication.shared.applicationState == .active else { return }
+      guard let problem = self.healthProblem(repair: attempt == 0) else { return }
+      if attempt == 0 {
+        self.scheduleHealthCheck(delay: 0.3, attempt: 1)
+      } else if !self.barFailSent {
+        self.barFailSent = true
+        self.onBarFail(["reason": problem])
+      }
+    }
+    healthWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
   }
 
   override func layoutSubviews() {
@@ -128,16 +243,13 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
   // MARK: - Items
 
   private func applyItems() {
-    let sig = records.map { "\($0.key)|\($0.label)|\($0.sfSymbol)|\($0.sfSymbolActive ?? "")" }.joined(separator: "\n")
+    let sig = records.map { "\($0.key)|\($0.label)|\($0.sfSymbol)|\($0.sfSymbolActive ?? "")|\($0.hideLabel)" }.joined(separator: "\n")
     if sig != structureSignature || (tabBar.items?.count ?? -1) != records.count {
       structureSignature = sig
       var built: [UITabBarItem] = []
       for (i, r) in records.enumerated() {
-        let img = UIImage(systemName: r.sfSymbol) ?? UIImage(systemName: "circle")
-        let selImg = r.sfSymbolActive.flatMap { UIImage(systemName: $0) } ?? img
-        let item = UITabBarItem(title: r.label, image: img, selectedImage: selImg)
-        item.tag = i
-        built.append(item)
+        let (img, selImg) = ChatyyTabBarView.symbolImages(r)
+        built.append(makeItem(r, at: i, image: img, selectedImage: selImg))
       }
       tabBar.setItems(built, animated: false)
       avatarSig.removeAll()
@@ -150,6 +262,59 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     applyAvatars()
   }
 
+  private func makeItem(_ r: NTBItemRecord, at i: Int, image: UIImage?, selectedImage: UIImage?) -> UITabBarItem {
+    let item = UITabBarItem(title: r.hideLabel ? nil : r.label, image: image, selectedImage: selectedImage)
+    item.tag = i
+    item.accessibilityLabel = r.label
+    if r.hideLabel { applyNoLabelInsets(item) }
+    return item
+  }
+
+  /// [2026-10-18 tabbar-invisivel] Troca a imagem do item i RECRIANDO o
+  /// UITabBarItem + setItems (nunca muta image/selectedImage de um item já
+  /// exibido — suspeita nº 1 da barra invisível do build 728).
+  private func replaceItemImages(at i: Int, image: UIImage?, selectedImage: UIImage?) {
+    guard var items = tabBar.items, i < items.count, i < records.count else { return }
+    let old = items[i]
+    let fresh = makeItem(records[i], at: i, image: image, selectedImage: selectedImage)
+    fresh.badgeValue = old.badgeValue
+    fresh.badgeColor = old.badgeColor
+    items[i] = fresh
+    tabBar.setItems(items, animated: false)
+    applyBadges()
+    let keep = displayedKey
+    displayedKey = nil
+    setDisplayed(keep ?? selectedKey, bounce: false)
+  }
+
+  // MARK: - Sem rótulo (api 4)
+
+  /// SF Symbol do item; sem rótulo um pouco maior (26 pt ≈ foto de 30 pt).
+  private static func symbolImages(_ r: NTBItemRecord) -> (UIImage?, UIImage?) {
+    let cfg: UIImage.SymbolConfiguration? = r.hideLabel
+      ? UIImage.SymbolConfiguration(pointSize: 26, weight: .regular, scale: .medium) : nil
+    func sym(_ name: String) -> UIImage? {
+      if let cfg = cfg { return UIImage(systemName: name, withConfiguration: cfg) }
+      return UIImage(systemName: name)
+    }
+    let img = sym(r.sfSymbol) ?? sym("circle")
+    let selImg = r.sfSymbolActive.flatMap { sym($0) } ?? img
+    return (img, selImg)
+  }
+
+  /// Sem título o UITabBar continua reservando a faixa do rótulo embaixo e o
+  /// ícone fica "colado" em cima → desce metade dessa faixa (top +, bottom −
+  /// mantém o tamanho). iPad (layout inline, ícone já centrado) = sem ajuste.
+  private func applyNoLabelInsets(_ item: UITabBarItem) {
+    guard traitCollection.userInterfaceIdiom == .phone else {
+      item.imageInsets = .zero
+      return
+    }
+    var dy: CGFloat = 6
+    if #available(iOS 26.0, *) { dy = 5 } // Liquid Glass: faixa do rótulo menor
+    item.imageInsets = UIEdgeInsets(top: dy, left: 0, bottom: -dy, right: 0)
+  }
+
   // MARK: - Avatar (api 3)
 
   private static func avatarURL(_ r: NTBItemRecord) -> String {
@@ -158,15 +323,17 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
 
   private func applyAvatars() {
     guard let items = tabBar.items else { return }
-    for (i, item) in items.enumerated() where i < records.count {
+    for i in items.indices where i < records.count {
       let r = records[i]
       let url = ChatyyTabBarView.avatarURL(r)
       if url.isEmpty {
-        if avatarSig[i] != nil { restoreSymbol(at: i) }
+        if avatarSig[i] != nil {
+          if canPaintNow { restoreSymbol(at: i) } else { avatarPaintPending = true }
+        }
         continue
       }
       if let photo = NTBAvatarLoader.shared.cached(url) {
-        paintAvatar(item, at: i, photo: photo, url: url)
+        if canPaintNow { paintAvatar(at: i, photo: photo, url: url) } else { avatarPaintPending = true }
         continue
       }
       // Enquanto baixa: mantém o que já está (SF Symbol ou a foto anterior,
@@ -174,9 +341,14 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
       NTBAvatarLoader.shared.load(url, headers: r.avatarHeaders) { [weak self] photo in
         guard let self = self, i < self.records.count,
               ChatyyTabBarView.avatarURL(self.records[i]) == url,
-              let items = self.tabBar.items, i < items.count else { return }
+              i < (self.tabBar.items?.count ?? 0) else { return }
+        if !self.canPaintNow {
+          // Fora da janela / 2º plano: pinta quando voltar (flushPendingAvatars).
+          self.avatarPaintPending = true
+          return
+        }
         if let photo = photo {
-          self.paintAvatar(items[i], at: i, photo: photo, url: url)
+          self.paintAvatar(at: i, photo: photo, url: url)
         } else if self.avatarSig[i] != nil {
           self.restoreSymbol(at: i)
         }
@@ -184,23 +356,23 @@ final class ChatyyTabBarView: ExpoView, UITabBarDelegate, UIGestureRecognizerDel
     }
   }
 
-  private func paintAvatar(_ item: UITabBarItem, at i: Int, photo: UIImage, url: String) {
+  private func paintAvatar(at i: Int, photo: UIImage, url: String) {
     let dark = theme.dark
     let ring = ntbColor(theme.active, dark ? .white : .black)
-    let sig = "\(url)|\(theme.active.map { String($0) } ?? "-")|\(dark)"
+    let side = (i < records.count && records[i].hideLabel) ? ntbAvatarSideNoLabel : ntbAvatarSide
+    let sig = "\(url)|\(theme.active.map { String($0) } ?? "-")|\(dark)|\(side)"
     if avatarSig[i] == sig { return }
     avatarSig[i] = sig
-    item.image = ntbAvatarImage(photo, ring: nil, dark: dark)
-    item.selectedImage = ntbAvatarImage(photo, ring: ring, dark: dark)
+    replaceItemImages(at: i,
+                      image: ntbAvatarImage(photo, ring: nil, dark: dark, side: side),
+                      selectedImage: ntbAvatarImage(photo, ring: ring, dark: dark, side: side))
   }
 
   private func restoreSymbol(at i: Int) {
     avatarSig[i] = nil
-    guard let items = tabBar.items, i < items.count, i < records.count else { return }
-    let r = records[i]
-    let img = UIImage(systemName: r.sfSymbol) ?? UIImage(systemName: "circle")
-    items[i].image = img
-    items[i].selectedImage = r.sfSymbolActive.flatMap { UIImage(systemName: $0) } ?? img
+    guard i < (tabBar.items?.count ?? 0), i < records.count else { return }
+    let (img, selImg) = ChatyyTabBarView.symbolImages(records[i])
+    replaceItemImages(at: i, image: img, selectedImage: selImg)
   }
 
   private func applyBadges() {
