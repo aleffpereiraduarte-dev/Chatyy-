@@ -116,6 +116,19 @@ function NativeConversationListInner(props) {
     return store.subscribeStatusRings(() => setRingToken(v => v + 1));
   }, []);
 
+  // [2026-10-19 info-cache] Avatares SWR do disco (services/avatarCache): linha
+  // cuja versão nova ainda não baixou mostra a última foto boa da pessoa (arquivo
+  // local) em vez de piscar as iniciais; quando o download grava, refaz as linhas
+  // (o patcher só manda as que mudaram). Topo da lista = baixa em 2º plano.
+  const [avatarToken, setAvatarToken] = useState(0);
+  const avKickRef = useRef(0);
+  useEffect(() => {
+    const ac = _avatarCache();
+    if (!ac || typeof ac.subscribeAvatarCached !== 'function') return undefined;
+    try { ac.prefetchTopConversationAvatars && ac.prefetchTopConversationAvatars(); } catch {}
+    return ac.subscribeAvatarCached(() => setAvatarToken(v => v + 1));
+  }, []);
+
   // Resync pedido pelo nativo (perdeu um patch) → próximo patch é reset.
   const patcherRef = useRef(null);
   const headerTouchGuard = useNativeHeaderTouchGuard();
@@ -143,19 +156,22 @@ function NativeConversationListInner(props) {
       buildAvatarUrl: av.buildAvatarUrl,
       canonicalAvatarUrl: av.canonicalAvatarUrl,
       avatarAuthHeaders: av.avatarAuthHeaders,
-      getCachedAvatarUriOrNull: ac.getCachedAvatarUriOrNull,
+      getCachedAvatarUriOrNull: typeof ac.getAvatarUriSWR === 'function'
+        ? (url) => ac.getAvatarUriSWR(url, { kick: avKickRef.current-- > 0 })
+        : ac.getCachedAvatarUriOrNull,
       typingUsers, drafts, draftTimes,
       presences: presencesRef?.current,
       socketUp, lockedIds, unlockedIds, selectedIds, selectionMode, notesMap,
     };
   // presenceToken/ringToken: forçam reler presença/anel (refs mutáveis).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me, t, language, helpers, typingUsers, drafts, draftTimes, presenceToken, ringToken, socketUp, lockedIds, unlockedIds, selectedIds, selectionMode, notesMap]);
+  }, [me, t, language, helpers, typingUsers, drafts, draftTimes, presenceToken, ringToken, avatarToken, socketUp, lockedIds, unlockedIds, selectedIds, selectionMode, notesMap]);
 
   const built = useMemo(() => {
     const rows = [];
     const meta = new Map();
     if (deferBuild) return { rows, meta, deferred: true };
+    avKickRef.current = 40; // só as ~40 primeiras linhas disparam download (o resto: prefetch/rolagem)
     for (const c of (Array.isArray(conversations) ? conversations : [])) {
       if (!c || c.id == null) continue;
       try {

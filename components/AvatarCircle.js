@@ -8,7 +8,7 @@ import { useLanguageOptional } from '../context/LanguageContext';
 // OS cache evictions so a contact's profile photo paints from disk on
 // cold-start / offline — even if expo-image's NSURLCache got purged.
 // Web: no-ops (browser Cache API + Cache-Control headers already cover).
-import { getCachedAvatarUriOrNull, cacheAvatar, getLastGoodAvatarUri } from '../services/avatarCache';
+import { getCachedAvatarUriOrNull, cacheAvatar, getLastGoodAvatarUri, getAvatarUriSWR } from '../services/avatarCache';
 import { seenAwareTransition, markImageLoaded } from '../utils/imageSeen'; // [2026-10-08 chat-open-flicker]
 // [2026-10-14 avatar-instant] URL canônica única (lista = cabeçalho = perfil = visualizador).
 import { buildAvatarUrl, canonicalAvatarUrl, prefetchAvatarFull, avatarSource } from '../services/avatar';
@@ -289,8 +289,11 @@ function _CollageTile({ member, size, width, height }) {
           }
         }).catch(() => {});
       } catch {}
-      const _online = _networkInfo?.isConnected?.() !== false;
-      if (!_online) uri = '';
+      // [2026-10-19 info-cache] versão nova ainda baixando → última foto boa do membro (SWR).
+      let _stale = null;
+      try { _stale = getAvatarUriSWR(uri, { kick: false }); } catch {}
+      if (_stale) uri = _stale;
+      else if (_networkInfo?.isConnected?.() === false) uri = '';
     }
   }
   const initials = getInitials(memberName, memberEmail);
@@ -577,7 +580,12 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
       // [2026-10-19 tabbar-offline] offlineFirst (aba "Você"): a versão atual ainda não
       // está no disco → mostra a ÚLTIMA foto boa da pessoa (qualquer versão) na hora,
       // online ou não; o download acima troca p/ a nova quando terminar.
-      const _lastGood = offlineFirst ? getLastGoodAvatarUri(_verEmail || email) : null;
+      // [2026-10-19 info-cache] SWR p/ TODOS: versão nova (`v=` novo) ainda não está
+      // no disco → mostra a última foto boa da mesma pessoa (nunca um vazio); o
+      // download acima troca quando gravar. Só p/ URL com versão (foto real) —
+      // regras em avatarCache.getAvatarUriSWR (kill switch __chatyy_info_cache).
+      let _lastGood = offlineFirst ? getLastGoodAvatarUri(_verEmail || email) : null;
+      if (!_lastGood) { try { _lastGood = getAvatarUriSWR(_remoteResolved, { kick: false }); } catch { _lastGood = null; } }
       if (_lastGood) {
         avatarUrl = _lastGood;
       } else {

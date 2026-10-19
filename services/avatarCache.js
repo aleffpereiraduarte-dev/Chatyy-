@@ -23,7 +23,7 @@
 // Shape:
 //   - On-disk: documentDirectory/avatar-saved/<urlKey>.jpg
 //   - In-memory index: urlKey → absolute file:// path (MMKV-persisted)
-//   - 200MB cap, 1000 entry cap (whichever hits first triggers LRU sweep).
+//   - 150MB cap, 1000 entry cap (whichever hits first triggers LRU sweep).
 //   - Concurrency: shared 3-slot semaphore (matches mediaCache parity).
 //
 // Web: no-op. Browsers' built-in HTTP cache (Cache-Control headers from
@@ -33,7 +33,7 @@
 import { Platform } from 'react-native';
 
 const AVATAR_DIR = 'avatar-saved';
-const MAX_AVATAR_BYTES = 200 * 1024 * 1024; // 200MB cap
+const MAX_AVATAR_BYTES = 150 * 1024 * 1024; // 150MB cap [2026-10-19 info-cache]
 const MAX_AVATAR_ENTRIES = 1000;            // hard entry-count cap
 const INDEX_MMKV_KEY = 'avatar_sync_index_v1';
 
@@ -201,7 +201,21 @@ const _waitQueue = [];
 // remote URL instead of materializing a file inside the deleted dir.
 let _aborted = false;
 
-function _acquireSlot() {
+// [2026-10-19 info-cache] Prefetch em 2º plano (lista/boot) usa no máximo 2 das
+// 3 vagas e entra no fim da fila → a foto da linha/conversa que a pessoa acabou
+// de abrir (1º plano) nunca espera atrás de 100 prefetches.
+const _MAX_BG = 2;
+let _activeBg = 0;
+const _bgQueue = [];
+
+function _acquireSlot(bg) {
+  if (bg) {
+    if (_activeDownloads < _MAX_CONCURRENT && _activeBg < _MAX_BG && _waitQueue.length === 0) {
+      _activeDownloads++; _activeBg++;
+      return Promise.resolve();
+    }
+    return new Promise(resolve => _bgQueue.push(resolve));
+  }
   if (_activeDownloads < _MAX_CONCURRENT) {
     _activeDownloads++;
     return Promise.resolve();
@@ -209,14 +223,21 @@ function _acquireSlot() {
   return new Promise(resolve => _waitQueue.push(resolve));
 }
 
-function _releaseSlot() {
+function _releaseSlot(bg) {
+  if (bg) { _activeBg--; if (_activeBg < 0) _activeBg = 0; }
   const next = _waitQueue.shift();
   if (next) {
     try { next(); } catch { _activeDownloads--; }
-  } else {
-    _activeDownloads--;
-    if (_activeDownloads < 0) _activeDownloads = 0;
+    return;
   }
+  if (_bgQueue.length && _activeBg < _MAX_BG) {
+    const nb = _bgQueue.shift();
+    _activeBg++;
+    try { nb(); } catch { _activeDownloads--; _activeBg--; }
+    return;
+  }
+  _activeDownloads--;
+  if (_activeDownloads < 0) _activeDownloads = 0;
 }
 
 // ── In-flight dedup ───────────────────────────────────────────────────
@@ -234,22 +255,83 @@ const _inflight = new Map(); // urlKey → Promise<localPath | url>
 // da aba "Você" caía nas iniciais/ícone. Aqui fica e-mail → NOME do arquivo do
 // último download bom (só o nome: o caminho absoluto muda de UUID no iOS a cada
 // build instalado — remontado com o documentDirectory atual na leitura).
-const LAST_GOOD_MMKV_KEY = 'avatar_last_good_v1';
-const MAX_LAST_GOOD = 300;
-const _lastGood = new Map(); // email(lower) → nome do arquivo em avatar-saved/
+const LAST_GOOD_MMKV_KEY = 'avatar_last_good_v1'; // legado (só e-mail) — migrado p/ v2
+// [2026-10-19 info-cache] v2: chave `<quem vê>|<e-mail>` → [arquivos], mais novo
+// primeiro (até 4). Por CONTA que vê: a foto "só meus contatos" que a conta A vê
+// nunca aparece como "última boa" para a conta B no mesmo aparelho; e a lista de
+// arquivos deixa a privacidade (foto oculta / bloqueio) apagar TODAS as cópias.
+const LAST_GOOD_V2_KEY = 'avatar_last_good_v2';
+const MAX_LAST_GOOD = 600;
+const MAX_FILES_PER_PERSON = 4;
+const _lastGood = new Map(); // `${viewer}|${email}` → string[] (nomes em avatar-saved/)
 let _lastGoodLoaded = false;
 let _lastGoodTimer = null;
+let _legacyLastGood = null; // objeto v1 esperando o e-mail de quem vê p/ migrar
+
+function _mmkvMod() { try { return require('./mmkv'); } catch { return null; } }
 
 function _ensureLastGood() {
   if (_lastGoodLoaded || Platform.OS === 'web') return;
   _lastGoodLoaded = true;
+  const mm = _mmkvMod();
   try {
-    const raw = require('./mmkv').getString?.(LAST_GOOD_MMKV_KEY);
+    const raw = mm?.getString?.(LAST_GOOD_V2_KEY);
     const obj = raw ? JSON.parse(raw) : null;
     if (obj && typeof obj === 'object') {
-      for (const [k, v] of Object.entries(obj)) if (typeof v === 'string' && v) _lastGood.set(k, v);
+      for (const [k, v] of Object.entries(obj)) {
+        const arr = Array.isArray(v) ? v.filter(x => typeof x === 'string' && x) : (typeof v === 'string' && v ? [v] : []);
+        if (arr.length && k.indexOf('|') >= 0) _lastGood.set(k, arr.slice(0, MAX_FILES_PER_PERSON));
+      }
     }
   } catch {}
+  try {
+    const raw1 = mm?.getString?.(LAST_GOOD_MMKV_KEY);
+    const o1 = raw1 ? JSON.parse(raw1) : null;
+    if (o1 && typeof o1 === 'object' && Object.keys(o1).length) _legacyLastGood = o1;
+  } catch {}
+}
+
+/** E-mail (minúsculo) da conta que VÊ — mesmo valor do `viewer=` das URLs. */
+function _viewerTag() {
+  try {
+    const api = require('./api');
+    const v = (typeof api.getAvatarViewerEmail === 'function' && api.getAvatarViewerEmail())
+      || (typeof api.getActiveAccountEmail === 'function' && api.getActiveAccountEmail()) || '';
+    return String(v || '').trim().toLowerCase();
+  } catch { return ''; }
+}
+function _viewerFromUrl(url) {
+  const m = String(url || '').match(/[?&]viewer=([^&#]*)/);
+  if (!m) return '';
+  try { return decodeURIComponent(m[1]).trim().toLowerCase(); } catch { return ''; }
+}
+function _lgKey(viewer, email) { return `${viewer || ''}|${String(email || '').trim().toLowerCase()}`; }
+
+function _migrateLegacy(viewer) {
+  if (!_legacyLastGood || !viewer) return;
+  const o1 = _legacyLastGood;
+  _legacyLastGood = null;
+  for (const [em, name] of Object.entries(o1)) {
+    if (typeof name !== 'string' || !name || !em) continue;
+    const k = _lgKey(viewer, em);
+    if (!_lastGood.has(k)) _lastGood.set(k, [name]);
+  }
+  _persistLastGood();
+  try { _mmkvMod()?.remove?.(LAST_GOOD_MMKV_KEY); } catch {}
+}
+
+function _persistLastGood(now) {
+  if (Platform.OS === 'web') return;
+  const write = () => {
+    try {
+      const obj = {};
+      for (const [k, v] of _lastGood.entries()) obj[k] = v;
+      _mmkvMod()?.setString?.(LAST_GOOD_V2_KEY, JSON.stringify(obj));
+    } catch {}
+  };
+  if (now) { if (_lastGoodTimer) { clearTimeout(_lastGoodTimer); _lastGoodTimer = null; } write(); return; }
+  if (_lastGoodTimer) return;
+  _lastGoodTimer = setTimeout(() => { _lastGoodTimer = null; write(); }, 1500);
 }
 
 function _emailFromUrl(url) {
@@ -264,24 +346,23 @@ function _noteLastGood(url, localPath) {
   // Só a foto de perfil "normal" (a 1024 do visualizador é outro arquivo, mesma pessoa — tanto faz,
   // mas a pequena é a que a aba/AvatarCircle mostram).
   if (/[?&]size=/.test(String(url))) return;
+  // [2026-10-19 info-cache] Iniciais geradas (sem `v=`) não são "foto boa".
+  if (!/[?&]v=/.test(String(url))) return;
   const email = _emailFromUrl(url);
   if (!email) return;
   const name = String(localPath).split('/').pop();
   if (!name) return;
   _ensureLastGood();
-  if (_lastGood.get(email) === name) return;
-  _lastGood.delete(email); // reinsere no fim (mais novo)
-  _lastGood.set(email, name);
+  const viewer = _viewerFromUrl(url) || _viewerTag();
+  _migrateLegacy(viewer);
+  const k = _lgKey(viewer, email);
+  const prev = _lastGood.get(k) || [];
+  if (prev[0] === name) return;
+  const next = [name, ...prev.filter(n => n !== name)].slice(0, MAX_FILES_PER_PERSON);
+  _lastGood.delete(k); // reinsere no fim (mais novo)
+  _lastGood.set(k, next);
   while (_lastGood.size > MAX_LAST_GOOD) _lastGood.delete(_lastGood.keys().next().value);
-  if (_lastGoodTimer) return;
-  _lastGoodTimer = setTimeout(() => {
-    _lastGoodTimer = null;
-    try {
-      const obj = {};
-      for (const [k, v] of _lastGood.entries()) obj[k] = v;
-      require('./mmkv').setString?.(LAST_GOOD_MMKV_KEY, JSON.stringify(obj));
-    } catch {}
-  }, 1500);
+  _persistLastGood();
 }
 
 /**
@@ -289,15 +370,180 @@ function _noteLastGood(url, localPath) {
  * da foto desta pessoa (qualquer versão), no container ATUAL; null se nunca baixou
  * ou o arquivo saiu do índice (LRU). Quem usa: aba "Você" (nativa api 6 e barra
  * JS) — mostra a foto offline/conectando e revalida pela rede depois.
+ * [2026-10-19 info-cache] Escopo = conta que vê (`viewer`, padrão: a ativa).
  */
-export function getLastGoodAvatarUri(email) {
+export function getLastGoodAvatarUri(email, viewer) {
   if (!email || Platform.OS === 'web') return null;
   _ensureIndex();
   _ensureLastGood();
-  const name = _lastGood.get(String(email).trim().toLowerCase());
-  if (!name || !syncIndex.has(name)) return null;
+  const vw = (viewer && String(viewer).trim().toLowerCase()) || _viewerTag();
+  _migrateLegacy(vw);
+  const names = _lastGood.get(_lgKey(vw, email));
+  if (!names || !names.length) return null;
   const dir = getAvatarDir();
-  return dir ? dir + name : null;
+  if (!dir) return null;
+  for (const name of names) if (syncIndex.has(name)) return dir + name;
+  return null;
+}
+
+// ── Kill switch + SWR por PESSOA ──────────────────────────────────────
+// [2026-10-19 info-cache] globalThis.__chatyy_info_cache === false → volta ao
+// comportamento antigo (só o arquivo da URL exata; sem prefetch de boot/
+// revalidação).
+export function infoCacheEnabled() {
+  try { if (globalThis.__chatyy_info_cache === false) return false; } catch {}
+  return true;
+}
+
+function _cacheReadyNow() {
+  try { const mm = _mmkvMod(); return mm && typeof mm.isCacheReady === 'function' ? !!mm.isCacheReady() : true; } catch { return true; }
+}
+
+// Assinantes "chegou foto nova no disco / cópia apagada" (lista nativa refaz as linhas).
+const _cachedSubs = new Set();
+let _cachedEmitTimer = null;
+function _emitCached() {
+  if (!_cachedSubs.size || _cachedEmitTimer) return;
+  _cachedEmitTimer = setTimeout(() => {
+    _cachedEmitTimer = null;
+    for (const fn of Array.from(_cachedSubs)) { try { fn(); } catch {} }
+  }, 450);
+}
+/** Avisa (com debounce) quando um avatar novo foi gravado ou apagado. Retorna unsubscribe. */
+export function subscribeAvatarCached(fn) {
+  if (typeof fn !== 'function') return () => {};
+  _cachedSubs.add(fn);
+  return () => { _cachedSubs.delete(fn); };
+}
+
+// URL já pedida nesta sessão (evita getInfoAsync a cada rebuild da lista).
+const _kicked = new Set();
+function _kickOnce(url, bg) {
+  if (_aborted || !url) return;
+  const key = urlToKey(url);
+  if (_kicked.has(key)) return;
+  _kicked.add(key);
+  if (_kicked.size > 3000) _kicked.delete(_kicked.values().next().value);
+  try { cacheAvatar(url, { bg: !!bg }).catch(() => {}); } catch {}
+}
+
+/**
+ * [2026-10-19 info-cache] Stale-while-revalidate SÍNCRONO p/ listas nativas e
+ * qualquer tela: file:// da URL exata se já está no disco; senão a ÚLTIMA foto
+ * boa da mesma pessoa (versão anterior) — e o download da versão nova sai em
+ * 2º plano (subscribeAvatarCached avisa quando gravar). null = não há cópia.
+ *   - só para URL COM `v=` (foto real): sem versão = iniciais/sem foto → nunca
+ *     mostra foto velha (exceto no boot, antes do store de versões hidratar);
+ *   - nunca para a versão grande (size=1024: o visualizador tem fluxo próprio).
+ * opts.kick=false → não dispara download; opts.bg=false → download em 1º plano.
+ */
+export function getAvatarUriSWR(url, opts) {
+  if (!url || Platform.OS === 'web' || !/^https?:/i.test(String(url))) return null;
+  const exact = getCachedAvatarUriOrNull(url);
+  if (exact) return exact;
+  const on = infoCacheEnabled();
+  if (on && !(opts && opts.kick === false)) _kickOnce(url, !(opts && opts.bg === false));
+  if (!on) return null;
+  const s = String(url);
+  if (/[?&]size=/.test(s)) return null;
+  if (!/[?&]v=/.test(s) && _cacheReadyNow()) return null;
+  const email = _emailFromUrl(s);
+  if (!email) return null;
+  return getLastGoodAvatarUri(email, _viewerFromUrl(s));
+}
+
+/**
+ * [2026-10-19 info-cache] Privacidade: a pessoa ocultou a foto p/ quem vê, bloqueou
+ * ou foi bloqueada → apaga TODAS as cópias conhecidas dela (arquivos + "última
+ * boa") desta conta (ou de todas as contas com allViewers).
+ */
+export function purgeAvatarForEmail(email, opts) {
+  if (!email || Platform.OS === 'web') return;
+  const em = String(email).trim().toLowerCase();
+  _ensureIndex();
+  _ensureLastGood();
+  const viewer = (opts && opts.viewer) ? String(opts.viewer).trim().toLowerCase() : _viewerTag();
+  const allViewers = !!(opts && opts.allViewers);
+  const names = new Set();
+  for (const [k, arr] of Array.from(_lastGood.entries())) {
+    const bar = k.indexOf('|');
+    if (k.slice(bar + 1) !== em) continue;
+    if (!allViewers && k.slice(0, bar) !== viewer) continue;
+    for (const n of arr) names.add(n);
+    _lastGood.delete(k);
+  }
+  if (!names.size) return;
+  const fs = getFS();
+  const dir = getAvatarDir();
+  for (const n of names) {
+    syncIndex.delete(n);
+    if (fs && dir) { try { fs.deleteAsync(dir + n, { idempotent: true }).catch(() => {}); } catch {} }
+  }
+  _schedulePersist();
+  _persistLastGood(true);
+  try {
+    const EI = require('expo-image').Image;
+    if (EI && typeof EI.clearMemoryCache === 'function') EI.clearMemoryCache();
+  } catch {}
+  _emitCached();
+}
+
+// ── Revalidação (privacidade mudou sem mudar a versão) ────────────────
+// A URL não muda quando a pessoa passa a foto para "ninguém" → o arquivo no disco
+// seria servido p/ sempre. Ao abrir conversa/dados/perfil revalida em 2º plano
+// (no máx. 1×/6 h por URL): resposta restrita → apaga as cópias; 200 → regrava.
+const REVALIDATE_MS = 6 * 3600 * 1000;
+const _revalAt = new Map();
+export async function revalidateAvatar(url) {
+  if (!url || Platform.OS === 'web' || _aborted || !infoCacheEnabled()) return;
+  const s = String(url);
+  if (!/^https?:/i.test(s) || /[?&]size=/.test(s)) return;
+  const fs = getFS();
+  if (!fs) return;
+  _ensureIndex();
+  const key = urlToKey(s);
+  const now = Date.now();
+  if ((_revalAt.get(key) || 0) > now - REVALIDATE_MS) return;
+  _revalAt.set(key, now);
+  if (_revalAt.size > 1000) _revalAt.delete(_revalAt.keys().next().value);
+  const indexed = syncIndex.get(key);
+  if (!indexed) { _kickOnce(s, false); return; }
+  try {
+    const st = await fs.getInfoAsync(indexed);
+    if (!st.exists) { syncIndex.delete(key); _kicked.delete(key); _kickOnce(s, false); return; }
+    const mt = Number(st.modificationTime || 0) * 1000;
+    if (mt && now - mt < REVALIDATE_MS) return;
+  } catch { return; }
+  const tmp = indexed + '.rv';
+  await _acquireSlot(true);
+  try {
+    if (_aborted) return;
+    let hdrs = null;
+    try { hdrs = require('./avatar').avatarAuthHeaders(s); } catch { hdrs = null; }
+    const dl = await Promise.race([
+      hdrs ? fs.downloadAsync(s, tmp, { headers: hdrs }) : fs.downloadAsync(s, tmp),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('avatar_rv_timeout')), 15000)),
+    ]);
+    if (dl?.status === 200 && _isRestrictedAvatarResp(dl.headers)) {
+      try { await fs.deleteAsync(tmp, { idempotent: true }); } catch {}
+      purgeAvatarForEmail(_emailFromUrl(s), { viewer: _viewerFromUrl(s) || undefined });
+      try { await fs.deleteAsync(indexed, { idempotent: true }); } catch {}
+      syncIndex.delete(key);
+      _schedulePersist();
+      _emitCached();
+      return;
+    }
+    if (dl?.status === 200 && !_aborted) {
+      try { await fs.deleteAsync(indexed, { idempotent: true }); } catch {}
+      try { await fs.moveAsync({ from: tmp, to: indexed }); } catch { syncIndex.delete(key); _schedulePersist(); }
+      return;
+    }
+    try { await fs.deleteAsync(tmp, { idempotent: true }); } catch {}
+  } catch {
+    try { await fs.deleteAsync(tmp, { idempotent: true }); } catch {}
+  } finally {
+    _releaseSlot(true);
+  }
 }
 
 // ── Public API ────────────────────────────────────────────────────────
@@ -355,7 +601,8 @@ function _isRestrictedAvatarResp(headers) {
   return false;
 }
 
-export async function cacheAvatar(url) {
+export async function cacheAvatar(url, opts) {
+  const _bg = !!(opts && opts.bg);
   if (!url || Platform.OS === 'web') return url;
   // Logout in progress — don't materialize new files into a dir that's
   // about to be deleted (would race fs.deleteAsync, and the file would
@@ -408,11 +655,11 @@ export async function cacheAvatar(url) {
       }
     } catch {}
 
-    await _acquireSlot();
+    await _acquireSlot(_bg);
     // Re-check after waiting for a semaphore slot — a logout might have
     // landed while we were queued behind 3 other downloads.
     if (_aborted) {
-      _releaseSlot();
+      _releaseSlot(_bg);
       return url;
     }
     try {
@@ -433,12 +680,16 @@ export async function cacheAvatar(url) {
         try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
         _restrictedUntil.set(key, Date.now() + 10 * 60 * 1000);
         if (_restrictedUntil.size > 500) { const k0 = _restrictedUntil.keys().next().value; _restrictedUntil.delete(k0); }
+        // [2026-10-19 info-cache] foto oculta p/ esta conta (privacidade/bloqueio) →
+        // some também a "última boa" e as versões antigas (o SWR não pode mostrá-las).
+        try { purgeAvatarForEmail(_emailFromUrl(url), { viewer: _viewerFromUrl(url) || undefined }); } catch {}
         return url;
       }
       if (download?.status === 200) {
         syncIndex.set(key, localPath);
         _schedulePersist();
         _noteLastGood(url, localPath);
+        _emitCached(); // [2026-10-19 info-cache] listas nativas trocam p/ a versão nova
         // Fire LRU sweep — debounced inside.
         try { evictIfNeeded(); } catch {}
         return localPath;
@@ -449,7 +700,7 @@ export async function cacheAvatar(url) {
     } catch {
       try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
     } finally {
-      _releaseSlot();
+      _releaseSlot(_bg);
     }
     return url; // Fall back to remote URL on failure.
   })();
@@ -473,9 +724,13 @@ export async function cacheAvatar(url) {
  * Fire-and-forget. Returns a Promise so tests can await but production
  * callers ignore it.
  */
-export function prefetchAvatarsForList(emails) {
+export function prefetchAvatarsForList(emails, opts) {
   if (Platform.OS === 'web') return Promise.resolve();
   if (!Array.isArray(emails) || emails.length === 0) return Promise.resolve();
+  // [2026-10-19 info-cache] 2º plano (vagas de prefetch) e ciente da rede:
+  // offline = nada; dados móveis = teto menor (as primeiras = mais recentes).
+  const _limit = _prefetchBudget(opts && opts.limit);
+  if (_limit <= 0) return Promise.resolve();
 
   let api = null;
   try { api = require('./api'); } catch { return Promise.resolve(); }
@@ -493,6 +748,7 @@ export function prefetchAvatarsForList(emails) {
     unique.push(e);
   }
   if (unique.length === 0) return Promise.resolve();
+  if (unique.length > _limit) unique.length = _limit;
 
   // Fire all — the semaphore inside `cacheAvatar` caps concurrency at
   // 3, so this loop is effectively a producer; the downloads themselves
@@ -501,8 +757,52 @@ export function prefetchAvatarsForList(emails) {
     let url = null;
     try { url = api.getAvatarUrlForEmail(email); } catch {}
     if (!url) return Promise.resolve();
-    return cacheAvatar(url).catch(() => {});
+    return cacheAvatar(url, { bg: true }).catch(() => {});
   }));
+}
+
+// Quantos avatares pré-baixar agora: Wi-Fi 200 · dados móveis 40 · offline 0.
+function _prefetchBudget(limit) {
+  let n = 200;
+  try {
+    const ni = require('./networkInfo');
+    if (ni.isConnected && ni.isConnected() === false) return 0;
+    const ty = ni.getNetworkType ? ni.getNetworkType() : 'unknown';
+    if (ty === 'none') return 0;
+    if (ty !== 'wifi') n = 40;
+  } catch {}
+  const l = Number(limit);
+  return l > 0 ? Math.min(n, l) : n;
+}
+
+/**
+ * [2026-10-19 info-cache] Boot: pré-baixa (baixa prioridade) as fotos das N
+ * conversas do topo da lista salva — 1× por sessão, depois que o app assentou.
+ * Wi-Fi 60 conversas, dados móveis 20, offline nada.
+ */
+let _bootPrefetchDone = false;
+export function prefetchTopConversationAvatars(opts) {
+  if (Platform.OS === 'web' || _bootPrefetchDone || !infoCacheEnabled()) return;
+  _bootPrefetchDone = true;
+  const delay = (opts && opts.delayMs) != null ? opts.delayMs : 4000;
+  setTimeout(async () => {
+    try {
+      if (_aborted) return;
+      let top = 60;
+      try { const ty = require('./networkInfo').getNetworkType(); if (ty === 'none') { _bootPrefetchDone = false; return; } if (ty !== 'wifi') top = 20; } catch {}
+      const list = await Promise.resolve(require('./chatCache').getCachedConversations?.());
+      if (!Array.isArray(list) || !list.length) { _bootPrefetchDone = false; return; }
+      const emails = [];
+      for (const c of list.slice(0, top)) {
+        if (!c) continue;
+        for (const e of [c.other_email, c.peer, c.peer_email]) if (typeof e === 'string' && e.includes('@')) emails.push(e);
+        if (c.type === 'group' && Array.isArray(c.members) && !c.avatar_url) {
+          for (const m of c.members.slice(0, 4)) if (m && typeof m.email === 'string') emails.push(m.email);
+        }
+      }
+      await prefetchAvatarsForList(emails, { limit: top * 2 });
+    } catch {}
+  }, delay);
 }
 
 // ── LRU eviction ──────────────────────────────────────────────────────
@@ -609,7 +909,12 @@ export async function clearAvatarCache() {
   _scanPromise = null;
   _lastGood.clear();
   _lastGoodLoaded = true;
+  _legacyLastGood = null;
   try { require('./mmkv').setString?.(LAST_GOOD_MMKV_KEY, '{}'); } catch {}
+  try { require('./mmkv').setString?.(LAST_GOOD_V2_KEY, '{}'); } catch {}
+  _kicked.clear();
+  _revalAt.clear();
+  _bootPrefetchDone = false;
   // Reset the abort gate so a subsequent login can resume caching.
   _aborted = false;
 }

@@ -164,7 +164,8 @@ function _avatarNode(name, email, size) {
     if (typeof email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) && email.toLowerCase() !== 'ai@chatyy.com.br') {
       const remote = require('../../services/avatar').buildAvatarUrl(email, { name });
       let disk = null;
-      try { disk = require('../../services/avatarCache').getCachedAvatarUriOrNull(remote); } catch {}
+      // [2026-10-19 info-cache] SWR: versão nova ainda não no disco → última foto boa (download em 2º plano).
+      try { const ac = require('../../services/avatarCache'); disk = ac.getAvatarUriSWR ? ac.getAvatarUriSWR(remote) : ac.getCachedAvatarUriOrNull(remote); } catch {}
       u = disk || remote || '';
     }
   } catch { u = ''; }

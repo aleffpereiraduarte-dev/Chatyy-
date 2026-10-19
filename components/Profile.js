@@ -155,14 +155,20 @@ export function invalidateProfileCache(key) {
   try { _invalidateCached(cachedKey(profileCacheKey(k))); } catch {}
 }
 
+function _infoCacheOn() {
+  try { return globalThis.__chatyy_info_cache !== false; } catch { return true; }
+}
+
 function _cacheGet(key) {
   if (!key || !hasCacheUser()) return null;
   const id = String(key).toLowerCase();
   const hit = _profileCache.get(_memKey(id));
   if (hit) return hit;
   // Hydrate from disk on demand (sync).
+  // [2026-10-19 info-cache] cópia vale 60 dias (antes 7): perfil de quem você não
+  // abre há semanas ainda pinta na hora (bio/capa/contagens) e revalida em 2º plano.
   try {
-    const e = getCachedEntrySync(cachedKey(profileCacheKey(id)), CACHED_MAX_AGE);
+    const e = getCachedEntrySync(cachedKey(profileCacheKey(id)), _infoCacheOn() ? 60 * 24 * 3600 * 1000 : CACHED_MAX_AGE);
     if (e && e.data) {
       const entry = { data: e.data, ts: e.ts || 0 };
       _profileCache.set(_memKey(id), entry);
@@ -1350,6 +1356,7 @@ export default function Profile({
 
     // Hydrate from cache synchronously — paint instantly, revalidate silently.
     const cached = _cacheGet(fetchKey);
+    try { require('../services/infoCache').noteInfoOpen('profile', !!cached); } catch {} // [2026-10-19 info-cache] taxa de acerto
     if (cached) {
       setData(cached.data);
       setLoading(false);
@@ -1377,7 +1384,13 @@ export default function Profile({
         if (cancelled) return;
         if (r?.success && r.data) {
           _cacheSet(fetchKey, r.data);
-          setData(r.data);
+          // [2026-10-19 info-cache] mesma pessoa → "Dados do contato" também abre na hora.
+          try {
+            const _em = r.data?.identity?.email;
+            if (_em) require('../services/infoCache').putContactInfo(_em, { identity: r.data.identity, groups: (r.data.common_chats || []).filter((c) => c && c.type === 'group') });
+          } catch {}
+          // só troca se mudou (revalidação igual à cópia = zero re-render/piscar)
+          setData((prev) => { try { if (prev && JSON.stringify(prev) === JSON.stringify(r.data)) return prev; } catch {} return r.data; });
           // Sync the server's avatar_version into the global cache-bust map
           // so any AvatarCircle elsewhere that builds the URL via
           // getAvatarUrlForEmail() picks up the new photo immediately,

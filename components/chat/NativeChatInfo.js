@@ -308,13 +308,21 @@ export default function NativeChatInfo(props) {
 // Servidor velho (sem members_total) → lista completa filtrada aqui.
 const PAGE = 80;
 
-export function useGroupMembersPager({ api, conversationId, enabled, version, fallback, pageSize }) {
+// [2026-10-19 info-cache] `initial` () => { items, total, hasMore } = 1ª página
+// salva (services/infoCache): enquanto a busca real não volta, a lista já pinta
+// os membros da cópia (sem esqueleto); `onFirstPage(items, total, hasMore)` grava
+// a 1ª página nova (sem busca) p/ a próxima abertura.
+export function useGroupMembersPager({ api, conversationId, enabled, version, fallback, pageSize, initial, onFirstPage }) {
   const _page = (Number(pageSize) > 0 ? Math.min(500, Math.floor(Number(pageSize))) : PAGE); // [2026-10-18 group-info-page] JS fallback usa 50
   const [state, setState] = useState({ items: [], total: 0, next: null, loading: false, q: '' });
   const reqRef = useRef(0);
   const qRef = useRef('');
   const fbRef = useRef(fallback);
   fbRef.current = fallback;
+  const initRef = useRef(initial);
+  initRef.current = initial;
+  const firstRef = useRef(onFirstPage);
+  firstRef.current = onFirstPage;
 
   const localSlice = useCallback((q) => {
     const all = Array.isArray(fbRef.current) ? fbRef.current : [];
@@ -346,6 +354,9 @@ export function useGroupMembersPager({ api, conversationId, enabled, version, fa
       setState({ items: list, total: list.length, next: null, loading: false, q });
       return;
     }
+    if (offset === 0 && !String(q || '').trim() && typeof firstRef.current === 'function') {
+      try { firstRef.current(d.members, Number(d.members_total) || d.members.length, d.members_next_offset != null); } catch {}
+    }
     setState((s) => {
       const base = offset > 0 ? s.items : [];
       const seen = new Set(base.map((m) => String(m.email || '').toLowerCase()));
@@ -372,6 +383,14 @@ export function useGroupMembersPager({ api, conversationId, enabled, version, fa
     load(s.next, qRef.current);
   }, [enabled, load]);
 
+  // Cópia salva enquanto a 1ª busca (sem filtro) não chegou → nada de esqueleto/lista vazia.
+  if (enabled && !state.q && state.items.length === 0 && typeof initRef.current === 'function') {
+    let init = null;
+    try { init = initRef.current(); } catch { init = null; }
+    if (init && Array.isArray(init.items) && init.items.length) {
+      return { ...state, items: init.items, total: Math.max(Number(init.total) || 0, init.items.length), loading: false, hasMore: !!init.hasMore, seeded: true, setQuery, loadMore };
+    }
+  }
   return { ...state, hasMore: state.next != null, setQuery, loadMore };
 }
 

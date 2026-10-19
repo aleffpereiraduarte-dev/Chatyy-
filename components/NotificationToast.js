@@ -151,10 +151,27 @@ function _absUrl(u) {
 function _avatarUrlFor(data) {
   const d = data || {};
   const direct = d.sender_avatar || d.from_avatar || d.avatar_url || d.avatar || '';
-  if (direct) return _absUrl(String(direct));
+  let url = '';
+  if (direct) url = _absUrl(String(direct));
   // push de e-mail: push-notify.php manda o avatar do remetente em `image`
-  if (typeof d.image === 'string' && d.image.indexOf('get_avatar') >= 0) return _absUrl(d.image);
-  return '';
+  else if (typeof d.image === 'string' && d.image.indexOf('get_avatar') >= 0) url = _absUrl(d.image);
+  // [2026-10-19 info-cache] mesma cópia em disco da lista/conversa (pinta na hora,
+  // offline e foto restrita sem Bearer); senão a remota de antes.
+  return _localAvatarFor(url, d) || url;
+}
+function _localAvatarFor(url, d) {
+  if (Platform.OS === 'web') return null;
+  try {
+    const ac = require('../services/avatarCache');
+    if (ac.infoCacheEnabled && !ac.infoCacheEnabled()) return null;
+    if (url && url.indexOf('get_avatar') >= 0) {
+      const canon = require('../services/avatar').canonicalAvatarUrl(url) || url;
+      const hit = ac.getAvatarUriSWR ? ac.getAvatarUriSWR(canon) : null;
+      if (hit) return hit;
+    }
+    const em = [d.sender_email, d.from_email, d.sender, d.from].find((x) => typeof x === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x));
+    return em && ac.getLastGoodAvatarUri ? ac.getLastGoodAvatarUri(em) : null;
+  } catch { return null; }
 }
 
 // Toque no banner/toast → abre o destino (conta certa primeiro; chat pelo
