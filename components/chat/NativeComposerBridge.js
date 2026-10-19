@@ -22,7 +22,7 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, processColor } from 'react-native';
 import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
-import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
+import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
 
 let _failed = false;
 
@@ -55,11 +55,15 @@ function _motionOff() {
 }
 
 // [2026-10-19 attach-instant] iOS (apiVersion >= 5): props só quando fogem do
-// padrão nativo (attachInstant=true, attachRestore='will').
+// padrão nativo (attachInstant=true). [2026-10-19 kb-restore] attachRestore vai
+// SEMPRE explícito: binários api 5 (build 734) nasceram com padrão 'will'
+// (sobe-desce-sobe ao cancelar o "+"); o JS agora manda 'did' por OTA.
+// restoreGuard só vai quando desligado (api >= 6 nasce ligado).
 function _attachInstantProps() {
   const o = {};
   if (!attachInstantOn()) o.attachInstant = false;
-  else if (attachRestoreMode() === 'did') o.attachRestore = 'did';
+  else o.attachRestore = attachRestoreMode();
+  if (!kbRestoreGuardOn() && nativeComposerApi() >= 6) o.restoreGuard = false;
   return o;
 }
 

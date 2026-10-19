@@ -2126,9 +2126,26 @@ export default function RootLayout() {
   const _PUSH = _navAnim(Platform.OS === 'web' ? 'slide_from_right' : Platform.OS === 'android' ? 'ios_from_right' : 'default');
   // [2026-10-14 piscada-voltar] FadeSlideIn que monta JUNTO com o push nativo nasce
   // assentado (components/FadeSlideIn.js); o focus marca quando a rota apareceu.
-  const _fadeSlideScreenListeners = React.useCallback(({ route }) => ({
-    focus: () => { try { require('../components/FadeSlideIn').noteRouteSeen(route?.key); } catch {} },
-  }), []);
+  // [2026-10-19 kb-restore] teclado de TextInput JS desce no INÍCIO do voltar
+  // (não depois do unmount, com a tela de baixo já à mostra = "abre e minimiza"). Kill: __chatyy_nav_kb_dismiss=false.
+  const _fadeSlideScreenListeners = React.useCallback(({ route }) => {
+    const kbDown = () => {
+      if (Platform.OS === 'web') return;
+      try { if (!require('../utils/kbNativeTransitions').navKbDismissOn()) return; } catch { return; }
+      let K = null;
+      try { K = require('react-native').Keyboard; } catch {}
+      if (!K) return;
+      try { if (K.isVisible && !K.isVisible()) return; } catch {}
+      try { K.dismiss(); } catch {}
+    };
+    return {
+      focus: () => { try { require('../components/FadeSlideIn').noteRouteSeen(route?.key); } catch {} },
+      // só a tela SAINDO (pop/voltar/dispensar modal): no push, o 'blur' chega
+      // depois do autoFocus da tela nova (efeitos do filho antes do pai) e
+      // derrubaria a busca que acabou de abrir.
+      beforeRemove: kbDown,
+    };
+  }, []);
   const _FULL_MODAL = Platform.OS === 'ios' ? { presentation: 'fullScreenModal' } : { presentation: 'modal', animation: _navAnim('slide_from_bottom') };
   // [2026-10-17 drag-dismiss] Regra do founder: modal desce arrastando de onde for.
   // iOS pageSheet ('modal') = arrasto NATIVO p/ baixo (qualquer ponto; com lista

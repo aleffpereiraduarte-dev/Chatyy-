@@ -160,8 +160,11 @@ public class ChatyyComposerModule: Module {
     // 5 = [2026-10-19 attach-instant] onAttach{hadKeyboard, instant} + props
     //     attachInstant/attachRestore: "+" sem esperar o teclado descer e, ao
     //     cancelar a folha nativa, foco devolvido no NATIVO (sem focus do JS).
+    // 6 = [2026-10-19 kb-restore] prop restoreGuard: devolução automática do
+    //     first responder pelo UIKit (volta de tela, modal, menu, folha) não
+    //     abre mais o teclado sozinho; attachRestore padrão "did".
     Function("apiVersion") { () -> Int in
-      return 5
+      return 6
     }
 
     View(ChatyyComposerView.self) {
@@ -199,7 +202,8 @@ public class ChatyyComposerModule: Module {
       Prop("focusGuard") { (view: ChatyyComposerView, v: Bool?) in view.focusGuard = v ?? true } // [2026-10-18 kb-resume]
       Prop("nativeTransitions") { (view: ChatyyComposerView, v: Bool?) in view.nativeTransitions = v ?? true } // [2026-10-19 kb-native]
       Prop("attachInstant") { (view: ChatyyComposerView, v: Bool?) in view.attachInstant = v ?? true } // [2026-10-19 attach-instant]
-      Prop("attachRestore") { (view: ChatyyComposerView, v: String?) in view.attachRestore = v ?? "will" } // [2026-10-19 attach-instant]
+      Prop("attachRestore") { (view: ChatyyComposerView, v: String?) in view.attachRestore = v ?? "did" } // [2026-10-19 attach-instant] · [2026-10-19 kb-restore] padrão "did"
+      Prop("restoreGuard") { (view: ChatyyComposerView, v: Bool?) in view.restoreGuard = v ?? true } // [2026-10-19 kb-restore]
 
       OnViewDidUpdateProps { (view: ChatyyComposerView) in
         view.didUpdateProps()

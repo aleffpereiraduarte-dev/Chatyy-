@@ -42,9 +42,34 @@ export function attachInstantOn() {
   return true;
 }
 
+// [2026-10-19 kb-restore] Padrão agora 'did': no modo 'will' o foco devolvido
+// com a folha ainda apresentada era derrubado pelo dismiss do UIKit e a rede do
+// DidClose focava de novo = teclado sobe-desce-sobe ("rapidão"). Voltar ao
+// antigo: globalThis.__chatyy_attach_restore = 'will'.
 export function attachRestoreMode() {
-  try { if (globalThis.__chatyy_attach_restore === 'did') return 'did'; } catch {}
-  return 'will';
+  try { if (globalThis.__chatyy_attach_restore === 'will') return 'will'; } catch {}
+  return 'did';
+}
+
+// [2026-10-19 kb-restore] Composer nativo (iOS apiVersion >= 6) recusa a
+// devolução automática do first responder pelo UIKit (volta de tela, modal,
+// menu, folha) — o teclado só volta por toque/foco explícito.
+// Kill switch OTA: globalThis.__chatyy_kb_restore_guard = false.
+export function kbRestoreGuardOn() {
+  try { if (globalThis.__chatyy_kb_restore_guard === false) return false; } catch {}
+  return true;
+}
+
+// [2026-10-19 kb-restore] Troca de tela com teclado de um TextInput JS aberto
+// (busca da lista, nova conversa, busca dentro de Info…): o teclado ficava em
+// cima durante o push/pop e só descia quando a tela nova montava
+// (Keyboard.dismiss do mount da conversa) ou a velha desmontava = "teclado
+// abre e minimiza". Agora desce no INÍCIO do voltar (beforeRemove da rota que
+// sai), junto com a animação. Não alcança o composer nativo (ele cuida de si).
+// Kill switch OTA: globalThis.__chatyy_nav_kb_dismiss = false.
+export function navKbDismissOn() {
+  try { if (globalThis.__chatyy_nav_kb_dismiss === false) return false; } catch {}
+  return true;
 }
 
 export function subscribeKeyboardSync(fn) {

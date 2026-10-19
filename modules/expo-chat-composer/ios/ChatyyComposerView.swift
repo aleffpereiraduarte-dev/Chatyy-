@@ -43,6 +43,12 @@ final class NCTextView: UITextView {
     return v
   }
 
+  // [2026-10-19 kb-restore] VoiceOver (toque duplo) = intenção do usuário.
+  override func accessibilityActivate() -> Bool {
+    lastTouchAt = CACurrentMediaTime()
+    return super.accessibilityActivate()
+  }
+
   override init(frame: CGRect, textContainer: NSTextContainer?) {
     super.init(frame: frame, textContainer: textContainer)
     placeholderLabel.numberOfLines = 1
@@ -542,7 +548,23 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   // attachRestore "did" = só no fim do dismiss (ajuste OTA).
   // Kill switch: prop attachInstant=false (JS: globalThis.__chatyy_attach_instant = false).
   var attachInstant = true { didSet { if !attachInstant { attachRestorePending = false } } }
-  var attachRestore: String = "will"
+  var attachRestore: String = "did" // [2026-10-19 kb-restore] era "will" (sobe-desce-sobe)
+  // [2026-10-19 kb-restore] "Teclado sobe e desce rapidão" ao trocar de tela /
+  // fechar folha, menu ou modal. RAIZ: o UIKit guarda o first responder quando
+  // algo cobre a tela (push, pageSheet, menu de contexto, folha) e o DEVOLVE
+  // sozinho (becomeFirstResponder) quando a tela reaparece — o teclado sobe já
+  // aberto e em seguida algum blur/dismiss (JS, focusGuard, KeyboardController)
+  // o derruba = pisca. WhatsApp/Telegram: o teclado só volta por ação explícita.
+  // Agora: depois que o teclado foi solto por qualquer caminho que NÃO seja o
+  // nosso (UIKit, blur JS, KeyboardController.dismiss) ou a tela saiu, todo
+  // becomeFirstResponder automático é recusado até haver toque no campo /
+  // VoiceOver ou foco explícito (focus() do JS, cartão de resposta, swipe
+  // cancelado, folha do "+" cancelada — todos via withInternalFocus). Também
+  // recusa foco automático com a tela fora da janela, em transição ou coberta
+  // por um modal. Volta do fundo (teclado estava aberto) segue liberada.
+  // Kill switch: prop restoreGuard=false (JS: globalThis.__chatyy_kb_restore_guard = false).
+  var restoreGuard = true { didSet { if !restoreGuard { restoreParked = false } } }
+  private var restoreParked = false
   private var attachRestorePending = false
   private var attachRestoreAt: CFTimeInterval = 0
   private var kbNoteOverlap: CGFloat = 0
@@ -938,10 +960,33 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   }
 
   func focusInput() {
+    // [2026-10-19 kb-restore] focus() do JS com a tela fora da janela ou coberta
+    // por um modal (re-foco atrasado do envio/menu chegando no meio, folha ainda
+    // descendo) = teclado subia por cima e descia quando o modal sumia. Fora da
+    // janela → ignorado; coberta → espera o modal sair (até ~1,2 s) e foca UMA vez.
+    if restoreGuard {
+      if window == nil { return }
+      if isHostCovered() { focusWhenUncovered(gen: focusWaitGen &+ 1, tries: 0); return }
+    }
     if !textView.isFirstResponder { withInternalFocus { _ = textView.becomeFirstResponder() } }
   }
 
+  private var focusWaitGen = 0
+  private func focusWhenUncovered(gen: Int, tries: Int) {
+    focusWaitGen = gen
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+      guard let self = self, self.focusWaitGen == gen, self.window != nil, !self.disabled else { return }
+      if self.textView.isFirstResponder { return }
+      if self.isHostCovered() {
+        if tries < 24 { self.focusWhenUncovered(gen: gen, tries: tries + 1) }
+        return
+      }
+      self.withInternalFocus { _ = self.textView.becomeFirstResponder() }
+    }
+  }
+
   func blurInput() {
+    focusWaitGen &+= 1 // [2026-10-19 kb-restore] blur depois de um focus em espera = cancela
     // JS blur: NÃO marcado como interno → o guarda de volta do fundo pode recusar.
     if textView.isFirstResponder { textView.resignFirstResponder() }
   }
@@ -1011,6 +1056,16 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     attachRestorePending = false
     guard restore else { return }
     // modo "did" ou rede: a dispensa do UIKit derrubou o foco devolvido cedo.
+    // [2026-10-19 kb-restore] "did": 1 volta do runloop depois do dismiss — o
+    // UIKit termina de restaurar os input views da folha (nenhum) antes; focar
+    // dentro do completion podia ser derrubado em seguida (sobe-desce).
+    if attachRestore == "did" {
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self, !self.textView.isFirstResponder else { return }
+        self.restoreFocusAfterAttach()
+      }
+      return
+    }
     if !textView.isFirstResponder { restoreFocusAfterAttach() }
   }
 
@@ -1025,11 +1080,36 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
 
   private func shouldBlockBecome() -> Bool {
     if isFocusBlockedNow() { return true }
+    if shouldBlockAutoRestore() { return true } // [2026-10-19 kb-restore]
     guard focusGuard else { return false }
     if CACurrentMediaTime() - textView.lastTouchAt < 0.8 { attachGuard = false; return false }
     if inResumeWindow && !resumeHadFocus { return true }
     if attachGuard && !internalFocusOp { return true }
     return false
+  }
+
+  /// [2026-10-19 kb-restore] true = becomeFirstResponder automático (UIKit
+  /// devolvendo o responder guardado) que faria o teclado subir-e-descer.
+  private func shouldBlockAutoRestore() -> Bool {
+    guard restoreGuard, !internalFocusOp else { return false }
+    if CACurrentMediaTime() - textView.lastTouchAt < 0.8 { return false } // toque real
+    // volta do fundo com o teclado aberto: o iOS devolve, não é ida-e-volta.
+    if inResumeWindow && resumeHadFocus && !restoreParked { return false }
+    if restoreParked { return true }
+    if window == nil { return true }
+    if let vc = nearestViewController() {
+      if vc.transitionCoordinator != nil || vc.isMovingFromParent || vc.isBeingDismissed || vc.isMovingToParent { return true }
+    }
+    return isHostCovered()
+  }
+
+  /// Algum modal (pageSheet, folha, menu) apresentado por cima da tela do composer.
+  private func isHostCovered() -> Bool {
+    guard let win = window, let root = win.rootViewController, let vc = nearestViewController() else { return false }
+    var top: UIViewController = root
+    while let p = top.presentedViewController { top = p }
+    if top === root { return false }
+    return !vc.view.isDescendant(of: top.view)
   }
 
   private func shouldBlockResign() -> Bool {
@@ -1074,10 +1154,15 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
 
   func textViewDidBeginEditing(_ tv: UITextView) {
     attachGuard = false // [2026-10-18 kb-resume] foco explícito chegou
+    restoreParked = false // [2026-10-19 kb-restore]
     onFocusChange(["focused": true])
   }
 
   func textViewDidEndEditing(_ tv: UITextView) {
+    // [2026-10-19 kb-restore] solto por fora (UIKit guardando o responder p/ um
+    // modal/menu/push, blur JS, KeyboardController.dismiss) → a devolução
+    // automática que vier depois é recusada. App indo p/ o fundo não conta.
+    if restoreGuard && !internalFocusOp && !appInactive { restoreParked = true }
     flushChange()
     onFocusChange(["focused": false])
   }
@@ -1321,6 +1406,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   override func willMove(toWindow newWindow: UIWindow?) {
     super.willMove(toWindow: newWindow)
     if newWindow == nil {
+      restoreParked = true // [2026-10-19 kb-restore]
       // [2026-10-17 kb-pop] rede de segurança: saindo da janela sem o proxy ter
       // visto o pop → derruba o teclado já, sem animação.
       if textView.isFirstResponder {
@@ -1400,6 +1486,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     hostTransitionGen += 1
     let gen = hostTransitionGen
     focusBlocked = true
+    restoreParked = true // [2026-10-19 kb-restore] restauração do UIKit no pop/volta = recusada
     if wasFirst {
       if nativeTransitions {
         // [2026-10-19 kb-native] ANIMADO: dentro do viewWillDisappear o UIKit
