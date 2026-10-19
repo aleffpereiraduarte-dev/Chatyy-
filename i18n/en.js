@@ -5773,6 +5773,7 @@ export default {
 
   // Audio recording errors
   'chatConv.audioNotSupported': 'Audio recording not supported in this browser',
+  'chatConv.voicePlayFailed': "Couldn't play this voice message. Tap again to retry.",
   'chatConv.mediaRecorderUnavailable': 'MediaRecorder not available',
   'chatConv.micPermissionDenied': 'Microphone permission denied',
   'chatConv.micNotFound': 'No microphone found',

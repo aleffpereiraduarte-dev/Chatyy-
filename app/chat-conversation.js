@@ -8814,9 +8814,13 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         mr.ondataavailable = (e) => {
           if (!e.data || e.data.size === 0) return;
           chunksRef.current.push(e.data);
-          if (voiceSessionRef.current?.alive) {
+          // [2026-10-19 voz-sem-som] Enfileira TAMBÉM antes do session_start responder:
+          // o 1º chunk (cabeçalho WebM) chegava em 200 ms, a sessão em ~210 ms → era
+          // descartado e a nota montada no servidor não tocava em lugar nenhum.
+          // Sessão morta (alive=false) → não enfileira; sem sessão ainda (null) → guarda.
+          if (voiceSessionRef.current?.alive || voiceSessionRef.current == null) {
             voiceUploadQueue.current.push(e.data);
-            drainVoiceUploadQueue();
+            if (voiceSessionRef.current?.alive) drainVoiceUploadQueue();
           }
         };
         mr.onerror = () => { if (mountedRef.current) setError(t('chatConv.recordingError')); };
@@ -35644,6 +35648,8 @@ function ChatConversationInnerBody() {
       let uri = null;
       try { uri = _indexedLocalUri(m) || (m._localUri ? _rebaseContainerUri(m._localUri) : null); } catch {}
       if (!uri) uri = _nlResolveRef.current ? _nlResolveRef.current(m.file_url) : m.file_url;
+      // [2026-10-19 voz-play] remoto: mesma URL tocável do JS (WA importado OGG → &fmt=m4a)
+      try { if (typeof uri === 'string' && /^https?:/i.test(uri)) uri = require('../services/mediaCache').playableAudioUrl(uri) || uri; } catch {}
       VoiceNote.playVoiceNote({
         messageId: m.id, url: m.file_url, uri, conversationId,
         durationMs: Math.max(0, (Number(m.duration) || 0) * 1000),
@@ -35944,6 +35950,7 @@ function ChatConversationInnerBody() {
     const _oldBin = nativeListApi() < 8;
     let _rateDec = '.';
     try { _rateDec = voiceRateDecimal(language); } catch {}
+    try { VoiceNote.setVoiceErrorLabel?.(t('chatConv.voicePlayFailed')); } catch {} // [2026-10-19 voz-play]
     const push = () => {
       try {
         const st = VoiceNote.getVoiceState();

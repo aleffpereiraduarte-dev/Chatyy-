@@ -5811,6 +5811,7 @@ export default {
 
   // Audio recording errors
   'chatConv.audioNotSupported': 'Gravação de áudio não suportada neste navegador',
+  'chatConv.voicePlayFailed': 'Não foi possível reproduzir o áudio. Toque de novo para tentar.',
   'chatConv.mediaRecorderUnavailable': 'MediaRecorder não disponível',
   'chatConv.micPermissionDenied': 'Permissão de microfone negada',
   'chatConv.micNotFound': 'Nenhum microfone encontrado',

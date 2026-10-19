@@ -464,12 +464,24 @@ function _onEngineStatus(st) {
   const it = _state.item;
   if (!it) return;
   if (st.error) {
+    if (_tryRecover(String(st.error))) return;
+    _voiceDiag('err', st.error);
+    _clearStall();
+    // Motor parado de vez: solta o player (o próximo toque recomeça do zero).
+    try { const e = _engine; _engine = null; e?.stop?.(); } catch {}
+    if (Platform.OS !== 'web' && _recoverOn()) _toastFailed();
     _set({ playing: false, loading: false, error: st.error });
     _emitPosition({ error: st.error });
     return;
   }
   const prevPos = _positionMs;
   if (typeof st.positionMs === 'number' && isFinite(st.positionMs)) _positionMs = st.positionMs;
+  // [2026-10-19 voz-play] 1º avanço real do relógio = tocou de verdade (watchdog desarma).
+  if (_att && !_att.ok && st.playing && _positionMs > (_att.startMs || 0) + 40) {
+    _att.ok = true;
+    const ms = Date.now() - _att.t0;
+    if (_att.stage > 0 || ms > 2500) _voiceDiag('ok', `ms=${ms}`);
+  }
   if (st.durationMs > 0) _durationMs = st.durationMs;
   // Listened-time accounting (seeks don't count as listening).
   if (st.playing && !st.seeked && _lastTickPos != null) {
@@ -533,6 +545,95 @@ function _onEnded() {
     return;
   }
   stopVoiceNote();
+}
+
+// ── [2026-10-19 voz-play] Recuperação + telemetria ─────────────────────
+// Founder (iOS, lista nativa): "recebo um áudio, clico em play e não toca". O
+// motor nativo falhava calado (AVPlayerItem .failed → só `error` no estado, que
+// a célula nativa não mostra) e não havia NENHUMA tentativa de novo nem beacon.
+// Agora, por toque: (1) arquivo local que não abre → apaga a cópia e toca a URL
+// remota; (2) motor nativo que falha/trava (sem avançar em 6 s) → expo-audio;
+// (3) só então erro visível (toast + "tentar de novo" no próximo toque) e
+// beacon push_diag `voice_play`. Kill switch: globalThis.__chatyy_voice_recover = false.
+let _att = null;          // { token, t0, stage, uri, kind, startMs, ok, item }
+let _stallTimer = null;
+function _recoverOn() {
+  try { return globalThis.__chatyy_voice_recover !== false; } catch { return true; }
+}
+function _voiceDiag(ev, detail) {
+  try {
+    const a = _att || {};
+    const u = String(a.uri || '');
+    const src = u.startsWith('file:') || u.startsWith('/') ? 'local' : (/^https?:/.test(u) ? 'remote' : (u ? 'other' : 'none'));
+    const ext = ((String(a.item?.url || u).split('?')[0].match(/\.([a-z0-9]{2,5})$/i) || [])[1] || '-').toLowerCase();
+    let inCall = 0;
+    try { inCall = require('./ongoingCall').isCallOngoing() ? 1 : 0; } catch {}
+    const info = `ev=${ev} eng=${a.kind || '-'} stage=${a.stage || 0} src=${src} ext=${ext} call=${inCall} d=${String(detail || '').slice(0, 160)}`;
+    require('./crashReporter').reportStep?.('voice_play', info);
+    if (ev === 'err') {
+      try { require('./crashReporter').reportTaggedEvent?.('VOICE', 'play_error', { code: String(detail || '').slice(0, 40), eng: a.kind, stage: a.stage || 0, src, ext }); } catch {}
+    }
+  } catch {}
+}
+function _clearStall() { if (_stallTimer) { clearTimeout(_stallTimer); _stallTimer = null; } }
+function _armStall(token) {
+  _clearStall();
+  if (!_recoverOn() || Platform.OS === 'web') return;
+  _stallTimer = setTimeout(() => {
+    _stallTimer = null;
+    if (!_att || _att.token !== token || token !== _token || _att.ok) return;
+    if (!_state.item || !_state.playing) return; // pausado pelo usuário
+    _onEngineStatus({ error: 'start_timeout', playing: false });
+  }, 6000);
+}
+function _remoteOf(item) {
+  const url = item && item.url;
+  if (typeof url !== 'string' || !url || _isLocal(url)) return null;
+  let r = url;
+  try { r = require('./api').getMediaUrl(url) || url; } catch {}
+  try { const mc = require('./mediaCache'); if (mc.playableAudioUrl) r = mc.playableAudioUrl(r); } catch {}
+  return /^https?:/.test(r) ? r : null;
+}
+function _tryRecover(err) {
+  if (!_recoverOn() || Platform.OS === 'web') return false;
+  const a = _att;
+  const it = _state.item;
+  if (!a || !it || a.token !== _token || String(a.item?.messageId) !== String(it.messageId)) return false;
+  const remote = _remoteOf(it);
+  const wasLocal = _isLocal(a.uri);
+  const pos = Math.max(0, _positionMs || 0);
+  _voiceDiag('retry', err);
+  if (a.stage === 0 && wasLocal && remote) {
+    // cópia local corrompida / formato errado → apaga e toca do servidor
+    (async () => {
+      try { const mc = require('./mediaCache'); await mc.deleteCachedUrl?.(remote); } catch {}
+      try {
+        if (typeof a.uri === 'string' && a.uri.startsWith('file://')) {
+          let fs; try { fs = require('expo-file-system/legacy'); } catch { fs = require('expo-file-system'); }
+          await fs.deleteAsync?.(a.uri, { idempotent: true });
+        }
+      } catch {}
+    })();
+    playVoiceNote({ ...it, uri: remote }, { startMs: pos, _stage: 1, _forceExpo: false }).catch(() => {});
+    return true;
+  }
+  if (a.stage < 2 && a.kind === 'native') {
+    playVoiceNote({ ...it, uri: (a.stage === 0 && !wasLocal) ? a.uri : (remote || a.uri) }, { startMs: pos, _stage: 2, _forceExpo: true }).catch(() => {});
+    return true;
+  }
+  return false;
+}
+let _toastAt = 0;
+let _errLabel = 'Não foi possível reproduzir o áudio. Toque de novo para tentar.';
+/** Texto localizado do toast de falha (a tela da conversa tem t()). */
+export function setVoiceErrorLabel(label) {
+  if (typeof label === 'string' && label && !/^chatConv\./.test(label)) _errLabel = label;
+}
+function _toastFailed() {
+  const now = Date.now();
+  if (now - _toastAt < 4000) return;
+  _toastAt = now;
+  try { require('../components/ui/Toast').showToast?.({ message: _errLabel, kind: 'error' }); } catch {}
 }
 
 // ── URI resolution (used for auto-advance + mini bar resume) ───────────
@@ -606,11 +707,17 @@ export async function playVoiceNote(item, opts = {}) {
   }
   const rate = _state.rate;
   let eng = null;
+  const _forceExpo = !!opts._forceExpo && _recoverOn();
+  _att = { token, t0: Date.now(), stage: opts._stage || 0, uri, kind: null, startMs, ok: false, item: { ...item } };
   try {
     if (Platform.OS === 'web') {
       eng = _webEngine(uri, startMs, rate, token, item);
     } else {
-      const m = _getNative();
+      const m = _forceExpo ? null : _getNative();
+      if (_forceExpo) {
+        const nm = _getNative();
+        if (nm) { try { nm.voiceSetProximityEnabled(false).catch(() => {}); nm.voiceStop().catch(() => {}); } catch {} }
+      }
       if (m) { eng = _nativeEngine(m, uri, startMs, rate, token); _nativeNowPlaying(m, item); }
       else {
         if (prev && prev.kind === 'native') { try { prev.stop(); } catch {} }
@@ -620,11 +727,14 @@ export async function playVoiceNote(item, opts = {}) {
   } catch { eng = null; }
   if (token !== _token) { try { eng?.stop?.(); } catch {} return; }
   if (!eng) {
+    _voiceDiag('err', 'engine_unavailable');
     _set({ playing: false, loading: false, error: 'engine_unavailable' });
     _emitPosition({ error: 'engine_unavailable' });
     return;
   }
   _engine = eng;
+  if (_att && _att.token === token) _att.kind = eng.kind;
+  _armStall(token);
 }
 
 export function pauseVoiceNote() {

@@ -1569,7 +1569,11 @@ function _buildRowInner(item, key, ctx) {
       row.au.w = out;
     }
     if (!own && ctx.isAudioPlayed && ctx.isAudioPlayed(item)) row.au.p = 1;
-    const adl = _dlFor(item, ctx, null, false); // [native-media-dl]
+    // [2026-10-19 voz-play] Nota de voz SEM anel de download nativo: com `dl` o toque no
+    // play ia p/ o CMLTransfers (baixando → toque CANCELAVA; falhou → toque só re-tentava
+    // o download; nunca tocava). WhatsApp: toque = toca já (o player transmite/cacheia).
+    // Kill switch (volta o anel): globalThis.__chatyy_voice_dl_ring = true.
+    const adl = (globalThis.__chatyy_voice_dl_ring === true) ? _dlFor(item, ctx, null, false) : undefined; // [native-media-dl]
     if (adl) row.au.dl = adl;
     if (_api >= 2) { try { _voiceExtras(item, row, ctx, own); } catch (e) { if (__DEV__) console.warn('[native-list] voice extras', e?.message); } }
     return row;
