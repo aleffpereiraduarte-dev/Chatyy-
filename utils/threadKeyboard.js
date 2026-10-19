@@ -33,6 +33,9 @@ export function useThreadKbRestLift() {
   return 0;
 }
 
+// [2026-10-19 kb-heal] mesma export do .native.js (web: nada a curar).
+export function threadKbNoteComposerBlur() {}
+
 export const THREAD_LIST_KEYBOARD_DISMISS_MODE = 'on-drag';
 export const THREAD_COMPOSER_NATIVE_ID = 'chatyy-thread-composer';
 

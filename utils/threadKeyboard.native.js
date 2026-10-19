@@ -118,12 +118,25 @@ const _useKbHandlerAndroid = (_IS_ANDROID && KC && typeof KC.useGenericKeyboardH
 // publicado pelo JS SÓ depois do movimento (didShow/didHide).
 // Com painel aberto (emoji nativo/figurinhas/GIF) volta o modo padding de
 // sempre; a troca é atômica (mesmo quadro do Reanimated: padding↔transform).
-// Kill switch OTA: globalThis.__chatyy_kb_translate = false (lido ao montar a conversa).
 // [2026-10-19 hotfix] DESLIGADO por padrão: founder viu barra+lista presas no
-// alto com o teclado FECHADO (lift não voltou a 0). Opt-in: __chatyy_kb_translate = true.
+// alto com o teclado FECHADO (lift não voltou a 0). Opt-in (lido ao montar a
+// conversa): globalThis.__chatyy_kb_translate = true. A auto-cura [kb-heal]
+// (didHide/blur/active/foco/watchdog → lift 0 sem teclado) vale nos DOIS modos.
 function _kbTranslateOn() {
   try { if (globalThis.__chatyy_kb_translate === true) return true; } catch {}
   return false;
+}
+// [2026-10-19 kb-heal] KC diz teclado aberto? Exige isVisible() E
+// state().height > 0 (state = último did-event do KC; 0 = fechado).
+function _kcStateOpen() {
+  const K = KC && KC.KeyboardController;
+  if (!K) return false;
+  let vis = false;
+  try { vis = !!(K.isVisible && K.isVisible()); } catch {}
+  if (!vis) return false;
+  let h = 0;
+  try { h = Number(K.state && K.state() && K.state().height) || 0; } catch {}
+  return h > 1;
 }
 const ThreadKbCtx = React.createContext(null);
 let _restLift = 0;
@@ -145,6 +158,14 @@ export function useThreadKbRestLift() {
     return () => { _restSubs.delete(fn); };
   }, []);
   return v;
+}
+// [2026-10-19 kb-heal] Avoiders montados → função de auto-cura (ver
+// KCThreadKeyboardAvoider). O composer (NativeComposerBridge) avisa no blur.
+const _healFns = new Set();
+/** Composer perdeu o foco: cada conversa montada confere (depois da descida do
+ *  teclado) se ainda há "lift" sem teclado nenhum e o leva a 0. */
+export function threadKbNoteComposerBlur() {
+  _healFns.forEach((fn) => { try { fn('blur'); } catch {} });
 }
 const _clipStyle = { flex: 1, overflow: 'hidden' };
 const _flex1 = { flex: 1 };
@@ -239,17 +260,100 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
       let rn = false;
       let kc = false;
       try { rn = !!Keyboard.isVisible(); } catch {}
-      try { kc = !!(KC.KeyboardController && KC.KeyboardController.isVisible && KC.KeyboardController.isVisible()); } catch {}
+      // [2026-10-19 kb-heal] KC.isVisible() vem só dos did-events SINTETIZADOS
+      // pelo observer do KC (fim de animação); pode ficar "aberto" depois de um
+      // fechamento sem animação achada → exige também state().height > 0.
+      try { kc = _kcStateOpen(); } catch {}
       if (rn || kc) return;
       let cur = 0;
       try { cur = Math.abs(height.value); } catch {}
       if (cur > 1 || settled.value !== 1) settle();
     };
+    // [2026-10-19 kb-heal] AUTO-CURA do lift (barra/lista presas no alto com o
+    // teclado FECHADO — print do founder 19/10). No iOS o `height` do KC é um
+    // DEGRAU: só muda em onKeyboardMoveStart (willShow → −kh, willHide → 0) e no
+    // interativo (src/animated.tsx: updateSharedValues ['ios'] só nesses dois).
+    // Se o willHide se perde (folha/modal por cima, observer do KC sem
+    // animação, sync nativa descartada em transição) ou alguém escreve −kh
+    // DEPOIS do último settle (restoreIfLost atrasado, sync nativa "focused",
+    // KVO do interativo), o lift fica = altura cheia do teclado sem teclado e
+    // nada mais o corrige. Agora: invariante "sem teclado ⇒ lift 0" checado em
+    // didHide, blur do composer, AppState active, foco da tela e num watchdog
+    // leve (1,5 s; sai na hora se o RN vê teclado).
+    let lastNativeSync = null; // { h, at } do composer nativo (quadro REAL)
+    const liftNow = () => {
+      try {
+        if (settled.value === 1) return 0;
+        return Math.max(0, -height.value - (insetRef.current || 0));
+      } catch { return 0; }
+    };
+    const kbClosedNow = () => {
+      if (Date.now() - lastShowAt < 700) return false;
+      try { if (Keyboard.isVisible()) return false; } catch {}
+      // Quadro real do composer nativo (keyboardLayoutGuide) recente = juiz.
+      if (lastNativeSync && Date.now() - lastNativeSync.at < 4000) return lastNativeSync.h <= 1;
+      // KC: state().height === 0 (último did-event = fechado) → fechado.
+      try { if (!_kcStateOpen()) return true; } catch { return true; }
+      return false;
+    };
+    let healTimer = null;
+    let healAnimTimer = null;
+    let rnClosedStrikes = 0;
+    const heal = (reason) => {
+      if (healAnimTimer) return;
+      if (isAppResuming()) return;
+      const cur = liftNow();
+      if (cur <= 1) {
+        // Sem lift visível, mas valor velho do KC guardado → limpa (próxima
+        // abertura volta a ser mudança real).
+        let hv = 0;
+        try { hv = Math.abs(height.value); } catch {}
+        if (hv > 1 && settled.value === 1) settle();
+        return;
+      }
+      // Desce animado (sem pulo seco) e assenta no fim se continuar fechado.
+      try {
+        if (Rea.withTiming) {
+          height.value = Rea.withTiming(0, { duration: 220 });
+          progress.value = Rea.withTiming(0, { duration: 220 });
+        }
+      } catch {}
+      try { pubRest.current(0); } catch {}
+      healAnimTimer = setTimeout(() => {
+        healAnimTimer = null;
+        if (Date.now() - lastShowAt < 700) return; // abriu de novo no meio
+        try { if (Keyboard.isVisible()) return; } catch {}
+        settle();
+      }, 240);
+      if (__DEV__) console.log('[threadKeyboard] kb-heal', reason, Math.round(cur));
+    };
+    const healIfClosed = (reason) => {
+      if (kbClosedNow()) heal(reason);
+    };
+    const healSoon = (reason, ms) => {
+      if (healTimer) clearTimeout(healTimer);
+      healTimer = setTimeout(() => { healTimer = null; healIfClosed(reason); }, ms);
+    };
+    const healFn = (reason) => healSoon(reason, 650);
+    _healFns.add(healFn);
+    const watchdog = setInterval(() => {
+      try {
+        if (AppState.currentState !== 'active' || isAppResuming()) { rnClosedStrikes = 0; return; }
+        if (Keyboard.isVisible()) { rnClosedStrikes = 0; return; } // barato: teclado aberto = nada a fazer
+        if (Date.now() - lastShowAt < 1200) return;
+        if (liftNow() <= 1) { rnClosedStrikes = 0; return; }
+        rnClosedStrikes += 1;
+        // Fontes concordam → já; só o RN dizendo fechado → 3 checagens (~4,5 s)
+        // (só iOS: lá o RCTKeyboardObserver é sempre inscrito e confiável).
+        if (kbClosedNow() || (!_IS_ANDROID && rnClosedStrikes >= 3)) { rnClosedStrikes = 0; heal('watchdog'); }
+      } catch {}
+    }, 1500);
     // [2026-10-19 kb-native] Quadro REAL do teclado vindo do composer nativo
     // (apiVersion >= 4: keyboardLayoutGuide no iOS, IME insets no Android) →
     // o padding nunca fica preso num valor velho.
     const onNativeSync = (e) => {
       const h = Math.max(0, Number(e && e.height) || 0);
+      lastNativeSync = { h, at: Date.now() }; // [2026-10-19 kb-heal]
       let cur = 0;
       try { cur = Math.abs(height.value); } catch {}
       if (h <= 1) {
@@ -261,6 +365,9 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
       // Aberto: só corrige se o teclado é DO composer (teclado de outra tela
       // ainda descendo no push não pode levantar a conversa — android-kbd-flicker).
       if (!(e && e.focused)) return;
+      // [2026-10-19 kb-heal] nunca levanta sem o RN ver teclado (guia velho).
+      try { if (!Keyboard.isVisible()) return; } catch {}
+      lastShowAt = Date.now();
       if (showTimer) { clearTimeout(showTimer); showTimer = null; }
       if (Math.abs(cur - h) > 2) {
         try { height.value = -h; progress.value = 1; } catch {}
@@ -273,9 +380,13 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
     // confere (binários sem onKeyboardSync dependem só disto).
     let navTimer = null;
     const checkAfterNav = () => {
-      if (!kbNativeTransitionsOn()) return;
       if (navTimer) clearTimeout(navTimer);
-      navTimer = setTimeout(() => { navTimer = null; if (!isAppResuming()) settleIfHiddenStrict(); }, 450);
+      navTimer = setTimeout(() => {
+        navTimer = null;
+        if (isAppResuming()) return;
+        if (kbNativeTransitionsOn()) settleIfHiddenStrict();
+        healIfClosed('focus'); // [2026-10-19 kb-heal]
+      }, 450);
     };
     const navSubs = [];
     try {
@@ -336,6 +447,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
       if (showTimer) { clearTimeout(showTimer); showTimer = null; }
       if (hideTimer) clearTimeout(hideTimer);
       try { pubRest.current(0); } catch {} // [kb-translate] teclado já desceu
+      healSoon('didHide', 900); // [2026-10-19 kb-heal] rede depois do settle normal
       hideTimer = setTimeout(() => {
         hideTimer = null;
         // KC still reports a keyboard (UI thread) → a re-open may be in
@@ -356,7 +468,8 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
     // = its value was lost/overwritten → restore it (composer back on top).
     const restoreIfLost = (kh) => {
       try {
-        if (kh > 0 && Math.abs(height.value) < 1) {
+        // [2026-10-19 kb-heal] didShow atrasado com o teclado já fechado não levanta.
+        if (kh > 0 && Math.abs(height.value) < 1 && Keyboard.isVisible()) {
           height.value = -kh;
           progress.value = 1;
         }
@@ -392,6 +505,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
     let appStateTimer = null;
     const subApp = AppState.addEventListener('change', (s) => {
       if (s !== 'active') return;
+      healSoon('active', 1800); // [2026-10-19 kb-heal] depois da janela de volta
       if (appStateTimer) clearTimeout(appStateTimer);
       // iOS restores a previously-open keyboard right after resume — give it
       // time to emit keyboardWillShow before deciding it's closed.
@@ -419,6 +533,10 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
       try { subApp.remove(); } catch {}
       if (appStateTimer) clearTimeout(appStateTimer);
       try { unsubSync(); } catch {}
+      _healFns.delete(healFn); // [2026-10-19 kb-heal]
+      clearInterval(watchdog);
+      if (healTimer) clearTimeout(healTimer);
+      if (healAnimTimer) clearTimeout(healAnimTimer);
       navSubs.forEach((u) => { try { if (typeof u === 'function') u(); } catch {} });
       if (navTimer) clearTimeout(navTimer);
       _enabledRefs = Math.max(0, _enabledRefs - 1);

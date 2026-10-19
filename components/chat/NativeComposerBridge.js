@@ -22,6 +22,7 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, processColor } from 'react-native';
 import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
+import { threadKbNoteComposerBlur } from '../../utils/threadKeyboard'; // [2026-10-19 kb-heal]
 import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
 
 let _failed = false;
@@ -307,6 +308,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
     const f = !!e?.nativeEvent?.focused;
     focusedRef.current = f;
     try { (f ? cbRef.current.onFocus : cbRef.current.onBlur)?.(); } catch {}
+    if (!f) { try { threadKbNoteComposerBlur(); } catch {} } // [2026-10-19 kb-heal] sem foco + sem teclado ⇒ lift 0
   }, []);
   const _onVoiceRecorded = useCallback((e) => {
     const d = voicePayloadToAudioData(e?.nativeEvent || {});
