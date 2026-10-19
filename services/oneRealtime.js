@@ -37,6 +37,20 @@ if (Platform.OS === 'web') {
   } catch {}
 }
 
+// [bia-lenta 2026-10-19] SESSÃO FANTASMA: stop() durante o 'connecting' (token
+// demora 1-3 s) não impedia o _startInner de seguir — criava um RTCPeerConnection
+// NOVO depois do stop, conectava e ficava viva sem ninguém referenciando: uma 2ª
+// Bia ouvindo o mic e falando no alto-falante com o contexto ANTIGO (respondia
+// "coisa anterior", agradecia conversa já apagada, falava por cima e cortava a
+// usuária). Agora: toda sessão viva fica neste registro, cada await do start
+// confere se foi parada, e stopAllRealtimeSessions() derruba qualquer sobra.
+const LIVE_SESSIONS = new Set();
+export function stopAllRealtimeSessions(except = null) {
+  for (const s of Array.from(LIVE_SESSIONS)) {
+    if (s !== except) { try { s.stop(); } catch {} }
+  }
+}
+
 export function isRealtimeSupported() {
   return !!(RTCPeerConnection && mediaDevices?.getUserMedia);
 }
@@ -157,10 +171,16 @@ export class OneRealtimeSession {
     this.localStream = null;
     this.remoteAudioEl = null; // web <audio>
     this.active = false;
+    this._stopped = false; // [bia-lenta 2026-10-19] parada é definitiva (não religa)
     this.currentState = 'idle';
   }
 
+  _alive() {
+    if (this._stopped) { const e = new Error('aborted'); e.aborted = true; throw e; }
+  }
+
   _emit(name, payload) {
+    if (this._stopped) return; // sessão parada não fala mais com a tela
     const fn = this.handlers[name];
     if (typeof fn === 'function') {
       try { fn(payload); } catch (e) { if (__DEV__) console.warn('[oneRealtime] handler err:', e?.message); }
@@ -175,8 +195,10 @@ export class OneRealtimeSession {
 
   async start() {
     if (this.active) return;
+    this._alive();
     if (!isRealtimeSupported()) throw new Error('WebRTC not available');
     this.active = true;
+    LIVE_SESSIONS.add(this);
     this._setState('connecting');
 
     try {
@@ -231,15 +253,19 @@ export class OneRealtimeSession {
       } catch {}
     }
 
+    this._alive();
     // 1. Ephemeral token from our backend
     const { token, model, toolsEnabled } = await mintEphemeralToken();
+    this._alive();
     this._toolsEnabled = !!toolsEnabled;
 
     // 2. Mic stream
-    this.localStream = await mediaDevices.getUserMedia({
+    const __ls = await mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
       video: false,
     });
+    if (this._stopped) { try { __ls?.getTracks?.().forEach(t => t.stop()); } catch {} this._alive(); }
+    this.localStream = __ls;
     const tracks = this.localStream.getAudioTracks?.() || [];
     if (!tracks.length) throw new Error('no microphone track');
 
@@ -271,7 +297,7 @@ export class OneRealtimeSession {
     // 4. Data channel for events (transcripts, VAD signals)
     this.dc = this.pc.createDataChannel('oai-events');
     this.dc.onopen = () => { this._setState('listening'); };
-    this.dc.onmessage = (ev) => this._onEvent(ev.data);
+    this.dc.onmessage = (ev) => { if (!this._stopped) this._onEvent(ev.data); };
     this.dc.onclose = () => { if (this.active) this._emit('onClose'); };
     this.dc.onerror = (e) => this._emit('onError', e);
 
@@ -292,7 +318,9 @@ export class OneRealtimeSession {
 
     // 5. SDP offer → OpenAI → answer
     const offer = await this.pc.createOffer();
+    this._alive();
     await this.pc.setLocalDescription(offer);
+    this._alive();
 
     // [2026-10-04] GA endpoint. A Beta (/v1/realtime) foi DESLIGADA pelo OpenAI
     // ("The Realtime Beta API is no longer supported. Please use
@@ -310,7 +338,9 @@ export class OneRealtimeSession {
       throw new Error(`OpenAI SDP exchange failed: ${sdpRes.status}`);
     }
     const answerSdp = await sdpRes.text();
+    this._alive();
     await this.pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: answerSdp }));
+    this._alive();
 
     this._setState('listening');
   }
@@ -557,6 +587,8 @@ export class OneRealtimeSession {
   }
 
   stop() {
+    this._stopped = true;
+    LIVE_SESSIONS.delete(this);
     this.active = false;
     try { this.dc?.close?.(); } catch {}
     try { this.pc?.close?.(); } catch {}

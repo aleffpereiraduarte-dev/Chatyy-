@@ -21,7 +21,7 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
-import { OneRealtimeSession, isRealtimeSupported } from '../services/oneRealtime';
+import { OneRealtimeSession, isRealtimeSupported, stopAllRealtimeSessions } from '../services/oneRealtime';
 import SmartReplyChips from '../components/SmartReplyChips';
 // [2026-10-15 bia-design] orb (Skia/UI thread) + interface nova (vidro, cascata, gaveta, voz)
 import BiaOrb from '../components/bia/BiaOrb';
@@ -722,6 +722,30 @@ export default function OneScreen() {
   const voiceSessionRef = useRef(0); // monotonic session id for race-safe restarts
   const aiAbortRef = useRef(null); // AbortController for in-flight AI requests
   const realtimeRef = useRef(null); // OneRealtimeSession — OpenAI Realtime WS client (web)
+  // [bia-lenta 2026-10-19] turnos com id: só o turno MAIS NOVO pode falar/agir.
+  // Resposta/TTS de turno antigo nunca toca ("respondia uma coisa anterior").
+  // Refs (não closures) p/ conversa/loading: o loop de voz usava um sendMessage
+  // velho → conversation_id antigo (até de conversa apagada) ou nulo a cada fala.
+  const turnSeqRef = useRef(0);
+  const inflightAiMsgIdRef = useRef(null);
+  const conversationIdRef = useRef(null);
+  const loadingRef = useRef(false);
+  const pttEpochRef = useRef(0); // invalida transcrição do mic em voo ao entrar no modo voz
+  useEffect(() => { conversationIdRef.current = conversationId; }, [conversationId]);
+  useEffect(() => { loadingRef.current = loading; }, [loading]);
+  const cancelInflightTurn = useCallback(() => {
+    turnSeqRef.current++;
+    try { aiAbortRef.current?.abort?.(); } catch {}
+    aiAbortRef.current = null;
+    const oldId = inflightAiMsgIdRef.current;
+    inflightAiMsgIdRef.current = null;
+    if (oldId) {
+      setMessages(prev => prev
+        .filter(m => !(m.id === oldId && !m.content))
+        .map(m => (m.id === oldId ? { ...m, _streaming: false, _toolPending: false, _toolName: null } : m)));
+    }
+    if (loadingRef.current) { loadingRef.current = false; setLoading(false); }
+  }, []);
   const emptyListenRef = useRef(0); // consecutive empty transcriptions in voice mode (guard vs mic-stuck-on)
 
   // [bug-fix #one-ai-2h, 2026-05-15] Auto-fresh conversation after idle window.
@@ -1284,7 +1308,9 @@ export default function OneScreen() {
       }
     }
     // Voice mode: speak sentence-by-sentence, then auto-listen
-    if (voiceModeRef.current) {
+    // [bia-lenta 2026-10-19] só no motor legado: com a sessão realtime ativa a Bia
+    // já fala pelo WebRTC — tocar TTS aqui criava uma 2ª Bia por cima.
+    if (voiceModeRef.current && !realtimeRef.current) {
       setVoiceState('speaking');
       setSpeakingId(aiMsgId);
       const lang = detectTextLang(responseText, locale);
@@ -1293,7 +1319,7 @@ export default function OneScreen() {
         setSpeakingId(null);
         if (voiceModeRef.current) {
           setTimeout(() => {
-            if (voiceModeRef.current && isMountedRef.current) {
+            if (voiceModeRef.current && isMountedRef.current && !realtimeRef.current) {
               playReactivationSound();
               haptic('light');
               setVoiceState('listening');
@@ -1306,18 +1332,19 @@ export default function OneScreen() {
   }, [locale, router, bumpActivity]);
 
   // ─── Fallback: non-streaming path ────────────────────────────────────────────
-  const sendMessageFallback = useCallback(async (msg, currentImage, aiMsgId) => {
+  const sendMessageFallback = useCallback(async (msg, currentImage, aiMsgId, isCurrentTurn = () => true) => {
     try {
       const result = await api.oneChat(
         msg || (currentImage ? 'Analise esta imagem. Se for um recibo/nota fiscal/conta, extraia os dados e me pergunte se quero criar uma planilha.' : ''),
-        conversationId,
+        conversationIdRef.current,
         currentImage ? currentImage.base64 : null,
         currentImage ? currentImage.mimeType : null,
         currentImage ? currentImage.driveFileId : null,
         currentImage ? currentImage.extra : null,
       );
+      if (!isCurrentTurn()) return; // [bia-lenta 2026-10-19] resposta de turno velho não entra/fala
       if (result?.success && result.data) {
-        if (result.data.conversation_id) setConversationId(result.data.conversation_id);
+        if (result.data.conversation_id) { conversationIdRef.current = result.data.conversation_id; setConversationId(result.data.conversation_id); }
         const responseTextRaw = result.data.response || t('one.errorProcess');
         // Backend already strips <followups> for the JSON path, but parse
         // defensively in case an old PHP-FPM worker still has the old code
@@ -1352,6 +1379,7 @@ export default function OneScreen() {
         }
       }
     } catch (e) {
+      if (!isCurrentTurn()) return; // [bia-lenta 2026-10-19] erro de turno velho não aparece/fala
       // [bug-fix 2026-05-18] Suffix the actual exception message so users +
       // QA see *why* it failed (network, parse, abort, etc.) instead of a
       // dead-end "Não consegui conectar com o servidor.".
@@ -1379,7 +1407,14 @@ export default function OneScreen() {
   const sendMessage = useCallback(async (text, opts = {}) => {
     const msg = (text || inputText).trim();
     if (!msg && !attachedImage) return;
-    if (loading) return;
+    if (loadingRef.current || loading) {
+      // [bia-lenta 2026-10-19] fala nova durante a resposta anterior: antes era
+      // DESCARTADA em silêncio. Agora (voz) cancela o turno anterior e segue.
+      if (!opts.voice) return;
+      cancelInflightTurn();
+    }
+    // nova fala do usuário: a voz da resposta anterior para na hora (barge-in)
+    try { abortVoiceSpeaking(); } catch {}
     // [bug-fix #one-ai-2h] Mark activity so the focus-effect idle reset
     // only kicks in after a real idle window. Persisted via AsyncStorage so
     // it survives app kill — without this, refreshing kept stale convo.
@@ -1418,14 +1453,18 @@ export default function OneScreen() {
     // setState, avaliado depois do aiMsgId → às vezes igual a ele e a resposta
     // da Bia sobrescrevia o balão do usuário).
     const userMsgId = Date.now();
+    const myTurn = ++turnSeqRef.current;
+    const isCurrentTurn = () => myTurn === turnSeqRef.current;
     setMessages(prev => [...prev, {
       id: userMsgId, role: 'user', content: displayMsg, userName: firstName,
       ...(currentImage ? { imageUri: currentImage.uri } : {}),
     }]);
     setLoading(true);
+    loadingRef.current = true;
     if (voiceModeRef.current) setVoiceState('thinking');
 
     const aiMsgId = userMsgId + 1;
+    inflightAiMsgIdRef.current = aiMsgId;
     const effectiveMsg = msg || (currentImage ? 'Analise esta imagem. Se for um recibo/nota fiscal/conta, extraia os dados e me pergunte se quero criar uma planilha.' : '');
 
     // ── Try SSE streaming first; fall back to oneChat on any error ─────────────
@@ -1446,7 +1485,7 @@ export default function OneScreen() {
       let renderedText = '';       // text currently shown to the user (typewriter)
       let streamActions = [];
       let activeToolName = null;
-      let streamConvId = conversationId;
+      let streamConvId = conversationIdRef.current;
       let streamMsgServerId = 0; // [bia-fase0 2026-10-18] id da resposta no servidor (feedback)
       let streamFailed = false;
       // Typing indicator state — shown while a tool is executing (no text yet for that round)
@@ -1492,7 +1531,7 @@ export default function OneScreen() {
 
       const abortCtrl = api.oneChatStream(
         effectiveMsg,
-        conversationId,
+        conversationIdRef.current,
         {
           onDelta: (delta) => {
             if (!isMountedRef.current) return;
@@ -1520,8 +1559,9 @@ export default function OneScreen() {
           },
           onMeta: (meta) => {
             if (!isMountedRef.current) return;
-            if (meta.conversation_id) {
+            if (meta.conversation_id && isCurrentTurn()) {
               streamConvId = meta.conversation_id;
+              conversationIdRef.current = meta.conversation_id;
               setConversationId(meta.conversation_id);
             }
             if (meta.actions) streamActions = meta.actions;
@@ -1549,12 +1589,21 @@ export default function OneScreen() {
                 ? { ...m, content: cleanText, actions: streamActions, serverId: streamMsgServerId || m.serverId, _streaming: false, _toolPending: false, _toolName: null }
                 : m
             ));
+            if (!isCurrentTurn()) return; // turno velho: mostra o texto, mas não fala nem age
+            inflightAiMsgIdRef.current = null;
             setLoading(false);
+            loadingRef.current = false;
             loadConversations(false);
             handleAIResponse(cleanText, streamActions, aiMsgId);
           },
           onError: (errMsg) => {
             if (!isMountedRef.current) return;
+            if (!isCurrentTurn()) { // turno cancelado/abortado: sem fallback (não reenvia o turno velho)
+              setMessages(prev => prev
+                .filter(m => !(m.id === aiMsgId && !streamedText))
+                .map(m => (m.id === aiMsgId ? { ...m, content: streamedText, _streaming: false, _toolPending: false, _toolName: null } : m)));
+              return;
+            }
             streamFailed = true;
             typewriterDone = true;
             if (typewriterRaf != null) { try { cancelAnimationFrame(typewriterRaf); } catch {} typewriterRaf = null; }
@@ -1576,13 +1625,18 @@ export default function OneScreen() {
                   : m
               ));
               setLoading(false);
+              loadingRef.current = false;
+              inflightAiMsgIdRef.current = null;
               loadConversations(false);
               handleAIResponse(cleanText, streamActions, aiMsgId);
               return;
             }
             setMessages(prev => prev.filter(m => m.id !== aiMsgId));
-            sendMessageFallback(effectiveMsg, currentImage, aiMsgId).finally(() => {
+            sendMessageFallback(effectiveMsg, currentImage, aiMsgId, isCurrentTurn).finally(() => {
+              if (!isCurrentTurn()) return;
               setLoading(false);
+              loadingRef.current = false;
+              inflightAiMsgIdRef.current = null;
               loadConversations(false);
             });
           },
@@ -1601,9 +1655,9 @@ export default function OneScreen() {
 
     // ── Non-streaming fallback (native or no ReadableStream) ───────────────────
     try {
-      await sendMessageFallback(effectiveMsg, currentImage, aiMsgId);
+      await sendMessageFallback(effectiveMsg, currentImage, aiMsgId, isCurrentTurn);
     } finally {
-      setLoading(false);
+      if (isCurrentTurn()) { setLoading(false); loadingRef.current = false; inflightAiMsgIdRef.current = null; }
       loadConversations(false);
     }
   }, [inputText, attachedImage, loading, conversationId, t, firstName, loadConversations, locale, sendMessageFallback, handleAIResponse, bumpActivity]);
@@ -1614,6 +1668,7 @@ export default function OneScreen() {
   useEffect(() => { handleSendRef.current = sendMessage; }, [sendMessage]);
 
   const newChat = useCallback(() => {
+    cancelInflightTurn(); conversationIdRef.current = null; // [bia-lenta 2026-10-19] thread nova de verdade
     setMessages([]); setConversationId(null); setLastFollowups([]); loadConversations(false);
   }, [loadConversations]);
 
@@ -1649,6 +1704,9 @@ export default function OneScreen() {
   // ─── Voice Input (Speech-to-Text) ───
 
   const startListening = useCallback(async () => {
+    // [bia-lenta 2026-10-19] tocar no mic = interromper a Bia (barge-in), senão a voz
+    // dela entrava na gravação e ela "respondia" a ela mesma
+    try { abortVoiceSpeaking(); } catch {}
     setAutoRead(true); // Enable auto-read when using voice
     if (Platform.OS !== 'web') {
       // Native: record audio and transcribe via server-side Whisper (auto language detect).
@@ -1829,7 +1887,7 @@ export default function OneScreen() {
           setLoading(false);
           if (text) {
             setInputText(text);
-            setTimeout(() => { sendMessage(text); setInputText(''); }, 150);
+            setTimeout(() => { (handleSendRef.current || sendMessage)(text, { voice: true }); setInputText(''); }, 150);
           } else {
             if (typeof alert !== 'undefined') alert(t('oneScreen.notUnderstood'));
           }
@@ -1860,6 +1918,7 @@ export default function OneScreen() {
     }
     // Native: stop recording, upload to Whisper, send transcribed text
     if (audioRecordingRef.current) {
+      const pttEpoch = pttEpochRef.current; // [bia-lenta 2026-10-19]
       const rec = audioRecordingRef.current;
       audioRecordingRef.current = null;
       setIsListening(false);
@@ -1899,7 +1958,9 @@ export default function OneScreen() {
         setLoading(false);
         if (text) {
           setInputText(text);
-          setTimeout(() => { sendMessage(text); setInputText(''); }, 200);
+          // [bia-lenta 2026-10-19] ref = sendMessage atual (conversa certa); se entrou no
+          // modo voz enquanto transcrevia, essa fala já foi descartada (epoch mudou).
+          if (pttEpoch === pttEpochRef.current) setTimeout(() => { (handleSendRef.current || sendMessage)(text, { voice: true }); setInputText(''); }, 200);
         } else {
           // No text detected — let user know with a more actionable hint.
           const errMsg = transRes?.message || '';
@@ -1931,6 +1992,8 @@ export default function OneScreen() {
   // Start listening specifically for voice conversation mode (auto-sends on result)
   const startListeningForVoiceMode = useCallback(() => {
     if (!voiceModeRef.current || !isMountedRef.current) return;
+    // [bia-lenta 2026-10-19] motor realtime ativo é dono do mic: o legado nunca roda junto
+    if (realtimeRef.current) return;
     // Per-session token: blocks the onend / onerror auto-restart and the
     // 8s native auto-stop from spawning overlapping recognition sessions
     // when a result already came in (codex finding: duplicate sends).
@@ -1999,7 +2062,7 @@ export default function OneScreen() {
             resetEmpty();
             setVoiceTranscript(text);
             haptic('medium');
-            setTimeout(() => { if (isFreshSession()) sendMessage(text); }, 150);
+            setTimeout(() => { if (isFreshSession() && !realtimeRef.current) (handleSendRef.current || sendMessage)(text, { voice: true }); }, 150);
           } else {
             bumpEmpty();
             scheduleReListen();
@@ -2111,7 +2174,7 @@ export default function OneScreen() {
       if (transcript) {
         setVoiceTranscript(transcript);
         haptic('medium');
-        setTimeout(() => sendMessage(transcript), 200);
+        setTimeout(() => (handleSendRef.current || sendMessage)(transcript, { voice: true }), 200);
       }
     };
     recognition.onend = () => {
@@ -2153,6 +2216,22 @@ export default function OneScreen() {
   }, [locale, sendMessage]);
 
   const enterVoiceMode = useCallback(() => {
+    // [bia-lenta 2026-10-19] UM motor de voz por vez: já em modo voz com sessão
+    // viva → ignora o 2º toque; derruba qualquer sessão realtime que tenha sobrado,
+    // descarta gravação do mic (e transcrição em voo) e cancela a resposta em
+    // andamento — senão viravam 2 Bias (uma com o contexto antigo).
+    if (voiceModeRef.current && realtimeRef.current) return;
+    try { stopAllRealtimeSessions(); } catch {}
+    realtimeRef.current = null;
+    pttEpochRef.current++;
+    if (vadTimerRef.current) { try { clearInterval(vadTimerRef.current); } catch {} vadTimerRef.current = null; }
+    if (audioRecordingRef.current) {
+      const r = audioRecordingRef.current;
+      audioRecordingRef.current = null;
+      try { r.stop?.(); } catch {}
+      setIsListening(false);
+    }
+    cancelInflightTurn();
     // Bump the session token so ANY in-flight scheduleReListen / TTS-done
     // callback from a previous session becomes stale immediately. Without
     // this, tapping the orb twice in quick succession (or exit→enter after
@@ -2221,6 +2300,8 @@ export default function OneScreen() {
       });
       realtimeRef.current = session;
       session.start().catch((e) => {
+        // parada de propósito (saiu/entrou de novo) ou já substituída: não cai no legado
+        if (e?.aborted || realtimeRef.current !== session) return;
         console.warn('[one] realtime start failed, falling back to Whisper:', e?.message);
         realtimeRef.current = null;
         if (voiceStartTimerRef.current) clearTimeout(voiceStartTimerRef.current);
@@ -2268,6 +2349,7 @@ export default function OneScreen() {
       try { realtimeRef.current.stop(); } catch {}
       realtimeRef.current = null;
     }
+    try { stopAllRealtimeSessions(); } catch {} // [bia-lenta 2026-10-19] nenhuma sessão fica viva
     abortVoiceSpeaking();
     stopListening();
     setSpeakingId(null);
@@ -2307,6 +2389,7 @@ export default function OneScreen() {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      try { stopAllRealtimeSessions(); } catch {}
       voiceModeRef.current = false;
       try { abortVoiceSpeaking(); } catch {}
       try { stopSpeak(); } catch {}
@@ -2820,7 +2903,11 @@ export default function OneScreen() {
             await api.oneHistoryDelete({ conversationId: c.id });
             setConversations(prev => prev.filter(x => x.id !== c.id));
             if (pinnedIds.includes(c.id)) togglePin(c);
-            if (conversationId === c.id) { setMessages([]); setConversationId(null); }
+            if (conversationId === c.id || conversationIdRef.current === c.id) {
+              // [bia-lenta 2026-10-19] apagou a conversa atual: nada dela segue como contexto
+              cancelInflightTurn(); conversationIdRef.current = null;
+              setMessages([]); setConversationId(null);
+            }
           } catch {
             // [2026-10-08 apps-native] falha era silenciosa (item ficava e nada avisava)
             if (Platform.OS === 'web') { try { window.alert(t('common.networkError')); } catch {} }
@@ -2832,6 +2919,7 @@ export default function OneScreen() {
             try {
               await api.oneHistoryDelete({ clearAll: true });
               setConversations([]);
+              cancelInflightTurn(); conversationIdRef.current = null; // [bia-lenta 2026-10-19]
               setMessages([]); setConversationId(null);
               setHistoryOpen(false);
               haptic('success');
