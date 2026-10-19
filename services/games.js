@@ -114,7 +114,11 @@ export function putGameView(view) {
   _views.set(id, v);
   const set = _subs.get(id);
   if (set) for (const fn of Array.from(set)) { try { fn(v); } catch {} }
+  for (const fn of Array.from(_anySubs)) { try { fn(v); } catch {} }
 }
+// [jogos 2026-10-19 inline] ouvinte de QUALQUER visão nova (lista nativa: re-monta os cartões com tabuleiro).
+const _anySubs = new Set();
+export function onAnyGameView(fn) { ensureGameWs(); _anySubs.add(fn); return () => _anySubs.delete(fn); }
 export function subscribeGame(id, fn) {
   ensureGameWs();
   const k = Number(id);

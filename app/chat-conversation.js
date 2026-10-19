@@ -207,6 +207,7 @@ import { IconGiftBox as _IconGiftBox } from '../components/Icons';
 import GameChatCard from '../components/games/GameChatCard';
 import GamePicker from '../components/games/GamePicker';
 import GameScoreboardSheet from '../components/games/GameScoreboard';
+import GamePlaySheetHost from '../components/games/GamePlaySheet'; // [jogos 2026-10-19 inline] partida em folha POR CIMA da conversa
 import { IconGamepad as _IconGamepad } from '../components/games/GameIcons';
 import MentionJumpFab from '../components/chat/MentionJumpFab'; // [2026-10-14 grupo-rajada]
 import * as api from '../services/api';
@@ -21699,7 +21700,8 @@ function ChatConversationInnerBody() {
     let G; try { G = require('../services/games'); } catch { return; }
     const g = G.parseGameContent(msg && msg.content);
     if (!g || !g.g) return;
-    const open = (id) => { try { router.push({ pathname: '/game/[id]', params: { id: String(id), cid: String(conversationId) } }); } catch {} };
+    // [jogos 2026-10-19 inline] abre na folha por cima da conversa (kill __chatyy_games_inline=false → rota antiga)
+    const open = (id) => { try { require('../services/gamesInline').openGameInChat(id, conversationId, router); } catch { try { router.push({ pathname: '/game/[id]', params: { id: String(id), cid: String(conversationId) } }); } catch {} } };
     if (act === 'open' || act === 'play' || act === 'watch') { open(g.g); return; }
     const fn = { accept: G.gameAccept, join: G.gameJoin, decline: G.gameDecline, start: G.gameStart, cancel: G.gameCancel || G.gameResign, rematch: G.gameRematch }[act]; // [jogos 2026-10-19] cancelar = chat_game_cancel
     if (!fn) { open(g.g); return; }
@@ -21715,7 +21717,7 @@ function ChatConversationInnerBody() {
     const gv = r.data && r.data.game;
     if (gv && gv.message_id) { try { _gamePatchCardRef.current(gv.message_id, G.cardContentFromView(gv)); } catch {} }
     const nv = r.data && (r.data.rematch || r.data.game);
-    if (act === 'rematch' && nv) { open(nv.g); return; }
+    if (act === 'rematch' && nv) { try { require('../services/gamesInline').afterGameCreated(nv, conversationId, router); } catch { open(nv.g); } return; }
     if (nv && nv.status === 'active' && (act === 'accept' || act === 'join' || act === 'start')) open(nv.g);
   };
   // [loc-pedido 2026-10-19] Pedido de localização na conversa (services/locationRequest.js):
@@ -39908,10 +39910,11 @@ function ChatConversationInnerBody() {
           t={t}
           colors={colors}
           isDark={isDark}
-          onCreated={(gv) => { if (gv && gv.g) { try { router.push({ pathname: '/game/[id]', params: { id: String(gv.g), cid: String(conversationId) } }); } catch {} } }}
-          onOpenGame={(gv) => { if (gv && gv.g) { try { router.push({ pathname: '/game/[id]', params: { id: String(gv.g), cid: String(conversationId) } }); } catch {} } }}
+          onCreated={(gv) => { if (gv && gv.g) { try { require('../services/gamesInline').afterGameCreated(gv, conversationId, router); } catch {} } }}
+          onOpenGame={(gv) => { if (gv && gv.g) { try { const GI = require('../services/gamesInline'); GI.afterSheetThen(() => GI.openGameInChat(gv.g, conversationId, router)); } catch {} } }}
         />
       ) : null}
+      {gamesOn && conversationId ? <GamePlaySheetHost conversationId={conversationId} /> : null}
       {showGameScore && conversationId ? (
         <GameScoreboardSheet visible onClose={() => setShowGameScore(false)} conversationId={conversationId} currentEmail={currentEmail}
           t={t} colors={colors} isDark={isDark} title={conversationType === 'group' ? (t('games.score.title') || 'Placar do grupo') : (t('games.score.titleDirect') || 'Placar da conversa')} />

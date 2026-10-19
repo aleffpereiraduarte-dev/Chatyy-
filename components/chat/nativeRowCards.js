@@ -1138,7 +1138,7 @@ function buildGame(m, row, ctx, C, own) {
   const me = ctx.myEmail || '';
   const isRes = g.kind === 'result';
   const w = 268;
-  const acts = G.gameCardActions(g, me);
+  let acts = G.gameCardActions(g, me);
   const openAct = acts.includes('play') ? 'play' : (acts.includes('watch') ? 'watch' : 'open');
   const myTurn = G.isMyTurn(g, me);
   const badge = G.gameEndBadge ? G.gameEndBadge(tf, g, me) : null; // [jogos 2026-10-19]
@@ -1181,14 +1181,20 @@ function buildGame(m, row, ctx, C, own) {
     }), { g: 10, m: [0, 0, 8, 0] }));
     body.push(text(G.gameStatusLine(tf, g, me), { fs: 14.5, fw: 700, c: ink, ml: 2 }));
   }
-  const kids = [head, vstack(body, { w: -1, p: [10, 12, 8, 12], a: 'game:' + openAct })];
+  // [jogos 2026-10-19 inline] tabuleiro tocável no próprio cartão (Velha/Forca/Quiz) ou miniatura (Damas/Cartas)
+  const board = _gameInlineNodes(g, ctx, C, tf, me);
+  let kids;
+  if (board) {
+    kids = [head, board, vstack([body[body.length - 1]], { w: -1, p: [8, 12, 8, 12], a: 'game:' + openAct })];
+    if (require('../../services/gamesInline').isInlineType(g.type)) acts = acts.filter((a) => a !== 'play' && a !== 'watch');
+  } else kids = [head, vstack(body, { w: -1, p: [10, 12, 8, 12], a: 'game:' + openAct })];
   if (acts.length) {
     const primary = { accept: 1, join: 1, start: 1, play: 1, rematch: 1 };
     kids.push(vstack([], { w: -1, h: 0.5, bg: line }));
     kids.push(hstack(acts.slice(0, 3).map((a) => {
       const prim = !!primary[a];
       const pbg = own || C.isDark ? '#FFFFFF' : '#111111';
-      return vstack([text(G.gameActionLabel(tf, a, g, me), { fs: 13.5, fw: 700, c: prim ? (own || C.isDark ? '#111111' : '#FFFFFF') : ink })], {
+      return vstack([text(_gameActLabel(G, tf, a, g, me), { fs: 13.5, fw: 700, c: prim ? (own || C.isDark ? '#111111' : '#FFFFFF') : ink })], {
         fl: 1, p: [8, 0, 8, 0], r: 10, al: 'c', bg: prim ? pbg : undefined, bw: prim ? 0 : 1, bc: prim ? undefined : line, a: 'game:' + a,
       });
     }), { w: -1, g: 8, p: [9, 10, 9, 10] }));
@@ -1196,6 +1202,161 @@ function buildGame(m, row, ctx, C, own) {
   row.bl = [vstack(kids, { w, r: 14, m: [1, 0, 1, 0] })];
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
+
+// ─── [jogos 2026-10-19 inline] jogo DENTRO do cartão na lista nativa ───────────────────────────────
+// Espelho de components/games/GameInlineBoard.js com nós tocáveis (`a`): game:mv:<casa> (Velha),
+// game:l:<letra> (Forca), game:q:<opção> (Quiz) → runCardAction → services/gamesInline.runInlineAction.
+// A visão (state) vem do store do WS; quando falta, é buscada 1× e o cartão re-monta via cards.bump().
+// Sem build: só nós v/h/tx/ic que o binário já desenha. Kill: globalThis.__chatyy_games_inline = false.
+let _gameBumpFn = null;
+let _gameBumpOff = null;
+function _gameHookBump(C) {
+  if (C && typeof C.bump === 'function') _gameBumpFn = C.bump;
+  if (_gameBumpOff) return;
+  try {
+    _gameBumpOff = require('../../services/gamesInline').onInlineChange((id, why) => {
+      if (why === 'sec') return; // relógio de 1 s do Quiz: só o render JS (re-montar a lista nativa a cada segundo pesa)
+      try { _gameBumpFn && _gameBumpFn(); } catch {}
+    });
+  } catch {}
+}
+function _gameActLabel(G, tf, a, g, me) {
+  try {
+    const GI = require('../../services/gamesInline');
+    if (GI.gamesInlineOn() && a === 'rematch' && !(g && g.rematch_st === 'pending' && g.rematch_by && String(g.rematch_by).toLowerCase() !== String(me || '').toLowerCase())) return G.tr(tf, 'games.act.playAgain', 'Jogar de novo');
+  } catch {}
+  return G.gameActionLabel(tf, a, g, me);
+}
+const _GX = [{ d: 'M6.5 6.5l11 11M17.5 6.5l-11 11' }];
+const _GO = [{ d: 'M12 4.8a7.2 7.2 0 1 1 0 14.4a7.2 7.2 0 1 1 0-14.4z' }];
+const _KB = ['ABCDEFG', 'HIJKLMN', 'OPQRSTU', 'VWXYZ'];
+const _CARD_BG = { r: '#E5484D', y: '#F0B400', g: '#22A55B', b: '#2F6FEB', W: '#141416' };
+function _gNorm(ch) { return String(ch || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase(); }
+function _gameInlineNodes(g, ctx, C, tf, me) {
+  let GI;
+  try { GI = require('../../services/gamesInline'); } catch { return null; }
+  if (!GI.gamesInlineOn() || g.kind !== 'game' || (g.status !== 'active' && g.status !== 'finished')) return null;
+  _gameHookBump(C);
+  const v = GI.ensureInlineView(g.g, g.status);
+  if (!v || !v.state) return null;
+  const active = v.status === 'active';
+  if (!active && !(v.status === 'finished' && (v.type === 'velha' || v.type === 'forca'))) return null;
+  const dark = !!C.isDark;
+  const ink = dark ? '#FFFFFF' : '#0A0A0A';
+  const sub = dark ? '#A1A1AA' : '#6B7280';
+  const card = dark ? '#1E1E21' : '#F1F1F3';
+  const card2 = dark ? '#2A2A2E' : '#E4E4E7';
+  const strong = ink; const onStrong = dark ? '#0A0A0A' : '#FFFFFF';
+  const good = '#16A34A'; const bad = '#DC2626';
+  const accent = dark ? 'rgba(255,214,10,0.30)' : 'rgba(224,168,0,0.24)';
+  const S = v.state || {};
+  const busy = GI.inlineBusy(v.g);
+  const pend = GI.inlinePending(v.g);
+  const err = GI.inlineError(v.g);
+  const kids = [];
+  if (v.type === 'velha') {
+    const b = Array.isArray(S.b) ? S.b : Array(9).fill('');
+    const legal = new Set(Array.isArray(S.legal) ? S.legal : []);
+    const win = new Set(Array.isArray(S.line) ? S.line : []);
+    const last = S.last && Number.isInteger(S.last.cell) ? S.last.cell : -1;
+    const CELL = 66;
+    const rows = [0, 1, 2].map((r) => hstack([0, 1, 2].map((c) => {
+      const i = r * 3 + c;
+      let m = b[i];
+      if (!m && pend && pend.kind === 'cell' && pend.val === i) m = v.me === 0 ? 'X' : 'O';
+      const can = active && legal.has(i) && !busy && !m;
+      const mk = m === 'X' ? iconPaths(_GX.map((x) => ({ d: x.d, k: ink, w: 2.6 })), { s: 40 })
+        : m === 'O' ? iconPaths(_GO.map((x) => ({ d: x.d, k: ink, w: 2.4 })), { s: 40 })
+          : (can ? vstack([], { w: 7, h: 7, r: 4, bg: card2 }) : null);
+      return vstack(mk ? [mk] : [], { w: CELL, h: CELL, r: 14, al: 'c', jc: 'c', bg: win.has(i) ? accent : (i === last ? card2 : card), a: can ? 'game:mv:' + i : undefined });
+    }), { g: 6 }));
+    kids.push(vstack(rows, { g: 6, al: 'c', w: -1 }));
+  } else if (v.type === 'forca') {
+    const mask = Array.isArray(S.mask) ? S.mask : [];
+    const guessed = new Set((S.g || []).map(_gNorm));
+    const shown = new Set(mask.filter(Boolean).map(_gNorm));
+    const myTurn = active && v.me !== null && v.me !== undefined && S.turn === v.me;
+    const max = S.max || 6; const wrong = S.wrong || 0;
+    kids.push(hstack([
+      S.cat ? vstack([text(S.cat, { fs: 11, fw: 700, c: ink, ml: 1 })], { bw: 1, bc: card2, r: 7, p: [2, 7, 2, 7] }) : null,
+      spacer({ fl: 1 }),
+      text(G_tr(tf, 'games.forca.errors', '{n} de {max} erros', { n: wrong, max }), { fs: 11.5, fw: 700, c: wrong >= max - 1 ? bad : sub }),
+    ], { w: -1, al: 'c', m: [0, 0, 6, 0] }));
+    kids.push(hstack(Array.from({ length: max }).map((_, k) => vstack([], { fl: 1, h: 4, r: 2, bg: k < wrong ? bad : card2 })), { w: -1, g: 3 }));
+    const word = mask.map((ch) => (ch === ' ' || ch === '-' ? (ch === '-' ? '-' : ' ') : (ch || '_'))).join(' ');
+    kids.push(text(word, { fs: mask.length > 10 ? 17 : 21, fw: 900, c: v.status === 'finished' ? (S.hanged ? bad : good) : ink, ta: 'c', w: -1, m: [10, 0, 10, 0] }));
+    if (active) {
+      _KB.forEach((row) => {
+        kids.push(hstack(row.split('').map((L) => {
+          const used = guessed.has(L);
+          const hit = used && shown.has(L);
+          const isP = pend && pend.kind === 'letter' && pend.val === L;
+          const can = myTurn && !used && !busy;
+          return vstack([text(L, { fs: 13.5, fw: 800, c: hit || isP ? onStrong : ink })], {
+            w: 30, h: 32, r: 8, al: 'c', jc: 'c', bg: hit || isP ? strong : (used ? undefined : card), bw: used && !hit ? 1 : 0, bc: used && !hit ? card2 : undefined,
+            op: used && !hit ? 0.4 : (myTurn ? 1 : 0.7), a: can ? 'game:l:' + L : undefined,
+          });
+        }), { g: 4, jc: 'c', w: -1, m: [0, 0, 4, 0] }));
+      });
+    } else if (S.word) kids.push(text(G_tr(tf, 'games.forca.wordWas', 'A palavra era {w}', { w: S.word }), { fs: 12, c: sub, ta: 'c', w: -1 }));
+  } else if (v.type === 'quiz') {
+    const isPlayer = v.me !== null && v.me !== undefined && !(S.out && S.out[v.me]);
+    const myChoice = S.my ? S.my.c : (pend && pend.kind === 'answer' && pend.q === S.i ? pend.val : null);
+    const answered = myChoice !== null && myChoice !== undefined;
+    const reveal = S.ph !== 'q';
+    kids.push(text(G_tr(tf, 'games.quiz.progress', 'Pergunta {i} de {n}', { i: (S.i || 0) + 1, n: S.count || 10 }), { fs: 11.5, fw: 700, c: sub, m: [0, 0, 6, 0] }));
+    kids.push(text(S.q || '', { fs: 15, fw: 800, c: ink, lh: 20, m: [0, 0, 8, 0] }));
+    (S.o || []).forEach((o, i) => {
+      const right = reveal && i === S.a;
+      const mineWrong = reveal && myChoice === i && i !== S.a;
+      const chosen = myChoice === i;
+      const can = isPlayer && !reveal && !answered && !busy;
+      const fg = right ? '#FFFFFF' : (chosen && !reveal ? onStrong : ink);
+      kids.push(hstack([
+        text(['A', 'B', 'C', 'D'][i] || '', { fs: 13.5, fw: 900, c: fg, w: 16 }),
+        text(o, { fs: 13.5, fw: 600, c: fg, fl: 1, ml: 2 }),
+      ], { w: -1, g: 8, al: 'c', r: 11, p: [9, 10, 9, 10], m: [0, 0, 6, 0], bg: right ? good : (chosen && !reveal ? strong : card), bw: mineWrong ? 2 : 0, bc: mineWrong ? bad : undefined, op: reveal && !right && !chosen ? 0.5 : 1, a: can ? 'game:q:' + i : undefined }));
+    });
+    kids.push(text(!reveal
+      ? (answered ? G_tr(tf, 'games.inline.answered', 'Resposta enviada') : (isPlayer ? G_tr(tf, 'games.quiz.answerFast', 'Responda rápido: vale mais pontos') : G_tr(tf, 'games.spectating', 'Você está assistindo')))
+      : (S.my && S.my.pts > 0 ? G_tr(tf, 'games.quiz.gotPts', 'Certa! +{n} pontos', { n: S.my.pts }) : (S.my ? G_tr(tf, 'games.quiz.wrong', 'Não foi desta vez') : G_tr(tf, 'games.quiz.next', 'Próxima pergunta já vem'))),
+    { fs: 12, fw: reveal ? 800 : 500, c: reveal && S.my && S.my.pts > 0 ? good : sub, ta: 'c', w: -1 }));
+  } else if (v.type === 'damas') {
+    const bd = typeof S.bd === 'string' && S.bd.length === 64 ? S.bd : '.'.repeat(64);
+    const flip = v.me === 1;
+    const lastSet = new Set(S.last && Array.isArray(S.last.p) ? [S.last.p[0], S.last.p[S.last.p.length - 1]] : []);
+    const CL = 18;
+    const lightSq = dark ? '#5B5B60' : '#EDEDED'; const darkSq = dark ? '#1E1E21' : '#3C3C3F';
+    const rows = [];
+    for (let r = 0; r < 8; r++) {
+      const cells = [];
+      for (let c = 0; c < 8; c++) {
+        const k = r * 8 + c; const sq = flip ? 63 - k : k; const ch = bd[sq];
+        const piece = ch && ch !== '.' ? vstack([], { w: 13, h: 13, r: 7, bg: ch === 'w' || ch === 'W' ? '#F4F1EA' : '#151517', bw: ch === 'W' || ch === 'B' ? 2 : 1, bc: ch === 'W' || ch === 'B' ? '#E0A800' : (ch === 'w' ? '#B9B4A8' : '#5A5A60') }) : null;
+        cells.push(vstack(piece ? [piece] : [], { w: CL, h: CL, al: 'c', jc: 'c', bg: lastSet.has(sq) ? accent : ((r + c) % 2 ? darkSq : lightSq) }));
+      }
+      rows.push(hstack(cells, {}));
+    }
+    kids.push(vstack([vstack(rows, { bw: 3, bc: dark ? '#2C2C2E' : '#0A0A0A', r: 6 })], { w: -1, al: 'c', a: 'game:play' }));
+  } else if (v.type === 'cartas') {
+    const top = String(S.top || '');
+    const val = top.slice(1);
+    const lbl = top === 'WW' ? '' : top === 'W4' ? '+4' : val === 'D' ? '+2' : val === 'S' ? G_tr(tf, 'games.cartas.skip', 'Pular') : val === 'R' ? G_tr(tf, 'games.cartas.reverse', 'Inverter') : val;
+    const seats = Array.isArray(v.seats) ? v.seats : [];
+    const counts = Array.isArray(S.counts) ? S.counts : [];
+    const info = [];
+    if (Array.isArray(S.hand)) info.push(text(G_tr(tf, 'games.inline.yourCards', 'Você tem {n} cartas', { n: S.hand.length }), { fs: 13.5, fw: 800, c: ink }));
+    seats.forEach((e, i) => { if (i !== v.me) info.push(text(`${require('../../services/games').nameOf(v, e, me, tf)} · ${G_tr(tf, 'games.cartas.nShort', '{n} c.', { n: counts[i] ?? 0 })}`, { fs: 12, c: sub, ml: 1 })); });
+    kids.push(hstack([
+      top ? vstack([text(lbl || 'W', { fs: lbl.length > 2 ? 11 : 20, fw: 800, c: '#FFFFFF', ta: 'c' })], { w: 48, h: 70, r: 8, al: 'c', jc: 'c', bg: _CARD_BG[top[0]] || '#777777', bw: 1, bc: 'rgba(255,255,255,0.35)' }) : null,
+      vstack(info, { fl: 1, g: 3 }),
+    ], { w: -1, g: 14, al: 'c', a: 'game:play' }));
+  }
+  if (!kids.length) return null;
+  if (err) kids.push(text(err, { fs: 12, fw: 700, c: bad, ta: 'c', w: -1, m: [4, 0, 0, 0] }));
+  return vstack(kids, { w: -1, p: [10, 12, 6, 12], bg: dark ? '#000000' : '#FFFFFF' });
+}
+function G_tr(tf, k, fb, vars) { try { return require('../../services/games').tr(tf, k, fb, vars); } catch { return fb; } }
 
 // [loc-pedido 2026-10-19] Pedido de localização — espelho de components/chat/LocationRequestCard.js.
 // Ações: lr:share · lr:decline (quem recebeu) · lr:cancel (quem pediu).
@@ -1595,7 +1756,10 @@ export function runCardAction(item, action, D) {
       }
       case 'st_open': { _openStatus(m, D, tt); return; }
       case 'gift_thank': { if (typeof D.thankGift === 'function') D.thankGift(m); return; } // [gift-premium 2026-10-16]
-      case 'game': { if (typeof D.gameAction === 'function') D.gameAction(m, arg || 'open'); return; } // [jogos 2026-10-18]
+      case 'game': { // [jogos 2026-10-18] · [2026-10-19 inline] lance no próprio cartão (mv/l/q) não sai do chat
+        try { if (require('../../services/gamesInline').runInlineAction(m, arg, t)) return; } catch {}
+        if (typeof D.gameAction === 'function') D.gameAction(m, arg || 'open'); return;
+      }
       case 'lr': { if (typeof D.locReqAction === 'function') D.locReqAction(m, arg); return; } // [loc-pedido 2026-10-19] lr:share|decline
       default: return;
     }

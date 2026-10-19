@@ -8,6 +8,8 @@ import {
   parseGameContent, gameTitle, gameStatusLine, resultHeadline, gameCardActions, gameActionLabel,
   nameOf, playerStatusLabel, isMyTurn, tr, gameEndBadge,
 } from '../../services/games';
+import GameInlineBoard, { useInlineView, inlineHasBoard } from './GameInlineBoard';
+import { gamesInlineOn, isInlineType } from '../../services/gamesInline';
 
 const PRIMARY = new Set(['accept', 'join', 'start', 'play', 'rematch']);
 
@@ -21,13 +23,26 @@ function Initials({ name, size = 22, dark, bg }) {
   );
 }
 
+// [jogos 2026-10-19 inline] revanche no cartão = "Jogar de novo" (a outra pessoa ainda aceita)
+export function _actLabel(t, a, g, me, inlineOn) {
+  if (inlineOn && a === 'rematch' && !(g && g.rematch_st === 'pending' && g.rematch_by && String(g.rematch_by).toLowerCase() !== String(me || '').toLowerCase())) return tr(t, 'games.act.playAgain', 'Jogar de novo');
+  return gameActionLabel(t, a, g, me);
+}
+
 function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction }) {
   const g = parseGameContent(msg && msg.content);
+  // [jogos 2026-10-19 inline] Velha/Forca/Quiz jogáveis no cartão; Damas/Cartas = miniatura (toque abre a folha)
+  const inlineOn = gamesInlineOn();
+  const liveId = inlineOn && g && g.kind === 'game' && (g.status === 'active' || g.status === 'finished') ? g.g : null;
+  const iv = useInlineView(liveId, g && g.status);
+  const hasBoard = !!liveId && inlineHasBoard(iv);
   if (!g) return <Text style={{ color: isOwn ? '#fff' : colors.text }}>{tr(t, 'games.preview', 'Jogo')}</Text>;
   const ink = isOwn ? '#FFFFFF' : (colors.text || '#111');
   const sub = isOwn ? 'rgba(255,255,255,0.72)' : (colors.textSecondary || '#6b7280');
   const line = isOwn ? 'rgba(255,255,255,0.18)' : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
-  const acts = gameCardActions(g, currentEmail);
+  let acts = gameCardActions(g, currentEmail);
+  // tabuleiro já no cartão → "Jogar"/"Assistir" sobram (tocar o cabeçalho abre a partida completa)
+  if (hasBoard && isInlineType(g.type)) acts = acts.filter((a) => a !== 'play' && a !== 'watch');
   const press = (a) => { try { onAction && onAction(msg, a, g); } catch {} };
   const isResult = g.kind === 'result';
   const myTurn = isMyTurn(g, currentEmail);
@@ -68,10 +83,10 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
       </View>
     );
   } else {
-    const pls = Array.isArray(g.players) ? g.players.filter((p) => g.status === 'pending' || p.s === 'accepted' || p.s === 'left') : [];
+    const pls = hasBoard ? [] : Array.isArray(g.players) ? g.players.filter((p) => g.status === 'pending' || p.s === 'accepted' || p.s === 'left') : [];
     body = (
       <View style={st.body}>
-        <View style={st.players}>
+        {pls.length ? <View style={st.players}>
           {pls.slice(0, 6).map((p) => {
             const turn = g.status === 'active' && String(g.turn || '').toLowerCase() === String(p.e).toLowerCase();
             const win = Array.isArray(g.winners) && g.winners.some((w) => String(w).toLowerCase() === String(p.e).toLowerCase());
@@ -86,7 +101,7 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
             );
           })}
           {pls.length > 6 ? <Text style={[st.small, { color: sub, alignSelf: 'center' }]}>+{pls.length - 6}</Text> : null}
-        </View>
+        </View> : null}
         <Text style={[st.status, { color: ink }]} numberOfLines={2}>{gameStatusLine(t, g, currentEmail)}</Text>
       </View>
     );
@@ -97,16 +112,22 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
       <Pressable onPress={() => press(acts.includes('play') ? 'play' : (acts.includes('watch') ? 'watch' : 'open'))} accessibilityRole="button"
         accessibilityLabel={`${gameTitle(t, g.type)}. ${isResult ? resultHeadline(t, g, currentEmail) : gameStatusLine(t, g, currentEmail)}`}>
         {header}
-        {body}
+        {hasBoard ? null : body}
       </Pressable>
+      {hasBoard ? (
+        <>
+          <GameInlineBoard g={g} currentEmail={currentEmail} colors={colors} isDark={isDark} t={t} onOpen={() => press('play')} />
+          <Pressable onPress={() => press(acts.includes('play') ? 'play' : (acts.includes('watch') ? 'watch' : 'open'))} accessibilityRole="button">{body}</Pressable>
+        </>
+      ) : null}
       {acts.length ? (
         <View style={[st.acts, { borderTopColor: line }]}>
           {acts.slice(0, 3).map((a) => {
             const prim = PRIMARY.has(a);
             return (
               <Pressable key={a} onPress={() => press(a)} style={({ pressed }) => [st.btn, prim ? { backgroundColor: isOwn ? '#fff' : (isDark ? '#fff' : '#111') } : { borderWidth: 1, borderColor: line }, pressed && { opacity: 0.7 }]}
-                accessibilityRole="button" accessibilityLabel={gameActionLabel(t, a, g, currentEmail)}>
-                <Text style={[st.btnTx, { color: prim ? (isOwn || isDark ? '#111' : '#fff') : ink }]}>{gameActionLabel(t, a, g, currentEmail)}</Text>
+                accessibilityRole="button" accessibilityLabel={_actLabel(t, a, g, currentEmail, inlineOn)}>
+                <Text style={[st.btnTx, { color: prim ? (isOwn || isDark ? '#111' : '#fff') : ink }]}>{_actLabel(t, a, g, currentEmail, inlineOn)}</Text>
               </Pressable>
             );
           })}
