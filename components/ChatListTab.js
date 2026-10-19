@@ -38,6 +38,7 @@ import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
 import BiaHomeCard from './bia/BiaHomeCard'; // [2026-10-15 bia-design]
+import { homeCarouselOn, HC, CarouselSlot, CarouselDivider, PinBadge, SkeletonSlot, BiaCarouselItem, tc as _hcT } from './chatlist/HomeCarousel'; // [2026-10-19 home-carousel]
 import SyncStatusTitle from './SyncStatusTitle'; // [2026-10-13 sync-status]
 import BackgroundSyncPill from './BackgroundSyncPill'; // [2026-10-18 bg-sync] "Sincronizando mensagens…" discreto
 import { noteUserActivity as _noteUserActivity } from '../services/userActivity'; // [2026-10-18 bg-sync]
@@ -2438,7 +2439,9 @@ const _saveNativeConversations = (convs) => {
 };
 
 // ── Status Stories Row (Instagram-style, unified with Notes) ──
-function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, requestOpenStatus, requestNewStatus }) {
+function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, requestOpenStatus, requestNewStatus,
+  // [2026-10-19 home-carousel] modo carrossel único (Eu · Bia · status · fixadas)
+  carousel = false, pinnedItems = null, carouselActionsRef = null, selectedIds = null }) {
   // Status feed comes from the shared hook now: WS deltas, MMKV preload,
   // fingerprint-diff-anti-flicker, 30d disk cache, video warm-cache. The
   // local `statuses` state lives just to keep the optimistic mutation
@@ -3095,7 +3098,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
     && otherStatuses.length === 0 && notesOnly.length === 0 && liveOnlyEntries.length === 0
     && pubProgress == null && !pubFailed
     // sobreposições (nota, compositor, câmera, visualizador) moram no render completo
-    && !showNoteModal && !showStatusComposer && !showCustomCamera && !statusViewerEmail && !statusEditor;
+    && !showNoteModal && !showStatusComposer && !showCustomCamera && !statusViewerEmail && !statusEditor
+    && !carousel; // [2026-10-19 home-carousel] o carrossel sempre mostra a fileira
   if (_soloOwn) {
     return (
       <View style={{ borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
@@ -3135,8 +3139,190 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
     );
   }
 
+  // [2026-10-19 home-carousel] Variante B "Mais limpo": UMA fileira — Eu · Bia ·
+  // status (não vistos → vistos) │ fixadas (menores). Só a Bia tem balão.
+  // Ver components/chatlist/HomeCarousel.js.
+  let _carouselEl = null;
+  if (carousel) {
+    const _A = () => (carouselActionsRef && carouselActionsRef.current) || {};
+    const _lc = colors.text;
+    const _sub = colors.textSecondary;
+    const _editNote = () => { try { (_A().onEditNote || (() => setShowNoteModal(true)))(); } catch {} };
+    const _ownLabel = pubProgress != null ? t('status.ring.uploading') : t('status.yourStory');
+    const _pins = Array.isArray(pinnedItems) ? pinnedItems : [];
+    const _firstName = (s) => { const n = String(s || '').trim(); return n.split(/\s+/)[0] || n; };
+    const _showSkel = statusLoading && otherStatuses.length === 0 && liveOnlyEntries.length === 0;
+    _carouselEl = (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        decelerationRate="normal"
+        contentContainerStyle={{ paddingLeft: HC.side - (HC.itemW - HC.ring) / 2 - 5, paddingRight: HC.side, paddingTop: HC.padTop, paddingBottom: HC.padBottom, gap: HC.gap, alignItems: 'flex-start' }}
+        testID="home-carousel"
+      >
+        {/* 1. Eu: "+" posta status; com status o anel aparece e o toque abre. */}
+        <CarouselSlot
+          key="own"
+          label={_ownLabel}
+          labelColor={_sub}
+          onPress={_onOwnStatusPress}
+          onLongPress={_editNote}
+          accessibilityLabel={`${t('status.yourStory')}. ${myStatus ? (t('chatConv.tapToView') || 'Toque para ver') : t('status.tapToAdd')}`}
+          testID="home-carousel-own"
+        >
+          <StoryRingAvatar
+            name={myDisplayName}
+            email={user?.email}
+            size={HC.avatar}
+            ringStyle={myStatus ? 'solid' : 'none'}
+            badge="plus"
+            onBadgePress={myStatus ? () => { try { haptic.light(); } catch {} try { requestNewStatus?.(); } catch {} } : undefined}
+            badgeAccessibilityLabel={t('status.ring.newStatus')}
+            uploadProgress={pubProgress}
+            uploadFailed={pubFailed}
+            textPreview={myStatus ? textPreviewOf(myStatus.items) : null}
+            pulse={false}
+            isDark={isDark}
+            colors={colors}
+          />
+        </CarouselSlot>
+
+        {/* 2. Bia: balão com a frase do dia; toque = chat, segurar = voz. */}
+        <BiaCarouselItem key="bia" isDark={isDark} t={t} router={router} labelColor={_lc} />
+
+        {/* Ao vivo sem status */}
+        {liveOnlyEntries.map((l) => (
+          <CarouselSlot
+            key={`live-${l.email}`}
+            label={_firstName(l.name)}
+            labelColor={_lc}
+            onPress={() => openLiveViewer(l.email, l.session_id, l.name)}
+            accessibilityLabel={`${l.name}, ${liveAoVivo}`}
+          >
+            <StoryRingAvatar name={l.name} email={l.email} size={HC.avatar} ringStyle="none" isLive liveLabel={liveAoVivo} isDark={isDark} colors={colors} />
+          </CarouselSlot>
+        ))}
+
+        {/* 3. Status dos contatos: não vistos primeiro (anel tinta), vistos com
+            anel cinza claro — muda ao vivo depois de ver (useStatuses). */}
+        {otherStatuses.map((s) => {
+          const allViewed = (s.items || []).every(it => it.viewed);
+          const liveInfo = livesByEmail[(s.email || '').toLowerCase()];
+          const isLive = !!liveInfo;
+          const full = emailToDisplayName(s.name || s.email?.split('@')[0] || '');
+          return (
+            <CarouselSlot
+              key={`st-${s.email}`}
+              label={_firstName(full)}
+              labelColor={allViewed ? _sub : _lc}
+              onPress={() => isLive ? openLiveViewer(s.email, liveInfo.id) : openStatus(s.email)}
+              onPressIn={() => {
+                if (Platform.OS === 'web' || isLive) return;
+                try {
+                  const { cacheMedia } = require('../services/mediaCache');
+                  const first = (s.items || [])[0];
+                  const raw = first && (first.media_url || ((first.type === 'image' || first.type === 'video') && /^(\/|https?:\/\/)/.test(String(first.content || '')) ? first.content : ''));
+                  if (raw) cacheMedia(raw.startsWith('http') ? raw : api.getMediaUrl(raw), { force: true }).catch(() => {});
+                } catch {}
+              }}
+              onLongPress={() => {
+                const peerName = s.name || s.email?.split('@')[0] || '';
+                const goReply = () => {
+                  try {
+                    const { chatCreate } = require('../services/api');
+                    chatCreate([s.email], '', 'direct').then(r => {
+                      const cid = r?.data?.conversation_id || r?.data?.id;
+                      if (!cid) return;
+                      require('../services/openConversation').openConversation(`/chat-conversation?id=${cid}&name=${encodeURIComponent(peerName)}&type=direct&email=${encodeURIComponent(s.email)}&replyStatus=1`, { router });
+                    }).catch(() => {});
+                  } catch {}
+                };
+                const doMute = async () => {
+                  try { await api.statusMute(s.email); } catch {}
+                  try { removeStatusGroup?.(s.email); } catch {}
+                  try { haptic.select(); } catch {}
+                };
+                Alert.alert(peerName || (t('status.title') || 'Status'), null, [
+                  { text: t('status.reply') || 'Responder', onPress: goReply },
+                  { text: `${t('status.muteAction') || 'Silenciar status de'} ${peerName}`, style: 'destructive', onPress: doMute },
+                  { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                ]);
+              }}
+              accessibilityLabel={`${full}. ${isLive ? liveAoVivo : (allViewed ? _hcT(t, 'homeCarousel.statusSeen', 'Status visto') : _hcT(t, 'homeCarousel.statusNew', 'Status novo'))}`}
+            >
+              <StoryRingAvatar
+                name={s.name || s.email}
+                email={s.email}
+                size={HC.avatar}
+                ringStyle="solid"
+                allViewed={allViewed}
+                isLive={isLive}
+                liveLabel={liveAoVivo}
+                badge={null}
+                pulse={false}
+                isDark={isDark}
+                colors={colors}
+                closeFriends={!isLive && (s.items || []).some(it => (it?.meta?.privacy || it?.privacy) === 'close_friends')}
+                textPreview={isLive ? null : textPreviewOf(s.items)}
+              />
+            </CarouselSlot>
+          );
+        })}
+
+        {/* Primeira carga sem cache: círculos de esqueleto com brilho. */}
+        {_showSkel ? [0, 1, 2].map(i => <SkeletonSlot key={`sk-${i}`} isDark={isDark} />) : null}
+
+        {/* │ divisória: status de um lado, fixadas do outro */}
+        {_pins.length > 0 ? <CarouselDivider key="div" color={isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)'} /> : null}
+
+        {/* 4. Fixadas: 52 pt, sem anel, selo de alfinete; toque abre, segurar = menu. */}
+        {_pins.map((item) => {
+          const isGroup = item.type === 'group' || item.type === 'channel';
+          const peerEmail = !isGroup ? (item.other_email || item.contact_email || item.email || '') : '';
+          let nick = '';
+          if (peerEmail) { try { nick = require('../services/nicknames').getNickname(peerEmail); } catch {} }
+          const nm = nick || emailToDisplayName(item.display_name || item.name || '?');
+          const unread = item.unread_count || 0;
+          const sel = !!(selectedIds && selectedIds.has && selectedIds.has(item.id));
+          return (
+            <CarouselSlot
+              key={`pin-${item.id}`}
+              width={HC.pinW}
+              labelSize={11}
+              label={isGroup ? nm : _firstName(nm)}
+              labelColor={_lc}
+              onPress={() => { try { _A().onPinPress?.(item); } catch {} }}
+              onLongPress={() => { try { _A().onPinLongPress?.(item); } catch {} }}
+              accessibilityLabel={`${nm}. ${_hcT(t, 'homeCarousel.pinned', 'Fixada')}${unread > 0 ? `. ${unread} ${_hcT(t, 'homeCarousel.unread', 'não lidas')}` : ''}`}
+              testID={`home-carousel-pin-${item.id}`}
+            >
+              <View style={{ width: HC.pinAvatar, height: HC.pinAvatar }}>
+                {isGroup
+                  ? <GroupAvatarStack conversation={item} size={HC.pinAvatar} isDark={isDark} />
+                  : <AvatarCircle name={nm} email={peerEmail} size={HC.pinAvatar} />}
+                {unread > 0 ? (
+                  <View pointerEvents="none" style={{
+                    position: 'absolute', top: -4, right: -6, minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5,
+                    backgroundColor: _accBg(isDark ? LP_DARK : LP_LIGHT), borderWidth: 2, borderColor: isDark ? '#000000' : '#FFFFFF',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Text maxFontSizeMultiplier={1} style={{ color: _accTx(isDark ? LP_DARK : LP_LIGHT), fontSize: 10.5, fontWeight: '800' }}>{unread > 99 ? '99+' : unread}</Text>
+                  </View>
+                ) : null}
+                <PinBadge isDark={isDark} />
+                {sel ? (
+                  <View pointerEvents="none" style={{ position: 'absolute', left: -3, top: -3, width: HC.pinAvatar + 6, height: HC.pinAvatar + 6, borderRadius: (HC.pinAvatar + 6) / 2, borderWidth: 3, borderColor: colors.text }} />
+                ) : null}
+              </View>
+            </CarouselSlot>
+          );
+        })}
+      </ScrollView>
+    );
+  }
+
   return (
-    <View style={{ paddingTop: stripHasContent ? _LMs.storyPadTop : 0, paddingBottom: stripHasContent ? _LMs.storyPadBottom : 0, borderBottomWidth: stripHasContent ? StyleSheet.hairlineWidth : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
+    <View style={carousel ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' } : { paddingTop: stripHasContent ? _LMs.storyPadTop : 0, paddingBottom: stripHasContent ? _LMs.storyPadBottom : 0, borderBottomWidth: stripHasContent ? StyleSheet.hairlineWidth : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
       {/* Dedicated live bar — prepended above the story strip so contacts
           who are streaming RIGHT NOW are the very first thing the user
           sees on the chat list. Renders only when at least one host is
@@ -3151,7 +3337,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
           colors={colors}
         />
       )}
-      {stripHasContent ? (
+      {_carouselEl}
+      {(!carousel && stripHasContent) ? (
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: _LMs.storyGap }}>
         {/* Your story/note */}
         <TouchableOpacity
@@ -8241,6 +8428,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // [2026-10-10 qa-sweep] Buscando: as fixadas aparecem misturadas em
     // "CONVERSAS" (com o ícone de pin) → o rótulo "FIXADAS" ficava órfão/vazio.
     if (filter !== 'all' || pinnedCount === 0 || String(searchQuery || '').trim()) return null;
+    // [2026-10-19 home-carousel] fixadas moram no carrossel do topo; a fileira
+    // antiga só volta no modo "Reorganizar fixados" (arrastar p/ ordenar).
+    if (homeCarouselOn() && pinnedAvatarsMode && !pinnedEditMode) return null;
     // iMessage-style grid: avatares grandes circulares no topo, até 9 fixadas.
     // Acima de 9 cai no fallback "FIXADAS" (lista vertical com badge de pin)
     // — 10+ bolas grandes ficam estranhas.
@@ -8813,6 +9003,15 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
+  // [2026-10-19 home-carousel] Bia + "Seu status" + fixadas numa fileira só.
+  // Ações por ref (o header é memoizado; o ref sempre aponta p/ os handlers atuais).
+  const _carouselOn = homeCarouselOn();
+  const _carouselActionsRef = useRef({});
+  _carouselActionsRef.current = {
+    onPinPress: (item) => { if (selectionMode) toggleSelected(item.id); else handleConversationPress(item); },
+    onPinLongPress: (item) => { try { showLongPressMenu(item); } catch {} },
+    onEditNote: () => { setNoteInput(myNote?.content || ''); setShowNoteModal(true); },
+  };
   const ListHeaderComponent = useMemo(() => (
     <>
       {/* Locked-chats "Secret code" settings — shown at the top of the locked
@@ -8951,14 +9150,14 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       )}
       {/* Chatyy One AI quick access (like Snapchat's My AI)
           [2026-10-15 bia-design] mini-orb vivo + sugestão do momento + atalho de voz */}
-      {!(searchQuery || '').trim() && (
+      {!_carouselOn && !(searchQuery || '').trim() && (
         <BiaHomeCard isDark={isDark} t={t} router={router} P={P} avatarSize={_rowAvatar()} compact={listMetrics().compact} nameStyle={s.rowName} previewStyle={s.rowPreview} />
       )}
       {/* [2026-10-08 chat-beauty-list] Same inset hairline as the rows (was
           a full-bleed border that broke the list rhythm).
           [2026-10-16 wave13 swipe-ios] Android também (a lista nativa agora
           desenha a mesma linha inset entre as conversas, igual ao iOS). */}
-      {!(searchQuery || '').trim() && (
+      {!_carouselOn && !(searchQuery || '').trim() && (
         <View style={[s.separator, { backgroundColor: P.hair, marginLeft: _sepInset() }]} />
       )}
 
@@ -8971,7 +9170,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           acompanha o resto do content"). Rendering it plainly = it moves EXACTLY
           with everything else, because it IS content. No transform = perfect. */}
       {!(searchQuery || '').trim() && (
-        <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} setActiveTab={setActiveTab} requestOpenStatus={requestOpenStatus} requestNewStatus={requestNewStatus} />
+        <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} setActiveTab={setActiveTab} requestOpenStatus={requestOpenStatus} requestNewStatus={requestNewStatus}
+          carousel={_carouselOn}
+          pinnedItems={_carouselOn && pinnedAvatarsMode && !pinnedEditMode ? pinnedConversations : null}
+          carouselActionsRef={_carouselActionsRef}
+          selectedIds={selectionMode ? selectedIds : null} />
       )}
       {renderArchivedHeader()}
       {filter === 'archived' && archivedCount > 0 && keepArchived ? (
@@ -9067,7 +9270,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // [2026-10-18 tg-list] linha Arquivadas (nomes + puxar p/ revelar)
     archivedPreview, archRevealed, _archPullOn,
     // [2026-10-18 compact-list] kill switch reflete sem esperar outra mudança
-    _lmCompact]);
+    _lmCompact,
+    // [2026-10-19 home-carousel]
+    _carouselOn, myNote]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {
@@ -9273,7 +9478,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       {/* Instagram Notes strip — only shown when there are notes to display,
           otherwise the status/stories row already surfaces the "Seu status"
           CTA and we'd have two duplicate affordances. */}
-      {(notes.length > 0 || myNote) && (
+      {!_carouselOn /* [2026-10-19 home-carousel] notas vão no carrossel */ && (notes.length > 0 || myNote) && (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -9368,7 +9573,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       </ScrollView>
     </>
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [notes, myNote, isDark, colors, P, t, FilterChip, filter, _chipRailOn, handleDeleteFolderChip, unreadCount, favoritesCount, groupCount, channelCount, personalCount, archivedCount, chatFolders, folderUnreadCounts, router, _lmCompact]);
+  ), [notes, myNote, isDark, colors, P, t, FilterChip, filter, _chipRailOn, handleDeleteFolderChip, unreadCount, favoritesCount, groupCount, channelCount, personalCount, archivedCount, chatFolders, folderUnreadCounts, router, _lmCompact, _carouselOn]);
 
   // Large title "Conversas" (iOS UINavigationBar large title / M3 large top
   // app bar): rola 1:1 com a lista; o chat.js faz o título compacto aparecer

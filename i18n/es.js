@@ -14308,4 +14308,10 @@ export default {
   'kidsLock.askWait': 'Pedido ya enviado',
   'kidsLock.askSentDesc': 'Avisamos a tu responsable. Si lo permite, la app vuelve al instante.',
   'kidsLock.askFail': 'No se pudo enviar ahora. Inténtalo de nuevo.',
+  // [2026-10-19 home-carousel]
+  'homeCarousel.statusSeen': "Estado visto",
+  'homeCarousel.statusNew': "Estado nuevo",
+  'homeCarousel.pinned': "Fijada",
+  'homeCarousel.unread': "sin leer",
+  'homeCarousel.biaHint': "Toca para chatear. Mantén pulsado para hablar por voz.",
 };

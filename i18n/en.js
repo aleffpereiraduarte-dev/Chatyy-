@@ -14309,4 +14309,10 @@ export default {
   'kidsLock.askWait': 'Request already sent',
   'kidsLock.askSentDesc': 'We let your parent know. If they allow it, the app comes back right away.',
   'kidsLock.askFail': 'Couldn\'t send it right now. Try again.',
+  // [2026-10-19 home-carousel]
+  'homeCarousel.statusSeen': "Status viewed",
+  'homeCarousel.statusNew': "New status",
+  'homeCarousel.pinned': "Pinned",
+  'homeCarousel.unread': "unread",
+  'homeCarousel.biaHint': "Tap to chat. Touch and hold to talk by voice.",
 };

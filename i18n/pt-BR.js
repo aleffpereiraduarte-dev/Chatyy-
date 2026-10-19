@@ -14387,4 +14387,10 @@ export default {
   'kidsLock.askWait': 'Pedido já enviado',
   'kidsLock.askSentDesc': 'Avisamos seu responsável. Se ele liberar, o app volta na hora.',
   'kidsLock.askFail': 'Não deu para enviar agora. Tente de novo.',
+  // [2026-10-19 home-carousel]
+  'homeCarousel.statusSeen': "Status visto",
+  'homeCarousel.statusNew': "Status novo",
+  'homeCarousel.pinned': "Fixada",
+  'homeCarousel.unread': "não lidas",
+  'homeCarousel.biaHint': "Toque para conversar. Toque e segure para falar por voz.",
 };
