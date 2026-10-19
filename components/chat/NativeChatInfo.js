@@ -86,6 +86,21 @@ export function isNativeProfileEnabled() {
 }
 
 /**
+ * [2026-10-19 profile-grid-native] ChatInfo api ≥ 5 (perfil): hero.cover (capa
+ * atrás do avatar com degradê), hero.ring (anel de status 'unseen'|'seen'),
+ * linhas k:'grid' (grade 3 colunas de `media`, pagina por onMediaEnd) e k:'hl'
+ * (faixa de destaques da prop `highlights` [{key,u,a,title}]; toque →
+ * onMediaPress {key:'hl|<id>'}, toque longo → {key:'hl!|<id>'}).
+ * Kill switch OTA: globalThis.__chatyy_profile_grid_native = false (volta à
+ * faixa de 12 miniaturas + linha "Destaques" da api 3).
+ */
+export function isNativeProfileV5Enabled() {
+  if (!isNativeProfileEnabled()) return false;
+  try { if (globalThis.__chatyy_profile_grid_native === false) return false; } catch {}
+  try { return chatInfoApiVersion() >= 5; } catch { return false; }
+}
+
+/**
  * [2026-10-18 profile-edit-native] "Editar perfil" NATIVO (Telegram) dentro da
  * mesma view: binário api ≥ 4 + perfil nativo ligado + kill switch OTA
  * globalThis.__chatyy_native_profile_edit = false (volta à folha JS).
@@ -165,7 +180,12 @@ function Inner(props) {
   const propsRef = useRef(props);
   propsRef.current = props;
 
-  const nativeRows = useMemo(() => (Array.isArray(rows) ? rows.filter((r) => r && r.id != null).map(_stripRow) : []), [rows]);
+  // [2026-10-19 profile-grid-native] api ≥ 5: capa/anel/grade/destaques.
+  const v5 = (() => { try { return chatInfoApiVersion() >= 5; } catch { return false; } })();
+  const nativeRows = useMemo(() => (Array.isArray(rows) ? rows.filter((r) => r && r.id != null && (v5 || (r.k !== 'grid' && r.k !== 'hl'))).map(_stripRow) : []), [rows, v5]);
+  const hlKey = v5 && Array.isArray(props.highlights) ? JSON.stringify(props.highlights) : '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableHighlights = useMemo(() => (v5 && Array.isArray(props.highlights) ? props.highlights : null), [hlKey]);
   const rowsKey = useMemo(() => JSON.stringify(nativeRows), [nativeRows]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableRows = useMemo(() => nativeRows, [rowsKey]);
@@ -183,9 +203,12 @@ function Inner(props) {
       photos: Array.isArray(h.photos) ? h.photos.filter((p) => p && p.u).slice(0, 9).map((p) => ({ u: String(p.u), a: p.a ? 1 : 0 })) : [],
       nav: h.nav && h.nav.key && h.nav.label ? { key: String(h.nav.key), label: String(h.nav.label) } : null,
       back: !!h.back,
+      // [2026-10-19 profile-cover-hero] api ≥ 5 (binários velhos ignoram).
+      ...(v5 && h.cover && h.cover.u ? { cover: { u: String(h.cover.u), a: h.cover.a ? 1 : 0 } } : null),
+      ...(v5 && h.ring ? { ring: String(h.ring) } : null),
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hero, rows]);
+  }, [hero, rows, v5]);
   const heroKey = JSON.stringify(nativeHero);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableHero = useMemo(() => nativeHero, [heroKey]);
@@ -257,6 +280,7 @@ function Inner(props) {
         try { propsRef.current.onMemberPress?.(id); } catch {}
       },
       onMembersEnd: () => { try { propsRef.current.onMembersEnd?.(); } catch {} },
+      onMediaEnd: () => { try { propsRef.current.onMediaEnd?.(); } catch {} },
       onMemberQuery: (e) => {
         const q = String((e?.nativeEvent ?? e)?.q ?? '');
         try { propsRef.current.onMemberQuery?.(q); } catch {}
@@ -291,6 +315,7 @@ function Inner(props) {
       maxContentWidth={maxWidth || 0}
       authToken={authToken}
       {...(stableEdit ? { edit: stableEdit } : null)}
+      {...(stableHighlights ? { highlights: stableHighlights } : null)}
       {...handlers}
     />
   );

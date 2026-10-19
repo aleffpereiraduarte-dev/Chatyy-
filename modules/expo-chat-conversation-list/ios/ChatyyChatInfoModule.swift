@@ -24,12 +24,17 @@ import UIKit
 // [2026-10-18 profile-edit-native] apiVersion 4: prop `edit` + evento onEdit
 //         ("Editar perfil" nativo estilo Telegram por cima da mesma view;
 //         contrato em CIEditPanel.swift).
+// [2026-10-19 profile-grid-native] apiVersion 5: hero.cover {u,a} (capa atrás
+//         do avatar com degradê), hero.ring ("unseen"|"seen"), linhas k "grid"
+//         (grade 3 colunas de `media` + evento onMediaEnd {count}) e k "hl"
+//         (faixa de destaques da prop `highlights` [{key,u,a,title}] →
+//         onMediaPress {key "hl|<key>" / "hl!|<key>" no toque longo}).
 public class ChatyyChatInfoModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyChatInfo")
 
     Function("apiVersion") { () -> Int in
-      return 4
+      return 5
     }
 
     View(ChatyyChatInfoView.self) {
@@ -45,7 +50,8 @@ public class ChatyyChatInfoModule: Module {
         "onFirstPaint",
         "onNativeError",
         "onClose",
-        "onEdit"
+        "onEdit",
+        "onMediaEnd"
       )
 
       Prop("hero") { (view: ChatyyChatInfoView, value: [String: Any]?) in
@@ -59,6 +65,9 @@ public class ChatyyChatInfoModule: Module {
       }
       Prop("members") { (view: ChatyyChatInfoView, value: [String: Any]?) in
         view.setMembers(value)
+      }
+      Prop("highlights") { (view: ChatyyChatInfoView, value: [[String: Any]]?) in
+        view.setHighlights(value)
       }
       Prop("colors") { (view: ChatyyChatInfoView, value: [String: Any]?) in
         view.setColors(value)

@@ -22,6 +22,8 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   let onClose = EventDispatcher()
   // [2026-10-18 profile-edit-native] apiVersion 4: modo edição do perfil próprio.
   let onEdit = EventDispatcher()
+  // [2026-10-19 profile-grid-native] apiVersion 5: fim da grade de publicações.
+  let onMediaEnd = EventDispatcher()
 
   private var editPanel: CIEditPanel?
   private var editState = CIEditState()
@@ -34,6 +36,10 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   private var rows: [String: CIRow] = [:]
   private var rowOrder: [String] = []
   private var media: [CIMedia] = []
+  private var mediaIndex: [String: Int] = [:]
+  private var mediaEndAskedAt = -1
+  // [2026-10-19 profile-grid-native] faixa de destaques (linha k "hl").
+  private var highlights: [CIHighlight] = []
   private var members = CIMembers()
   private var memberMap: [String: CIMember] = [:]
   private var memberActionMap: [String: CIMemberAction] = [:]
@@ -128,6 +134,16 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       cell.onSeeAll = { [weak self] in self?.onMediaPress(["key": ""]) }
       cell.onItem = { [weak self] key in self?.onMediaPress(["key": key]) }
     }
+    let gridReg = UICollectionView.CellRegistration<CIGridCell, String> { [weak self] cell, _, id in
+      guard let self = self, let i = self.mediaIndex[String(id.dropFirst(2))], i < self.media.count else { return }
+      cell.configure(self.media[i], palette: self.palette, label: self.labels.get("post", "Publicação"))
+    }
+    let hlReg = UICollectionView.CellRegistration<CIHighlightsCell, String> { [weak self] cell, _, _ in
+      guard let self = self else { return }
+      cell.configure(self.highlights, palette: self.palette)
+      cell.onItem = { [weak self] key in self?.onMediaPress(["key": "hl|" + key]) }
+      cell.onLong = { [weak self] key in self?.onMediaPress(["key": "hl!|" + key]) }
+    }
     let memberReg = UICollectionView.CellRegistration<CIMemberCell, String> { [weak self] cell, _, id in
       guard let self = self, let m = self.memberMap[String(id.dropFirst(2))] else { return }
       let pos = self.positions[id] ?? (first: false, last: false)
@@ -165,12 +181,18 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       if id.hasPrefix("m|") {
         return collectionView.dequeueConfiguredReusableCell(using: memberReg, for: indexPath, item: id)
       }
+      if id.hasPrefix("g|") {
+        return collectionView.dequeueConfiguredReusableCell(using: gridReg, for: indexPath, item: id)
+      }
       if id.hasPrefix("r|"), let r = self?.rows[String(id.dropFirst(2))] {
         if r.kind == "about" {
           return collectionView.dequeueConfiguredReusableCell(using: aboutReg, for: indexPath, item: id)
         }
         if r.kind == "media" {
           return collectionView.dequeueConfiguredReusableCell(using: mediaReg, for: indexPath, item: id)
+        }
+        if r.kind == "hl" {
+          return collectionView.dequeueConfiguredReusableCell(using: hlReg, for: indexPath, item: id)
         }
       }
       return collectionView.dequeueConfiguredReusableCell(using: rowReg, for: indexPath, item: id)
@@ -217,6 +239,22 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     let w = env.container.effectiveContentSize.width
     var h: CGFloat = 16
     if maxContentWidth > 0 && w > maxContentWidth { h = max(16, (w - maxContentWidth) / 2 + 16) }
+    if sid.hasPrefix("g|") {
+      // [2026-10-19 profile-grid-native] grade 3 colunas, 2 pt entre as
+      // miniaturas, de borda a borda (coluna centrada em tela larga).
+      let gap: CGFloat = 2
+      var side: CGFloat = 0
+      if maxContentWidth > 0 && w > maxContentWidth { side = floor((w - maxContentWidth) / 2) }
+      let cw = max(30, w - side * 2)
+      let cell = max(10, floor((cw - gap * 2) / 3))
+      let gItem = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .absolute(cell), heightDimension: .absolute(cell)))
+      let gGroup = NSCollectionLayoutGroup.horizontal(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(cell)), subitems: [gItem])
+      gGroup.interItemSpacing = .fixed(gap)
+      let gSection = NSCollectionLayoutSection(group: gGroup)
+      gSection.interGroupSpacing = gap
+      gSection.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: side, bottom: 28, trailing: side)
+      return gSection
+    }
     var est: CGFloat = 52
     if sid == "hero" { est = 300 } else if sid.hasPrefix("h|") || sid.hasPrefix("f|") { est = 24 }
     var dim = NSCollectionLayoutDimension.estimated(est)
@@ -224,6 +262,7 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       // Espaçador do cabeçalho que encolhe: altura exata (o desenho é do overlay).
       dim = .absolute(max(1, heroHeightApplied))
     }
+    if sid.hasPrefix("x|") { dim = .absolute(CIHighlightsCell.height) }
     let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: dim))
     let group = NSCollectionLayoutGroup.vertical(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: dim), subitems: [item])
     let section = NSCollectionLayoutSection(group: group)
@@ -238,6 +277,9 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       section.decorationItems = [bg]
     } else if sid.hasPrefix("f|") {
       section.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: h, bottom: 28, trailing: h)
+    } else if sid.hasPrefix("x|") {
+      // Faixa de destaques: sem cartão, respiro até o próximo grupo.
+      section.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: h, bottom: 20, trailing: h)
     } else if sid == "hero" && collapsing {
       section.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
     } else if sid == "hero" {
@@ -285,8 +327,33 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       next.append(m)
     }
     if next == media && appliedOnce { return }
+    var oldMap: [String: CIMedia] = [:]
+    for m in media { oldMap[m.key] = m }
+    var idx: [String: Int] = [:]
+    for (i, m) in next.enumerated() {
+      idx[m.key] = i
+      if oldMap[m.key] != m { dirty.insert("g|" + m.key) }
+    }
+    if next.count != media.count { mediaEndAskedAt = -1 }
     media = next
+    mediaIndex = idx
     for (id, r) in rows where r.kind == "media" { dirty.insert("r|" + id) }
+    needsApply = true
+  }
+
+  /// [2026-10-19 profile-grid-native] apiVersion 5: destaques da linha k "hl".
+  func setHighlights(_ arr: [[String: Any]]?) {
+    var next: [CIHighlight] = []
+    var seen = Set<String>()
+    for d in arr ?? [] {
+      let h = CIHighlight(d)
+      if h.key.isEmpty || seen.contains(h.key) { continue }
+      seen.insert(h.key)
+      next.append(h)
+    }
+    if next == highlights && appliedOnce { return }
+    highlights = next
+    for (id, r) in rows where r.kind == "hl" { dirty.insert("r|" + id) }
     needsApply = true
   }
 
@@ -501,6 +568,36 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
         if members.loading || (members.items.isEmpty && !members.empty.isEmpty) { items.append("mx") }
         let header = members.header.isEmpty ? r.header : members.header
         addCard("\(n)|members", header, r.footer, items)
+        n += 1
+        continue
+      }
+      if r.kind == "grid" {
+        // [2026-10-19 profile-grid-native] grade: legenda (hd) + uma célula por publicação.
+        flush()
+        let items = media.map { "g|" + $0.key }.filter { seenItems.insert($0).inserted }
+        if !items.isEmpty {
+          let key = "\(n)|grid"
+          if !r.header.isEmpty {
+            let hid = "h|" + key
+            snap.appendSections([hid])
+            snap.appendItems([hid], toSection: hid)
+            captions[hid] = r.header
+          }
+          let gid = "g|" + key
+          snap.appendSections([gid])
+          snap.appendItems(items, toSection: gid)
+        }
+        n += 1
+        continue
+      }
+      if r.kind == "hl" {
+        flush()
+        let iid = "r|" + id
+        if !highlights.isEmpty && seenItems.insert(iid).inserted {
+          let xid = "x|\(n)"
+          snap.appendSections([xid])
+          snap.appendItems([iid], toSection: xid)
+        }
         n += 1
         continue
       }
@@ -766,9 +863,9 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   // MARK: - UICollectionViewDelegate
 
   private func isPressable(_ id: String) -> Bool {
-    if id.hasPrefix("m|") || id.hasPrefix("ma|") { return true }
+    if id.hasPrefix("m|") || id.hasPrefix("ma|") || id.hasPrefix("g|") { return true }
     guard id.hasPrefix("r|"), let r = rows[String(id.dropFirst(2))] else { return false }
-    return r.kind != "t" && r.kind != "media" && !r.disabled
+    return r.kind != "t" && r.kind != "media" && r.kind != "hl" && !r.disabled
   }
 
   public func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
@@ -786,6 +883,9 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     guard let id = dataSource.itemIdentifier(for: indexPath), isPressable(id) else { return }
     if id.hasPrefix("m|") {
       onMemberPress(["id": String(id.dropFirst(2))])
+    } else if id.hasPrefix("g|") {
+      UISelectionFeedbackGenerator().selectionChanged()
+      onMediaPress(["key": String(id.dropFirst(2))])
     } else if id.hasPrefix("ma|") {
       onRowPress(["id": String(id.dropFirst(3))])
     } else {
@@ -794,7 +894,18 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   }
 
   public func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
-    guard let id = dataSource.itemIdentifier(for: indexPath), id.hasPrefix("m|") else { return }
+    guard let id = dataSource.itemIdentifier(for: indexPath) else { return }
+    if id.hasPrefix("g|") {
+      // [2026-10-19 profile-grid-native] perto do fim da grade → JS pagina.
+      guard let gi = mediaIndex[String(id.dropFirst(2))] else { return }
+      let mc = media.count
+      if gi >= mc - 9 && mediaEndAskedAt != mc {
+        mediaEndAskedAt = mc
+        onMediaEnd(["count": mc])
+      }
+      return
+    }
+    guard id.hasPrefix("m|") else { return }
     guard let i = memberIndex[String(id.dropFirst(2))] else { return }
     let count = members.items.count
     if i >= count - 12 && members.hasMore && !members.loading && endAskedAt != count {

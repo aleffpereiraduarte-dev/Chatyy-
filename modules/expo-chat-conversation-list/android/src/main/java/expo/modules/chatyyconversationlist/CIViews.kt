@@ -720,3 +720,224 @@ internal class CIStateView(ctx: Context) : FrameLayout(ctx) {
     spin.indeterminateTintList = ColorStateList.valueOf(p.secondary)
   }
 }
+
+// ─── [2026-10-19 profile-grid-native] Grade de publicações + destaques (api 5) ──
+
+/** Uma linha da grade 3 colunas (linha k "grid"): a lista é LinearLayoutManager,
+ *  então o nativo agrupa `media` de 3 em 3 (cada linha reaproveitada pelo
+ *  RecyclerView). Quadrados de (largura − 2 × 2 dp) / 3; toque → onItem(key). */
+@SuppressLint("ViewConstructor")
+internal class CIGridRowView(ctx: Context) : ViewGroup(ctx) {
+  var onItem: ((String) -> Unit)? = null
+  private val gap = ctx.ciPx(2f)
+  private val cells = ArrayList<FrameLayout>()
+  private val keys = arrayOf("", "", "")
+  private val urls = arrayOf("", "", "")
+
+  init {
+    for (i in 0 until 3) {
+      val f = FrameLayout(ctx)
+      val img = ImageView(ctx)
+      img.scaleType = ImageView.ScaleType.CENTER_CROP
+      f.addView(img, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+      val play = ImageView(ctx)
+      play.setImageDrawable(tintedIcon(ctx, R.drawable.crl_ic_play, Color.WHITE))
+      f.addView(play, FrameLayout.LayoutParams(ctx.ciPx(16f), ctx.ciPx(16f), Gravity.END or Gravity.TOP).apply {
+        rightMargin = ctx.ciPx(6f)
+        topMargin = ctx.ciPx(6f)
+      })
+      val dur = ciText(ctx, 11f, 600)
+      dur.setTextColor(Color.WHITE)
+      dur.setShadowLayer(3f, 0f, 0f, 0x80000000.toInt())
+      f.addView(dur, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.BOTTOM).apply {
+        leftMargin = ctx.ciPx(6f)
+        bottomMargin = ctx.ciPx(4f)
+      })
+      f.isClickable = true
+      f.isFocusable = true
+      f.foreground = RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), null, null)
+      val idx = i
+      f.setOnClickListener {
+        val k = keys[idx]
+        if (k.isNotEmpty()) {
+          it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+          onItem?.invoke(k)
+        }
+      }
+      cells.add(f)
+      addView(f)
+    }
+  }
+
+  private fun cellSide(w: Int): Int = max(1, (w - gap * 2) / 3)
+
+  override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    val w = MeasureSpec.getSize(widthMeasureSpec)
+    val side = cellSide(w)
+    val spec = MeasureSpec.makeMeasureSpec(side, MeasureSpec.EXACTLY)
+    for (c in cells) c.measure(spec, spec)
+    setMeasuredDimension(w, side)
+  }
+
+  override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+    val side = cellSide(r - l)
+    for (i in cells.indices) {
+      val x = i * (side + gap)
+      cells[i].layout(x, 0, x + side, side)
+    }
+  }
+
+  fun bind(items: List<CIMedia>, p: STPalette, label: String) {
+    val px = max(1, cellSide(if (width > 0) width else resources.displayMetrics.widthPixels))
+    for (i in 0 until 3) {
+      val f = cells[i]
+      val m = items.getOrNull(i)
+      if (m == null) {
+        keys[i] = ""
+        f.visibility = View.INVISIBLE
+        continue
+      }
+      f.visibility = View.VISIBLE
+      keys[i] = m.key
+      f.setBackgroundColor(p.chipBg)
+      f.contentDescription = label
+      val img = f.getChildAt(0) as? ImageView
+      val play = f.getChildAt(1)
+      val dur = f.getChildAt(2) as? TextView
+      play.visibility = if (m.video) View.VISIBLE else View.GONE
+      dur?.text = m.dur
+      dur?.visibility = if (m.video && m.dur.isNotEmpty()) View.VISIBLE else View.GONE
+      if (img != null && urls[i] != m.url) {
+        urls[i] = m.url
+        val model = CICard.glideModel(m.url, m.auth)
+        if (model == null) {
+          img.setImageDrawable(null)
+        } else {
+          try {
+            Glide.with(context.applicationContext)
+              .load(model)
+              .override(px, px)
+              .centerCrop()
+              .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
+              .into(img)
+          } catch (_: Throwable) {
+            img.setImageDrawable(null)
+          }
+        }
+      }
+    }
+  }
+}
+
+/** Faixa horizontal de destaques (linha k "hl"): capa redonda num anel em
+ *  degradê (CIRingView) + título; toque → onItem(key), toque longo → onLong(key). */
+@SuppressLint("ViewConstructor")
+internal class CIHighlightsView(ctx: Context) : HorizontalScrollView(ctx) {
+  var onItem: ((String) -> Unit)? = null
+  var onLong: ((String) -> Unit)? = null
+  private val row = LinearLayout(ctx)
+  private val tiles = ArrayList<LinearLayout>()
+  private val keys = ArrayList<String>()
+  private val urls = ArrayList<String>()
+
+  init {
+    isHorizontalScrollBarEnabled = false
+    overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+    clipToPadding = false
+    row.orientation = LinearLayout.HORIZONTAL
+    addView(row, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ctx.ciPx(96f)))
+  }
+
+  private fun makeTile(): LinearLayout {
+    val ctx = context
+    val t = LinearLayout(ctx)
+    t.orientation = LinearLayout.VERTICAL
+    t.gravity = Gravity.CENTER_HORIZONTAL
+    val box = FrameLayout(ctx)
+    val ring = CIRingView(ctx)
+    box.addView(ring, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    val img = ImageView(ctx)
+    img.scaleType = ImageView.ScaleType.CENTER_CROP
+    img.outlineProvider = object : ViewOutlineProvider() {
+      override fun getOutline(view: View, outline: Outline) {
+        outline.setOval(0, 0, view.width, view.height)
+      }
+    }
+    img.clipToOutline = true
+    val inner = ctx.ciPx(58f)
+    box.addView(img, FrameLayout.LayoutParams(inner, inner, Gravity.CENTER))
+    t.addView(box, LinearLayout.LayoutParams(ctx.ciPx(68f), ctx.ciPx(68f)))
+    val title = ciText(ctx, 12f, 600)
+    title.maxLines = 1
+    title.ellipsize = TextUtils.TruncateAt.END
+    title.gravity = Gravity.CENTER_HORIZONTAL
+    t.addView(title, LinearLayout.LayoutParams(ctx.ciPx(76f), LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = ctx.ciPx(6f) })
+    t.isClickable = true
+    t.isFocusable = true
+    return t
+  }
+
+  fun bind(items: List<CIHighlight>, p: STPalette) {
+    while (tiles.size < items.size) {
+      val t = makeTile()
+      tiles.add(t)
+      keys.add("")
+      urls.add("")
+      row.addView(t, LinearLayout.LayoutParams(context.ciPx(76f), LinearLayout.LayoutParams.MATCH_PARENT).apply {
+        if (tiles.size > 1) leftMargin = context.ciPx(8f)
+      })
+    }
+    while (tiles.size > items.size) {
+      val t = tiles.removeAt(tiles.size - 1)
+      keys.removeAt(keys.size - 1)
+      urls.removeAt(urls.size - 1)
+      val img = ((t.getChildAt(0) as? FrameLayout)?.getChildAt(1)) as? ImageView
+      if (img != null) {
+        try { Glide.with(context.applicationContext).clear(img) } catch (_: Throwable) {}
+      }
+      row.removeView(t)
+    }
+    items.forEachIndexed { i, h ->
+      val t = tiles[i]
+      keys[i] = h.key
+      val box = t.getChildAt(0) as? FrameLayout
+      val ring = box?.getChildAt(0) as? CIRingView
+      val img = box?.getChildAt(1) as? ImageView
+      val title = t.getChildAt(1) as? TextView
+      ring?.setColors(p.text, 0xFFF97316.toInt())
+      title?.text = h.title
+      title?.setTextColor(p.text)
+      t.contentDescription = h.title
+      img?.setBackgroundColor(p.chipBg)
+      if (img != null && urls[i] != h.url) {
+        urls[i] = h.url
+        val model = CICard.glideModel(h.url, h.auth)
+        if (model == null) {
+          img.setImageDrawable(null)
+        } else {
+          val px = context.ciPx(58f)
+          try {
+            Glide.with(context.applicationContext)
+              .load(model)
+              .override(px, px)
+              .centerCrop()
+              .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
+              .into(img)
+          } catch (_: Throwable) {
+            img.setImageDrawable(null)
+          }
+        }
+      }
+      val key = h.key
+      t.setOnClickListener {
+        it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        onItem?.invoke(key)
+      }
+      t.setOnLongClickListener {
+        it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        onLong?.invoke(key)
+        true
+      }
+    }
+  }
+}

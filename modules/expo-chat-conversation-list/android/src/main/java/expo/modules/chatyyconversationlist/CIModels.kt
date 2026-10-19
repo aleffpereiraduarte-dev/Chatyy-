@@ -7,6 +7,9 @@ package expo.modules.chatyyconversationlist
 //   rows    [{id, k, sid, hd, ft, title, sub, val, icon, dest, on, dis}]
 //           k: "c" navega · "a" ação · "t" interruptor · "about" · "media" · "members"
 //   media   [{key, u, a, video, dur}]
+//           [2026-10-19 profile-grid-native] api 5: k "grid" (grade 3 colunas de
+//           `media`, onMediaEnd {count}) e k "hl" (faixa da prop `highlights`
+//           [{key, u, a, title}] → onMediaPress {key "hl|<key>" / "hl!|<key>"})
 //   members {header, items [{id, title, sub, tile, pill, me}], total, hasMore,
 //            loading, search, empty, actions [{id, title, icon}]}
 // Regra do projeto: try só em forma de statement (nunca try-expressão).
@@ -102,7 +105,10 @@ internal data class CIHero(
   val photos: List<CIPic> = emptyList(),
   val navKey: String = "",
   val navLabel: String = "",
-  val back: Boolean = false
+  val back: Boolean = false,
+  // [2026-10-19 profile-cover-hero] apiVersion 5: capa atrás do avatar + anel de status.
+  val cover: CIPic = CIPic(),
+  val ring: String = ""
 ) {
   companion object {
     fun from(m: Map<String, Any?>?): CIHero {
@@ -134,7 +140,9 @@ internal data class CIHero(
         photos = pics,
         navKey = if (nav != null) CLVal.str(nav["key"]) else "",
         navLabel = if (nav != null) CLVal.str(nav["label"]) else "",
-        back = CLVal.bool(m["back"])
+        back = CLVal.bool(m["back"]),
+        cover = CIPic.from(m["cover"]),
+        ring = CLVal.str(m["ring"])
       )
     }
   }
@@ -154,6 +162,23 @@ internal data class CIMedia(
       auth = CLVal.bool(m["a"]),
       video = CLVal.bool(m["video"]),
       dur = CLVal.str(m["dur"])
+    )
+  }
+}
+
+/** [2026-10-19 profile-grid-native] apiVersion 5: destaque da faixa (linha k "hl"). */
+internal data class CIHighlight(
+  val key: String = "",
+  val url: String = "",
+  val auth: Boolean = false,
+  val title: String = ""
+) {
+  companion object {
+    fun from(m: Map<String, Any?>): CIHighlight = CIHighlight(
+      key = CLVal.str(m["key"]),
+      url = CLVal.str(m["u"]),
+      auth = CLVal.bool(m["a"]),
+      title = CLVal.str(m["title"])
     )
   }
 }

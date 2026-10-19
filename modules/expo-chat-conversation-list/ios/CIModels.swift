@@ -10,6 +10,10 @@ import UIKit
 //              "about" texto livre (recado/descrição) · "media" faixa de
 //              miniaturas (prop `media`) · "members" âncora da lista de membros
 //   media   [{key, u, a, video, dur}]
+//           [2026-10-19 profile-grid-native] api 5: k "grid" = grade 3 colunas
+//           de `media` (pagina por onMediaEnd {count}); k "hl" = faixa de
+//           destaques da prop `highlights` [{key, u, a, title}] (toque →
+//           onMediaPress {key "hl|<key>"}, toque longo → {key "hl!|<key>"})
 //   members {header, items [{id, title, sub, tile {u,a,i,g}, pill, me}],
 //            total, hasMore, loading, search (placeholder; "" = sem busca),
 //            empty, actions [{id, title, icon}]}
@@ -97,11 +101,18 @@ struct CIHero: Equatable {
   var navKey: String = ""
   var navLabel: String = ""
   var back = false
+  // [2026-10-19 profile-cover-hero] apiVersion 5:
+  //   cover  {u, a} capa desenhada atrás do avatar (degradê até o fundo da página)
+  //   ring   "unseen" | "seen" | "" anel de status em volta do avatar
+  var cover = CIPic()
+  var ring: String = ""
 
   init() {}
 
   init(_ d: [String: Any]?) {
     guard let d = d else { return }
+    cover = CIPic(d["cover"])
+    ring = CLVal.str(d["ring"])
     title = CLVal.str(d["title"])
     sub = CLVal.str(d["sub"])
     pic = CIPic(d["tile"])
@@ -146,6 +157,21 @@ struct CIMedia: Equatable {
     auth = CLVal.bool(d["a"])
     video = CLVal.bool(d["video"])
     dur = CLVal.str(d["dur"])
+  }
+}
+
+/// [2026-10-19 profile-grid-native] apiVersion 5: destaque da faixa (linha k "hl").
+struct CIHighlight: Equatable {
+  var key: String = ""
+  var url: String = ""
+  var auth = false
+  var title: String = ""
+
+  init(_ d: [String: Any]) {
+    key = CLVal.str(d["key"])
+    url = CLVal.str(d["u"])
+    auth = CLVal.bool(d["a"])
+    title = CLVal.str(d["title"])
   }
 }
 

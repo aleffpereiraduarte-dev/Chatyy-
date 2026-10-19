@@ -35,7 +35,14 @@ export default function UserProfileScreen() {
   // aberta pelo "ver tudo" do nativo. Kill switch: globalThis.__chatyy_native_profile = false.
   const _one = (v) => (Array.isArray(v) ? v[0] : v);
   const wantsGrid = _one(grid) === '1' || _one(grid) === 'true';
-  const [nativeActive, setNativeActive] = useState(false);
+  // [2026-10-19 profile-native-first] o perfil nativo pinta já no 1º quadro →
+  // a rota já nasce sem o botão voltar JS / com o fundo agrupado (sem 2º render
+  // trocando padding e cor). Erro / kill switch → Profile avisa false e volta.
+  const [nativeActive, setNativeActive] = useState(() => {
+    if (Platform.OS === 'web' || wantsGrid) return false;
+    try { if (globalThis.__chatyy_profile_native_first === false) return false; } catch {}
+    try { return require('../../components/chat/NativeChatInfo').isNativeProfileEnabled(); } catch { return false; }
+  });
   const gc = useGroupedColors();
   const router = useRouter();
   const { colors, isDark } = useTheme();

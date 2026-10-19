@@ -16,7 +16,10 @@ class ChatyyChatInfoModule : Module() {
     // (seta à esquerda) e onAvatarPress {index}.
     // [2026-10-18 profile-edit-native] 4 = prop `edit` + evento onEdit
     // ("Editar perfil" nativo estilo Telegram; contrato em CIEditPanel.kt).
-    Function("apiVersion") { 4 }
+    // [2026-10-19 profile-grid-native] 5 = hero.cover (capa atrás do avatar) +
+    // hero.ring (anel de status) + linhas k "grid" (grade 3 colunas, evento
+    // onMediaEnd) e k "hl" (prop `highlights`, toque → onMediaPress "hl|<key>").
+    Function("apiVersion") { 5 }
 
     View(ChatyyChatInfoView::class) {
       Events(
@@ -31,13 +34,15 @@ class ChatyyChatInfoModule : Module() {
         "onFirstPaint",
         "onNativeError",
         "onClose",
-        "onEdit"
+        "onEdit",
+        "onMediaEnd"
       )
 
       Prop("hero") { view: ChatyyChatInfoView, v: Map<String, Any?>? -> view.setHeroProp(v) }
       Prop("rows") { view: ChatyyChatInfoView, v: List<Any?>? -> view.setRowsProp(v) }
       Prop("media") { view: ChatyyChatInfoView, v: List<Any?>? -> view.setMediaProp(v) }
       Prop("members") { view: ChatyyChatInfoView, v: Map<String, Any?>? -> view.setMembersProp(v) }
+      Prop("highlights") { view: ChatyyChatInfoView, v: List<Any?>? -> view.setHighlightsProp(v) }
       Prop("colors") { view: ChatyyChatInfoView, v: Map<String, Any?>? -> view.setColors(v) }
       Prop("dark") { view: ChatyyChatInfoView, v: Boolean? -> view.setDark(v ?: false) }
       Prop("labels") { view: ChatyyChatInfoView, v: Map<String, Any?>? -> view.setLabelsProp(v) }

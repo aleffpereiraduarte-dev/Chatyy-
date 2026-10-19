@@ -143,6 +143,49 @@ internal class CISegments(ctx: Context) : View(ctx) {
   }
 }
 
+/** [2026-10-19 profile-cover-hero] Anel de status/destaque: arco com degradê
+ *  diagonal (LinearGradient no Paint) — um drawCircle, sem bitmap/SVG. */
+@SuppressLint("ViewConstructor")
+internal class CIRingView(ctx: Context) : View(ctx) {
+  private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+  private var c0 = Color.BLACK
+  private var c1 = Color.BLACK
+  private var shaderW = -1
+  var strokePx = 2f * ctx.resources.displayMetrics.density
+    set(v) {
+      if (v == field) return
+      field = v
+      invalidate()
+    }
+
+  init {
+    paint.style = Paint.Style.STROKE
+    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+  }
+
+  fun setColors(a: Int, b: Int) {
+    if (a == c0 && b == c1) return
+    c0 = a
+    c1 = b
+    shaderW = -1
+    invalidate()
+  }
+
+  override fun onDraw(canvas: Canvas) {
+    super.onDraw(canvas)
+    val w = width.toFloat()
+    val h = height.toFloat()
+    if (w <= 0f || h <= 0f) return
+    if (shaderW != width) {
+      shaderW = width
+      paint.shader = android.graphics.LinearGradient(0f, 0f, w, h, intArrayOf(c0, c0, c1), floatArrayOf(0f, 0.5f, 1f), android.graphics.Shader.TileMode.CLAMP)
+    }
+    paint.strokeWidth = strokePx
+    val r = min(w, h) / 2f - strokePx / 2f
+    canvas.drawCircle(w / 2f, h / 2f, r, paint)
+  }
+}
+
 @SuppressLint("ViewConstructor")
 internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
   private val d = ctx.resources.displayMetrics.density
@@ -150,8 +193,24 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
 
   val navH: Float get() = dp(56f)
   private val side: Float get() = dp(104f)
-  private val avatarTop: Float get() = dp(8f)
+  // [2026-10-19 profile-cover-hero] com capa, o avatar desce 64 dp.
+  private val avatarTop: Float get() = dp(8f) + (if (hasCover) dp(64f) else 0f)
   private val actionsH: Float get() = dp(64f)
+  private val coverH: Float get() = avatarTop + side * 0.5f + dp(22f)
+
+  // [2026-10-19 profile-cover-hero] apiVersion 5: capa + degradê + disco + anel.
+  private val cover = ImageView(ctx)
+  private val coverFade = View(ctx)
+  private val coverTop = View(ctx)
+  private val coverFadeBg = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x00000000, 0x00000000, 0xFF000000.toInt()))
+  private var coverKey = ""
+  private var hasCover = false
+  private var coverTarget: CustomTarget<Bitmap>? = null
+  private val disc = View(ctx)
+  private val discBg = GradientDrawable()
+  private val ring = CIRingView(ctx)
+  private var ringMode = ""
+  private var lastBtnMix = -1f
 
   private val avatar = CLAvatarView(ctx)
   private val photo = ImageView(ctx)
@@ -210,6 +269,27 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
   init {
     clipChildren = true
     setWillNotDraw(true)
+
+    cover.scaleType = ImageView.ScaleType.CENTER_CROP
+    cover.visibility = View.GONE
+    cover.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    addView(cover)
+    coverTop.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x47000000, 0x00000000))
+    coverTop.visibility = View.GONE
+    coverTop.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    addView(coverTop)
+    coverFadeBg.gradientType = GradientDrawable.LINEAR_GRADIENT
+    coverFade.background = coverFadeBg
+    coverFade.visibility = View.GONE
+    coverFade.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    addView(coverFade)
+    ring.visibility = View.GONE
+    addView(ring)
+    discBg.shape = GradientDrawable.OVAL
+    disc.background = discBg
+    disc.visibility = View.GONE
+    disc.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    addView(disc)
 
     avatar.setBoxDp(104f)
     avatar.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
@@ -349,6 +429,20 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     segments.index = photoIndex
     segments.visibility = if (list.size > 1) View.VISIBLE else View.GONE
 
+    configureCover(h.cover, p)
+    ringMode = if (h.ring == "seen" || h.ring == "unseen") h.ring else ""
+    ring.visibility = if (ringMode.isEmpty()) View.GONE else View.VISIBLE
+    if (ringMode == "seen") {
+      ring.setColors(p.tertiary, p.tertiary)
+      ring.strokePx = dp(2f)
+    } else {
+      ring.setColors(p.text, 0xFFF97316.toInt())
+      ring.strokePx = dp(3f)
+    }
+    discBg.setColor(p.pageBg)
+    disc.visibility = if (hasCover || ringMode.isNotEmpty()) View.VISIBLE else View.GONE
+    lastBtnMix = -1f
+
     titleTv.text = h.title
     subTv.text = h.sub
     hasSub = h.sub.isNotEmpty()
@@ -403,6 +497,52 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     navBtn.visibility = if (h.navKey.isNotEmpty() && h.navLabel.isNotEmpty()) View.VISIBLE else View.GONE
     pressedKey = null
     requestLayout()
+  }
+
+  // ─── Capa (apiVersion 5) ────────────────────────────────────────────────
+
+  private fun configureCover(c: CIPic, p: STPalette) {
+    coverFadeBg.colors = intArrayOf(p.pageBg and 0x00FFFFFF, p.pageBg and 0x00FFFFFF, p.pageBg)
+    cover.setBackgroundColor(p.chipBg)
+    val had = hasCover
+    hasCover = c.url.isNotEmpty()
+    val vis = if (hasCover) View.VISIBLE else View.GONE
+    cover.visibility = vis
+    coverFade.visibility = vis
+    coverTop.visibility = vis
+    if (had != hasCover) requestLayout()
+    if (c.url == coverKey) return
+    val app = context.applicationContext
+    coverTarget?.let { old -> try { Glide.with(app).clear(old) } catch (_: Throwable) {} }
+    coverTarget = null
+    coverKey = c.url
+    cover.setImageDrawable(null)
+    if (c.url.isEmpty()) return
+    val model = CICard.glideModel(c.url, c.auth) ?: return
+    val px = min(1080, max(320, resources.displayMetrics.widthPixels))
+    val key = c.url
+    val target = object : CustomTarget<Bitmap>(px, px) {
+      override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
+        if (coverKey != key) return
+        cover.setImageBitmap(resource)
+      }
+
+      override fun onLoadCleared(placeholder: Drawable?) {
+        if (coverKey != key) return
+        cover.setImageDrawable(null)
+      }
+    }
+    coverTarget = target
+    try {
+      Glide.with(app)
+        .asBitmap()
+        .load(model)
+        .override(px, px)
+        .diskCacheStrategy(DiskCacheStrategy.AUTOMATIC)
+        .into(target)
+    } catch (_: Throwable) {
+      coverTarget = null
+    }
   }
 
   // ─── Carrossel (foto expandida) ─────────────────────────────────────────
@@ -531,12 +671,17 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     navBtn.measure(MeasureSpec.makeMeasureSpec(dp(140f).toInt(), MeasureSpec.AT_MOST), ciExactly(cb))
     segments.measure(ciExactly(max(1, w - dp(16f).toInt())), ciExactly(max(1, dp(3f).toInt())))
     photo.measure(ciExactly(max(1, photo.width)), ciExactly(max(1, photo.height)))
+    disc.measure(ciExactly((side + dp(8f)).toInt()), ciExactly((side + dp(8f)).toInt()))
+    ring.measure(ciExactly((side + dp(16f)).toInt()), ciExactly((side + dp(16f)).toInt()))
+    cover.measure(ciExactly(max(1, cover.width)), ciExactly(max(1, cover.height)))
+    coverFade.measure(ciExactly(max(1, coverFade.width)), ciExactly(max(1, coverFade.height)))
+    coverTop.measure(ciExactly(max(1, coverTop.width)), ciExactly(max(1, coverTop.height)))
     scrim.measure(ciExactly(max(1, scrim.width)), ciExactly(max(1, scrim.height)))
   }
 
   override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
     val w = r - l
-    for (v in listOf<View>(avatar, titleTv, subTv, actionsRow, navBg, badge)) {
+    for (v in listOf<View>(avatar, titleTv, subTv, actionsRow, navBg, badge, disc, ring)) {
       v.layout(0, 0, v.measuredWidth, v.measuredHeight)
     }
     val hl = hairline.measuredHeight
@@ -625,6 +770,41 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     avB = b
     avAlpha = if (usePhoto) 1f else nAlpha
 
+    // [2026-10-19 profile-cover-hero] capa anda com o conteúdo, estica ao puxar,
+    // some na foto expandida; disco + anel acompanham o avatar (só scale/alpha).
+    if (hasCover) {
+      val ct = (-up).toInt()
+      val cb = (-up + coverH + st).toInt()
+      val wi = w.toInt()
+      cover.layout(0, ct, wi, cb)
+      coverFade.layout(0, ct, wi, cb)
+      coverTop.layout(0, ct, wi, ct + min(cb - ct, (navH + dp(36f)).toInt()))
+      cover.alpha = 1f - e
+      coverFade.alpha = 1f - e
+      coverTop.alpha = 1f - e
+    }
+    val fadeA = nAlpha * (1f - e)
+    if (disc.visibility == View.VISIBLE) {
+      val dw = disc.width.toFloat()
+      disc.pivotX = dw / 2f
+      disc.pivotY = dw / 2f
+      disc.translationX = w / 2f - dw / 2f
+      disc.translationY = nCY - dw / 2f
+      disc.scaleX = s
+      disc.scaleY = s
+      disc.alpha = fadeA
+    }
+    if (ring.visibility == View.VISIBLE) {
+      val rw = ring.width.toFloat()
+      ring.pivotX = rw / 2f
+      ring.pivotY = rw / 2f
+      ring.translationX = w / 2f - rw / 2f
+      ring.translationY = nCY - rw / 2f
+      ring.scaleX = s
+      ring.scaleY = s
+      ring.alpha = fadeA
+    }
+
     if (showBadge) {
       val bw = badge.width.toFloat()
       val bs = max(0.5f, min(1.2f, s))
@@ -673,9 +853,15 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
       lastColorE = e
       titleTv.setTextColor(ciMixColor(palette.text, Color.WHITE, e))
       subTv.setTextColor(ciMixColor(palette.secondary, 0xDBFFFFFF.toInt(), e))
-      closeBtn.setColorFilter(ciMixColor(palette.text, Color.WHITE, e))
-      navBtn.setTextColor(ciMixColor(palette.text, Color.WHITE, e))
-      navBtn.setShadowLayer(dp(3f), 0f, dp(1f), Color.argb((90f * e).toInt(), 0, 0, 0))
+    }
+    // Seta/X e "Editar": brancos sobre a foto expandida e sobre a capa (até a barra aparecer).
+    val coverMix = if (hasCover) 1f - ciSmooth(dock - dp(30f), dock, up) else 0f
+    val bm = max(e, coverMix)
+    if (abs(bm - lastBtnMix) > 0.004f) {
+      lastBtnMix = bm
+      closeBtn.setColorFilter(ciMixColor(palette.text, Color.WHITE, bm))
+      navBtn.setTextColor(ciMixColor(palette.text, Color.WHITE, bm))
+      navBtn.setShadowLayer(dp(3f), 0f, dp(1f), Color.argb((90f * bm).toInt(), 0, 0, 0))
     }
 
     // Ladrilhos: andam com o conteúdo e somem antes da barra.
@@ -754,6 +940,9 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
   }
 
   override fun onDetachedFromWindow() {
+    coverTarget?.let { old -> try { Glide.with(context.applicationContext).clear(old) } catch (_: Throwable) {} }
+    coverTarget = null
+    coverKey = ""
     photoTarget?.let { old -> try { Glide.with(context.applicationContext).clear(old) } catch (_: Throwable) {} }
     photoTarget = null
     prevPhotoTarget?.let { old -> try { Glide.with(context.applicationContext).clear(old) } catch (_: Throwable) {} }

@@ -572,6 +572,8 @@ final class CIThumb: UIControl {
   private let durLabel = UILabel()
   private(set) var key = ""
   private var currentURL = ""
+  /// [2026-10-19 profile-grid-native] grade 3 colunas pede mais pixels que a faixa (80 pt).
+  var maxPixel: CGFloat = 260
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -634,13 +636,14 @@ final class CIThumb: UIControl {
       imageView.image = nil
       return
     }
-    if let img = CLImageLoader.shared.cachedImage(m.url, maxPixel: 260) {
+    let px = maxPixel
+    if let img = CLImageLoader.shared.cachedImage(m.url, maxPixel: px) {
       imageView.image = img
       return
     }
     imageView.image = nil
     let url = m.url
-    CLImageLoader.shared.load(url, auth: m.auth, maxPixel: 260) { [weak self] img in
+    CLImageLoader.shared.load(url, auth: m.auth, maxPixel: px) { [weak self] img in
       guard let self = self, self.currentURL == url else { return }
       self.imageView.image = img
     }
@@ -1124,6 +1127,23 @@ final class CIHeaderOverlay: UIView {
   static let avatarSide: CGFloat = 104
   static let avatarTop: CGFloat = 8
   static let actionsH: CGFloat = 64
+  /// [2026-10-19 profile-cover-hero] com capa, o avatar desce isso (a capa ocupa o topo).
+  static let coverShift: CGFloat = 64
+
+  // [2026-10-19 profile-cover-hero] apiVersion 5: capa atrás do avatar (degradê
+  // até o fundo da página + véu escuro no topo p/ a seta/Editar) e anel de status.
+  private let coverView = UIImageView()
+  private let coverFade = UIView()
+  private let coverFadeLayer = CAGradientLayer()
+  private let coverTopLayer = CAGradientLayer()
+  private var coverURL = ""
+  private var hasCover = false
+  private let avatarDisc = UIView()
+  private let ringView = UIView()
+  private let ringGradient = CAGradientLayer()
+  private let ringMask = CAShapeLayer()
+  private var ringMode = ""
+  private var lastButtonMix: CGFloat = -1
 
   private let avatar = CIAvatarView()
   private let scrim = UIView()
@@ -1167,6 +1187,33 @@ final class CIHeaderOverlay: UIView {
     super.init(frame: frame)
     backgroundColor = .clear
     clipsToBounds = true
+
+    coverView.contentMode = .scaleAspectFill
+    coverView.clipsToBounds = true
+    coverView.isUserInteractionEnabled = false
+    coverView.isHidden = true
+    addSubview(coverView)
+    coverFade.isUserInteractionEnabled = false
+    coverFade.isHidden = true
+    coverTopLayer.colors = [UIColor(white: 0, alpha: 0.28).cgColor, UIColor(white: 0, alpha: 0).cgColor]
+    coverTopLayer.locations = [0, 1]
+    coverFade.layer.addSublayer(coverTopLayer)
+    coverFadeLayer.locations = [0.38, 1]
+    coverFade.layer.addSublayer(coverFadeLayer)
+    addSubview(coverFade)
+
+    ringGradient.startPoint = CGPoint(x: 0, y: 0)
+    ringGradient.endPoint = CGPoint(x: 1, y: 1)
+    ringMask.fillColor = UIColor.clear.cgColor
+    ringMask.strokeColor = UIColor.black.cgColor
+    ringGradient.mask = ringMask
+    ringView.layer.addSublayer(ringGradient)
+    ringView.isUserInteractionEnabled = false
+    ringView.isHidden = true
+    addSubview(ringView)
+    avatarDisc.isUserInteractionEnabled = false
+    avatarDisc.isHidden = true
+    addSubview(avatarDisc)
 
     avatar.maxPixel = 1080
     avatar.isAccessibilityElement = true
@@ -1240,7 +1287,11 @@ final class CIHeaderOverlay: UIView {
 
   // MARK: Geometria (pontos, conteúdo em repouso)
 
-  private var titleY0: CGFloat { return CIHeaderOverlay.avatarTop + CIHeaderOverlay.avatarSide + 28 }
+  /// Topo do avatar em repouso (desce com capa).
+  private var aTop: CGFloat { return CIHeaderOverlay.avatarTop + (hasCover ? CIHeaderOverlay.coverShift : 0) }
+  /// Altura da capa em repouso (até um pouco abaixo do meio do avatar).
+  private var coverH: CGFloat { return aTop + CIHeaderOverlay.avatarSide * 0.5 + 22 }
+  private var titleY0: CGFloat { return aTop + CIHeaderOverlay.avatarSide + 28 }
   private var subY0: CGFloat { return titleY0 + 28 }
   private var textBottom0: CGFloat { return hasSub ? subY0 + 10 : titleY0 + 14 }
   private var actionsTop0: CGFloat { return textBottom0 + 20 }
@@ -1295,6 +1346,20 @@ final class CIHeaderOverlay: UIView {
     titleFit = ceil(titleLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 30)).width)
     subFit = ceil(subLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 22)).width)
 
+    configureCover(h.cover, palette: p)
+    ringMode = h.ring == "seen" || h.ring == "unseen" ? h.ring : ""
+    ringView.isHidden = ringMode.isEmpty
+    if ringMode == "seen" {
+      ringGradient.colors = [p.tertiary.cgColor, p.tertiary.cgColor]
+      ringMask.lineWidth = 2
+    } else {
+      ringGradient.colors = [p.text.cgColor, UIColor(red: 0.976, green: 0.451, blue: 0.086, alpha: 1).cgColor]
+      ringMask.lineWidth = 3
+    }
+    avatarDisc.backgroundColor = p.pageBg
+    avatarDisc.isHidden = !(hasCover || !ringMode.isEmpty)
+    lastButtonMix = -1
+
     showBadge = h.badge == "camera" || h.busy
     badge.isHidden = !showBadge
     badge.backgroundColor = p.text
@@ -1337,6 +1402,58 @@ final class CIHeaderOverlay: UIView {
     navW = navButton.isHidden ? 0 : min(140, ceil(navButton.sizeThatFits(CGSize(width: 200, height: 44)).width) + 16)
     pressed = .empty
     setNeedsLayout()
+  }
+
+  // MARK: Capa (apiVersion 5)
+
+  private func configureCover(_ c: CIPic, palette p: STPalette) {
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    coverFadeLayer.colors = [p.pageBg.withAlphaComponent(0).cgColor, p.pageBg.cgColor]
+    CATransaction.commit()
+    coverView.backgroundColor = p.chipBg
+    let had = hasCover
+    hasCover = !c.url.isEmpty
+    coverView.isHidden = !hasCover
+    coverFade.isHidden = !hasCover
+    if had != hasCover { setNeedsLayout() }
+    if !hasCover {
+      coverURL = ""
+      coverView.image = nil
+      return
+    }
+    if c.url == coverURL && coverView.image != nil { return }
+    coverURL = c.url
+    let px: CGFloat = 1080
+    if let img = CLImageLoader.shared.cachedImage(c.url, maxPixel: px) {
+      coverView.image = img
+      return
+    }
+    coverView.image = nil
+    let url = c.url
+    CLImageLoader.shared.load(url, auth: c.auth, maxPixel: px) { [weak self] img in
+      guard let self = self, self.coverURL == url else { return }
+      if img != nil && self.window != nil {
+        UIView.transition(with: self.coverView, duration: 0.2, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+          self.coverView.image = img
+        }, completion: nil)
+      } else {
+        self.coverView.image = img
+      }
+    }
+  }
+
+  private func layoutRing(side: CGFloat) {
+    let bounds = CGRect(x: 0, y: 0, width: side, height: side)
+    if ringView.bounds.size == bounds.size { return }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    ringView.bounds = bounds
+    ringGradient.frame = bounds
+    ringMask.frame = bounds
+    let inset: CGFloat = 1.5
+    ringMask.path = UIBezierPath(ovalIn: bounds.insetBy(dx: inset, dy: inset)).cgPath
+    CATransaction.commit()
   }
 
   // MARK: Carrossel (foto expandida)
@@ -1403,7 +1520,7 @@ final class CIHeaderOverlay: UIView {
 
     // ── Avatar (normal: círculo que encolhe/cresce; foto: largura total) ──
     var nSide = A
-    var nCY = CIHeaderOverlay.avatarTop + A / 2
+    var nCY = aTop + A / 2
     var nAlpha: CGFloat = 1
     if st > 0 {
       nSide = A * (1 + min(0.3, st / 260))
@@ -1432,6 +1549,45 @@ final class CIHeaderOverlay: UIView {
     scrimLayer.frame = scrim.bounds
     CATransaction.commit()
     scrim.alpha = e
+
+    // [2026-10-19 profile-cover-hero] Capa: anda com o conteúdo, estica ao
+    // puxar (presa no topo) e some na foto expandida. Disco da cor da página
+    // + anel de status atrás do avatar (só transform → sem refazer o traço).
+    if hasCover {
+      let cRect = CGRect(x: 0, y: -up, width: W, height: coverH + st)
+      coverView.frame = cRect
+      coverFade.frame = cRect
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      coverFadeLayer.frame = coverFade.bounds
+      coverTopLayer.frame = CGRect(x: 0, y: 0, width: cRect.width, height: min(cRect.height, CIHeaderOverlay.navH + 36))
+      CATransaction.commit()
+      coverView.alpha = 1 - e
+      coverFade.alpha = 1 - e
+    }
+    let discOn = !avatarDisc.isHidden
+    if discOn || !ringMode.isEmpty {
+      let sc = nSide / A
+      let cx = W / 2
+      let fade = nAlpha * (1 - e)
+      if discOn {
+        let ds = A + 8
+        avatarDisc.transform = .identity
+        avatarDisc.bounds = CGRect(x: 0, y: 0, width: ds, height: ds)
+        avatarDisc.layer.cornerRadius = ds / 2
+        avatarDisc.center = CGPoint(x: cx, y: nCY)
+        avatarDisc.transform = CGAffineTransform(scaleX: sc, y: sc)
+        avatarDisc.alpha = fade
+      }
+      if !ringMode.isEmpty {
+        let rs = A + 16
+        ringView.transform = .identity
+        layoutRing(side: rs)
+        ringView.center = CGPoint(x: cx, y: nCY)
+        ringView.transform = CGAffineTransform(scaleX: sc, y: sc)
+        ringView.alpha = fade
+      }
+    }
 
     // Selo da câmera (admin) acompanha a borda do círculo.
     if showBadge {
@@ -1469,10 +1625,16 @@ final class CIHeaderOverlay: UIView {
       lastColorE = e
       titleLabel.textColor = ciMix(palette.text, .white, e)
       subLabel.textColor = ciMix(palette.secondary, UIColor(white: 1, alpha: 0.86), e)
-      closeButton.tintColor = ciMix(palette.text, .white, e)
-      closeButton.layer.shadowOpacity = Float(0.35 * e)
-      navButton.tintColor = ciMix(palette.text, .white, e)
-      navButton.layer.shadowOpacity = Float(0.35 * e)
+    }
+    // Seta/X e "Editar": brancos sobre a foto expandida E sobre a capa (até a barra aparecer).
+    let coverMix: CGFloat = hasCover ? 1 - ciSmooth(dock - 30, dock, up) : 0
+    let bm = max(e, coverMix)
+    if abs(bm - lastButtonMix) > 0.004 {
+      lastButtonMix = bm
+      closeButton.tintColor = ciMix(palette.text, .white, bm)
+      closeButton.layer.shadowOpacity = Float(0.35 * bm)
+      navButton.tintColor = ciMix(palette.text, .white, bm)
+      navButton.layer.shadowOpacity = Float(0.35 * bm)
     }
 
     // ── Ladrilhos de ação: andam com o conteúdo e somem antes da barra ──
@@ -1576,5 +1738,197 @@ final class CIHeaderOverlay: UIView {
   @objc private func navTapped() {
     if navKey.isEmpty { return }
     onNav?(navKey)
+  }
+}
+
+
+// MARK: - [2026-10-19 profile-grid-native] Grade de publicações + faixa de destaques (apiVersion 5)
+
+/// Uma miniatura da grade 3 colunas (linha k "grid"). Cada publicação é uma
+/// célula própria do UICollectionView (virtualizada, reaproveitada); o toque
+/// vem pelo didSelect da lista → onMediaPress {key}.
+final class CIGridCell: UICollectionViewCell {
+  private let thumb = CIThumb()
+  private(set) var key = ""
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    thumb.isUserInteractionEnabled = false
+    thumb.layer.cornerRadius = 0
+    thumb.maxPixel = 420
+    thumb.translatesAutoresizingMaskIntoConstraints = false
+    contentView.addSubview(thumb)
+    NSLayoutConstraint.activate([
+      thumb.topAnchor.constraint(equalTo: contentView.topAnchor),
+      thumb.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+      thumb.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+      thumb.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+    ])
+    isAccessibilityElement = true
+    accessibilityTraits = [.button, .image]
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override var isHighlighted: Bool {
+    didSet { contentView.alpha = isHighlighted ? 0.7 : 1 }
+  }
+
+  func configure(_ m: CIMedia, palette p: STPalette, label: String) {
+    key = m.key
+    thumb.configure(m, placeholder: p.chipBg)
+    accessibilityLabel = label
+  }
+}
+
+/// Um destaque: capa redonda dentro de um anel em degradê (CAGradientLayer
+/// mascarado por um CAShapeLayer — o mesmo #111 → laranja do perfil JS) + título.
+final class CIHighlightTile: UIControl {
+  static let ring: CGFloat = 68
+  static let width: CGFloat = 76
+  private let ringGradient = CAGradientLayer()
+  private let ringMask = CAShapeLayer()
+  private let imageView = UIImageView()
+  private let titleLabel = UILabel()
+  private(set) var key = ""
+  private var currentURL = ""
+  var onLongPress: ((String) -> Void)?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    ringGradient.startPoint = CGPoint(x: 0, y: 0)
+    ringGradient.endPoint = CGPoint(x: 1, y: 1)
+    ringMask.fillColor = UIColor.clear.cgColor
+    ringMask.strokeColor = UIColor.black.cgColor
+    ringMask.lineWidth = 2
+    ringGradient.mask = ringMask
+    layer.addSublayer(ringGradient)
+    imageView.contentMode = .scaleAspectFill
+    imageView.clipsToBounds = true
+    imageView.isUserInteractionEnabled = false
+    addSubview(imageView)
+    titleLabel.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
+    titleLabel.textAlignment = .center
+    titleLabel.lineBreakMode = .byTruncatingTail
+    titleLabel.isUserInteractionEnabled = false
+    addSubview(titleLabel)
+    let lp = UILongPressGestureRecognizer(target: self, action: #selector(longPressed(_:)))
+    lp.minimumPressDuration = 0.35
+    addGestureRecognizer(lp)
+    isAccessibilityElement = true
+    accessibilityTraits = .button
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override var isHighlighted: Bool {
+    didSet { alpha = isHighlighted ? 0.7 : 1 }
+  }
+
+  func configure(_ h: CIHighlight, palette p: STPalette) {
+    key = h.key
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    ringGradient.colors = [p.text.cgColor, p.text.cgColor, UIColor(red: 0.976, green: 0.451, blue: 0.086, alpha: 1).cgColor]
+    ringGradient.locations = [0, 0.5, 1]
+    CATransaction.commit()
+    imageView.backgroundColor = p.chipBg
+    titleLabel.text = h.title
+    titleLabel.textColor = p.text
+    accessibilityLabel = h.title
+    if h.url == currentURL && imageView.image != nil { return }
+    currentURL = h.url
+    if h.url.isEmpty {
+      imageView.image = nil
+      return
+    }
+    let px: CGFloat = 200
+    if let img = CLImageLoader.shared.cachedImage(h.url, maxPixel: px) {
+      imageView.image = img
+      return
+    }
+    imageView.image = nil
+    let url = h.url
+    CLImageLoader.shared.load(url, auth: h.auth, maxPixel: px) { [weak self] img in
+      guard let self = self, self.currentURL == url else { return }
+      self.imageView.image = img
+    }
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    let R = CIHighlightTile.ring
+    let x = (bounds.width - R) / 2
+    let ringRect = CGRect(x: x, y: 0, width: R, height: R)
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    ringGradient.frame = ringRect
+    ringMask.frame = CGRect(x: 0, y: 0, width: R, height: R)
+    ringMask.path = UIBezierPath(ovalIn: CGRect(x: 1, y: 1, width: R - 2, height: R - 2)).cgPath
+    CATransaction.commit()
+    let inner = ringRect.insetBy(dx: 5, dy: 5)
+    imageView.frame = inner
+    imageView.layer.cornerRadius = inner.width / 2
+    titleLabel.frame = CGRect(x: 0, y: R + 6, width: bounds.width, height: 16)
+  }
+
+  @objc private func longPressed(_ g: UILongPressGestureRecognizer) {
+    guard g.state == .began, !key.isEmpty else { return }
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    onLongPress?(key)
+  }
+}
+
+/// Faixa horizontal de destaques (linha k "hl"), sem cartão por trás.
+final class CIHighlightsCell: UICollectionViewCell {
+  static let height: CGFloat = 96
+  private let strip = UIScrollView()
+  private var tiles: [CIHighlightTile] = []
+  var onItem: ((String) -> Void)?
+  var onLong: ((String) -> Void)?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    strip.showsHorizontalScrollIndicator = false
+    strip.alwaysBounceHorizontal = true
+    strip.clipsToBounds = false
+    contentView.addSubview(strip)
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  func configure(_ items: [CIHighlight], palette p: STPalette) {
+    while tiles.count < items.count {
+      let t = CIHighlightTile()
+      t.addTarget(self, action: #selector(tileTapped(_:)), for: .touchUpInside)
+      t.onLongPress = { [weak self] key in self?.onLong?(key) }
+      tiles.append(t)
+      strip.addSubview(t)
+    }
+    while tiles.count > items.count {
+      let t = tiles.removeLast()
+      t.removeFromSuperview()
+    }
+    for (i, h) in items.enumerated() { tiles[i].configure(h, palette: p) }
+    setNeedsLayout()
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    strip.frame = contentView.bounds
+    let w = CIHighlightTile.width
+    let gap: CGFloat = 8
+    let h = CIHighlightTile.ring + 6 + 16
+    let y = max(0, (contentView.bounds.height - h) / 2)
+    for (i, t) in tiles.enumerated() {
+      t.frame = CGRect(x: CGFloat(i) * (w + gap), y: y, width: w, height: h)
+    }
+    let total = CGFloat(tiles.count) * w + CGFloat(max(0, tiles.count - 1)) * gap
+    strip.contentSize = CGSize(width: total, height: contentView.bounds.height)
+  }
+
+  @objc private func tileTapped(_ sender: CIHighlightTile) {
+    UISelectionFeedbackGenerator().selectionChanged()
+    onItem?(sender.key)
   }
 }

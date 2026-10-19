@@ -31,6 +31,7 @@ import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 @SuppressLint("ViewConstructor")
 class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
@@ -49,6 +50,8 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
   val onClose by EventDispatcher()
   // [2026-10-18 profile-edit-native] apiVersion 4: modo edição do perfil próprio.
   val onEdit by EventDispatcher()
+  // [2026-10-19 profile-grid-native] apiVersion 5: fim da grade de publicações.
+  val onMediaEnd by EventDispatcher()
 
   private var editPanel: CIEditPanel? = null
   private var editState = CIEditState()
@@ -61,6 +64,9 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
   private val rows = HashMap<String, CIRow>()
   private var rowOrder: List<String> = emptyList()
   private var media: List<CIMedia> = emptyList()
+  private var mediaEndAskedAt = -1
+  // [2026-10-19 profile-grid-native] faixa de destaques (linha k "hl").
+  private var highlights: List<CIHighlight> = emptyList()
   private var members = CIMembers()
 
   private var needsApply = true
@@ -142,10 +148,29 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
         if (it2.key.isEmpty() || !seen.add(it2.key)) return@forEach
         next.add(it2)
       }
+      if (next.size != media.size) mediaEndAskedAt = -1
       media = next
       needsApply = true
     } catch (e: Throwable) {
       onNativeError(mapOf("message" to ("media: " + (e.message ?: e.javaClass.simpleName))))
+    }
+  }
+
+  /** [2026-10-19 profile-grid-native] apiVersion 5: destaques da linha k "hl". */
+  fun setHighlightsProp(list: List<Any?>?) {
+    try {
+      val seen = HashSet<String>()
+      val next = ArrayList<CIHighlight>()
+      list?.forEach { x ->
+        val m = CLVal.map(x) ?: return@forEach
+        val h = CIHighlight.from(m)
+        if (h.key.isEmpty() || !seen.add(h.key)) return@forEach
+        next.add(h)
+      }
+      highlights = next
+      needsApply = true
+    } catch (e: Throwable) {
+      onNativeError(mapOf("message" to ("highlights: " + (e.message ?: e.javaClass.simpleName))))
     }
   }
 
@@ -465,6 +490,9 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
     data class Member(override val key: String, val member: CIMember, val index: Int, val first: Boolean, val last: Boolean, val inset: Int, val gap: Int) : Item()
     data class Search(override val key: String, val placeholder: String, val first: Boolean, val last: Boolean, val inset: Int, val gap: Int) : Item()
     data class State(override val key: String, val text: String, val loading: Boolean, val first: Boolean, val last: Boolean, val inset: Int, val gap: Int) : Item()
+    // [2026-10-19 profile-grid-native] api 5.
+    data class GridRow(override val key: String, val items: List<CIMedia>, val index: Int, val total: Int, val inset: Int, val gap: Int) : Item()
+    data class Highlights(override val key: String, val items: List<CIHighlight>, val inset: Int, val gap: Int) : Item()
   }
 
   private var items: List<Item> = emptyList()
@@ -528,6 +556,34 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
 
       for (id in rowOrder) {
         val r = rows[id] ?: continue
+        if (r.kind == "grid") {
+          // [2026-10-19 profile-grid-native] grade: legenda + linhas de 3 (borda a borda).
+          flush()
+          val list = media
+          if (list.isNotEmpty() && seen.add("grid|" + id)) {
+            if (r.header.isNotEmpty()) next.add(Item.Caption("h|$n|grid", r.header, false, ins, 0))
+            val gIns = gridInset()
+            val total = (list.size + 2) / 3
+            var i = 0
+            var rowIdx = 0
+            while (i < list.size) {
+              val chunk = list.subList(i, min(list.size, i + 3)).toList()
+              val last = rowIdx == total - 1
+              next.add(Item.GridRow("gr|" + chunk[0].key, chunk, rowIdx, total, gIns, if (last) gapCard else px(2f)))
+              i += 3
+              rowIdx++
+            }
+          }
+          n++
+          continue
+        }
+        if (r.kind == "hl") {
+          flush()
+          val k = "r|" + id
+          if (highlights.isNotEmpty() && seen.add(k)) next.add(Item.Highlights(k, highlights, ins, px(20f)))
+          n++
+          continue
+        }
         if (r.kind == "members") {
           flush()
           val list = ArrayList<Pending>()
@@ -614,6 +670,21 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
     mainHandler.postDelayed(queryRunnable, 250)
   }
 
+  /** Grade de borda a borda (coluna centrada em tela larga). */
+  private fun gridInset(): Int {
+    val maxPx = (maxContentWidthDp * density).toInt()
+    val w = width
+    return if (maxPx > 0 && w > maxPx) (w - maxPx) / 2 else 0
+  }
+
+  private fun maybeAskMoreMedia(rowIndex: Int, totalRows: Int) {
+    val count = media.size
+    if (rowIndex >= totalRows - 3 && mediaEndAskedAt != count) {
+      mediaEndAskedAt = count
+      recycler.post { onMediaEnd(mapOf("count" to count)) }
+    }
+  }
+
   private fun maybeAskMore(index: Int) {
     val count = members.items.size
     if (index >= count - 12 && members.hasMore && !members.loading && endAskedAt != count) {
@@ -658,6 +729,8 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
       is Item.Member -> TYPE_MEMBER
       is Item.Search -> TYPE_SEARCH
       is Item.State -> TYPE_STATE
+      is Item.GridRow -> TYPE_GRID
+      is Item.Highlights -> TYPE_HL
     }
 
     override fun getItemId(position: Int): Long = stableId(items[position].key)
@@ -690,6 +763,13 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
           s.onChange = { text -> queryChanged(text) }
         }
         TYPE_STATE -> CIStateView(ctx)
+        TYPE_GRID -> CIGridRowView(ctx).also { g ->
+          g.onItem = { key -> onMediaPress(mapOf("key" to key)) }
+        }
+        TYPE_HL -> CIHighlightsView(ctx).also { hv ->
+          hv.onItem = { key -> onMediaPress(mapOf("key" to "hl|$key")) }
+          hv.onLong = { key -> onMediaPress(mapOf("key" to "hl!|$key")) }
+        }
         else -> CIRowView(ctx).also { r -> r.listener = rowListener }
       }
       v.layoutParams = lp()
@@ -755,6 +835,15 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
             margins(v, it.inset, it.gap)
             (v as? CIStateView)?.bind(it.text, it.loading, palette, it.first, it.last)
           }
+          is Item.GridRow -> {
+            margins(v, it.inset, it.gap)
+            (v as? CIGridRowView)?.bind(it.items, palette, labels.get("post", "Publicação"))
+            maybeAskMoreMedia(it.index, it.total)
+          }
+          is Item.Highlights -> {
+            margins(v, it.inset, it.gap)
+            (v as? CIHighlightsView)?.bind(it.items, palette)
+          }
           null -> {}
         }
       } catch (e: Throwable) {
@@ -799,6 +888,8 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
     private const val TYPE_SEARCH = 6
     private const val TYPE_STATE = 7
     private const val TYPE_SPACER = 8
+    private const val TYPE_GRID = 9
+    private const val TYPE_HL = 10
     private val PAYLOAD_BIND = Any()
   }
 }

@@ -20,6 +20,14 @@
 //                 nativa de membros), compartilhar, mais opções, bloquear,
 //                 denunciar.
 // Ícones = nomes lógicos (CIText.symbol no iOS / CIText.drawable no Android).
+//
+// [2026-10-19 profile-native-first] ctx.loading = semente (cópia/infoCache, sem
+// profile_get ainda): sem "Editar", contagens nem linhas de ação até chegar.
+// [2026-10-19 profile-grid-native] ctx.v5 (ChatInfo api ≥ 5): hero.cover
+// {u,a} (capa atrás do avatar), hero.ring ('unseen'|'seen'), linha k:'hl'
+// (faixa nativa de destaques — descritores em `highlights`) e k:'grid'
+// (publicações em grade 3 colunas no fim; onMediaEnd → on.morePosts).
+// Novos handlers: on.highlight(h), on.highlightMenu(h), on.morePosts().
 import { initialsOf, gradientIndex } from '../chatlist/nativeAdapter';
 import { avatarRefForEmail, avatarRefForUrl } from '../chat/NativeProfileBridge';
 import { normalizeCoverUrl } from '../../services/profileCover';
@@ -71,12 +79,17 @@ export function buildNativeProfileInfo(ctx) {
   const social = ctx.social || {};
   const actions = ctx.actions || {};
   const abs = typeof ctx.abs === 'function' ? ctx.abs : (u) => u;
+  // [2026-10-19 profile-native-first] semente sem profile_get: só o que é certo.
+  const loading = !!ctx.loading;
+  // [2026-10-19 profile-grid-native] binário com ChatInfo api ≥ 5.
+  const v5 = !!ctx.v5;
 
   // ── Fotos: avatar (tamanho cheio) + capa → carrossel da foto expandida ──
   const avatarRef = email ? avatarRefForEmail(email, name, 'full') : (id.avatar_url ? avatarRefForUrl(id.avatar_url, 'full') : null);
   const photos = [];
   const photoUris = [avatarRef && avatarRef.uri ? avatarRef.uri : ''];
   const cover = normalizeCoverUrl(String(id.cover_url || '').trim()); // [capa-2026-10-19] host antigo → media
+  const coverAbs = cover ? abs(cover) : '';
   if (cover && avatarRef && avatarRef.uri) {
     const u = abs(cover);
     if (u) {
@@ -102,13 +115,19 @@ export function buildNativeProfileInfo(ctx) {
     badge: self ? 'camera' : '',
     photos,
     back: true,
-    nav: self ? { key: 'edit', label: tr('common.edit', 'Editar'), onPress: () => on.edit?.() } : null,
+    nav: self && !loading ? { key: 'edit', label: tr('common.edit', 'Editar'), onPress: () => on.edit?.() } : null,
     actions: [],
     onAvatarPress: (index) => {
       const i = Number(index) || 0;
       on.avatar?.(i, i > 0 ? (photoUris[i] || null) : null);
     },
   };
+  // [2026-10-19 profile-cover-hero] api ≥ 5: capa atrás do avatar (degradê até
+  // o fundo) + anel de status no avatar ('unseen' | 'seen').
+  if (v5) {
+    if (coverAbs) hero.cover = { u: coverAbs, a: /\/api\//.test(coverAbs) ? 1 : 0 };
+    if (ctx.storyRing) hero.ring = String(ctx.storyRing);
+  }
   if (!self) {
     if (actions.can_message) hero.actions.push({ key: 'msg', icon: 'message', label: tr('profile.message', 'Mensagem'), onPress: () => on.chat?.() });
     if (actions.can_call) {
@@ -151,14 +170,32 @@ export function buildNativeProfileInfo(ctx) {
   // ── Status / destaques / seguidores ──
   const stories = Array.isArray(ctx.stories) ? ctx.stories : [];
   const highlights = Array.isArray(ctx.highlights) ? ctx.highlights : [];
+  // [2026-10-19 profile-grid-native] api ≥ 5: destaques = faixa NATIVA de
+  // círculos com anel (capa + título), logo abaixo das informações (Instagram).
+  const hlItems = [];
+  const hlById = new Map();
+  if (v5) {
+    for (const h of highlights) {
+      if (!h || h.id == null) continue;
+      const key = String(h.id);
+      if (hlById.has(key)) continue;
+      const u = h.cover_url ? abs(String(h.cover_url)) : '';
+      hlById.set(key, h);
+      hlItems.push({ key, u, a: u && /\/api\//.test(u) ? 1 : 0, title: String(h.title || '') });
+      if (hlItems.length >= 60) break;
+    }
+    if (hlItems.length > 0) rows.push({ id: 'hl', k: 'hl', sid: 'hl' });
+  }
   if (stories.length > 0) {
     rows.push({ id: 'status', sid: 'social', icon: 'status', title: self ? tr('nativeProfile.myStatus', 'Meus status') : tr('nativeProfile.status', 'Status'), val: _count(stories.length), onPress: () => on.stories?.() });
   }
-  if (highlights.length > 0) {
+  if (!v5 && highlights.length > 0) {
     rows.push({ id: 'highlights', sid: 'social', icon: 'bookmark', title: tr('nativeProfile.highlights', 'Destaques'), val: _count(highlights.length), onPress: () => on.grid?.('posts') });
   }
-  rows.push({ id: 'followers', sid: 'social', icon: 'followers', title: tr('profile.followers', 'Seguidores'), val: _count(social.followers_count) || '0', onPress: () => on.followers?.('followers') });
-  rows.push({ id: 'following', sid: 'social', icon: 'users', title: tr('profile.following', 'Seguindo'), val: _count(social.following_count) || '0', onPress: () => on.followers?.('following') });
+  if (!loading) {
+    rows.push({ id: 'followers', sid: 'social', icon: 'followers', title: tr('profile.followers', 'Seguidores'), val: _count(social.followers_count) || '0', onPress: () => on.followers?.('followers') });
+    rows.push({ id: 'following', sid: 'social', icon: 'users', title: tr('profile.following', 'Seguindo'), val: _count(social.following_count) || '0', onPress: () => on.followers?.('following') });
+  }
   const shared = Array.isArray(ctx.sharedMedia) ? ctx.sharedMedia : [];
   if (!self && shared.length > 0) {
     rows.push({ id: 'shared', sid: 'social', icon: 'image', title: tr('profile.sharedMedia', 'Mídia compartilhada'), val: _count(shared.length), onPress: () => on.grid?.('media') });
@@ -177,10 +214,13 @@ export function buildNativeProfileInfo(ctx) {
     if (!u) continue;
     postByKey.set(key, p);
     media.push({ key, u, a: /\/api\//.test(u) ? 1 : 0, video: _isVideo(p) });
-    if (media.length >= 12) break;
+    // api ≥ 5: grade 3 colunas virtualizada (pagina por onMediaEnd); antes, faixa de 12.
+    if (media.length >= (v5 ? 600 : 12)) break;
   }
-  if (media.length > 0) {
-    rows.push({ id: 'posts', k: 'media', sid: 'posts', title: tr('nativeProfile.posts', 'Publicações'), val: _count(ctx.postsTotal || posts.length) });
+  const postsLabel = tr('nativeProfile.posts', 'Publicações');
+  const postsCount = _count(ctx.postsTotal || posts.length);
+  if (media.length > 0 && !v5) {
+    rows.push({ id: 'posts', k: 'media', sid: 'posts', title: postsLabel, val: postsCount });
   }
 
   // ── Outra pessoa: live, presente, grupos em comum, ações ──
@@ -206,10 +246,19 @@ export function buildNativeProfileInfo(ctx) {
         actions: [],
       };
     }
-    rows.push({ id: 'share', k: 'a', sid: 'acts', icon: 'share', title: tr('profile.share', 'Compartilhar perfil'), onPress: () => on.share?.() });
-    rows.push({ id: 'more', k: 'a', sid: 'acts', icon: 'more', title: tr('nativeProfile.more', 'Mais opções'), onPress: () => on.menu?.() });
-    rows.push({ id: 'block', k: 'a', sid: 'danger', dest: true, icon: 'block', title: tr('chat.blockUser', 'Bloquear usuário'), onPress: () => on.block?.() });
-    rows.push({ id: 'report', k: 'a', sid: 'danger', dest: true, icon: 'flag', title: tr('chat.reportUser', 'Denunciar usuário'), onPress: () => on.report?.() });
+    if (!loading) {
+      rows.push({ id: 'share', k: 'a', sid: 'acts', icon: 'share', title: tr('profile.share', 'Compartilhar perfil'), onPress: () => on.share?.() });
+      rows.push({ id: 'more', k: 'a', sid: 'acts', icon: 'more', title: tr('nativeProfile.more', 'Mais opções'), onPress: () => on.menu?.() });
+      rows.push({ id: 'block', k: 'a', sid: 'danger', dest: true, icon: 'block', title: tr('chat.blockUser', 'Bloquear usuário'), onPress: () => on.block?.() });
+      rows.push({ id: 'report', k: 'a', sid: 'danger', dest: true, icon: 'flag', title: tr('chat.reportUser', 'Denunciar usuário'), onPress: () => on.report?.() });
+    }
+  }
+
+  // [2026-10-19 profile-grid-native] api ≥ 5: publicações no FIM da lista como
+  // grade nativa (Instagram), com "Ver tudo" (reels / lives / mídia) antes dela.
+  if (v5 && media.length > 0) {
+    rows.push({ id: 'posts_all', k: 'c', sid: 'posts_all', icon: 'image', title: tr('chat.nprofile.seeAll', 'Ver tudo'), val: postsCount, onPress: () => on.grid?.('posts') });
+    rows.push({ id: 'posts', k: 'grid', sid: 'posts', hd: postsLabel, title: postsLabel, val: postsCount });
   }
 
   return {
@@ -217,16 +266,26 @@ export function buildNativeProfileInfo(ctx) {
     rows,
     media,
     members,
+    highlights: hlItems,
     onMediaPress: (key) => {
       if (!key) { on.grid?.('posts'); return; }
-      const p = postByKey.get(String(key));
+      const k = String(key);
+      // [2026-10-19 profile-grid-native] faixa de destaques: 'hl|<id>' toque, 'hl!|<id>' toque longo.
+      if (k.startsWith('hl|') || k.startsWith('hl!|')) {
+        const long = k.startsWith('hl!|');
+        const h = hlById.get(k.slice(long ? 4 : 3));
+        if (h) { if (long) on.highlightMenu?.(h); else on.highlight?.(h); }
+        return;
+      }
+      const p = postByKey.get(k);
       if (p) on.post?.(p);
     },
+    onMediaEnd: () => { if (ctx.postsHasMore) on.morePosts?.(); },
     onMemberPress: (gid) => {
       const groups = Array.isArray(ctx.commonChats) ? ctx.commonChats : [];
       const c = groups.find((x) => x && String(x.id) === String(gid));
       if (c) on.group?.(c);
     },
-    labels: { photo: tr('profile.viewPhoto', 'Ver foto') },
+    labels: { photo: tr('profile.viewPhoto', 'Ver foto'), post: postsLabel },
   };
 }

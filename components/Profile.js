@@ -25,7 +25,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Image, FlatList,
   Platform, Modal, Pressable, ActivityIndicator, Dimensions, Animated, Alert, TextInput,
-  PanResponder, Easing, Switch, Linking, AppState, DeviceEventEmitter,
+  PanResponder, Easing, Switch, Linking, AppState, DeviceEventEmitter, InteractionManager,
 } from 'react-native';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
@@ -65,7 +65,7 @@ import { humanizeCount as _humanizeDiamonds } from './gifts/giftCatalog';
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import HighlightEditSheet from './HighlightEditSheet';
 import ReportSheet from './ReportSheet'; // [central-moderacao 2026-10-14] motivos padronizados
-import NativeChatInfo, { isNativeProfileEnabled } from './chat/NativeChatInfo'; // [2026-10-18 profile-native]
+import NativeChatInfo, { isNativeProfileEnabled, isNativeProfileV5Enabled } from './chat/NativeChatInfo'; // [2026-10-18 profile-native] + [2026-10-19 profile-grid-native] api 5
 import { buildNativeProfileInfo } from './profile/nativeProfileInfo'; // [2026-10-18 profile-native]
 import { useNativeProfileEdit, isNativeProfileEditEnabled } from './profile/nativeProfileEdit'; // [2026-10-18 profile-edit-native]
 import { PLAN_NAME } from '../services/brandPlan'; // [2026-10-18 profile-native]
@@ -157,6 +157,39 @@ export function invalidateProfileCache(key) {
 
 function _infoCacheOn() {
   try { return globalThis.__chatyy_info_cache !== false; } catch { return true; }
+}
+
+// [2026-10-19 profile-native-first] kill switch OTA do perfil nativo imediato.
+function _profileNativeFirstOn() {
+  try { return globalThis.__chatyy_profile_native_first !== false; } catch { return true; }
+}
+
+// [2026-10-19 profile-native-first] Semente do 1º quadro nativo quando ainda
+// não há cópia do profile_get: eu mesmo (conta ativa) → contato salvo no
+// infoCache (nome, recado, capa, foto) → só o @/e-mail da rota.
+function _seedProfileIdentity(key, me) {
+  const k = String(key || '').trim();
+  if (!k) return null;
+  const kl = k.toLowerCase().replace(/^@/, '');
+  const isEmail = kl.includes('@');
+  const meEmail = String(me?.email || '').toLowerCase();
+  const meUser = String(me?.username || '').toLowerCase().replace(/^@/, '');
+  if (meEmail && (isEmail ? kl === meEmail : (meUser && kl === meUser))) {
+    return {
+      email: me.email,
+      name: String(me.name || me.display_name || ''),
+      username: String(me.username || ''),
+      avatar_url: me.avatar_url || '',
+      __self: true,
+    };
+  }
+  if (isEmail) {
+    let c = null;
+    try { c = require('../services/infoCache').getContactInfo(kl); } catch { c = null; }
+    const id = (c && c.identity && typeof c.identity === 'object') ? c.identity : {};
+    return { ...id, email: id.email || kl };
+  }
+  return { username: kl };
 }
 
 function _cacheGet(key) {
@@ -1946,8 +1979,40 @@ export default function Profile({
   // via renderTabContent) — depois dele dava TDZ no web.
   const _gridKind = (activeTab === 'posts' || activeTab === 'reels' || activeTab === 'lives' || activeTab === 'media') ? activeTab : null;
   const _isSelf = !!actions?.is_self;
+  // ─── [2026-10-19 profile-native-first] Perfil NATIVO pinta JÁ ──────────
+  // Antes: o perfil JS (esqueleto → cabeçalho/anéis SVG/grade) montava
+  // primeiro e só depois do profile_get trocava para o ChatyyChatInfo nativo
+  // (pior rota iOS no build 732: 73,5‰ de quadros lentos). Agora, com o
+  // nativo disponível, a view nativa pinta no 1º render a partir da cópia
+  // (cache do Perfil → infoCache do contato → semente mínima do @/e-mail) e o
+  // corpo JS NÃO é montado (nem calculado); folhas/visualizadores JS montam
+  // depois do 1º quadro ou quando abertos. Kill switch OTA:
+  // globalThis.__chatyy_profile_native_first = false → comportamento anterior
+  // (espera o profile_get com o esqueleto JS).
+  const _npOn = mode === 'full' && !WEB && !!nativeProfile && !nativeProfileOff && isNativeProfileEnabled();
+  const _npFirst = _npOn && _profileNativeFirstOn();
+  const _npSeed = useMemo(() => {
+    if (!_npFirst || identity) return null;
+    return _seedProfileIdentity(fetchKey, currentUser);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_npFirst, !!identity, fetchKey, currentUser?.email]);
+  const _npIdentity = identity || _npSeed;
+  const _npActive = _npOn && !err && (_npFirst ? !!_npIdentity : (!loading && !!identity));
+  const _npV5 = _npActive && isNativeProfileV5Enabled();
+  const [_npOverlaysReady, setNpOverlaysReady] = useState(false);
+  useEffect(() => {
+    if (!_npActive || _npOverlaysReady) return undefined;
+    let task = null;
+    let tm = null;
+    try {
+      task = InteractionManager.runAfterInteractions(() => { tm = setTimeout(() => setNpOverlaysReady(true), 350); });
+    } catch {
+      tm = setTimeout(() => setNpOverlaysReady(true), 700);
+    }
+    return () => { try { task?.cancel?.(); } catch {} if (tm) clearTimeout(tm); };
+  }, [_npActive, _npOverlaysReady]);
   const gridRows = useMemo(() => {
-    if (mode !== 'full' || !_gridKind) return _EMPTY_ROWS;
+    if (mode !== 'full' || !_gridKind || _npActive) return _EMPTY_ROWS;
     let list = _gridKind === 'posts' ? combinedPostsAll
       : _gridKind === 'reels' ? reels
       : _gridKind === 'lives' ? lives
@@ -1961,12 +2026,12 @@ export default function Profile({
       rows.push({ key: `${_gridKind}:${k0}:${i}`, items });
     }
     return rows;
-  }, [mode, _gridKind, combinedPostsAll, reels, lives, sharedMedia, _isSelf]);
+  }, [mode, _gridKind, combinedPostsAll, reels, lives, sharedMedia, _isSelf, _npActive]);
 
   // [2026-10-16 native-media-grid] Modo full no iOS/Android: grade NATIVA
   // (UICollectionView/RecyclerView, miniaturas c/ cache nativo, 120 Hz) com o
   // cabecalho (`body`) como filho que rola junto. Sem modulo/kill → FlashList.
-  const _nativeGridOn = mode === 'full' && !WEB && isNativeMediaGridAvailable();
+  const _nativeGridOn = mode === 'full' && !WEB && !_npActive && isNativeMediaGridAvailable(); // [2026-10-19 profile-native-first] perfil nativo não calcula a grade da rota ?grid=1
   const _sharedMediaKey = (data?.shared_media || _EMPTY_ROWS);
   const nativeGrid = useMemo(() => {
     if (!_nativeGridOn || !_gridKind) return _EMPTY_NATIVE_GRID;
@@ -2221,6 +2286,50 @@ export default function Profile({
   // [WAVE 52] Skeleton row paints 4 shimmer placeholders during the first
   // refetch so the strip never collapses to a blank gap; stagger fade-in
   // makes the real tiles slide up after data arrives.
+  // [2026-10-19 profile-grid-native] abrir destaque = função do componente:
+  // a faixa JS e a faixa NATIVA (ChatInfo api 5) chamam a mesma.
+  // [feat-10] Tap → resolve items via status_highlight_items + open
+  // the existing StoryViewer.
+  const openHighlight = async (h) => {
+    if (!h || h.id == null) return;
+    const isSelf = !!actions?.is_self;
+    try {
+      const r = await api.statusHighlightItems?.(h.id);
+      const items = r?.data?.items || r?.items || [];
+      if (!Array.isArray(items) || items.length === 0) {
+        // [2026-05-18] Destaque vazio. Two outcomes:
+        //  - Owner: offer to delete the destaque (it's a dead bookmark).
+        //    Also auto-prune from local state so the user doesn't keep
+        //    tapping a phantom tile.
+        //  - Viewer: silent dismiss — no value in shouting "vazio" at them.
+        if (isSelf) {
+          Alert.alert(
+            t?.('profile.highlightEmpty') || 'Destaque vazio',
+            t?.('profile.highlightEmptyHint') || 'Esse destaque ficou sem stories. Quer apagar?',
+            [
+              { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+              {
+                text: t?.('common.delete') || 'Apagar',
+                style: 'destructive',
+                onPress: async () => {
+                  try { await api.statusHighlightDelete?.(h.id); } catch {}
+                  setHighlights(prev => prev.filter(x => x.id !== h.id));
+                },
+              },
+            ]
+          );
+        } else {
+          // Hide it from the viewer's local state too — keeps the row tidy.
+          setHighlights(prev => prev.filter(x => x.id !== h.id));
+        }
+        return;
+      }
+      setHighlightViewer({ open: true, items, title: h.title || '', startIdx: 0, highlightId: h.id });
+    } catch (e) {
+      Alert.alert(t?.('common.error') || 'Erro', e?.message || t?.('common.failed') || 'Falhou');
+    }
+  };
+
   const renderHighlights = () => {
     const isSelf = !!actions?.is_self;
     const SIZE = 72;
@@ -2436,76 +2545,16 @@ export default function Profile({
     // [B.2] Per-tile renderer for the windowed FlatList below.
     const renderHighlightTile = (h) => {
           const cover = h.cover_url ? resolveMedia(h.cover_url) : null;
-          // Instagram gradient ring (purple → fuchsia → orange) so destaques
-          // stand out from regular avatars. Painted via SVG when available;
-          // gracefully falls back to a solid purple ring in degraded envs so
-          // we never lose the visual identity. Same palette family as the
-          // profile header halo for brand consistency.
-          const ringRadius = (RING / 2) - 1.5;
-          const renderHighlightRing = () => {
-            if (_Svg && _SvgDefs && _SvgLinearGradient && _SvgStop && _SvgCircle) {
-              return (
-                <_Svg width={RING} height={RING} style={{ position: 'absolute', top: 0, left: 0 }}>
-                  <_SvgDefs>
-                    <_SvgLinearGradient id={`hlRing_${h.id}`} x1="0" y1="0" x2="1" y2="1">
-                      <_SvgStop offset="0" stopColor="#111111" />
-                      <_SvgStop offset="0.5" stopColor="#111111" />
-                      <_SvgStop offset="1" stopColor="#F97316" />
-                    </_SvgLinearGradient>
-                  </_SvgDefs>
-                  <_SvgCircle
-                    cx={RING / 2}
-                    cy={RING / 2}
-                    r={ringRadius}
-                    stroke={`url(#hlRing_${h.id})`}
-                    strokeWidth={2}
-                    fill="none"
-                  />
-                </_Svg>
-              );
-            }
-            return null;
-          };
+          // [2026-10-19 profile-rings] Anel do destaque SEM SVG (era um <Svg> +
+          // LinearGradient por ladrilho → 1 superfície de desenho por destaque).
+          // Agora é a própria borda da View: metade de cima/esquerda na cor do
+          // texto e de baixo/direita laranja (mesma diagonal #111 → #F97316 do
+          // degradê antigo) — zero camada extra, desenhado pelo nativo.
+          const ringBase = colors?.text || '#111111';
           // [feat-10] Tap → resolve items via status_highlight_items + open
           // the existing StoryViewer. Long-press (self) → delete with
           // confirmation. Mirrors Instagram's interaction grammar.
-          const openHighlight = async () => {
-            try {
-              const r = await api.statusHighlightItems?.(h.id);
-              const items = r?.data?.items || r?.items || [];
-              if (!Array.isArray(items) || items.length === 0) {
-                // [2026-05-18] Destaque vazio. Two outcomes:
-                //  - Owner: offer to delete the destaque (it's a dead bookmark).
-                //    Also auto-prune from local state so the user doesn't keep
-                //    tapping a phantom tile.
-                //  - Viewer: silent dismiss — no value in shouting "vazio" at them.
-                if (isSelf) {
-                  Alert.alert(
-                    t?.('profile.highlightEmpty') || 'Destaque vazio',
-                    t?.('profile.highlightEmptyHint') || 'Esse destaque ficou sem stories. Quer apagar?',
-                    [
-                      { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                      {
-                        text: t?.('common.delete') || 'Apagar',
-                        style: 'destructive',
-                        onPress: async () => {
-                          try { await api.statusHighlightDelete?.(h.id); } catch {}
-                          setHighlights(prev => prev.filter(x => x.id !== h.id));
-                        },
-                      },
-                    ]
-                  );
-                } else {
-                  // Hide it from the viewer's local state too — keeps the row tidy.
-                  setHighlights(prev => prev.filter(x => x.id !== h.id));
-                }
-                return;
-              }
-              setHighlightViewer({ open: true, items, title: h.title || '', startIdx: 0, highlightId: h.id });
-            } catch (e) {
-              Alert.alert(t?.('common.error') || 'Erro', e?.message || t?.('common.failed') || 'Falhou');
-            }
-          };
+          const openHighlightTile = () => openHighlight(h);
           // [2026-05-18 IG-Pro] Long-press → action sheet (Edit / Share /
           // Delete). Replaces the previous "delete-only" prompt which gave
           // users no way to rename, swap cover, or generate a public link.
@@ -2526,7 +2575,7 @@ export default function Profile({
               key={h.id}
               activeOpacity={0.85}
               style={{ alignItems: 'center', width: SIZE + 8 }}
-              onPress={openHighlight}
+              onPress={openHighlightTile}
               onLongPress={openActionSheet}
               delayLongPress={350}
               accessibilityLabel={(t?.('profile.openHighlight') || 'Abrir destaque') + ' ' + (h.title || '')}
@@ -2535,14 +2584,13 @@ export default function Profile({
                 width: RING, height: RING, borderRadius: RING / 2,
                 alignItems: 'center', justifyContent: 'center',
                 padding: 2,
-                // Solid fallback ring sits under the SVG. When the SVG paints
-                // it covers this border; if SVG isn't available the user still
-                // sees a purple ring (no silent visual regression).
-                borderWidth: _Svg ? 0 : 2,
-                borderColor: colors?.text || '#111111',
+                borderWidth: 2,
+                borderTopColor: ringBase,
+                borderLeftColor: ringBase,
+                borderRightColor: '#F97316',
+                borderBottomColor: '#F97316',
                 backgroundColor: tone,
               }}>
-                {renderHighlightRing()}
                 {cover ? (
                   WEB
                     ? <img src={cover} alt="" style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2, objectFit: 'cover' }} />
@@ -2739,34 +2787,18 @@ export default function Profile({
             const AVATAR_SIZE = 86;
             const HALO_PAD = 5; // 3px stroke + 2px inner gap
             const HALO_SIZE = AVATAR_SIZE + HALO_PAD * 2;
-            const haloRadius = (HALO_SIZE / 2) - 0.75;
             // "MUCH LESS BLACK" 2026: no heavy black ring on the avatar. When
             // there are no stories the avatar sits inside a barely-there light
             // hairline (colors.border) — WhatsApp/iOS clean, avatar prominent.
             const haloColor = colors?.border || (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
-            const renderHalo = () => {
-              if (_Svg && _SvgCircle) {
-                return (
-                  <_Svg width={HALO_SIZE} height={HALO_SIZE} style={{ position: 'absolute', top: 0, left: 0 }}>
-                    <_SvgCircle
-                      cx={HALO_SIZE / 2}
-                      cy={HALO_SIZE / 2}
-                      r={haloRadius}
-                      stroke={haloColor}
-                      strokeWidth={1.5}
-                      fill="none"
-                    />
-                  </_Svg>
-                );
-              }
-              return (
-                <View style={{
-                  position: 'absolute', top: 0, left: 0,
-                  width: HALO_SIZE, height: HALO_SIZE, borderRadius: HALO_SIZE / 2,
-                  borderWidth: StyleSheet.hairlineWidth, borderColor: haloColor,
-                }} />
-              );
-            };
+            // [2026-10-19 profile-rings] halo = borda fina da própria View (era <Svg><Circle>).
+            const renderHalo = () => (
+              <View pointerEvents="none" style={{
+                position: 'absolute', top: 0, left: 0,
+                width: HALO_SIZE, height: HALO_SIZE, borderRadius: HALO_SIZE / 2,
+                borderWidth: 1.5, borderColor: haloColor,
+              }} />
+            );
             const isLive = !!liveSessionId;
             const liveLabel = (t?.('live.aoVivo') || 'AO VIVO').toUpperCase();
             const inner = hasStories ? (
@@ -3416,7 +3448,9 @@ export default function Profile({
     );
   };
 
-  const body = loading ? (
+  // [2026-10-19 profile-native-first] nativo ativo → o corpo JS (cabeçalho,
+  // destaques, abas, grade) nem é construído.
+  const body = (mode === 'full' && _npActive) ? null : loading ? (
     <ProfileSkeleton colors={colors} isDark={isDark} />
   ) : err ? (
     <View style={{ paddingHorizontal: 28, paddingTop: 80, paddingBottom: 40, alignItems: 'center' }}>
@@ -4279,8 +4313,7 @@ export default function Profile({
   // linha chama os MESMOS handlers/folhas da versão JS abaixo. Gate: rota
   // pediu (nativeProfile) + binário api ≥ 3 + kill switch OTA
   // globalThis.__chatyy_native_profile = false; erro nativo → volta ao JS.
-  const _npOn = mode === 'full' && !WEB && !!nativeProfile && !nativeProfileOff && isNativeProfileEnabled();
-  const _npActive = _npOn && !loading && !err && !!identity;
+  // _npOn / _npActive: calculados lá em cima (antes do `body`) — [2026-10-19 profile-native-first].
   useEffect(() => { try { onNativeActive?.(_npActive); } catch {} }, [_npActive, onNativeActive]);
   // ─── [2026-10-18 profile-edit-native] "Editar" = MESMA tela nativa em modo
   // edição (Telegram). Binário api ≥ 4 + kill switch
@@ -4335,6 +4368,50 @@ export default function Profile({
   const _npGo = (href) => { try { if (router?.push) router.push(href); } catch {} };
   const _npKey = identity?.username || identity?.email || fetchKey || '';
   const _npGrid = (tab) => _npGo(`/u/${encodeURIComponent(String(_npKey))}?grid=1${tab ? `&tab=${encodeURIComponent(tab)}` : ''}`);
+  // [2026-10-19 profile-grid-native] Toque na grade NATIVA → visualizador de
+  // mídia NATIVO (modules/expo-media-viewer: pager + zoom + vídeo) com as
+  // publicações carregadas. Sem módulo / item sem mídia real (vídeo só com
+  // pôster) / falhou → visualizador JS de antes (ProfilePostViewer, com
+  // curtidas/comentários). Kill switch: globalThis.__chatyy_profile_native_viewer = false.
+  const _npPostMedia = (p) => {
+    if (!p || p.__create) return null;
+    const mu = Array.isArray(p.media_urls) ? p.media_urls : [];
+    const isVid = p.type === 'video' || p.media_type === 'video';
+    const main = mu[0] || (isVid ? (p.video_url || '') : (p.url || p.thumbnail || ''));
+    if (!main) return null;
+    const uri = resolveMedia(String(main));
+    if (!uri || /\/api\//.test(uri)) return null; // viewer nativo não manda Bearer
+    const video = isVid || /\.(mp4|mov|webm|m4v|3gp)(\?|$)/i.test(uri);
+    const thumb = p.thumbnail || p.thumbnail_url || '';
+    return {
+      uri,
+      thumbUri: thumb ? resolveMedia(String(thumb)) : null,
+      type: video ? 'video' : 'image',
+      caption: String(p.caption || '').slice(0, 300),
+      senderName: identity?.name || '',
+      createdAt: p.created_at || null,
+    };
+  };
+  const _npOpenPost = (it) => {
+    const jsOpen = () => { try { onGridItemPress(it, 'posts'); } catch {} };
+    let off = false;
+    try { off = globalThis.__chatyy_profile_native_viewer === false; } catch {}
+    if (off || !it || !_npPostMedia(it)) { jsOpen(); return; }
+    const list = (combinedPostsAll || []).filter((p) => p && !p.__create);
+    const idx = list.findIndex((p) => String(p.id) === String(it.id));
+    if (idx < 0) { jsOpen(); return; }
+    let nmo = null;
+    try { nmo = require('../services/nativeMediaOpen'); } catch { nmo = null; }
+    if (!nmo || !nmo.nativeMediaAlways?.()) { jsOpen(); return; }
+    Promise.resolve(nmo.openNativeMediaList({
+      list,
+      index: idx,
+      toItem: _npPostMedia,
+      t,
+      allowShare: true,
+      allowSave: true,
+    })).then((sid) => { if (!sid) jsOpen(); }, jsOpen);
+  };
   const _npAvatar = (index, uri) => {
     if (index > 0 && uri) { setLightboxUri(uri); setAvatarLightboxOpen(true); return; }
     if (stories.length > 0) { openStoriesAt(0); return; }
@@ -4370,8 +4447,16 @@ export default function Profile({
   };
   const _npInfo = _npActive ? buildNativeProfileInfo({
     t,
-    mode: actions?.is_self ? 'self' : 'user',
-    identity,
+    mode: (actions?.is_self || (!identity && _npIdentity?.__self)) ? 'self' : 'user',
+    identity: _npIdentity,
+    // [2026-10-19 profile-native-first] semente (sem profile_get ainda): sem
+    // ações/contagens/linhas de ação até os dados reais chegarem.
+    loading: !identity,
+    // [2026-10-19 profile-grid-native] api ≥ 5: capa no cabeçalho, anel de
+    // status no avatar, grade 3 colunas de publicações e faixa de destaques nativas.
+    v5: _npV5,
+    storyRing: stories.length > 0 ? ((!actions?.is_self && _profileStatusRing?.allViewed) ? 'seen' : 'unseen') : '',
+    postsHasMore: _canPageMore,
     presenceText,
     social,
     actions,
@@ -4400,7 +4485,13 @@ export default function Profile({
       email: handleEmail,
       followers: (tab) => (onOpenFollowers ? onOpenFollowers(identity.email, tab) : setFollowersTab(tab)),
       grid: _npGrid,
-      post: (it) => onGridItemPress(it, 'posts'),
+      post: _npOpenPost,
+      highlight: (h) => { try { openHighlight(h); } catch {} },
+      highlightMenu: (h) => {
+        try { require('../services/haptics').hapticEvent('longPress'); } catch {}
+        setHighlightSheet({ open: true, highlight: { id: h.id, title: h.title, cover_url: h.cover_url, isSelf: !!actions?.is_self } });
+      },
+      morePosts: () => { try { loadMorePosts(); } catch {} },
       group: (c) => { try { require('../services/openConversation').openConversation(`/chat-conversation?id=${c.id}`); } catch {} },
       menu: () => setMenuOpen(true),
       block: handleBlock,
@@ -4414,6 +4505,12 @@ export default function Profile({
     },
   }) : null;
   const _npBack = () => { try { if (router?.canGoBack?.()) router.back(); else router?.replace?.('/chat'); } catch {} };
+  // [2026-10-19 profile-native-first] folhas/visualizadores JS (Modal) montam só
+  // depois do 1º quadro nativo (ou na hora em que algum abre).
+  const _npAnyOpen = !!(viewer.open || storyViewer.open || avatarLightboxOpen || highlightViewer.open
+    || highlightEdit.open || highlightShare.open || editOpen || statusCameraOpen || statusPublishing
+    || settingsOpen || sendDiamondOpen || reportOpen || followersTab);
+  const _npOverlaysOn = !_npActive || _npOverlaysReady || _npAnyOpen;
   const _npFail = (why) => {
     try { console.warn('[profile-native] fallback JS:', why); require('./../services/crashReporter').reportNativeFallback?.('native_profile_v3', String(why || '')); } catch {}
     setNativeProfileOff(true);
@@ -4475,24 +4572,30 @@ export default function Profile({
             {body}
           </ScrollView>
         )}
-        {viewerNode}
-        {storyViewerNode}
+        {/* [2026-10-19 profile-native-first] folhas por ref (leves, abertas por
+            .open()) ficam sempre montadas; os Modais por estado esperam o 1º quadro. */}
         {selfStatusHostNode}
-        {avatarLightboxNode}
-        {highlightViewerNode}
         {highlightActionSheetNode}
-        {highlightEditNode}
-        {highlightShareNode}
-        {editNode}
         {avatarActionNode}
-        {statusCameraNode}
-        {publishingToastNode}
-        {settingsNode}
-        {sendDiamondNode}
-        {reportNode}
-        {followersNode}
         {menuNode}
         {nicknameModalNode}
+        {_npOverlaysOn ? (
+          <>
+            {viewerNode}
+            {storyViewerNode}
+            {avatarLightboxNode}
+            {highlightViewerNode}
+            {highlightEditNode}
+            {highlightShareNode}
+            {editNode}
+            {statusCameraNode}
+            {publishingToastNode}
+            {settingsNode}
+            {sendDiamondNode}
+            {reportNode}
+            {followersNode}
+          </>
+        ) : null}
       </>
     );
   }
