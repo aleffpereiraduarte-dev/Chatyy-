@@ -271,6 +271,8 @@ import { MentionAutocomplete, isMentioning, insertMention, isUserMentioned } fro
 import NativeComposerBridge, { shouldUseNativeComposer } from '../components/chat/NativeComposerBridge'; // [2026-10-14 native-composer]
 import ComposerLinkPreviewStrip from '../components/chat/ComposerLinkPreviewStrip'; // [linkpreview 2026-10-18]
 import { previewForMessage as _lpForMsg, isFreshMessage as _lpIsFresh, composerSendDecision as _lpSendDecision, setLocalPreviewForCmi as _lpSetLocal, parseLinkPreview as _lpParse, LP_SKELETON as _LP_SK } from '../components/chat/linkPreviewState'; // [linkpreview 2026-10-18]
+import CallLinkCard from '../components/chat/CallLinkCard'; // [call-link 2026-10-19]
+import { isCallLinkUrl as _isCallLinkUrl } from '../components/calls/callLinkUtil'; // [call-link 2026-10-19]
 import { ScheduleToast, CustomScheduleModal, ScheduledMessagesModal } from '../components/ScheduleModals';
 import ReminderSheet from '../components/ReminderSheet';
 import { detectReminder as detectChatReminder, createReminder as createChatReminder, formatReminderWhen } from '../services/reminders';
@@ -3676,6 +3678,8 @@ function _lpHashColor(seed) {
 }
 
 function LinkPreview({ url, colors, ink = null, sub = null, msg = null }) {
+  // [call-link 2026-10-19] link de chamada do Chatyy → cartão com Entrar (não a prévia genérica).
+  if (_isCallLinkUrl(url)) return <CallLinkCard url={url} msg={msg} colors={colors} ink={ink} sub={sub} />;
   // Skip our own domains — cards linking back to the app are pure noise.
   if (_lpShouldSkip(url)) return null;
 

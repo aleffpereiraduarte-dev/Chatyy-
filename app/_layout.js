@@ -2361,6 +2361,7 @@ export default function RootLayout() {
                   <Stack.Screen name="search" options={{ headerShown: false, animation: _PUSH }} />
                   <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false, ..._DARK_BG }} />
                   <Stack.Screen name="call/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />{/* [2026-10-14 nav-nativa] era fade 120ms (página de link de chamada, não é o player) */}
+                  <Stack.Screen name="c/[code]" options={{ headerShown: false, animation: 'none' }} />{/* [call-link 2026-10-19] /c/<código> → /call/<código> */}
                   <Stack.Screen name="voicemail-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false }} />
                   <Stack.Screen name="meetings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="meeting-create" options={{ ..._FULL_MODAL }} />

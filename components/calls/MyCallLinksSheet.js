@@ -12,6 +12,7 @@ import { showToast } from '../ui/Toast';
 import {
   useMyCallLinks, refreshMyCallLinks, patchMyCallLink, removeMyCallLink, callLinkState,
 } from './myCallLinks';
+import { buildCallLinkMessage } from './callLinkUtil';
 
 function tr(t, key, fb, params) {
   let v;
@@ -63,12 +64,18 @@ const LinkRow = function LinkRow({ link, t, language, oc, ink, sub, onCopy, onSh
   const state = callLinkState(link);
   const active = state === 'active';
   const KindIcon = link.is_video ? IconVideo : IconPhone;
-  const title = link.is_video ? tr(t, 'calls.linkVideo', 'Link de vídeo') : tr(t, 'calls.linkVoice', 'Link de voz');
+  // [call-link 2026-10-19] nome dado na criação; válido até revogar ou 90 dias sem uso.
+  const title = String(link.title || '').trim()
+    || (link.is_video ? tr(t, 'calls.linkVideo', 'Link de vídeo') : tr(t, 'calls.linkVoice', 'Link de voz'));
   const statusText = state === 'revoked'
     ? tr(t, 'calls.linkRevoked', 'Revogado')
     : state === 'expired'
       ? tr(t, 'calls.linkExpired', 'Expirado')
-      : tr(t, 'calls.linkExpiresAt', 'Expira {date}', { date: fmtDate(link.expires_at, language) });
+      : link.idle_expiry
+        ? (link.last_used_at
+          ? tr(t, 'callLink.lastUsed', 'Ativo · último uso {date}', { date: fmtDate(link.last_used_at, language) })
+          : tr(t, 'callLink.activeUntilRevoked', 'Ativo até você revogar'))
+        : tr(t, 'calls.linkExpiresAt', 'Expira {date}', { date: fmtDate(link.expires_at, language) });
   return (
     <View>
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12 }}>
@@ -155,7 +162,7 @@ export default function MyCallLinksSheet({ visible, onClose, t, language }) {
   }, [t]);
 
   const onShare = useCallback(async (link) => {
-    const message = tr(t, 'calls.callLinkShareMsg', 'Entre na minha chamada no Chatyy: ') + link.url;
+    const message = buildCallLinkMessage(link, t); // [call-link 2026-10-19] mesmo texto do cartão no chat
     try {
       if (Platform.OS === 'web') {
         if (typeof navigator !== 'undefined' && navigator.share) { await navigator.share({ text: message, url: link.url }); return; }
@@ -163,7 +170,7 @@ export default function MyCallLinksSheet({ visible, onClose, t, language }) {
         if (ok) showToast({ message: tr(t, 'calls.linkCopied', 'Link copiado'), kind: 'success' });
         return;
       }
-      await Share.share({ message, url: link.url });
+      await Share.share(Platform.OS === 'ios' ? { message } : { message, url: link.url }); // iOS: url junto duplica o link
     } catch {}
   }, [t]);
 
@@ -191,7 +198,7 @@ export default function MyCallLinksSheet({ visible, onClose, t, language }) {
       visible={visible}
       onClose={onClose}
       title={tr(t, 'calls.myCallLinks', 'Meus links de chamada')}
-      subtitle={tr(t, 'calls.myCallLinksHint', 'Links expiram em 24 horas. Revogue para impedir novas entradas.')}
+      subtitle={tr(t, 'calls.myCallLinksHint', 'Os links valem até você revogar ou ficarem 90 dias sem uso.')}
       scroll
       testID="my-call-links-sheet"
     >

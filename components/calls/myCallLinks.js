@@ -18,7 +18,8 @@ const KEY = 'my_call_links_v1';
 const HIDDEN_KEY = 'my_call_links_hidden_v1'; // [wave13e] removidos à mão (não voltam do servidor)
 const MAX = 50;
 const KEEP_DEAD_MS = 30 * 24 * 3600 * 1000;
-const DEFAULT_TTL_MS = 24 * 3600 * 1000; // servidor: expiry padrão 24h
+// [call-link 2026-10-19] servidor: válido até revogar ou 90 dias SEM USO (era 24 h fixas).
+const DEFAULT_TTL_MS = 90 * 24 * 3600 * 1000;
 
 const _listeners = new Set();
 
@@ -50,11 +51,14 @@ function _write(list) {
 
 export function getMyCallLinks() { return _prune(_read()); }
 
-export function addMyCallLink({ link_id, url, is_video }) {
+export function addMyCallLink({ link_id, url, is_video, title, code, expires_at }) {
   if (!link_id || !url) return;
   const now = Date.now();
   const rest = _read().filter((l) => l && l.link_id !== link_id);
-  _write([{ link_id, url, is_video: !!is_video, created_at: now, expires_at: now + DEFAULT_TTL_MS, revoked: false }, ...rest]);
+  _write([{
+    link_id, url, is_video: !!is_video, title: String(title || ''), code: String(code || ''),
+    created_at: now, expires_at: Number(expires_at) || now + DEFAULT_TTL_MS, idle_expiry: !expires_at, revoked: false,
+  }, ...rest]);
 }
 
 export function patchMyCallLink(linkId, patch) {
@@ -95,6 +99,10 @@ function _mergeServer(items) {
       link_id: id,
       url: it.url || prev.url || `https://chatyy.com.br/call/${id}`,
       is_video: !!it.is_video,
+      title: it.title != null ? String(it.title) : (prev.title || ''), // [call-link 2026-10-19]
+      code: it.code || prev.code || '',
+      last_used_at: Number(it.last_used_at) || prev.last_used_at || 0,
+      idle_expiry: it.idle_expiry != null ? !!it.idle_expiry : !!prev.idle_expiry,
       created_at: Number(it.created_at) || prev.created_at || 0,
       expires_at: it.expires_at == null ? 0 : Number(it.expires_at) || 0,
       revoked: !!it.revoked || st === 'revoked',
@@ -116,11 +124,22 @@ export function callLinkState(l, now = Date.now()) {
   return 'active';
 }
 
+// [call-link 2026-10-19] A aba Ligações sincroniza sozinha (no máx. 1× a cada 10 min)
+// → links criados em OUTRO aparelho aparecem em "Meus links" sem abrir a folha.
+let _lastAutoRefresh = 0;
+function _autoRefresh() {
+  const now = Date.now();
+  if (now - _lastAutoRefresh < 10 * 60 * 1000) return;
+  _lastAutoRefresh = now;
+  setTimeout(() => { refreshMyCallLinks().catch?.(() => {}); }, 1500);
+}
+
 export function useMyCallLinks() {
   const [list, setList] = useState(getMyCallLinks);
   useEffect(() => {
     _listeners.add(setList);
     setList(getMyCallLinks());
+    _autoRefresh();
     return () => { _listeners.delete(setList); };
   }, []);
   return list;

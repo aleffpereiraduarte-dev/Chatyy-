@@ -33,6 +33,7 @@ const _NOFLEX = { flex: 0 };
 // JS abaixo (idêntico ao antigo). Desligar por OTA: globalThis.__chatyy_native_calls = false.
 import NativeCallList from './calls/NativeCallList';
 import MyCallLinksSheet from './calls/MyCallLinksSheet'; // [2026-10-16 wave12-D]
+import CreateCallLinkSheet from './calls/CreateCallLinkSheet'; // [call-link 2026-10-19]
 import NewCallSheet from './calls/NewCallSheet'; // [2026-10-17 sem-pstn] "Nova chamada" (só Chatyy) no lugar do discador
 import CallInfoSheet from './calls/CallInfoSheet'; // [2026-10-19 callinfo] info da chamada nível iOS Telefone / WhatsApp
 import { addMyCallLink, useMyCallLinks, callLinkState } from './calls/myCallLinks';
@@ -3255,6 +3256,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
   const [creatingLink, setCreatingLink] = useState(false);
   // [2026-10-16 wave12-D] "Meus links de chamada" (revogar/copiar/compartilhar).
   const [myLinksOpen, setMyLinksOpen] = useState(false);
+  const [createLinkOpen, setCreateLinkOpen] = useState(false); // [call-link 2026-10-19] folha nível WhatsApp
   const myLinks = useMyCallLinks();
   const myLinksActive = myLinks.reduce((n, l) => n + (callLinkState(l) === 'active' ? 1 : 0), 0);
   const createAndShareLink = useCallback(async (callType) => {
@@ -3302,6 +3304,9 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
 
   const handleCreateCallLink = useCallback(() => {
     if (creatingLink) return;
+    // [call-link 2026-10-19] Folha Vídeo/Áudio + nome → link + Copiar/Compartilhar/Enviar no Chatyy/Entrar agora.
+    // Kill switch OTA: globalThis.__chatyy_call_link_sheet = false → fluxo antigo (Alert + share).
+    if (globalThis.__chatyy_call_link_sheet !== false) { setCreateLinkOpen(true); return; }
     const videoLabel = t?.('calls.videoCall') || 'Chamada de vídeo';
     const voiceLabel = t?.('calls.voiceCall') || 'Chamada de voz';
     const cancelLabel = t?.('common.cancel') || 'Cancelar';
@@ -3566,6 +3571,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
           showPhone={isPstnEnabled()}
         />
         <MyCallLinksSheet visible={myLinksOpen} onClose={() => setMyLinksOpen(false)} t={t} language={language} />
+        <CreateCallLinkSheet visible={createLinkOpen} onClose={() => setCreateLinkOpen(false)} t={t} router={router} currentEmail={user?.email} />
       </View>
 
       {/* Plan status */}

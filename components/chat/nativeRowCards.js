@@ -404,6 +404,7 @@ function cardKind(item, ctx) {
   const tenor = /^[a-z0-9]+\/[a-z0-9\-]+\.gif$/i.test(ct);
   if ((tenor || /^https?:\/\//.test(ct)) && (ct.includes('tenor.com') || ct.includes('giphy.com') || ct.includes('media.tenor.com') || /\.gif(\?.*)?$/i.test(ct))) return 'giftext';
   if (CALL_TEXT_RE.test(c)) return 'calltext';
+  if (_clOn() && _parseCallLink(c)) return 'clink'; // [call-link 2026-10-19] link de chamada → cartão com Entrar
   return null;
 }
 
@@ -844,6 +845,35 @@ function buildCallText(m, row, C, own) {
     ]),
   ], { g: 8, p: [2, 0, 2, 0], al: 'c', a: 'call_join' })];
   row.pad = PAD; row.mp = 'below';
+}
+
+// [call-link 2026-10-19] Cartão do link de chamada (texto "Chamada de vídeo do Chatyy: título\nURL").
+// Kill switch: globalThis.__chatyy_call_link_card = false → volta a ser texto com link.
+function _clOn() { try { return globalThis.__chatyy_call_link_card !== false; } catch { return true; } }
+function _parseCallLink(c) { try { return require('../calls/callLinkUtil').parseCallLinkMessage(c); } catch { return null; } }
+function buildCallLinkCard(m, row, C, own) {
+  const p = _parseCallLink(String(m.content || ''));
+  if (!p) return;
+  const col = C.colors || {};
+  const tr = (k, fb) => _tr(C, k, fb);
+  const ink = own ? (C.ownText || '#FFFFFF') : (col.text || '#111111');
+  const subC = own ? (C.ownMeta || 'rgba(255,255,255,0.62)') : (C.otherMeta || col.textTertiary);
+  const soft = own ? 'rgba(255,255,255,0.16)' : (C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)');
+  const title = p.title || tr('callLink.cardTitle', 'Link de chamada');
+  const kind = p.isVideo ? tr('callLink.kindVideo', 'Chamada de vídeo do Chatyy') : tr('callLink.kindVoice', 'Chamada de voz do Chatyy');
+  const act = 'clink:' + p.code;
+  const w = _clampW(240, 288, 40 + 12 + Math.max(_estW(title, 15, true), _estW(kind, 13)) * 1.1 + 8);
+  row.bl = [vstack([
+    hstack([
+      vstack([iconPaths([{ d: p.isVideo ? CALL_GLYPH_VIDEO : CALL_GLYPH_PHONE, f: ink }], { s: 20 })], { w: 40, h: 40, r: 20, bg: soft, al: 'c', jc: 'c' }),
+      vstack([
+        text(title, { fs: 15, fw: 600, c: ink, ml: 1 }),
+        text(kind, { fs: 13, c: subC, ml: 1, m: [1, 0, 0, 0] }),
+      ], { fl: 1 }),
+    ], { g: 12, al: 'c', w: -1, a: act }),
+    vstack([text(tr('callLink.join', 'Entrar'), { fs: 15, fw: 600, c: ink, ml: 1 })], { w: -1, h: 36, r: 18, bg: soft, al: 'c', jc: 'c', m: [10, 0, 0, 0], a: act }),
+  ], { w })];
+  row.cw = w; row.pad = PAD; row.mp = 'below';
 }
 
 function buildGifText(m, row) {
@@ -1367,6 +1397,7 @@ export function buildCard(item, row, ctx) {
       case 'call_card': buildCallCard(item, row, ctx, C, own); break;
       case 'jcall': buildJsonCall(_json(item.content) || {}, row, ctx, C); break;
       case 'calltext': buildCallText(item, row, C, own); break;
+      case 'clink': buildCallLinkCard(item, row, C, own); break; // [call-link 2026-10-19]
       case 'giftext': buildGifText(item, row); break;
       case 'vn': buildVideoNote(item, row, ctx, C); break;
       case 'gift': buildGift(item, row, ctx, C, own); break;
@@ -1546,6 +1577,10 @@ export function runCardAction(item, action, D) {
         return;
       }
       case 'call_back': { D.startCall(arg === 'v'); return; }
+      case 'clink': { // [call-link 2026-10-19] cartão do link de chamada → lobby
+        if (arg && /^[a-z0-9-]{6,80}$/i.test(arg)) D.router.push(require('../calls/callLinkUtil').callLinkRoute(arg));
+        return;
+      }
       case 'call_join': {
         const c = String(m.content || '');
         const isVideo = /^(Videochamada|Video Call)/i.test(c);

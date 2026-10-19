@@ -7514,7 +7514,14 @@ export async function chatGetStreaks() { return apiCall('chat_get_streaks', {});
 //   chat_call_link_info    { link_id }          → { creator_name, creator_avatar, is_video, revoked, expired, participant_count }
 //   chat_call_link_join    { link_id }          → { url, token, room, is_video }
 //   chat_call_link_revoke  { link_id }          (creator-only)
-export async function chatCreateCallLink(callType = 'video') { return apiCall('chat_create_call_link', { call_type: callType }, 'POST'); }
+// [call-link 2026-10-19] opts.title = nome opcional; resposta ganha code/title/state (URL /c/ curta).
+export async function chatCreateCallLink(callType = 'video', opts = null) {
+  const body = { call_type: callType };
+  const ti = opts && typeof opts.title === 'string' ? opts.title.trim().slice(0, 60) : '';
+  if (ti) body.title = ti;
+  if (opts && opts.call_id) body.call_id = String(opts.call_id);
+  return apiCall('chat_create_call_link', body, 'POST');
+}
 export async function chatCallLinkInfo(linkId) { return apiCall('chat_call_link_info', { link_id: linkId }); }
 export async function chatCallLinkJoin(linkId) { return apiCall('chat_call_link_join', { link_id: linkId }, 'POST'); }
 export async function chatCallLinkRevoke(linkId) { return apiCall('chat_call_link_revoke', { link_id: linkId }, 'POST'); }

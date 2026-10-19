@@ -556,7 +556,7 @@ function CallScreenInner() {
   const isGroupCall = params.groupCall === '1' || params.groupCall === 'true';
 
   // ───── State ─────
-  const [audioMuted, setAudioMuted] = useState(false);
+  const [audioMuted, setAudioMuted] = useState(() => params.startMuted === '1'); // [call-link 2026-10-19] lobby do link: microfone desligado
   const [videoEnabled, setVideoEnabled] = useState(isVideoCall);
   const audioMutedRef = useRef(audioMuted);
   const videoEnabledRef = useRef(videoEnabled);
