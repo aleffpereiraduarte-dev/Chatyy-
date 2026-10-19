@@ -879,7 +879,7 @@ final class AttachSheetController: UIViewController,
   private func settle(velocity v: CGFloat) {
     if dismissOffset > 0 {
       if dismissOffset > 110 || v > 900 {
-        finish(["action": "cancel"])
+        finish(["action": "cancel"], velocity: v) // [2026-10-19 attach-close] segue o dedo
         return
       }
       animateTo(top: top, dismiss: 0, velocity: v)
@@ -891,7 +891,7 @@ final class AttachSheetController: UIViewController,
     else if v > 500 { target = collapsedTop }
     else { target = top < mid ? expandedTop : collapsedTop }
     if v > 1600 && top >= collapsedTop - 1 {
-      finish(["action": "cancel"])
+      finish(["action": "cancel"], velocity: v) // [2026-10-19 attach-close]
       return
     }
     animateTo(top: target, dismiss: 0, velocity: v)
@@ -946,23 +946,48 @@ final class AttachSheetController: UIViewController,
     NotificationCenter.default.post(name: name, object: nil, userInfo: info)
   }
 
-  private func finish(_ result: [String: Any], byUser: Bool = true) {
+  // [2026-10-19 attach-close] Founder: "na hora de baixar a folha ainda dá
+  // uma travadinha". RAIZ: (1) soltar o dedo no arrasto chamava uma descida
+  // .curveEaseIn de 0,24 s — começa PARADA (velocidade 0) e acelera: a folha
+  // que vinha a 1000+ pt/s freava no quadro da soltura e só depois caía =
+  // engasgo; (2) stopCamera() no mesmo quadro: previewLayer.session = nil
+  // sincroniza com a fila da AVCaptureSession NO MAIN → quadros perdidos bem
+  // no início da descida. AGORA: arrasto → mola criticamente amortecida que
+  // COMEÇA na velocidade do dedo (sem freada); toque fora/X → curva ease-out
+  // (sai rápido, assenta fora da tela); câmera solta só depois de a folha
+  // sair da tela. motion=false (__chatyy_motion_attach=false) = curva antiga.
+  private func finish(_ result: [String: Any], byUser: Bool = true, velocity: CGFloat = 0) {
     guard !finished else { return }
     finished = true
     if captionField.isFirstResponder { captionField.resignFirstResponder() }
-    stopCamera()
+    if !config.motion { stopCamera() }
     postClose(AttachSheetController.willCloseNote, result, byUser: byUser)
     let h = view.bounds.height
-    UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseIn, .beginFromCurrentState]) {
-      self.dismissOffset = max(h - self.top, 1)
+    let target = max(h - self.top, 1)
+    let changes = {
+      self.dismissOffset = target
       self.applyGeometry()
       self.dimView.alpha = 0
-    } completion: { _ in
+    }
+    let done: (Bool) -> Void = { _ in
+      self.stopCamera()
       self.dismiss(animated: false) {
         self.postClose(AttachSheetController.didCloseNote, result, byUser: byUser)
         self.onFinish?(result)
         self.onFinish = nil
       }
+    }
+    let remaining = max(1, target - dismissOffset)
+    let v = max(0, velocity)
+    if !config.motion {
+      UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseIn, .beginFromCurrentState], animations: changes, completion: done)
+    } else if v > 60 {
+      // Desaceleração linear a partir de v cobriria `remaining` em 2·d/v.
+      let dur = min(0.34, max(0.16, Double(2 * remaining / v)))
+      UIView.animate(withDuration: dur, delay: 0, usingSpringWithDamping: 1.0, initialSpringVelocity: v / remaining,
+                     options: [.beginFromCurrentState, .allowUserInteraction], animations: changes, completion: done)
+    } else {
+      UIView.animate(withDuration: 0.26, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: changes, completion: done)
     }
   }
 

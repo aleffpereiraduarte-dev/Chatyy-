@@ -34,8 +34,11 @@ public class ChatyyAttachModule: Module {
     // 4 = [2026-10-19 attach-instant] folha posta ChatyyAttachSheetWillClose /
     //     ChatyyAttachSheetDidClose {action, user} → o composer nativo devolve
     //     o teclado sozinho ao cancelar (sem focus do JS).
+    // 5 = [2026-10-19 attach-close] fechar a folha sem engasgo: descida segue a
+    //     velocidade do dedo (mola crítica) / ease-out no toque fora; câmera
+    //     solta só depois de a folha sair da tela.
     Function("apiVersion") { () -> Int in
-      return 4
+      return 5
     }
 
     Function("isVideoNoteSupported") { () -> Bool in

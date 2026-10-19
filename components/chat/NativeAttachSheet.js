@@ -217,10 +217,27 @@ export default function NativeAttachSheet({
       openRef.current = false;
       const cur = propsRef.current;
       if (!r || !r.action) { try { cur.onFail && cur.onFail(); } catch {} return; }
-      try { cur.onClose && cur.onClose(); } catch {}
-      // [2026-10-18 kb-resume] folha já dispensada (promessa resolve no fim do
-      // dismiss): a conversa devolve o teclado só se cancelou e ele estava aberto.
-      try { DeviceEventEmitter.emit('chatyy:attachSheetClosed', { action: String(r.action) }); } catch {}
+      // [2026-10-19 attach-close] Cancelar: o setState que fecha o menu
+      // re-renderiza a conversa inteira (JS + mount no main). Adiado 2 quadros
+      // para nunca cair no último quadro do dismiss/esmaecer. Ação/Enviar
+      // seguem na hora (abrem Galeria/Arquivo/envio). Kill switch OTA:
+      // globalThis.__chatyy_attach_close_defer = false.
+      const closeNow = () => {
+        try { cur.onClose && cur.onClose(); } catch {}
+        // [2026-10-18 kb-resume] folha já dispensada (promessa resolve no fim do
+        // dismiss): a conversa devolve o teclado só se cancelou e ele estava aberto.
+        try { DeviceEventEmitter.emit('chatyy:attachSheetClosed', { action: String(r.action) }); } catch {}
+      };
+      let _defer = r.action === 'cancel' && typeof requestAnimationFrame === 'function';
+      try { if (globalThis.__chatyy_attach_close_defer === false) _defer = false; } catch {}
+      if (_defer) {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (openRef.current) return; // outra folha já abriu nesse meio-tempo
+          closeNow();
+        }));
+        return;
+      }
+      closeNow();
       try {
         if (r.action === 'action' && r.key) {
           cur.onPick && cur.onPick(r.key);
