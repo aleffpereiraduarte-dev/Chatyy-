@@ -1237,7 +1237,7 @@ function _gameInlineNodes(g, ctx, C, tf, me) {
   try { GI = require('../../services/gamesInline'); } catch { return null; }
   if (!GI.gamesInlineOn() || g.kind !== 'game' || (g.status !== 'active' && g.status !== 'finished')) return null;
   _gameHookBump(C);
-  const v = GI.ensureInlineView(g.g, g.status);
+  const v = GI.ensureInlineView(g.g, g.status, g.v);
   if (!v || !v.state) return null;
   const active = v.status === 'active';
   if (!active && !(v.status === 'finished' && (v.type === 'velha' || v.type === 'forca'))) return null;

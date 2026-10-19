@@ -45,17 +45,20 @@ export function onInlineChange(fn) {
 const _inflight = new Map(); // gid -> Promise
 const _lastAsk = new Map();  // gid -> ms
 /** Visão do jogo p/ desenhar o tabuleiro no cartão; busca 1× (e de novo se ficar velha) quando falta. */
-export function ensureInlineView(gid, cardStatus) {
+export function ensureInlineView(gid, cardStatus, cardV) {
   const id = Number(gid);
   if (!id) return null;
   const v = getGameView(id);
-  const stale = v && v.status === 'active' && cardStatus === 'active' && Date.now() - (v._rx || 0) > 90000;
+  // [audit 2026-10-19] visão atrás do cartão (WS perdido em 2º plano: o cartão veio pelo sync com versão/estado
+  // mais novos) → re-busca; antes o tabuleiro ficava na posição velha (ou "ativo" com a partida já encerrada).
+  const behind = !!v && ((Number(cardV) > 0 && Number(v.v) < Number(cardV)) || (v.status === 'active' && !!cardStatus && cardStatus !== 'active'));
+  const stale = behind || (v && v.status === 'active' && cardStatus === 'active' && Date.now() - (v._rx || 0) > 90000);
   if (v && !stale) { _scheduleTick(v); return v; }
   // só vale buscar enquanto a partida está em andamento (ou acabou de acabar e o cartão ainda diz ativo)
-  if (cardStatus !== 'active' && !(cardStatus === 'finished' && !v)) return v || null;
+  if (!behind && cardStatus !== 'active' && !(cardStatus === 'finished' && !v)) return v || null;
   if (_inflight.has(id)) return v || null;
   const last = _lastAsk.get(id) || 0;
-  if (Date.now() - last < (v ? 30000 : 8000)) return v || null;
+  if (Date.now() - last < (behind ? 4000 : (v ? 30000 : 8000))) return v || null;
   _lastAsk.set(id, Date.now());
   const p = gameState(id).catch(() => null).finally(() => { _inflight.delete(id); _emit(id); });
   _inflight.set(id, p);

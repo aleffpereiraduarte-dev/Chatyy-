@@ -34,7 +34,7 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
   // [jogos 2026-10-19 inline] Velha/Forca/Quiz jogáveis no cartão; Damas/Cartas = miniatura (toque abre a folha)
   const inlineOn = gamesInlineOn();
   const liveId = inlineOn && g && g.kind === 'game' && (g.status === 'active' || g.status === 'finished') ? g.g : null;
-  const iv = useInlineView(liveId, g && g.status);
+  const iv = useInlineView(liveId, g && g.status, g && g.v);
   const hasBoard = !!liveId && inlineHasBoard(iv);
   if (!g) return <Text style={{ color: isOwn ? '#fff' : colors.text }}>{tr(t, 'games.preview', 'Jogo')}</Text>;
   const ink = isOwn ? '#FFFFFF' : (colors.text || '#111');

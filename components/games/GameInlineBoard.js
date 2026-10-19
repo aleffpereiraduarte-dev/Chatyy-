@@ -21,7 +21,7 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 function norm(ch) { return String(ch || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(); }
 
 /** Visão viva do jogo do cartão (store + busca preguiçosa + re-render nos eventos do inline). */
-export function useInlineView(gid, cardStatus) {
+export function useInlineView(gid, cardStatus, cardV) {
   const [, force] = useReducer((x) => x + 1, 0);
   useEffect(() => {
     if (!gid) return undefined;
@@ -30,7 +30,7 @@ export function useInlineView(gid, cardStatus) {
     return () => { off1(); off2(); };
   }, [gid]);
   if (!gid) return null;
-  return ensureInlineView(gid, cardStatus) || getGameView(gid);
+  return ensureInlineView(gid, cardStatus, cardV) || getGameView(gid);
 }
 
 function InlineVelha({ view, pal, t }) {
@@ -205,7 +205,7 @@ export function inlineHasBoard(view) {
  * o cartão segue com o desenho normal.
  */
 function GameInlineBoard({ g, currentEmail, colors, isDark, t, onOpen }) {
-  const view = useInlineView(g && g.g, g && g.status);
+  const view = useInlineView(g && g.g, g && g.status, g && g.v);
   const pal = useMemo(() => gamePalette(colors || {}, !!isDark), [colors, isDark]);
   const rm = useRM();
   if (!g || !inlineHasBoard(view)) return null;
