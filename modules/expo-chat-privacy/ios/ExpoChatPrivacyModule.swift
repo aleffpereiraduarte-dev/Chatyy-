@@ -26,6 +26,11 @@ import UIKit
 //   getAppProtection() → { supported, enabled, effective, sharing }
 //   setLocalTag / reassert → no-op (API do Android)
 //   eventos onProtectChange { effective, sharing }, onScreenshotBlocked
+//
+// [2026-10-19 secure-view] apiVersion 3 — view nativa <ChatyySecureView>
+// (nome no JS = "ExpoChatPrivacy"): o que está dentro dela some de
+// print/gravação/espelhamento e no lugar sai "Captura de tela bloqueada"
+// (ChatyySecureView.swift). secureViewSupported() → Bool (sondado na main).
 public class ExpoChatPrivacyModule: Module {
   private var tags = Set<String>()
   private var title = "Conteúdo protegido"
@@ -42,6 +47,7 @@ public class ExpoChatPrivacyModule: Module {
     OnCreate {
       DispatchQueue.main.async { [weak self] in
         self?.startObserving()
+        ChatyySecureCanvas.probe()
         let sp = ChatyyScreenProtect.shared
         sp.onChange = { [weak self] effective, sharing in
           self?.sendEvent("onProtectChange", ["effective": effective, "sharing": sharing])
@@ -62,7 +68,26 @@ public class ExpoChatPrivacyModule: Module {
     }
 
     Function("apiVersion") { () -> Int in
-      return 2
+      return 3
+    }
+
+    Function("secureViewSupported") { () -> Bool in
+      return ChatyySecureCanvas.probed ?? true
+    }
+
+    View(ChatyySecureView.self) {
+      Prop("enabled") { (view: ChatyySecureView, on: Bool) in
+        view.setProtected(on)
+      }
+      Prop("dark") { (view: ChatyySecureView, dark: Bool) in
+        view.setDark(dark)
+      }
+      Prop("coverColor") { (view: ChatyySecureView, color: UIColor?) in
+        view.setCoverColor(color)
+      }
+      Prop("labels") { (view: ChatyySecureView, labels: [String: String]?) in
+        view.setTexts(title: labels?["title"], message: labels?["message"], brand: labels?["brand"])
+      }
     }
 
     AsyncFunction("setAppProtection") { (enabled: Bool, labels: [String: Any]) -> Bool in

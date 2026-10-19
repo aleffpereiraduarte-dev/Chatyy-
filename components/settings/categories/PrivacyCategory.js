@@ -3,13 +3,14 @@
 // bloqueados, extras, personalização e temporárias por padrão. Dados =
 // settingsCache 'privacy' / 'defaults' (commit otimista).
 import { useState } from 'react';
-import { View } from 'react-native';
+import { View, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useLanguage } from '../../../context/LanguageContext';
 import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, OptionSheet } from '../SettingsKit';
 import { PrivacyExtrasGroup } from '../SettingsPanels';
 import { useSafeNav, useSettingsHost, useChatPrivacy, useChatDefaults, privacyValueLabel } from './shared';
 import { useSilenceUnknownCallers } from '../../calls/silenceUnknownCallers'; // [2026-10-16 wave12-D]
+import { useCaptureBlockGlobal, setCaptureBlockGlobal } from '../../../services/captureBlock'; // [2026-10-19 secure-view]
 
 const FIELDS = ['last_seen', 'online', 'profile_photo', 'about', 'phone_visibility', 'story_privacy', 'group_add'];
 
@@ -22,6 +23,13 @@ export default function PrivacyCategory() {
   const { defaults, updateDefault } = useChatDefaults();
   const [picker, setPicker] = useState(null);
   const [silenceUnknown, setSilenceUnknown] = useSilenceUnknownCallers();
+  // [2026-10-19 secure-view] "Bloquear capturas de tela nas conversas" (opt-in):
+  // espelho local = efeito na hora; servidor = outros aparelhos.
+  const captureBlock = useCaptureBlockGlobal();
+  const saveCaptureBlock = (v) => {
+    setCaptureBlockGlobal(!!v);
+    savePrivacy({ block_screenshots: !!v });
+  };
 
   const fieldTitle = (field) => (
     field === 'last_seen' ? t('settings.privacyLastSeen')
@@ -78,6 +86,16 @@ export default function PrivacyCategory() {
           <SettingsSwitchRow title={t('settings.blockUnknown')} value={!!privacy.block_unknown} onValueChange={(v) => savePrivacy({ block_unknown: !!v })} />
           <SettingsRow title={t('settings.blockedContacts')} onPress={() => safeNav('/settings-blocked')} testID="settings-row-blocked" />
         </SettingsGroup>
+        {Platform.OS !== 'web' && (
+        <SettingsGroup footer={t('settings.blockScreenshotsDesc') || 'Suas conversas não aparecem em prints nem em gravações de tela neste aparelho. Se houver uma tentativa, a outra pessoa da conversa é avisada.'}>
+          <SettingsSwitchRow
+            title={t('settings.blockScreenshots') || 'Bloquear capturas de tela nas conversas'}
+            value={!!captureBlock}
+            onValueChange={saveCaptureBlock}
+            testID="settings-row-block-screenshots"
+          />
+        </SettingsGroup>
+        )}
         {/* [2026-10-16 wave12-D] mesmo ajuste do cartão da aba Ligações (estado compartilhado). */}
         <SettingsGroup header={t('chat.tabCalls')} footer={t('calls.silenceUnknownDesc')}>
           <SettingsSwitchRow title={t('calls.silenceUnknown')} value={silenceUnknown} onValueChange={setSilenceUnknown} testID="settings-row-silence-unknown" />

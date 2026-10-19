@@ -15,6 +15,8 @@ import { renderArchiveEntry } from './FileViewer';
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit]
 // [2026-10-14 adv-privacy] Conversa com privacidade avançada → visualizador protegido.
 import { useAdvancedPrivacy, acquireCaptureProtection } from '../services/chatPrivacy';
+import ChatyySecureView from './chat/ChatyySecureView'; // [2026-10-19 secure-view]
+import { useCaptureScope, secureViewAvailable } from '../services/captureBlock';
 import { PrivacyWatermark, viewerHandle } from './chat/useConversationPrivacy';
 // Wave 14: 3D / depth-photo parallax view. Lazy-loaded so web stays green
 // (expo-sensors isn't available in the web bundle).
@@ -2096,6 +2098,14 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   const _advPrivSt = useAdvancedPrivacy(conversationId);
   const _secure = !!_secureProp || !!_advPrivSt.enabled;
   const _locked = !!viewOnce || _secure;
+  // [2026-10-19 secure-view] Proteção de CAPTURA (sem mexer em salvar/encaminhar):
+  // view-once, privacidade avançada, ou aberto de uma conversa protegida (modo
+  // temporário / "Bloquear capturas de tela nas conversas").
+  const _capScope = useCaptureScope(conversationId);
+  const _capProt = _locked || !!_capScope;
+  // iOS com <ChatyySecureView>: pager JS dentro da camada segura (o viewer
+  // nativo é outro view controller, fora dela).
+  const _capJsPager = _capProt && Platform.OS === 'ios' && secureViewAvailable();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   // WAVE 60: WhatsApp/IG-grade viewer chrome. The ugly "IMG_1234.jpg 299KB"
@@ -2203,7 +2213,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // (mesmo se a lista mudar no meio).
   const _nvSessionRef = useRef(0);
   const [_nvFailed, _setNvFailed] = useState(false);
-  const _nvOn = !!visible && !_nvFailed && (_nvSessionRef.current !== 0 || _nvEligible(_list, viewOnce, _secure));
+  const _nvOn = !!visible && !_nvFailed && (_nvSessionRef.current !== 0 || (!_capJsPager && _nvEligible(_list, viewOnce, _secure)));
   const _initialLive = Math.max(0, Math.min(_list.length - 1, Number(initialIndex) || 0));
   // [2026-10-14 swipe-album] Índice inicial CONGELADO por abertura. O
   // chat-conversation recalcula mediaList/initialIndex a cada render dele (upload
@@ -2475,14 +2485,15 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // (pager JS) e iOS escudo durante gravação/espelhamento. O aviso de print da
   // conversa vem do useConversationPrivacy (tela de baixo continua em foco).
   useEffect(() => {
-    if (!visible || !_locked || Platform.OS === 'web') return undefined;
+    if (!visible || !_capProt || Platform.OS === 'web') return undefined;
     return acquireCaptureProtection('chatyy-viewer-protected', {
       labels: {
         title: (typeof t === 'function' && t('advPriv.protectedTitle')) || 'Conteúdo protegido',
         subtitle: (typeof t === 'function' && t('advPriv.protectedRecording')) || '',
       },
+      secureView: true,
     });
-  }, [visible, _locked]);
+  }, [visible, _capProt]);
   const [_currentUserEmail, _setCurrentUserEmail] = useState('');
   useEffect(() => {
     if (!visible || !viewOnce || !ScreenCapture) return;
@@ -2497,7 +2508,11 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
     } catch {}
     let sub;
     (async () => {
-      try { await ScreenCapture.preventScreenCaptureAsync('chatyy-view-once'); } catch {}
+      // [2026-10-19 secure-view] iOS com <ChatyySecureView>: sem o prevent do
+      // expo (deixaria a janela inteira preta no print, sem o aviso).
+      if (!(Platform.OS === 'ios' && secureViewAvailable())) {
+        try { await ScreenCapture.preventScreenCaptureAsync('chatyy-view-once'); } catch {}
+      }
       try {
         sub = ScreenCapture.addScreenshotListener?.(() => {
           // Make the watermark immediately visible so the *next* attempt
@@ -2986,6 +3001,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      <ChatyySecureView enabled={_capJsPager} dark coverColor="#000000" t={t}>
       <View
         style={[s.backdrop, viewOnceStyle]}
         onContextMenu={_locked ? (e) => e.preventDefault?.() : undefined}
@@ -3559,6 +3575,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           </TouchableWithoutFeedback>
         )}
       </View>
+      </ChatyySecureView>
     </Modal>
   );
 }

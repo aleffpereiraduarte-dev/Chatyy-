@@ -51,6 +51,7 @@ const ENTRIES = [
   ['privacy', 'settings.privacyKeepArchived', 'Manter conversas arquivadas', 'privacy_granular', 'archived arquivadas'],
   ['privacy', 'settings.blockUnknown', 'Bloquear desconhecidos', 'privacy_granular', 'unknown spam'],
   ['privacy', 'settings.blockedContacts', 'Contatos bloqueados', 'privacy_granular', 'blocked bloqueados'],
+  ['privacy', 'settings.blockScreenshots', 'Bloquear capturas de tela nas conversas', 'privacy_granular', 'print screenshot captura gravação tela'], // [2026-10-19 secure-view]
   ['privacy', 'calls.silenceUnknown', 'Silenciar chamadas desconhecidas', 'privacy_granular', 'ligações calls silence silenciar desconhecidos unknown'], // [2026-10-16 wave12-D]
   ['privacy', 'settings.personalizationOffers', 'Personalização e ofertas', null, 'lgpd reels anúncios ads'],
   ['privacy', 'settings.defaultDisappearing', 'Mensagens temporárias', 'defaultDisappearing', 'disappearing temporárias'],

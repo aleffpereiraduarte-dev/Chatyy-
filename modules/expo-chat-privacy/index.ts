@@ -80,3 +80,34 @@ export function addCaptureListener(cb: (captured: boolean) => void): { remove():
     return { remove() {} };
   }
 }
+
+// ─── [2026-10-19 secure-view] <ChatyySecureView> (iOS, apiVersion ≥ 3) ─────
+// O que está dentro some de print/gravação/espelhamento e no lugar sai o aviso
+// "Captura de tela bloqueada" (camada segura do UITextField). Binário antigo,
+// Android, web ou kill switch globalThis.__chatyy_secure_view === false → null
+// (o JS segue com o comportamento de antes).
+let _secureView: any; // componente | null
+export function getSecureView(): any {
+  if (_secureView !== undefined) return _secureView;
+  _secureView = null;
+  try {
+    if ((globalThis as any).__chatyy_secure_view === false) return null;
+  } catch {}
+  const m: any = mod();
+  if (!m) return null;
+  let api = 0;
+  try { api = typeof m.apiVersion === 'function' ? Number(m.apiVersion()) || 0 : 0; } catch { api = 0; }
+  if (api < 3) return null;
+  try { if (typeof m.secureViewSupported === 'function' && m.secureViewSupported() === false) return null; } catch {}
+  try {
+    const g: any = globalThis as any;
+    if (g?.expo?.getViewConfig && !g.expo.getViewConfig('ExpoChatPrivacy')) return null;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const core = require('expo-modules-core');
+    const req = core.requireNativeViewManager || core.requireNativeView;
+    if (typeof req === 'function') _secureView = req('ExpoChatPrivacy') || null;
+  } catch {
+    _secureView = null;
+  }
+  return _secureView;
+}

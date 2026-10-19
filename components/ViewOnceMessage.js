@@ -5,6 +5,8 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { IconEye, IconLock, IconVideo, IconCheck, IconX, IconMic, IconPlay, IconPause } from './Icons';
+import ChatyySecureView from './chat/ChatyySecureView'; // [2026-10-19 secure-view] view-once sempre protegido
+import { secureViewAvailable } from '../services/captureBlock';
 
 let _expoVideoMod = null;
 function loadExpoVideo() {
@@ -153,6 +155,7 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
       if (Platform.OS === 'ios') {
         _releaseShield = _cp()?.acquireCaptureProtection?.('chatyy-view-once-shield', {
           labels: { title: t?.('advPriv.protectedTitle') || 'Conteúdo protegido', subtitle: t?.('advPriv.protectedRecording') || '' },
+          secureView: true,
         }) || null;
       }
     } catch {}
@@ -160,7 +163,11 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
     if (!SC) return () => { try { _releaseShield?.(); } catch {} };
     let sub;
     (async () => {
-      try { await SC.preventScreenCaptureAsync?.('chatyy-view-once'); } catch {}
+      // [2026-10-19 secure-view] iOS com <ChatyySecureView>: o print sai com o
+      // aviso "Captura de tela bloqueada" — sem o prevent do expo (janela preta).
+      if (!(Platform.OS === 'ios' && secureViewAvailable())) {
+        try { await SC.preventScreenCaptureAsync?.('chatyy-view-once'); } catch {}
+      }
       try {
         sub = SC.addScreenshotListener?.(() => {
           // Notify the peer that this user just took a screenshot. Backend
@@ -217,6 +224,7 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
       statusBarTranslucent
       hardwareAccelerated
     >
+      <ChatyySecureView enabled dark coverColor="#000000" t={t}>
       <View style={fs.root}>
         {Platform.OS === 'android' ? (
           <RNStatusBar barStyle="light-content" backgroundColor="rgba(0,0,0,0.6)" translucent />
@@ -327,6 +335,7 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
           </View>
         ) : null}
       </View>
+      </ChatyySecureView>
     </Modal>
   );
 }

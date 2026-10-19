@@ -1378,6 +1378,10 @@ export default {
   // [2026-10-09 wa-real]
   "settings.blockUnknown": "Bloquear mensagens de desconhecidos",
   "settings.blockUnknownDesc": "Mensagens de quem não está nos seus contatos, não tem grupo em comum com você e com quem você nunca conversou não chegam.",
+  "captureBlock.title": "Captura de tela bloqueada",
+  "captureBlock.message": "Para proteger a privacidade de todos no Chatyy, esta captura de tela foi bloqueada.",
+  "settings.blockScreenshots": "Bloquear capturas de tela nas conversas",
+  "settings.blockScreenshotsDesc": "Suas conversas não aparecem em prints nem em gravações de tela neste aparelho (no iPhone sai o aviso \"Captura de tela bloqueada\"; no Android a imagem sai preta). Se houver uma tentativa, a outra pessoa da conversa é avisada.",
   "chatConv.unknownCard.title": "Não está nos seus contatos",
   "chatConv.unknownCard.noCommonGroups": "Nenhum grupo em comum",
   "chatConv.unknownCard.commonGroups": "Grupos em comum: {names}",

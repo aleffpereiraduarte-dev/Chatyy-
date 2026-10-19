@@ -150,6 +150,7 @@ import { useSharedNow } from '../hooks/useSharedNow';
 import useConversationPrivacy from '../components/chat/useConversationPrivacy';
 import useVanishMode, { VanishSwipeArea, VanishThemeScope, IconVanish } from '../components/chat/useVanishMode'; // [vanish 2026-10-19]
 import { noteAdvancedPrivacy as _advPrivNote } from '../services/chatPrivacy';
+import ChatyySecureView from '../components/chat/ChatyySecureView'; // [2026-10-19 secure-view] print = "Captura de tela bloqueada"
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
 import LazyMount from '../components/chat/LazyMount';
 import MediaQualityPill from '../components/chat/MediaQualityPill';
@@ -25586,7 +25587,7 @@ function ChatConversationInnerBody() {
   const myRole = members.find(m => m.email === user?.email)?.role;
   const isGroupAdmin = myRole === 'admin';
   // [2026-10-14 adv-privacy] FLAG_SECURE/escudo/aviso de print/bloqueios — components/chat/useConversationPrivacy.js
-  const _advPriv = useConversationPrivacy({ conversationId, conversationType, isAdmin: isGroupAdmin, currentEmail, colors, isDark, t });
+  const _advPriv = useConversationPrivacy({ conversationId, conversationType, isAdmin: isGroupAdmin, currentEmail, colors, isDark, t, vanishActive: !!_vanish.active });
 
   const handleLeaveGroup = async () => {
     const ok = await confirm({
@@ -35951,6 +35952,7 @@ function ChatConversationInnerBody() {
   }
 
   return (
+    <ChatyySecureView enabled={!!_advPriv.captureProtected} dark={!!isDark} coverColor={chatWallBg} t={t}>
     <ThreadKeyboardAvoider
       // [2026-10-06 keyboard-controller] Was RN <KeyboardAvoidingView
       // behavior=padding|height> driven by the `keyboardHeight` state. Native
@@ -44569,6 +44571,7 @@ function ChatConversationInnerBody() {
         </View>
       </Modal>)}</LazyMount>
     </ThreadKeyboardAvoider>
+    </ChatyySecureView>
   );
 }
 

@@ -195,10 +195,16 @@ export function sendScreenshotNotice(cid, opts) {
     try { if (Date.now() - (Number(globalThis.__chatyy_vo_shot_at) || 0) < 4000) return; } catch {}
     try {
       const api = require('./api');
+      // [2026-10-19 secure-view] blocked = o print saiu com "Captura de tela
+      // bloqueada" (iOS camada segura) → o outro lado vê "tentou fazer uma
+      // captura de tela"; scope = por que a conversa está protegida ('global'
+      // = ajuste "Bloquear capturas de tela nas conversas" de quem tirou).
       const r = api.apiCall('chat_screenshot_notice', {
         conversation_id: Number(k) || k,
         message_id: (opts && opts.messageId) ? opts.messageId : 0,
         kind: (opts && opts.kind) || 'screenshot',
+        blocked: opts && opts.blocked ? 1 : 0,
+        scope: (opts && opts.scope) || '',
       }, 'POST');
       if (r && r.catch) r.catch(() => {});
     } catch {}
@@ -264,7 +270,13 @@ export function acquireCaptureProtection(tag, opts) {
   if (Platform.OS === 'android') {
     try { require('./screenProtect').setScreenProtectLocalTag?.(tag, true); } catch {}
   }
-  const cp = _cp();
+  // [2026-10-19 secure-view] iOS com <ChatyySecureView> (o.secureView): a
+  // gravação já sai com "Captura de tela bloqueada" — sem a janela preta por
+  // cima (o usuário continua vendo a própria tela, igual ao WhatsApp).
+  let cp = _cp();
+  if (cp && o.secureView) {
+    try { if (require('./captureBlock').secureViewAvailable()) cp = null; } catch {}
+  }
   if (cp) cp.setShield(tag, true, o.labels || {});
   return () => {
     if (released) return;

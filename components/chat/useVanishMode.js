@@ -15,6 +15,7 @@ import {
   vanishGateOn, setVanishActive, useVanishActive, purgeVanishLocal, vanishSeenClose,
 } from '../../services/vanishMode';
 import { acquireCaptureProtection, addScreenshotListener, sendScreenshotNotice } from '../../services/chatPrivacy';
+import { secureViewAvailable } from '../../services/captureBlock'; // [2026-10-19 secure-view]
 
 function _tt(t, key, fb) {
   try {
@@ -97,9 +98,10 @@ export default function useVanishMode({
         title: _tt(t, 'vanish.protectedTitle', 'Modo temporário'),
         subtitle: _tt(t, 'advPriv.protectedRecording', 'A gravação ou o espelhamento de tela está ativo.'),
       },
+      secureView: true, // [2026-10-19 secure-view] iOS: <ChatyySecureView> na conversa
     });
     let sub = null;
-    if (Platform.OS === 'ios') sub = addScreenshotListener(() => sendScreenshotNotice(cid, { kind: 'screenshot' }));
+    if (Platform.OS === 'ios') sub = addScreenshotListener(() => sendScreenshotNotice(cid, { kind: 'screenshot', blocked: secureViewAvailable(), scope: 'vanish' }));
     return () => {
       try { release && release(); } catch {}
       try { sub && sub.remove(); } catch {}

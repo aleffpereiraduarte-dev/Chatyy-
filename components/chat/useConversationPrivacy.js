@@ -3,6 +3,7 @@
 // só (o app/chat-conversation.js é enorme — lá ficam só chamadas pontuais):
 //   const advPriv = useConversationPrivacy({ conversationId, conversationType, isAdmin, currentEmail, colors, isDark, t });
 //   advPriv.enabled / advPriv.canEdit / advPriv.openSheet() / advPriv.guard('export'|'ai'|'forward')
+//   advPriv.captureProtected → <ChatyySecureView enabled> (privacidade avançada | vanishActive | ajuste global)
 //   {advPriv.banner} {advPriv.watermark} {advPriv.sheet}
 // Proteção (só com a tela em foco): Android FLAG_SECURE; iOS escudo na gravação
 // + aviso de print; web sem clique direito/arrastar + marca d'água.
@@ -15,6 +16,7 @@ import {
   useAdvancedPrivacy, fetchAdvancedPrivacy, setAdvancedPrivacyRemote,
   acquireCaptureProtection, addScreenshotListener, sendScreenshotNotice, markProtectedOpen,
 } from '../../services/chatPrivacy';
+import { useCaptureBlockGlobal, setCaptureScope, secureViewAvailable } from '../../services/captureBlock'; // [2026-10-19 secure-view]
 
 function _tt(t, key, fb) {
   try {
@@ -61,10 +63,18 @@ export function PrivacyWatermark({ handle, label, dark, style }) {
   );
 }
 
-export default function useConversationPrivacy({ conversationId, conversationType, isAdmin, currentEmail, colors, isDark, t }) {
+export default function useConversationPrivacy({ conversationId, conversationType, isAdmin, currentEmail, colors, isDark, t, vanishActive }) {
   const cid = _realConvId(conversationId);
   const st = useAdvancedPrivacy(cid || null);
   const enabled = !!cid && st.enabled;
+  // [2026-10-19 secure-view] Proteção de captura da conversa = privacidade
+  // avançada OU modo temporário OU o ajuste global "Bloquear capturas de tela
+  // nas conversas" (de quem está vendo). iOS: <ChatyySecureView> → o print sai
+  // "Captura de tela bloqueada"; Android: FLAG_SECURE.
+  const globalBlock = useCaptureBlockGlobal();
+  const vanishOn = !!vanishActive;
+  const globalOn = !!globalBlock && !enabled && !vanishOn;
+  const captureProtected = enabled || vanishOn || !!globalBlock;
   const screenshotNotice = st.screenshotNotice !== false;
   const isGroupish = conversationType === 'group' || conversationType === 'channel';
   const canEdit = !!cid && conversationType !== 'saved' && (!isGroupish || !!isAdmin);
@@ -106,12 +116,14 @@ export default function useConversationPrivacy({ conversationId, conversationTyp
         title: _tt(t, 'advPriv.protectedTitle', 'Conteúdo protegido'),
         subtitle: _tt(t, 'advPriv.protectedRecording', 'A gravação ou o espelhamento de tela está ativo.'),
       },
+      secureView: true,
     });
-    // iOS não bloqueia print → avisa a conversa. Android: FLAG_SECURE já
-    // bloqueia (print sai preto / o SO recusa).
+    // iOS: o print sai "Captura de tela bloqueada" (binário novo) ou com o
+    // conteúdo (antigo) — nos dois casos a conversa é avisada. Android:
+    // FLAG_SECURE já bloqueia (print sai preto / o SO recusa).
     let sub = null;
     if (Platform.OS === 'ios' && screenshotNotice) {
-      sub = addScreenshotListener(() => sendScreenshotNotice(cid, { kind: 'screenshot' }));
+      sub = addScreenshotListener(() => sendScreenshotNotice(cid, { kind: 'screenshot', blocked: secureViewAvailable(), scope: 'adv' }));
     }
     return () => {
       try { release(); } catch {}
@@ -119,6 +131,42 @@ export default function useConversationPrivacy({ conversationId, conversationTyp
       markProtectedOpen(cid, false);
     };
   }, [enabled, focused, cid, screenshotNotice, t]);
+
+  // [2026-10-19 secure-view] Ajuste global: protege toda conversa em foco
+  // (Android FLAG_SECURE; iOS sem a view nativa = escudo na gravação) e avisa
+  // a conversa do print (iOS). Privacidade avançada / modo temporário já
+  // cuidam disso nos efeitos deles.
+  useEffect(() => {
+    if (!globalOn || !focused || Platform.OS === 'web') return undefined;
+    const tag = `chatyy-capblock-conv-${cid || 'new'}`;
+    const release = acquireCaptureProtection(tag, {
+      labels: {
+        title: _tt(t, 'advPriv.protectedTitle', 'Conteúdo protegido'),
+        subtitle: _tt(t, 'advPriv.protectedRecording', 'A gravação ou o espelhamento de tela está ativo.'),
+      },
+      secureView: true,
+    });
+    let sub = null;
+    if (Platform.OS === 'ios' && cid && conversationType !== 'saved') {
+      sub = addScreenshotListener(() => sendScreenshotNotice(cid, { kind: 'screenshot', blocked: secureViewAvailable(), scope: 'global' }));
+    }
+    return () => {
+      try { release(); } catch {}
+      try { sub && sub.remove(); } catch {}
+    };
+  }, [globalOn, focused, cid, conversationType, t]);
+
+  // Escopo aberto (independe do foco): Dados do contato / visualizador
+  // empurrados por cima desta conversa também protegem.
+  useEffect(() => {
+    if (!cid) return undefined;
+    const reasons = [];
+    if (enabled) reasons.push('adv');
+    if (vanishOn) reasons.push('vanish');
+    if (globalBlock) reasons.push('global');
+    for (const r of reasons) setCaptureScope(cid, true, r);
+    return () => { for (const r of reasons) setCaptureScope(cid, false, r); };
+  }, [cid, enabled, vanishOn, globalBlock]);
 
   const openSheet = useCallback(() => {
     if (!cid) return;
@@ -187,7 +235,7 @@ export default function useConversationPrivacy({ conversationId, conversationTyp
 
   const statusLabel = enabled ? _tt(t, 'advPriv.on', 'Ativada') : _tt(t, 'advPriv.off', 'Desativada');
 
-  return { enabled, screenshotNotice, canEdit, openSheet, guard, banner, watermark, sheet, statusLabel };
+  return { enabled, screenshotNotice, canEdit, openSheet, guard, banner, watermark, sheet, statusLabel, captureProtected };
 }
 
 const styles = StyleSheet.create({
