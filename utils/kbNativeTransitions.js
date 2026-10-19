@@ -46,9 +46,15 @@ export function attachInstantOn() {
 // com a folha ainda apresentada era derrubado pelo dismiss do UIKit e a rede do
 // DidClose focava de novo = teclado sobe-desce-sobe ("rapidão"). Voltar ao
 // antigo: globalThis.__chatyy_attach_restore = 'will'.
+// [2026-10-19 attach-none] Founder: fechar a folha do "+" deixa o teclado
+// FECHADO. Composer api >= 7 entende 'none'; api 5/6 (734/737) trataria 'none'
+// como 'will' → lá fica 'did' (sobe 1x no fim). Override: __chatyy_attach_restore.
 export function attachRestoreMode() {
-  try { if (globalThis.__chatyy_attach_restore === 'will') return 'will'; } catch {}
-  return 'did';
+  try {
+    const v = globalThis.__chatyy_attach_restore;
+    if (v === 'will' || v === 'did') return v;
+  } catch {}
+  return nativeComposerApi() >= 7 ? 'none' : 'did';
 }
 
 // [2026-10-19 kb-restore] Composer nativo (iOS apiVersion >= 6) recusa a

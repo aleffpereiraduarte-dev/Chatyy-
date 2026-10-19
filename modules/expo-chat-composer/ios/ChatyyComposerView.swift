@@ -548,7 +548,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   // attachRestore "did" = só no fim do dismiss (ajuste OTA).
   // Kill switch: prop attachInstant=false (JS: globalThis.__chatyy_attach_instant = false).
   var attachInstant = true { didSet { if !attachInstant { attachRestorePending = false } } }
-  var attachRestore: String = "did" // [2026-10-19 kb-restore] era "will" (sobe-desce-sobe)
+  var attachRestore: String = "none" // [2026-10-19 attach-none] era "did"; antes "will" (sobe-desce-sobe)
   // [2026-10-19 kb-restore] "Teclado sobe e desce rapidão" ao trocar de tela /
   // fechar folha, menu ou modal. RAIZ: o UIKit guarda o first responder quando
   // algo cobre a tela (push, pageSheet, menu de contexto, folha) e o DEVOLVE
@@ -1047,7 +1047,9 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     let byUser: Bool = (info["user"] as? Bool) ?? false
     // Só "cancelar" pelo usuário devolve o teclado (WhatsApp). Ação (Galeria,
     // Câmera, Arquivo…), Enviar ou fechamento pelo JS (troca de tela) → fechado.
-    let restore = action == "cancel" && byUser
+    // [2026-10-19 attach-none] "none" (padrão api 7) = teclado continua fechado
+    // depois da folha, mesmo cancelando (pedido do founder: sem sobe-desce).
+    let restore = action == "cancel" && byUser && attachRestore != "none"
     if !final {
       if !restore { attachRestorePending = false; return }
       if attachRestore != "did" { restoreFocusAfterAttach() }

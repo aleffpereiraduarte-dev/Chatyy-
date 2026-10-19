@@ -163,8 +163,10 @@ public class ChatyyComposerModule: Module {
     // 6 = [2026-10-19 kb-restore] prop restoreGuard: devolução automática do
     //     first responder pelo UIKit (volta de tela, modal, menu, folha) não
     //     abre mais o teclado sozinho; attachRestore padrão "did".
+    // 7 = [2026-10-19 attach-none] attachRestore "none" (padrão): fechar a
+    //     folha do "+" deixa o teclado fechado.
     Function("apiVersion") { () -> Int in
-      return 6
+      return 7
     }
 
     View(ChatyyComposerView.self) {
