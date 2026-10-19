@@ -57,9 +57,34 @@ export function attachRestoreMode() {
   return nativeComposerApi() >= 7 ? 'none' : 'did';
 }
 
+// [2026-10-19 android-parity] "+" no Android nível WhatsApp Android: a folha
+// nativa (Dialog, SOFT_INPUT_STATE_HIDDEN) abre NO MESMO TOQUE — o composer
+// nativo já escondeu o IME — sem os 80 ms + render de antes. Vale em qualquer
+// binário com a folha nativa (o composer api >= 5 só manda hadKeyboard REAL).
+// Kill switch OTA: globalThis.__chatyy_android_attach_instant = false (ou o
+// geral __chatyy_attach_instant = false) → caminho de 18/10.
+export function androidAttachInstantOn() {
+  try { if (globalThis.__chatyy_android_attach_instant === false) return false; } catch {}
+  return attachInstantOn();
+}
+
+// [2026-10-19 android-parity] Mesmo combinado do iOS api 7 (founder): fechar a
+// folha do "+" deixa o teclado FECHADO. Override OTA:
+// globalThis.__chatyy_attach_restore = 'did' | 'will' → o JS devolve o teclado
+// ao cancelar se ele estava aberto (comportamento de 18/10).
+export function androidAttachRestoreMode() {
+  try {
+    const v = globalThis.__chatyy_attach_restore;
+    if (v === 'will' || v === 'did') return 'did';
+  } catch {}
+  return 'none';
+}
+
 // [2026-10-19 kb-restore] Composer nativo (iOS apiVersion >= 6) recusa a
 // devolução automática do first responder pelo UIKit (volta de tela, modal,
 // menu, folha) — o teclado só volta por toque/foco explícito.
+// [2026-10-19 android-parity] Android api >= 6: a volta do foco da janela
+// (folha/diálogo/outra Activity/OEM) não reabre um IME que estava fechado.
 // Kill switch OTA: globalThis.__chatyy_kb_restore_guard = false.
 export function kbRestoreGuardOn() {
   try { if (globalThis.__chatyy_kb_restore_guard === false) return false; } catch {}

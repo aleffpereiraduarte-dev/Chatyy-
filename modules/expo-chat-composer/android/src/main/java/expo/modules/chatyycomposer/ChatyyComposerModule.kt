@@ -90,7 +90,14 @@ class ChatyyComposerModule : Module() {
     //     pauseRecording/resumeRecording/playPreview/pausePreview. (Pula o 2 p/
     //     alinhar com o iOS; o gate `>= 2` do cartão de resposta é só iOS.)
     // 4 = [2026-10-19 kb-native] onKeyboardSync{height, visible, focused, reason} + prop nativeTransitions.
-    Function("apiVersion") { 4 }
+    // 5 = [2026-10-19 android-parity] onAttach{hadKeyboard, instant} (IME REAL medido
+    //     antes do hide) + prop attachInstant (kill switch). A devolução do teclado
+    //     ao cancelar a folha é do JS (padrão "none" = continua fechado).
+    // 6 = [2026-10-19 android-parity] prop restoreGuard: ao voltar o foco da janela
+    //     (folha/diálogo/outra Activity/OEM) o IME que estava FECHADO ao sair não
+    //     reabre sozinho — só por toque no compositor ou focus() explícito.
+    // (7 = iOS attachRestore "none": no Android o padrão já é o JS não devolver.)
+    Function("apiVersion") { 6 }
 
     // [2026-10-18 kb-resume] fundo/frente → guarda de foco do compositor.
     OnActivityEntersBackground { ChatyyComposerView.notifyBackground() }
@@ -130,6 +137,8 @@ class ChatyyComposerModule : Module() {
       Prop("motion") { view: ChatyyComposerView, v: Boolean? -> view.setMotion(v ?: true) } // [2026-10-16 motion-composer]
       Prop("focusGuard") { view: ChatyyComposerView, v: Boolean? -> view.focusGuard = v ?: true } // [2026-10-18 kb-resume]
       Prop("nativeTransitions") { view: ChatyyComposerView, v: Boolean? -> view.nativeTransitions = v ?: true } // [2026-10-19 kb-native]
+      Prop("attachInstant") { view: ChatyyComposerView, v: Boolean? -> view.attachInstant = v ?: true } // [2026-10-19 android-parity]
+      Prop("restoreGuard") { view: ChatyyComposerView, v: Boolean? -> view.restoreGuard = v ?: true } // [2026-10-19 android-parity]
 
       OnViewDidUpdateProps { view: ChatyyComposerView -> view.didUpdateProps() }
 

@@ -606,8 +606,11 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     addView(hairline)
 
     plusButton.setOnClickListener {
+      // [2026-10-19 android-parity] api 5: o JS sabe se o teclado estava aberto
+      // pelo IME REAL (antes do hide; Keyboard.isVisible do RN chega atrasado).
+      val had = imeVisibleNow()
       hideKeyboard()
-      onAttach(emptyMap<String, Any>())
+      onAttach(mapOf("hadKeyboard" to had, "instant" to attachInstant))
     }
     addView(plusButton)
     plusSpinner.visibility = View.GONE
@@ -977,7 +980,37 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     try { edit.setSelection(s, e) } catch (_: Throwable) {}
   }
 
+  // ── [2026-10-19 android-parity] "+" instantâneo + guarda de devolução do IME ──
+  // attachInstant (api 5): onAttach{instant:true} → o JS abre a folha nativa no
+  // mesmo toque (sem os 80 ms + render). Kill switch: prop attachInstant=false.
+  var attachInstant = true
+  // restoreGuard (api 6): voltar o foco da janela (folha do "+", diálogo, outra
+  // Activity, alguns OEMs) não reabre um teclado que estava FECHADO ao sair.
+  // Toque no compositor ou focus() explícito liberam. Kill switch: prop restoreGuard=false.
+  var restoreGuard = true
+  private var imeAtFocusLoss = false
+  private var lastExplicitFocusAt = 0L
+  private var focusRegainAt = 0L
+
+  private fun imeVisibleNow(): Boolean = try {
+    ViewCompat.getRootWindowInsets(this)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+  } catch (_: Throwable) { false }
+
+  override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+    if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) lastExplicitFocusAt = android.os.SystemClock.uptimeMillis()
+    return super.dispatchTouchEvent(ev)
+  }
+
+  private fun guardRestoredIme(regainAt: Long) {
+    if (!restoreGuard || !isAttachedToWindow || focusRegainAt != regainAt) return
+    if (imeAtFocusLoss || lastExplicitFocusAt >= regainAt) return
+    if (!edit.hasFocus() || !imeVisibleNow()) return
+    Log.i(TAG, "restoreGuard: IME reaberto sozinho ao voltar o foco → fecha")
+    hideKeyboard()
+  }
+
   fun focusInput() {
+    lastExplicitFocusAt = android.os.SystemClock.uptimeMillis() // [2026-10-19 android-parity] restoreGuard
     // [2026-10-17 kb-pop] tela saindo/fora da janela → não reabre o teclado
     // (ex.: re-foco atrasado do envio chegando durante o voltar).
     if (!isAttachedToWindow || !isShown) return
@@ -1239,6 +1272,17 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
     super.onWindowFocusChanged(hasWindowFocus)
     if (hasWindowFocus) scheduleKeyboardSync("focus", 120L)
+    // [2026-10-19 android-parity] restoreGuard: o IME estava fechado quando a
+    // janela perdeu o foco → se reabrir sozinho logo depois de voltar, fecha.
+    if (!hasWindowFocus) {
+      imeAtFocusLoss = imeVisibleNow()
+      focusRegainAt = 0L
+    } else if (restoreGuard && !appInBackground) {
+      val at = android.os.SystemClock.uptimeMillis()
+      focusRegainAt = at
+      postDelayed({ guardRestoredIme(at) }, 250L)
+      postDelayed({ guardRestoredIme(at) }, 650L)
+    }
   }
 
   override fun onDetachedFromWindow() {

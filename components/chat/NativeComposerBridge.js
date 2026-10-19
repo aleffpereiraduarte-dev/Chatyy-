@@ -23,7 +23,7 @@ import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo
 import { Platform, processColor } from 'react-native';
 import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
 import { threadKbNoteComposerBlur } from '../../utils/threadKeyboard'; // [2026-10-19 kb-heal]
-import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
+import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi, androidAttachInstantOn } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
 
 let _failed = false;
 
@@ -65,6 +65,15 @@ function _attachInstantProps() {
   if (!attachInstantOn()) o.attachInstant = false;
   else o.attachRestore = attachRestoreMode();
   if (!kbRestoreGuardOn() && nativeComposerApi() >= 6) o.restoreGuard = false;
+  return o;
+}
+// [2026-10-19 android-parity] Android: props só quando desligadas (api 5 =
+// attachInstant, api 6 = restoreGuard; binário antigo ignora prop desconhecida).
+function _androidAttachProps() {
+  const api = nativeComposerApi();
+  const o = {};
+  if (api >= 5 && !androidAttachInstantOn()) o.attachInstant = false;
+  if (api >= 6 && !kbRestoreGuardOn()) o.restoreGuard = false;
   return o;
 }
 
@@ -389,7 +398,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
       motion={_motionOff() ? false : undefined}
       focusGuard={kbResumeGuardOn() ? undefined : false /* [2026-10-18 kb-resume] kill __chatyy_kb_resume_guard */}
       nativeTransitions={kbNativeTransitionsOn() ? undefined : false /* [2026-10-19 kb-native] kill __chatyy_kb_native_transitions */}
-      {...(Platform.OS === 'ios' ? _attachInstantProps() : null) /* [2026-10-19 attach-instant] */}
+      {...(Platform.OS === 'ios' ? _attachInstantProps() : (Platform.OS === 'android' ? _androidAttachProps() : null)) /* [2026-10-19 attach-instant] · [2026-10-19 android-parity] */}
       onChangeText={_onChangeText}
       onSend={_onSend}
       onAttach={_onAttach}

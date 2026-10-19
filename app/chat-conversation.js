@@ -13138,6 +13138,7 @@ function ChatConversationInnerBody() {
   const _attachInstantRef = useRef(false);
   const _attachInstantOpenRef = useRef(null); // preenchido pelo NativeAttachSheet
   const _openAttachInstant = (e) => {
+    if (Platform.OS === 'android') return _openAttachInstantAndroid(e); // [2026-10-19 android-parity]
     if (Platform.OS !== 'ios' || !e || e.instant !== true) return false;
     try { if (!require('../utils/kbNativeTransitions').attachInstantOn()) return false; } catch { return false; }
     if (!mountedRef.current || _kbLeavingRef.current) return false;
@@ -13148,6 +13149,32 @@ function ChatConversationInnerBody() {
     let ok = false;
     try { ok = !!open(); } catch { ok = false; }
     if (!ok) { _attachInstantRef.current = false; return false; }
+    setShowAttachMenu(true);
+    return true;
+  };
+  // [2026-10-19 android-parity] "+" no Android: o composer nativo já escondeu
+  // o IME no toque; a folha nativa (Dialog SOFT_INPUT_STATE_HIDDEN) abre JÁ,
+  // sem os 80 ms + render da conversa. Composer api >= 5 manda hadKeyboard
+  // REAL (binário antigo = {} → Keyboard.isVisible). Fechar a folha deixa o
+  // teclado FECHADO (= iOS api 7); __chatyy_attach_restore 'did'|'will' = o
+  // JS devolve ao cancelar. Kill: __chatyy_android_attach_instant = false.
+  const _openAttachInstantAndroid = (e) => {
+    let kn = null;
+    try { kn = require('../utils/kbNativeTransitions'); } catch { return false; }
+    if (!kn || !kn.androidAttachInstantOn()) return false;
+    if (e && e.instant === false) return false;
+    if (!mountedRef.current || _kbLeavingRef.current) return false;
+    const open = _attachInstantOpenRef.current;
+    if (typeof open !== 'function') return false;
+    let had = false;
+    if (e && typeof e.hadKeyboard === 'boolean') had = e.hadKeyboard;
+    else { try { had = !!Keyboard.isVisible?.(); } catch {} }
+    _attachKbRef.current = (kn.androidAttachRestoreMode() !== 'none' && kbResumeGuardOn())
+      ? { had: !!had, at: Date.now() }
+      : { had: false, at: 0 };
+    let ok = false;
+    try { ok = !!open(); } catch { ok = false; }
+    if (!ok) { _attachKbRef.current = { had: false, at: 0 }; return false; }
     setShowAttachMenu(true);
     return true;
   };
