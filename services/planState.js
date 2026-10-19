@@ -28,10 +28,11 @@ export function canonicalPlanId(raw) {
   return 'free';
 }
 
-/** "20 GB", "200 GB", "1 TB", "1,5 TB" a partir de GB. */
+/** "20 GB", "200 GB", "1 TB", "2 TB" a partir de GB (mesmo formato do medidor). */
 export function formatGb(gb) {
   const n = Number(gb) || 0;
-  if (n >= 1024) {
+  try { return require('./format').formatStorage(n * GB); } catch {}
+  if (n >= 1000) {
     const tb = n / 1024;
     return `${Number.isInteger(tb) ? tb : tb.toFixed(1)} TB`;
   }

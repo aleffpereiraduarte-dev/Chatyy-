@@ -148,6 +148,8 @@ export function nudgeLevel(plan) {
 }
 
 export function formatGbShort(bytes) {
+  // [2026-10-19 plano-consistente] mesmo formato do medidor/plano ("2 TB", "200 GB").
+  if ((Number(bytes) || 0) >= 1024 * 1024 * 1024) { try { return require('./format').formatStorage(bytes); } catch {} }
   const gb = (Number(bytes) || 0) / GB;
   if (gb >= 1024) { const tb = gb / 1024; return (tb >= 10 ? Math.round(tb) : tb.toFixed(1).replace('.0', '')) + ' TB'; }
   if (gb >= 10) return Math.round(gb) + ' GB';

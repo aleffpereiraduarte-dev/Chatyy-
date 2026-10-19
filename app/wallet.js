@@ -570,8 +570,8 @@ function WalletScreen() {
             {!canCashout ? (
               <PressableScale onPress={() => setHowOpen(true)} haptic="select" hitSlop={8} accessibilityRole="button" style={styles.cashWhy}>
                 <Text style={[Type.caption, { color: s.textSecondary, textAlign: 'center' }]}>
+                  {/* [2026-10-19 carteira-polish] sem o 2º "Como funciona" colado (o cartão logo abaixo já é o atalho) */}
                   {!wallet.cashoutEnabled && reachedMin ? tr(t, 'creatorEarnings.cashoutPaused', 'Saques temporariamente indisponíveis.') : minText}
-                  <Text style={{ color: s.text, fontWeight: '600' }}>{'  ' + tr(t, 'walletHow.title', 'Como funciona')}</Text>
                 </Text>
               </PressableScale>
             ) : null}

@@ -27,6 +27,28 @@ export function formatBytes(bytes) {
   return `${_dec(n / (1024 * 1024 * 1024))} GB`;
 }
 
+// [2026-10-19 plano-consistente] Tamanho de ARMAZENAMENTO (cota/uso) num formato
+// só: "81,4 GB de 2 TB" (antes "81.4 GB de 1.95 TB" no medidor e "2.0 TB" no
+// nome do plano — cota de 2000 GiB lida de 3 jeitos). Base 1024; ≥ 1000 GB vira
+// TB; 1 casa só quando ajuda (< 100 GB / < 10 TB / < 10 MB), sem ",0"; vírgula
+// decimal pelo idioma do app.
+function _dec1(v) {
+  let s = (Math.round(v * 10) / 10).toFixed(1);
+  if (s.endsWith('.0')) s = s.slice(0, -2);
+  let lang = 'pt-BR';
+  try { lang = String(globalThis.__chatyyLang || 'pt-BR'); } catch {}
+  return _DOT_LANGS.test(lang) ? s : s.replace('.', ',');
+}
+export function formatStorage(bytes) {
+  const v = Math.max(0, Number(bytes) || 0);
+  const KB = 1024; const MB = KB * 1024; const GB = MB * 1024; const TB = GB * 1024;
+  if (v >= 1000 * GB) { const tb = v / TB; return (tb >= 10 ? String(Math.round(tb)) : _dec1(tb)) + ' TB'; }
+  if (v >= 1000 * MB) { const gb = v / GB; return (gb >= 100 ? String(Math.round(gb)) : _dec1(Math.max(gb, 1))) + ' GB'; }
+  if (v >= MB) { const mb = v / MB; return (mb >= 10 ? String(Math.round(mb)) : _dec1(mb)) + ' MB'; }
+  if (v >= KB) return Math.round(v / KB) + ' KB';
+  return Math.round(v) + ' B';
+}
+
 /**
  * "report.final.pdf" → "pdf". Empty for files with no extension.
  */

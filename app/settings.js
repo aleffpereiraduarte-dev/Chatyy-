@@ -274,6 +274,8 @@ function SettingsScreenInner() {
   const openCategory = useCallback((key, anchor) => {
     if (PUSH_CATEGORIES && !twoPane) {
       try { Haptics.selectionAsync?.(); } catch {}
+      // [2026-10-19 convite-wa] "Convidar um amigo" = tela própria (busca, link, A–Z, Já no Chatyy).
+      if (key === 'invite' && !anchor) { try { pushOnce(router, '/invite-friends'); } catch {} return; }
       try { pushOnce(router, { pathname: '/settings-section', params: anchor && anchor !== key ? { section: key, anchor } : { section: key } }); } catch {}
       return;
     }

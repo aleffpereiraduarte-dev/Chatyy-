@@ -23,10 +23,11 @@ import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsCardContent, Set
 import AvatarCircle from '../AvatarCircle';
 import PressableRow from '../PressableRow';
 import Svg, { Rect as SvgRect, Path as SvgPath } from 'react-native-svg';
-import { IconCheck, IconCloud, IconZap, IconTrash, IconCreditCard } from '../Icons';
+import { IconCheck, IconCloud, IconZap, IconTrash, IconCreditCard, IconFile, IconClock, IconUsers } from '../Icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import StorageMeter, { StorageNudgeCard, meterFromPlan } from '../storage/StorageMeter'; // [2026-10-17 smart-storage]
 import { normalizePlanState, planDisplayName, formatQuotaBytes } from '../../services/planState';
+import { formatStorage } from '../../services/format'; // [2026-10-19 plano-consistente]
 import { openStripePortal, isStripePortalAvailable } from '../../services/stripeCheckout'; // [2026-10-18 stripe-off] compra nova só nas lojas; portal p/ assinantes Stripe existentes
 import { MONETIZATION_ENABLED } from '../../constants/featureFlags';
 
@@ -490,6 +491,15 @@ export function ChatyyOnePanel() {
           onPress={() => { try { router.push('/manage-storage'); } catch {} }}
           testID="one-free-space"
         />
+      </SettingsGroup>
+      {/* [2026-10-19 plano-completo] O que o plano inclui (números do plan_info; sem promessa que o servidor não cumpre). */}
+      <SettingsGroup header={t('chatyyOne.includedHeader', 'Incluído no seu plano')}>
+        <SettingsRow icon={IconCloud} title={t('chatyyOne.benefitStorage', 'Armazenamento na nuvem')} subtitle={t('chatyyOne.benefitStorageSub', 'Fotos, vídeos, arquivos, e-mail e conversas')} value={gbTxt} />
+        <SettingsRow icon={IconFile} title={t('chatyyOne.benefitFile', 'Arquivos de até')} value={formatStorage(planNorm.maxFileBytes)} />
+        <SettingsRow icon={IconClock} title={t('chatyyOne.benefitBackup', 'Backup das conversas')} value={t('chatyyOne.benefitBackupDays', '{n} dias', { n: planNorm.backupRetentionDays }).replace('{n}', String(planNorm.backupRetentionDays))} />
+        {planNorm.maxMembers > 1 ? (
+          <SettingsRow icon={IconUsers} title={t('chatyyOne.benefitFamily', 'Compartilhar com a família')} value={t('chatyyOne.benefitFamilyN', 'Até {n} pessoas', { n: planNorm.maxMembers }).replace('{n}', String(planNorm.maxMembers))} />
+        ) : null}
       </SettingsGroup>
       {/* [2026-10-17 smart-storage] 80/95%: plano que cabe + preço (servidor/loja). Aqui sem teto (é a tela do plano). */}
       <StorageNudgeCard

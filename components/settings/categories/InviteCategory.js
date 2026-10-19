@@ -223,20 +223,11 @@ function useInviteContacts(t) {
   const [state, setState] = useState(Platform.OS === 'web' ? 'web' : 'idle'); // idle|loading|denied|ready|error|web
   const [list, setList] = useState([]);
 
+  // [2026-10-19 convite-wa] limpeza/ordem A–Z compartilhada com /invite-friends
+  // (símbolos/emojis não vão mais para o topo; sem nome → número formatado).
   const apply = useCallback((others) => {
-    const seen = new Set();
-    const out = [];
-    for (const c of others || []) {
-      const phone = String(c?.phone || '').trim();
-      const name = String(c?.name || '').trim();
-      const d = phone.replace(/\D+/g, '');
-      if (!phone || d.length < 8 || !name || name === 'Unknown') continue;
-      const k = d.slice(-9);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push({ name, phone });
-    }
-    out.sort((a, b) => a.name.localeCompare(b.name));
+    let out = [];
+    try { out = require('../../../services/inviteContacts').prepareInviteContacts(others).map((c) => ({ name: c.display, phone: c.phone, phoneLabel: c.phoneLabel, key: c.key })); } catch {}
     setList(out);
     setState('ready');
   }, []);
@@ -367,9 +358,9 @@ export default function InviteCategory() {
           )}
           {state === 'ready' && shown.map((c) => (
             <SettingsRow
-              key={c.phone + c.name}
+              key={c.key || (c.phone + c.name)}
               title={c.name}
-              subtitle={c.phone}
+              subtitle={c.phoneLabel || c.phone}
               subtitleLines={1}
               onPress={() => inviteContact(c)}
               right={<SettingsValueText color={gc.text}>{t('invite.inviteCta', 'Convidar')}</SettingsValueText>}

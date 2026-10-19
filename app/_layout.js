@@ -2398,6 +2398,7 @@ export default function RootLayout() {
                   <Stack.Screen name="profile-insights" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="profile-creator-dashboard" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="starred-messages" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 more-native] */ }} />
+                  <Stack.Screen name="invite-friends" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-19 convite-wa] */ }} />
                   <Stack.Screen name="linked-devices" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="companion-qr" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   {/* iOS QA 2026-05-28: iOS drops 'card' pushes from inside a modal (render
