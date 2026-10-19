@@ -34,6 +34,7 @@ const _NOFLEX = { flex: 0 };
 import NativeCallList from './calls/NativeCallList';
 import MyCallLinksSheet from './calls/MyCallLinksSheet'; // [2026-10-16 wave12-D]
 import NewCallSheet from './calls/NewCallSheet'; // [2026-10-17 sem-pstn] "Nova chamada" (só Chatyy) no lugar do discador
+import CallInfoSheet from './calls/CallInfoSheet'; // [2026-10-19 callinfo] info da chamada nível iOS Telefone / WhatsApp
 import { addMyCallLink, useMyCallLinks, callLinkState } from './calls/myCallLinks';
 import { useSilenceUnknownCallers } from './calls/silenceUnknownCallers';
 import { isCallListAvailable as _nativeCallsAvailable } from '../modules/expo-chat-conversation-list';
@@ -923,142 +924,7 @@ function PlanBadge({ minutesInfo, isDark, t }) {
   );
 }
 
-// ============================================================
-// CALL INFO MODAL
-// ============================================================
-function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
-  if (!item) return null;
-
-  const bgColor = isDark ? '#1c1c1e' : '#ffffff';
-  const textColor = isDark ? '#ffffff' : '#000000';
-  const subColor = isDark ? '#8e8e93' : '#6c6c70';
-  const sepColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
-  const isChatyy = item.source === 'chat';
-  const country = detectCountry(item.to_number);
-  const rawName = item.contactName || item.contact_name || item.to_number || item.contactEmail || '?';
-  const _savedNm = item.contactName || item.contact_name;
-  const displayName = (_savedNm && !/^[a-z0-9]+([._-][a-z0-9]+)*$/.test(String(_savedNm).trim()))
-    ? rawName
-    : prettifyHandle(rawName);
-
-  // [2026-10-15 native-sheets-v2] Sheet do SISTEMA (detents/grabber/arrastar
-  // 1:1); web / kill-switch → Modal JS abaixo, idêntico.
-  const infoBody = (
-  <>
-          {/* Header */}
-          <View style={s.modalHeader}>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={{ color: blueInk(isDark), fontSize: 17 }}>{t?.('common.close') || 'Fechar'}</Text>
-            </TouchableOpacity>
-            <Text style={[s.modalTitle, { color: textColor }]}>{t?.('calls.callInfo') || 'Info'}</Text>
-            <View style={{ width: 60 }} />
-          </View>
-
-          {/* Contact info */}
-          <View style={s.modalContactSection}>
-            {isChatyy && (item.contactName || item.contactEmail) ? (
-              <AvatarCircle name={displayName} email={item.contactEmail} size={64} />
-            ) : (
-              <View style={[s.modalAvatar, { backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }]}>
-                <IconPhone size={28} color={subColor} />
-              </View>
-            )}
-            <Text style={[s.modalContactName, { color: textColor }]}>{displayName}</Text>
-            {item.to_number ? (
-              <Text style={[s.modalContactSub, { color: subColor }]}>{formatPhoneDisplay(item.to_number)}</Text>
-            ) : item.contactEmail ? (
-              <Text style={[s.modalContactSub, { color: subColor }]}>{item.contactEmail}</Text>
-            ) : null}
-          </View>
-
-          {/* Details */}
-          <View style={[s.modalDetails, { backgroundColor: isDark ? '#2c2c2e' : '#f9f9f9', borderColor: sepColor }]}>
-            <View style={s.modalDetailRow}>
-              <Text style={[s.modalDetailLabel, { color: subColor }]}>{t?.('calls.type') || 'Tipo'}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                {isChatyy ? (
-                  <View style={[s.chatyyBadge, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }]}>
-                    <Text style={{ color: textColor, fontSize: 12, fontWeight: '600' }}>Chatyy</Text>
-                  </View>
-                ) : (
-                  <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.phoneCall') || 'Telefone'}</Text>
-                )}
-                {callIsVideo(item) ? ( // [2026-10-06 UX2]
-                  <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.video') || 'Vídeo'}</Text>
-                ) : (
-                  <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.audio') || 'Áudio'}</Text>
-                )}
-              </View>
-            </View>
-            <View style={[s.modalDetailSep, { backgroundColor: sepColor }]} />
-            <View style={s.modalDetailRow}>
-              <Text style={[s.modalDetailLabel, { color: subColor }]}>{t?.('calls.date') || 'Data'}</Text>
-              <Text style={[s.modalDetailValue, { color: textColor }]}>
-                {(_d=>isNaN(_d.getTime())?'':_d.toLocaleString(undefined, {
-                  day: '2-digit', month: '2-digit', year: 'numeric',
-                  hour: '2-digit', minute: '2-digit'
-                }))(new Date(item.timestamp || item.created_at))}
-              </Text>
-            </View>
-            <View style={[s.modalDetailSep, { backgroundColor: sepColor }]} />
-            <View style={s.modalDetailRow}>
-              {/* [2026-10-06 UX2] direction via callDirection() */}
-              <Text style={[s.modalDetailLabel, { color: subColor }]}>{getCallLabel(callDirection(item), t)}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                {callDirection(item) === 'missed' ? (
-                  <IconMissedCall size={14} color={RED} />
-                ) : callDirection(item) === 'outgoing' ? (
-                  <ArrowOutgoing size={14} color={subColor} />
-                ) : (
-                  <ArrowIncoming size={14} color={subColor} />
-                )}
-              </View>
-            </View>
-            <View style={[s.modalDetailSep, { backgroundColor: sepColor }]} />
-            <View style={s.modalDetailRow}>
-              <Text style={[s.modalDetailLabel, { color: subColor }]}>{t?.('calls.duration') || 'Duracao'}</Text>
-              <Text style={[s.modalDetailValue, { color: textColor }]}>{formatDurationLong(item.duration)}</Text>
-            </View>
-          </View>
-
-          {/* Call again button */}
-          <TouchableOpacity
-            style={s.callAgainBtn}
-            onPress={() => { onClose(); if (USE_NATIVE_SHEETS) runAfterNativeSheet(() => onCallAgain(item)); else onCallAgain(item); }}
-            activeOpacity={0.7}
-          >
-            <IconPhone size={18} color="#fff" />
-            {/* [2026-10-17 sem-pstn] número comum: liga pelo Chatyy (ou convida) — nunca rediscar PSTN */}
-            <Text style={s.callAgainText}>{item.to_number && !isPstnEnabled()
-              ? (t?.('calls.callViaChatyy') || 'Ligar pelo Chatyy')
-              : (t?.('calls.callAgain') || 'Ligar novamente')}</Text>
-          </TouchableOpacity>
-  </>
-  );
-  if (USE_NATIVE_SHEETS) {
-    return (
-      <NativeSheet visible={!!visible} onClose={onClose} detents="fitToContents" backgroundColor={bgColor}>
-        <View style={{ paddingTop: 14, paddingBottom: Platform.OS === 'ios' ? 16 : androidBottomInset(16) }}>
-          {infoBody}
-        </View>
-      </NativeSheet>
-    );
-  }
-  return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={onClose}
-    >
-      <View style={s.modalOverlay}>
-        <View style={[s.modalContent, { backgroundColor: bgColor }]}>
-          {infoBody}
-        </View>
-      </View>
-    </Modal>
-  );
-}
+// [2026-10-19 callinfo] CALL INFO → components/calls/CallInfoSheet.js
 
 // ============================================================
 // AUDIO WAVEFORM ANIMATION - subtle bars when connected
@@ -3133,10 +2999,31 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
   //     Block caller, Report spam, Add to contacts, Copy number, Delete.
   const handleDeleteEntry = useCallback(async (item) => {
     if (!item?.id) return;
-    try { await callHistoryDelete(item.id); } catch {}
+    // [2026-10-19 callinfo] a lista mescla ids como "chat_<id>" (servidor) / "voip_<id>" (PSTN):
+    // mandar "chat_123" pro servidor virava (int) 0 → 400 e a linha voltava no próximo refresh.
+    const _rawId = String(item.id);
+    const _srvId = /^voip_/.test(_rawId) ? 0 : Number(_rawId.replace(/^chat_/, ''));
+    if (_srvId > 0) { try { await callHistoryDelete(_srvId); } catch {} }
     // Optimistic: drop from local state right away. The next refresh
     // catches any server-side disagreement.
-    setChatCalls(prev => Array.isArray(prev) ? prev.filter(c => c.id !== item.id) : prev);
+    setChatCalls(prev => Array.isArray(prev) ? prev.filter(c => c.id !== item.id && !(_srvId > 0 && Number(c.id) === _srvId)) : prev);
+  }, []);
+  // [2026-10-19 callinfo] "Apagar do histórico" na folha de info → some da lista + caches.
+  const handleInfoDeleted = useCallback((peerKey) => {
+    const key = String(peerKey || '').toLowerCase();
+    if (!key) return;
+    const _match = (c) => {
+      const e = String(c?.contactEmail || c?.contact_email || '').trim().toLowerCase();
+      if (e && e === key) return true;
+      const ph = String(c?.to_number || '').replace(/[^0-9+]/g, '');
+      return !!ph && key === 'tel:' + ph;
+    };
+    setChatCalls(prev => {
+      if (!Array.isArray(prev)) return prev;
+      const next = prev.filter(c => !_match(c));
+      try { _writeCallHistoryCache(next); } catch {}
+      return next;
+    });
   }, []);
 
   // [2026-10-15 native-calls] Ações do menu da linha por chave — usadas pelo
@@ -3985,14 +3872,15 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
         }}
       />
 
-      {/* Call info modal */}
-      <CallInfoModal
+      {/* [2026-10-19 callinfo] Informações da chamada: todas as ligações com a pessoa */}
+      <CallInfoSheet
         item={infoItem}
         visible={!!infoItem}
         onClose={() => setInfoItem(null)}
-        isDark={isDark}
-        t={t}
-        onCallAgain={handleHistoryPress}
+        calls={allHistory}
+        onCall={handleHistoryCallBack}
+        onMessage={handleHistoryPress}
+        onDeleted={handleInfoDeleted}
       />
     </View>
   );

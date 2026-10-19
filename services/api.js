@@ -12017,6 +12017,16 @@ export async function callHistoryAdd(callData) {
 export async function callHistoryDelete(id) {
   return apiCall('chat_call_history_delete', { id }, 'POST');
 }
+// [2026-10-19 callinfo] Folha "Informações da chamada": todas as ligações com
+// UM contato (servidor filtra por `peer` e anexa `net` {region, weak} da trilha;
+// edge com email.php antigo ignora o filtro → quem chama filtra de novo).
+export async function callHistoryListPeer(peer, limit = 200) {
+  return apiCall('chat_call_history_list', { limit, offset: 0, peer: String(peer || '').trim().toLowerCase() }, 'POST');
+}
+// Apaga TODAS as linhas do histórico com esse contato (inclui duplicatas legadas).
+export async function callHistoryDeletePeer(peer) {
+  return apiCall('chat_call_history_delete', { peer: String(peer || '').trim().toLowerCase() }, 'POST');
+}
 export async function callHistoryClear() {
   return apiCall('chat_call_history_clear', {}, 'POST');
 }
