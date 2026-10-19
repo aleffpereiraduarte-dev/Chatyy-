@@ -22,6 +22,13 @@ export function nativeTabsAvailable() {
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') return false;
   try { if (globalThis.__chatyy_native_tabs === false) return false; } catch {}
   const m = nativeMod();
+  // [2026-10-18 tabbar-invisivel] iOS build 728 (api 3, aba Você c/ foto): a barra
+  // nativa monta mas some às vezes → usa a barra JS (já mostra a foto) até um build
+  // com api ≥ 4. Forçar a nativa: globalThis.__chatyy_native_tabs = true.
+  try {
+    if (Platform.OS === 'ios' && globalThis.__chatyy_native_tabs !== true
+      && m && m.apiVersion && Number(m.apiVersion()) === 3) return false;
+  } catch {}
   try { return !!(m && m.isAvailable && m.isAvailable()); } catch { return false; }
 }
 
