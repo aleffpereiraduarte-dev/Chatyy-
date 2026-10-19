@@ -44,6 +44,7 @@ data class MLAudioState(val id: String, val playing: Boolean, val loading: Boole
 class MLImageSlot(private val owner: View) {
   var drawable: Drawable? = null
     private set
+  private val clipP = Path()
   private var model: String = ""
   private var thumbModel: String = ""
   private var target: CustomTarget<Drawable>? = null
@@ -234,7 +235,9 @@ class MLImageSlot(private val owner: View) {
     val ih = d.intrinsicHeight.toFloat()
     c.save()
     if (radius > 0) {
-      val p = Path()
+      // [2026-10-19 perf-scroll] Path reaproveitado (era 1 alocação por desenho por imagem)
+      val p = clipP
+      p.reset()
       p.addRoundRect(r, radius, radius, Path.Direction.CW)
       c.clipPath(p)
     } else {

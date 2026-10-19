@@ -191,6 +191,8 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   private var storeCfg: StoreCfg?
   private var storeLoadStarted = false
   private var jsApplied = false
+  /// [2026-10-19 store-rev, apiVersion 13] rótulos de dia de hoje p/ as linhas de data da foto
+  private let dayLabels = CMLDayLabels()
   private var storeDicts: [String: NSDictionary] = [:]  // linhas pintadas da foto (até o 1º applyRows do JS)
   private var rawDicts: [String: [String: Any]] = [:]   // dicionário JS por chave (p/ regravar a foto)
   private var jsVersion = 0
@@ -725,7 +727,9 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
 
   private func applyRowsCore(_ payload: [String: Any], fromStore: Bool) {
     if let arr = payload["rows"] as? [[String: Any]] {
-      for d in arr {
+      for d0 in arr {
+        // [store-rev] foto: "Hoje/Ontem/dia da semana" recalculados p/ hoje
+        let d = fromStore ? dayLabels.relabel(d0) : d0
         if let k = d["k"] as? String {
           if fromStore {
             storeDicts[k] = d as NSDictionary
@@ -968,6 +972,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
       persistedVersion = jsVersion
     }
     storeCfg = StoreCfg(a: a, c: c, r: r, n: n)
+    dayLabels.update(v["dl"])
     if jsApplied || storeLoadStarted { return }
     storeLoadStarted = true
     // [fase 1.5] pré-carga do pressIn da home: pinta SÍNCRONO, já no set da prop

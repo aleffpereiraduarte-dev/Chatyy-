@@ -19,6 +19,20 @@ final class CMLTextView: UIView {
   var spoiler: CMLSpoilerStyle? {
     didSet { if spoiler != oldValue { setNeedsDisplay() } }
   }
+  /// [2026-10-19 perf-scroll] sombra do texto PRÉ-RENDERIZADA no backing store
+  /// (substitui layer.shadow* sem shadowPath, que custava 1 passe offscreen por
+  /// quadro durante a rolagem). 0 = sem sombra. Com glow > 0 o texto é desenhado
+  /// deslocado de `glow` pt — o chamador expande o frame com `glowFrame(_:)`.
+  var glow: CGFloat = 0 {
+    didSet { if glow != oldValue { setNeedsDisplay() } }
+  }
+  var glowColor: UIColor = UIColor(white: 0, alpha: 0.6)
+
+  /// Frame do texto `r` (tamanho do layout) já com a margem da sombra.
+  func glowFrame(_ r: CGRect) -> CGRect {
+    return glow > 0 ? r.insetBy(dx: -glow, dy: -glow) : r
+  }
+
   private var pendingEmoji = Set<String>()
 
   func requestEmoji(_ url: String, _ px: CGFloat) {
@@ -64,6 +78,16 @@ final class CMLTextView: UIView {
       }
       ctx.fillPath()
       ctx.restoreGState()
+    }
+    if glow > 0 {
+      // ≈ CALayer shadowRadius 2 / opacity 0,6 / offset 0 (blur do CG ≈ 2× raio)
+      ctx.saveGState()
+      ctx.setShadow(offset: .zero, blur: glow, color: glowColor.cgColor)
+      CMLTextView.drawText(l, in: ctx, origin: CGPoint(x: glow, y: glow), height: bounds.height, spoiler: spoiler, onMissingEmoji: { [weak self] u, px in
+        self?.requestEmoji(u, px)
+      })
+      ctx.restoreGState()
+      return
     }
     CMLTextView.drawText(l, in: ctx, origin: .zero, height: bounds.height, spoiler: spoiler, onMissingEmoji: { [weak self] u, px in
       self?.requestEmoji(u, px)

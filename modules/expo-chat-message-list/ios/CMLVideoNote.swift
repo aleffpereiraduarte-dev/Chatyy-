@@ -85,7 +85,7 @@ final class CMLVideoNoteView: UIView {
     let s: CGFloat = 46
     playIcon.frame = CGRect(x: b.midX - s / 2, y: b.midY - s / 2, width: s, height: s)
     if let dl = durView.layout {
-      durView.frame = CGRect(x: b.midX - dl.size.width / 2, y: b.maxY - dl.size.height - 14, width: dl.size.width + 1, height: dl.size.height)
+      durView.frame = durView.glowFrame(CGRect(x: b.midX - dl.size.width / 2, y: b.maxY - dl.size.height - 14, width: dl.size.width + 1, height: dl.size.height))
     }
   }
 
@@ -122,10 +122,8 @@ final class CMLVideoNoteView: UIView {
     let dl = CMLLayoutBuilder.line(txt, font: UIFont.systemFont(ofSize: 12, weight: .semibold), color: .white, maxWidth: 80)
     durView.layout = dl
     durView.isHidden = false
-    durView.layer.shadowColor = UIColor.black.cgColor
-    durView.layer.shadowOpacity = 0.6
-    durView.layer.shadowRadius = 2
-    durView.layer.shadowOffset = .zero
+    // [2026-10-19 perf-scroll] sombra pré-renderizada (era layer.shadow sem shadowPath)
+    durView.glow = 4
     setNeedsLayout()
   }
 

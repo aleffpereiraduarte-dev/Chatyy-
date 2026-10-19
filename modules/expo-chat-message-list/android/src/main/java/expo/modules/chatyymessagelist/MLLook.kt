@@ -42,3 +42,63 @@ object MLLook {
   /** altura da curva do rabicho (dp) */
   const val TAIL_RISE = 13f
 }
+
+// [2026-10-19 store-rev, apiVersion 13] rótulos de dia recalculados ao pintar a foto
+// do store (o rev do JS não leva mais o id do OTA nem o dia local — antes 45 % das
+// aberturas jogavam a foto fora com why=rev). store.dl = {m: {"A-M-D" (mês 0-based
+// = chave "sep-A-M-D"): rótulo de hoje} p/ os 7 dias relativos, loc}; linhas mais
+// velhas usam `ab` (absoluto gravado pelo JS) ou formatam aqui (skeleton yMMMd).
+class MLDayLabels {
+  private var map: Map<String, String> = emptyMap()
+  private var rel: Set<String> = emptySet()
+  private var loc = ""
+  private var fmt: java.text.DateFormat? = null
+
+  fun update(v: Any?) {
+    val d = v as? Map<*, *>
+    val m = d?.get("m") as? Map<*, *>
+    if (m == null) { map = emptyMap(); rel = emptySet(); return }
+    val out = HashMap<String, String>()
+    for ((k, x) in m) {
+      val ks = k as? String ?: continue
+      val s = x as? String ?: continue
+      if (s.isNotEmpty()) out[ks] = s
+    }
+    map = out
+    rel = out.values.toHashSet()
+    val l = (d?.get("loc") as? String) ?: ""
+    if (l != loc) { loc = l; fmt = null }
+  }
+
+  /** Linha de data da foto com o rótulo de HOJE (as outras voltam iguais). */
+  fun relabel(d: Map<String, Any?>): Map<String, Any?> {
+    if (map.isEmpty() || d["kind"] != "date") return d
+    val k = d["k"] as? String ?: return d
+    if (!k.startsWith("sep-")) return d
+    val day = k.substring(4)
+    val cur = (d["text"] as? String) ?: ""
+    val ab = d["ab"] as? String
+    val want: String? = map[day]
+      ?: (if (!ab.isNullOrEmpty()) ab else if (cur in rel) absLabel(day) else null)
+    if (want.isNullOrEmpty() || want == cur) return d
+    val out = HashMap<String, Any?>(d)
+    out["text"] = want
+    return out
+  }
+
+  private fun absLabel(day: String): String? {
+    val p = day.split("-").mapNotNull { it.toIntOrNull() }
+    if (p.size != 3) return null
+    return try {
+      val cal = java.util.Calendar.getInstance()
+      cal.clear()
+      cal.set(p[0], p[1], p[2], 12, 0, 0)
+      val f = fmt ?: run {
+        val locale = if (loc.isNotEmpty()) java.util.Locale.forLanguageTag(loc) else java.util.Locale.getDefault()
+        val pat = android.text.format.DateFormat.getBestDateTimePattern(locale, "yMMMd")
+        java.text.SimpleDateFormat(pat, locale).also { fmt = it }
+      }
+      f.format(cal.time)
+    } catch (_: Throwable) { null }
+  }
+}

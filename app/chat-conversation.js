@@ -58,7 +58,7 @@ import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_
 import { isAppResuming, kbResumeGuardOn } from '../utils/kbResumeGuard'; // [2026-10-18 kb-resume]
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
 import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal, nativeSearchOn, nativeDragSelectOn, nativeOverlayOn, nativeQuickReactOn, tgBubblesOn, nativeTgStyleOn } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
-import { useConvOpenMetric, noteConvOpen, noteSendAck, sendSocketSnapshot } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open + [wave10-D] send_ack
+import { useConvOpenMetric, noteConvOpen, noteSendAck, sendSocketSnapshot, notePerfPhase } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open + [wave10-D] send_ack
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
 // Motores (escolha por plataforma, FlatList invertida intacta como fallback):
@@ -821,6 +821,21 @@ function formatDateSeparator(dateStr, t) {
   if (_dateSepMemo.size > 2000) _dateSepMemo.clear();
   _dateSepMemo.set(mk, out);
   return out;
+}
+
+/** [2026-10-19 store-rev] mesmo formato "full" do separador (sem Hoje/Ontem/dia da semana). */
+function formatDateSeparatorAbs(dateStr, t) {
+  if (!dateStr) return '';
+  const d = new Date(_normalizeIso(dateStr));
+  if (isNaN(d.getTime())) return '';
+  const locale = t('_locale') || undefined;
+  const f = _dateFormatter(locale, 'full');
+  let out = null;
+  try { out = f ? f.format(d) : null; } catch { out = null; }
+  if (!out) {
+    try { out = d.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' }); } catch { out = ''; }
+  }
+  return out || '';
 }
 
 // ============================================================
@@ -10478,6 +10493,10 @@ function ChatConversationInner() {
   // effect below so the module-scoped callback always uses the live translator.
   const tRef = useRef(t);
   useEffect(() => { tRef.current = t; }, [t]);
+  // [2026-10-19 perf-scroll] fase "open" no contador nativo de quadros (2 s a partir
+  // do 1º render — marcado no render, não no efeito, p/ pegar o próprio montar)
+  const _perfOpenRef = useRef(false);
+  if (!_perfOpenRef.current) { _perfOpenRef.current = true; try { notePerfPhase('open', 2000); } catch {} }
   const confirm = useConfirm();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -14864,6 +14883,9 @@ function ChatConversationInner() {
       }
     };
     const sub1 = Keyboard.addListener(showEvent, onShow);
+    // [2026-10-19 perf-scroll] fase "kb" no contador nativo de quadros (sobe/desce ~0,5 s)
+    const subKbA = Keyboard.addListener(showEvent, () => { try { notePerfPhase('kb', 700); } catch {} });
+    const subKbB = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => { try { notePerfPhase('kb', 700); } catch {} });
     // [2026-10-07 flashlist] Oldest-first FlashList: the viewport shrinks from
     // the BOTTOM while the keyboard rises (container paddingBottom), so the
     // newest rows slide under the composer unless we re-pin after the frame
@@ -14875,7 +14897,7 @@ function ChatConversationInner() {
     // Navigating here with the keyboard still up from the previous screen
     // would otherwise open the thread lifted. Dismiss on mount.
     try { Keyboard.dismiss(); } catch {}
-    return () => { sub1.remove(); try { sub2 && sub2.remove(); } catch {} if (_kbSnapTimer) clearTimeout(_kbSnapTimer); };
+    return () => { sub1.remove(); try { sub2 && sub2.remove(); } catch {} try { subKbA.remove(); subKbB.remove(); } catch {} if (_kbSnapTimer) clearTimeout(_kbSnapTimer); };
   }, []);
 
   // ============================================================
@@ -28030,6 +28052,11 @@ function ChatConversationInner() {
     }
     return byId;
   }, [messages]);
+  // [2026-10-19 perf-scroll] lido por ref no ctx da lista nativa: messagesById nas deps
+  // do _nlCtx fazia TODO setMessages (✓✓ do par, reação, delta, página antiga no
+  // meio da rolagem) trocar o ctx → buildRow + JSON.stringify de TODAS as linhas.
+  const messagesByIdRef = useRef(messagesById);
+  messagesByIdRef.current = messagesById;
 
   // Enrich messages with per-item derived state. CRITICAL for perf: we keep a
   // WeakMap cache so messages that don't need updating reuse their exact same
@@ -29094,7 +29121,9 @@ function ChatConversationInner() {
     }
     if (!ca) return;
     try {
-      if (singleDateGroupRef.current) {
+      if (_nlStickyRef.current) {
+        // [2026-10-19 perf-scroll] pílula nativa ativa: a JS nem é renderizada
+      } else if (singleDateGroupRef.current) {
         // Single date-group loaded ⇒ the inline separator above the messages
         // already labels the day. Keep the floating pill fully hidden so the
         // user never sees "Hoje" twice. Multi-day threads fall through and
@@ -29217,10 +29246,16 @@ function ChatConversationInner() {
 
   // Optimized scroll handler - uses ref to avoid setState on every scroll event
   const showScrollDownRef = useRef(false);
+  // [2026-10-19 perf-scroll] lista nativa com ↓/@ nativos (overlay api 11) e pílula de
+  // data nativa: os equivalentes JS ficam escondidos → o caminho da rolagem não
+  // precisa re-renderizar a tela inteira (setShowScrollDown) nem animar a pílula JS.
+  const _nlOverlayOnRef = useRef(false);
+  const _nlStickyRef = useRef(false);
   const handleFlatListScroll = useCallback((e) => {
     // [2026-10-07 flashlist] distance from the NEWEST message, engine-agnostic
     // (inverted: contentOffset.y; oldest-first: contentH - viewportH - y).
     const _distLatest = threadScroll.distanceFromLatest(e);
+    notePerfPhase('scroll', 500); // [2026-10-19 perf-scroll] fase no contador nativo (barato; renova o ttl)
     _wpNotifyScroll(_distLatest); // [2026-10-15 native-wallpaper] rolagem → passo do gradiente (acumula ~420 pt)
     const _prevDistLatest = threadScrollStateRef.current.lastDistance || 0; // [2026-10-14 grupo-rajada]
     threadScrollStateRef.current.lastDistance = _distLatest; // [2026-10-08 chat-gaps2] jumpToLatest
@@ -29273,7 +29308,7 @@ function ChatConversationInner() {
     // Only trigger setState when the value actually changes
     if (showScrollDownRef.current !== scrolledUp) {
       showScrollDownRef.current = scrolledUp;
-      setShowScrollDown(scrolledUp);
+      if (!_nlOverlayOnRef.current) setShowScrollDown(scrolledUp);
     }
     // [2026-10-14 grupo-rajada] Voltou ao fim depois de ler acima (com msgs
     // chegando): marca lido até a mais nova RECEBIDA. O onViewableItemsChanged
@@ -34898,6 +34933,9 @@ function ChatConversationInner() {
       isSavedMode: !!isSavedMode,
       formatTime,
       dateLabel: (d) => formatDateSeparator(d, t),
+      // [2026-10-19 store-rev] rótulo absoluto (foto do store sem o dia no rev) + locale
+      dateLabelAbs: (d) => formatDateSeparatorAbs(d, t),
+      dateLocale: (() => { try { const l = String(t('_locale') || ''); return /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(l) ? l : ''; } catch { return ''; } })(),
       unreadLabel: (n) => (n > 1
         ? (t('chatConv.unreadMessagesN', { n }) || `${n} mensagens não lidas`)
         : n === 1 ? tt('chatConv.unreadMessagesOne', '1 mensagem não lida') : tt('chatConv.unreadMessages', 'Mensagens não lidas')),
@@ -34914,7 +34952,7 @@ function ChatConversationInner() {
       senderColor: senderColorFromEmail,
       describeReply: (m) => {
         const rt = m.reply_to || {};
-        const localRef = rt.id ? (messagesById.get(rt.id) || null) : null;
+        const localRef = rt.id ? (messagesByIdRef.current.get(rt.id) || null) : null;
         const em = String(rt.sender_email || localRef?.sender_email || '').trim();
         const nm = String(rt.sender_name || localRef?.sender_name || '').trim();
         const you = String(tt('chat.you', 'Você'));
@@ -35043,7 +35081,7 @@ function ChatConversationInner() {
       },
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentEmail, conversationType, t, isSavedMode, selectionMode, selectedIds, messagesById, isDark, translatedMessages, pinnedIdSet, disappearingTimer, disappearingSetAt, msgFontSize, msgLineHeight, colors, _nlCards, conversationId, conversationName, params.email, _nlVoicePill]);
+  }, [currentEmail, conversationType, t, isSavedMode, selectionMode, selectedIds, isDark, translatedMessages, pinnedIdSet, disappearingTimer, disappearingSetAt, msgFontSize, msgLineHeight, colors, _nlCards, conversationId, conversationName, params.email, _nlVoicePill]);
   const _nlTheme = useMemo(() => ({
     ownBubble: ownBubbleBg, otherBubble: otherBubbleBg, ownText: ownTextColor, otherText: otherInk,
     ownMeta: ownMetaColor, otherMeta: colors.highContrast ? _boostAlpha(otherMetaColor, 0.92) : otherMetaColor, link: (colors.accentOn && !_accentBubblesOn()) ? colors.accent : otherInk, read: _tickReadColor(), wall: chatWallBg, // [2026-10-19 accent-real/a11y]
@@ -35141,6 +35179,9 @@ function ChatConversationInner() {
   const _nlDragSelOn = _nl.on && selectionMode && Platform.OS !== 'web' && nativeDragSelectOn();
   // Overlay ↓ / @ / ♥ nativo (substitui ScrollDownFabAnim + MentionJumpFab).
   const _nlOverlayOn = _nl.on && Platform.OS !== 'web' && nativeOverlayOn();
+  _nlOverlayOnRef.current = _nlOverlayOn;
+  // overlay nativo desligou (kill switch / fallback JS) → o ↓ JS volta a refletir a rolagem
+  useEffect(() => { if (!_nlOverlayOn && showScrollDown !== showScrollDownRef.current) setShowScrollDown(showScrollDownRef.current); }, [_nlOverlayOn]); // eslint-disable-line react-hooks/exhaustive-deps
   const _nlOverlayCfg = useMemo(() => (!_nlOverlayOn ? undefined : {
     on: 1, unread: newMsgCount || 0, mention: unreadMentionIds.length, reaction: unreadReactionIds.length, b: 12, dark: isDark ? 1 : 0,
     ax: {
@@ -35562,6 +35603,7 @@ function ChatConversationInner() {
   // com ela ligada o pill JS não aparece. Esconde quando só há 1 grupo de data
   // (o nativo também esconde quando há só 1 separador).
   const _nlSticky = _nl.on && nativeListApi() >= 2;
+  _nlStickyRef.current = _nlSticky;
   const _nlStickyCfg = useMemo(() => (_nlSticky ? {
     on: 1, top: 8, shadow: 1,
     // [2026-10-18 tg-look] = pílula flutuante JS (vidro P&B)

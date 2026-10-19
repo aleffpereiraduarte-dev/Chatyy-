@@ -141,8 +141,8 @@ export function openWithRowZoom(id, opts = {}) {
   if (!hint || typeof opts.open !== 'function') return _rzSkip('no_hint');
   if (!rowZoomEnabled()) return _rzSkip(_mod() ? 'kill' : 'no_module');
   if (_tabletSplit()) return _rzSkip('tablet');
-  if (_pending && !_pending.done) return false;
-  if (_alreadyInStack(id)) return false;
+  if (_pending && !_pending.done) return _rzSkip('pending');
+  if (_alreadyInStack(id)) return _rzSkip('in_stack');
   if (Number(opts.unread) > 0 && _killState() !== 'always') return _rzSkip('unread');
   if (!_shellLikely(opts.acct, id, opts.unread)) return _rzSkip(_shellOffReason());
   const mod = _mod();
@@ -158,6 +158,7 @@ export function openWithRowZoom(id, opts = {}) {
   };
   const tm = setTimeout(() => {
     if (decided) return;
+    _rzSkip('begin_timeout');
     fallback();
     try { mod.cancel(); } catch {}
   }, BEGIN_TIMEOUT_MS);
@@ -167,12 +168,12 @@ export function openWithRowZoom(id, opts = {}) {
     pr = mod.begin({ ...hint.frame, dark: !!opts.dark, radius: 10, maxWait: 220 });
   } catch {
     clearTimeout(tm);
-    return false;
+    return _rzSkip('begin_throw');
   }
   Promise.resolve(pr).then((ok) => {
     if (decided) { if (ok) { try { mod.cancel(); } catch {} } return; }
     clearTimeout(tm);
-    if (!ok) { fallback(); return; }
+    if (!ok) { _rzSkip('begin_no'); fallback(); return; }
     decided = true;
     const p = { id: String(id), key: null, fb: null, at: Date.now(), done: false, cbs: new Set(), timer: null };
     _pending = p;

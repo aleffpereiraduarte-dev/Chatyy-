@@ -44,9 +44,12 @@ public class ChatyyMessageListModule: Module {
     //     pílulas de data/sistema/flutuante em cápsula com desfoque (12 pt), hora e
     //     duração sobre mídia com desfoque, nota de voz com botão cheio, "Encaminhada"
     //     13 regular, citação com cantos 6, reações sem sombra.
+    // 13 = [2026-10-19 perf-scroll + store-rev] células sem UIVisualEffectView/sombra sem
+    //     shadowPath (pílulas tg-style chapadas; desfoque só na flutuante) · store.dl
+    //     {m, loc} → rótulos de dia da foto recalculados ao pintar (rev do JS sem o dia).
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 12
+      return 13
       #else
       return 3
       #endif

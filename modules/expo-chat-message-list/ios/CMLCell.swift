@@ -27,6 +27,10 @@ final class CMLCell: UICollectionViewCell {
   /// foto com áreas brancas (print de tela) sumia no fundo branco da conversa e
   /// parecia "faixa em branco" no meio da imagem (print do founder 18/10).
   let mediaEdge = CAShapeLayer()
+  /// [2026-10-19 perf-scroll] o contorno mora numa view IRMÃ da mídia (por cima),
+  /// não como subcamada dela: subcamada + cornerRadius/masksToBounds = passe
+  /// offscreen por quadro; sozinha, a camada da imagem recorta no caminho rápido.
+  private let mediaEdgeHost = UIView()
   var albumRings: [CMLTransferRing] = []
   let audioRing = CMLTransferRing()
   let fileRing = CMLTransferRing()
@@ -47,12 +51,13 @@ final class CMLCell: UICollectionViewCell {
   // pílulas
   let pillBg = UIView()
   let pillText = CMLTextView()
-  /// [2026-10-19 tg-style] desfoque atrás da pílula de data/sistema, da hora sobre
-  /// mídia e da duração do vídeo (só com CMLStyle.ts; criadas sob demanda).
-  private var pillBlur: UIVisualEffectView?
-  private var pillBlurDark: Bool?
-  private var metaBlur: UIVisualEffectView?
-  private var durBlur: UIVisualEffectView?
+  /// [2026-10-19 perf-scroll] tg-style SEM UIVisualEffectView por célula: até ~8
+  /// desfoques por tela (data/sistema, hora sobre mídia, duração) custavam 1 passe
+  /// de desfoque + offscreen CADA quadro da rolagem (slow frames 10,5‰ → 32,7‰ da
+  /// 723 à 732). Agora: pílulas chapadas translúcidas com a cor "fosca" pré-composta
+  /// (CMLLook.frostedPill). Desfoque real fica SÓ na pílula flutuante (CMLSticky).
+  /// Pílula da duração do vídeo (só CMLStyle.ts) — view simples, criada sob demanda.
+  private var durPill: UIView?
   // [fase 2]
   let blocks = CMLBlocksView()
   let failIcon = CMLIconView()
@@ -79,6 +84,9 @@ final class CMLCell: UICollectionViewCell {
   /// [2026-10-18 lqip] slot → tentativas de recarga do pôster que falhou (2 s, 6 s, 15 s)
   private var retryN: [Int: Int] = [:]
   private var retryArmed: Set<Int> = []
+  /// [perf-scroll] cache do caminho do contorno (só refaz se tamanho/cantos mudarem)
+  private var mediaEdgeCorners: [CGFloat] = []
+  private var mediaEdgeRadius: CGFloat = -1
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -115,9 +123,11 @@ final class CMLCell: UICollectionViewCell {
     media.contentMode = .scaleAspectFill
     media.clipsToBounds = true
     mediaEdge.fillColor = UIColor.clear.cgColor
-    mediaEdge.isHidden = true
-    media.layer.addSublayer(mediaEdge)
+    mediaEdgeHost.isUserInteractionEnabled = false
+    mediaEdgeHost.isHidden = true
+    mediaEdgeHost.layer.addSublayer(mediaEdge)
     slide.addSubview(media)
+    slide.addSubview(mediaEdgeHost)
     for _ in 0..<4 {
       let iv = UIImageView()
       iv.contentMode = .scaleAspectFill
@@ -275,19 +285,8 @@ final class CMLCell: UICollectionViewCell {
     pillText.isHidden = !isPill
     slide.isHidden = isPill
     selIcon.isHidden = isPill || row.sel == 0
-    // [2026-10-19 tg-style] cápsula com desfoque (data/sistema)
+    // [2026-10-19 tg-style] cápsula (data/sistema) · [perf-scroll] fosca pré-composta, sem desfoque
     let blurPill = isPill && s.ts && row.kind != .unread && !L.pillFrame.isEmpty
-    if blurPill {
-      let dark = CMLLook.isDark(th.wall)
-      let bv = ensurePillBlur()
-      if pillBlurDark != dark { bv.effect = CMLLook.pillBlur(dark: dark); pillBlurDark = dark }
-      bv.isHidden = false
-      bv.frame = L.pillFrame
-      bv.layer.cornerRadius = L.pillFrame.height / 2
-      bv.contentView.backgroundColor = th.pillBg
-    } else {
-      pillBlur?.isHidden = true
-    }
     if isPill {
       pillText.layout = L.pillText
       pillText.frame = L.pillTextFrame
@@ -297,7 +296,7 @@ final class CMLCell: UICollectionViewCell {
         pillBg.backgroundColor = th.unreadBg
         pillBg.layer.cornerRadius = 0
       default:
-        pillBg.backgroundColor = blurPill ? .clear : th.pillBg
+        pillBg.backgroundColor = blurPill ? CMLLook.frostedPill(tint: th.pillBg, wall: th.wall) : th.pillBg
         pillBg.layer.cornerRadius = blurPill ? L.pillFrame.height / 2 : min(8, L.pillFrame.height / 2) // [2026-10-17 wa-pills]
         if #available(iOS 13.0, *) { pillBg.layer.cornerCurve = .continuous }
       }
@@ -383,16 +382,27 @@ final class CMLCell: UICollectionViewCell {
         if !th.wall.getRed(&wr, green: &wg, blue: &wb, alpha: &wa) { th.wall.getWhite(&wr, alpha: &wa); wg = wr; wb = wr }
         let darkWall = (0.299 * wr + 0.587 * wg + 0.114 * wb) < 0.5
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        mediaEdge.frame = media.bounds
-        mediaEdge.path = L.mediaCorners.count == 4
-          ? CMLLayoutBuilder.roundedPath(media.bounds, L.mediaCorners)
-          : UIBezierPath(roundedRect: media.bounds, cornerRadius: L.mediaRadius).cgPath
-        mediaEdge.lineWidth = 2 / max(1, scale)
+        // [perf-scroll] view irmã por cima da mídia: traço de 1 px centrado ½ px
+        // para dentro = mesmos pixels da metade interna do traço de 2 px recortado.
+        let mb = CGRect(origin: .zero, size: media.bounds.size)
+        let hw = 0.5 / max(1, scale)
+        let ib = mb.insetBy(dx: hw, dy: hw)
+        let lastSize = mediaEdgeHost.bounds.size
+        mediaEdgeHost.frame = media.frame
+        if lastSize != mb.size || mediaEdgeCorners != L.mediaCorners || mediaEdgeRadius != L.mediaRadius || mediaEdge.path == nil {
+          mediaEdge.frame = mb
+          mediaEdge.path = L.mediaCorners.count == 4
+            ? CMLLayoutBuilder.roundedPath(ib, L.mediaCorners.map { max(0, $0 - hw) })
+            : UIBezierPath(roundedRect: ib, cornerRadius: max(0, L.mediaRadius - hw)).cgPath
+          mediaEdgeCorners = L.mediaCorners
+          mediaEdgeRadius = L.mediaRadius
+        }
+        mediaEdge.lineWidth = 1 / max(1, scale)
         mediaEdge.strokeColor = (darkWall ? UIColor(white: 1, alpha: 0.12) : UIColor(white: 0, alpha: 0.10)).cgColor
-        mediaEdge.isHidden = false
+        mediaEdgeHost.isHidden = false
         CATransaction.commit()
       } else {
-        mediaEdge.isHidden = true
+        mediaEdgeHost.isHidden = true
       }
       media.contentMode = md.kind == "sticker" ? .scaleAspectFit : .scaleAspectFill
       media.backgroundColor = md.kind == "sticker" ? .clear : (row.own ? th.ownQuote : th.otherQuote)
@@ -410,26 +420,25 @@ final class CMLCell: UICollectionViewCell {
         let dl = CMLLayoutBuilder.line(md.dur, font: s.meta, color: .white, maxWidth: 80)
         durLabel.layout = dl
         if s.ts {
-          // [2026-10-19 tg-style] duração em pílula com desfoque (mesma linha/altura da hora)
+          // [2026-10-19 tg-style] duração em pílula (mesma linha/altura da hora) ·
+          // [perf-scroll] fundo chapado translúcido (era UIVisualEffectView)
           let ph: CGFloat = 18
           let pr = CGRect(x: L.mediaFrame.minX + 5, y: L.mediaFrame.maxY - ph - 5, width: ceil(dl.size.width) + 12, height: ph).offsetBy(dx: o.x, dy: o.y)
-          let bv = ensureDurBlur()
-          bv.isHidden = false
-          bv.frame = pr
-          bv.layer.cornerRadius = ph / 2
+          let pv = ensureDurPill()
+          pv.isHidden = false
+          pv.frame = pr
+          pv.layer.cornerRadius = ph / 2
+          durLabel.glow = 0
           durLabel.frame = CGRect(x: pr.minX + 6, y: pr.minY + floor((ph - dl.size.height) / 2), width: dl.size.width + 1, height: dl.size.height)
-          durLabel.layer.shadowOpacity = 0
         } else {
-          durBlur?.isHidden = true
-          durLabel.frame = CGRect(x: L.mediaFrame.minX + 8, y: L.mediaFrame.maxY - dl.size.height - 7, width: dl.size.width + 1, height: dl.size.height).offsetBy(dx: o.x, dy: o.y)
-          durLabel.layer.shadowColor = UIColor.black.cgColor
-          durLabel.layer.shadowOpacity = 0.6
-          durLabel.layer.shadowRadius = 2
-          durLabel.layer.shadowOffset = .zero
+          durPill?.isHidden = true
+          // [2026-10-19 perf-scroll] sombra do texto pré-renderizada (era layer.shadow sem shadowPath)
+          durLabel.glow = 4
+          durLabel.frame = durLabel.glowFrame(CGRect(x: L.mediaFrame.minX + 8, y: L.mediaFrame.maxY - dl.size.height - 7, width: dl.size.width + 1, height: dl.size.height).offsetBy(dx: o.x, dy: o.y))
         }
       } else {
         durLabel.isHidden = true
-        durBlur?.isHidden = true
+        durPill?.isHidden = true
       }
       mediaDim.frame = media.frame
       applyCorners(mediaDim, L.mediaCorners, L.mediaRadius)
@@ -440,8 +449,9 @@ final class CMLCell: UICollectionViewCell {
       _ = trackVF(-1, "")
       playBadge.isHidden = true
       durLabel.isHidden = true
-      durBlur?.isHidden = true
+      durPill?.isHidden = true
       mediaDim.isHidden = true
+      mediaEdgeHost.isHidden = true
     }
 
     // álbum
@@ -542,19 +552,12 @@ final class CMLCell: UICollectionViewCell {
     // meta
     meta.meta = L.meta
     meta.pill = L.meta.onMedia
-    meta.pillAlpha = s.ts ? 0.26 : 0.42
+    // [perf-scroll] tg-style sem desfoque atrás → véu um pouco mais denso (≈ material
+    // ultra-fino escuro + 0,26 de antes sobre foto média)
+    meta.pillAlpha = s.ts ? 0.36 : 0.42
     meta.readColor = th.read
     meta.failedColor = th.failed
     place(meta, L.metaFrame, !L.metaFrame.isEmpty)
-    // [2026-10-19 tg-style] hora sobre foto/vídeo/figurinha: pílula com desfoque atrás
-    if s.ts && L.meta.onMedia && !L.metaFrame.isEmpty {
-      let bv = ensureMetaBlur()
-      bv.isHidden = false
-      bv.frame = meta.frame
-      bv.layer.cornerRadius = meta.frame.height / 2
-    } else {
-      metaBlur?.isHidden = true
-    }
     // [motion-conv] status avançou na MESMA linha visível → transição animada
     if prevKey != key {
       meta.cancelStatusAnim()
@@ -579,6 +582,9 @@ final class CMLCell: UICollectionViewCell {
       reacts.bg = th.reactBg
       reacts.border = th.reactBorder
       reacts.layer.shadowOpacity = s.ts ? 0 : 0.08 // [tg-style] chips chapados
+      // [2026-10-19 perf-scroll] shadowPath = união dos chips (sem ele o CA mede o
+      // alfa do conteúdo desenhado → passe offscreen por quadro na rolagem)
+      if !s.ts { reacts.layer.shadowPath = CMLCell.chipsShadowPath(L.reactChips) } else { reacts.layer.shadowPath = nil }
       reacts.mineBg = th.selection.withAlphaComponent(0.9)
       reacts.mine = row.reacts.map { $0.mine }
       reacts.chips = L.reactChips
@@ -596,41 +602,29 @@ final class CMLCell: UICollectionViewCell {
     }
   }
 
-  // MARK: [2026-10-19 tg-style] desfoques sob demanda
+  // MARK: [2026-10-19 perf-scroll] pílula da duração (sem desfoque)
 
-  private func makeBlur(_ effect: UIVisualEffect?) -> UIVisualEffectView {
-    let v = UIVisualEffectView(effect: effect)
+  private func ensureDurPill() -> UIView {
+    if let v = durPill { return v }
+    let v = UIView()
     v.isUserInteractionEnabled = false
-    v.clipsToBounds = true
+    // ≈ material ultra-fino escuro + véu 0,26 de antes, sobre foto média
+    v.backgroundColor = UIColor(white: 0, alpha: 0.38)
     if #available(iOS 13.0, *) { v.layer.cornerCurve = .continuous }
     v.isHidden = true
-    return v
-  }
-
-  private func ensurePillBlur() -> UIVisualEffectView {
-    if let v = pillBlur { return v }
-    let v = makeBlur(nil)
-    contentView.insertSubview(v, belowSubview: pillBg)
-    pillBlur = v
-    pillBlurDark = nil
-    return v
-  }
-
-  private func ensureMetaBlur() -> UIVisualEffectView {
-    if let v = metaBlur { return v }
-    let v = makeBlur(CMLLook.mediaBlur)
-    slide.insertSubview(v, belowSubview: meta)
-    metaBlur = v
-    return v
-  }
-
-  private func ensureDurBlur() -> UIVisualEffectView {
-    if let v = durBlur { return v }
-    let v = makeBlur(CMLLook.mediaBlur)
-    v.contentView.backgroundColor = UIColor(white: 0, alpha: 0.26)
     slide.insertSubview(v, belowSubview: durLabel)
-    durBlur = v
+    durPill = v
     return v
+  }
+
+  /// [perf-scroll] caminho da sombra dos chips de reação (mesmo recorte do draw).
+  static func chipsShadowPath(_ chips: [(CGRect, CTLine)]) -> CGPath {
+    let p = CGMutablePath()
+    for c in chips {
+      let r = c.0.insetBy(dx: 0.75, dy: 0.75)
+      p.addPath(UIBezierPath(roundedRect: r, cornerRadius: r.height / 2).cgPath)
+    }
+    return p
   }
 
   /// [motion-conv] Alguém (não eu) reagiu: emoji novo ou contagem maior, e o
@@ -925,14 +919,44 @@ final class CMLCell: UICollectionViewCell {
 
   /// [2026-10-18 tg-look] Raio por canto [tl, tr, br, bl] via máscara; vazio = raio uniforme (antigo).
   private func applyCorners(_ v: UIView, _ c: [CGFloat], _ fallback: CGFloat) {
+    let all: CACornerMask = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMaxXMaxYCorner, .layerMinXMaxYCorner]
     if c.count == 4 {
+      // [2026-10-19 perf-scroll] cantos "uniformes" (todos iguais, ou só 0 e um único
+      // raio — o caso comum: foto sozinha, foto c/ legenda, 1ª do grupo) → cornerRadius
+      // + maskedCorners (caminho rápido, sem passe offscreen). Máscara CAShapeLayer só
+      // quando há 2 raios diferentes (meio de grupo / mosaico do álbum).
+      let lim = min(v.bounds.width, v.bounds.height) / 2
+      let cl = c.map { max(0, min($0, lim)) }
+      var radius: CGFloat = 0
+      var uniform = true
+      for r in cl where r > 0.01 {
+        if radius == 0 { radius = r } else if abs(r - radius) > 0.01 { uniform = false; break }
+      }
+      if uniform {
+        if v.layer.mask != nil { v.layer.mask = nil }
+        if radius > 0 {
+          var m: CACornerMask = []
+          if cl[0] > 0.01 { m.insert(.layerMinXMinYCorner) }
+          if cl[1] > 0.01 { m.insert(.layerMaxXMinYCorner) }
+          if cl[2] > 0.01 { m.insert(.layerMaxXMaxYCorner) }
+          if cl[3] > 0.01 { m.insert(.layerMinXMaxYCorner) }
+          v.layer.maskedCorners = m
+          v.layer.cornerRadius = radius
+        } else {
+          v.layer.maskedCorners = all
+          v.layer.cornerRadius = 0
+        }
+        return
+      }
       v.layer.cornerRadius = 0
+      v.layer.maskedCorners = all
       let m = (v.layer.mask as? CAShapeLayer) ?? CAShapeLayer()
       m.frame = v.bounds
       m.path = CMLLayoutBuilder.roundedPath(v.bounds, c)
       if v.layer.mask !== m { v.layer.mask = m }
     } else {
       if v.layer.mask != nil { v.layer.mask = nil }
+      v.layer.maskedCorners = all
       v.layer.cornerRadius = fallback
     }
   }

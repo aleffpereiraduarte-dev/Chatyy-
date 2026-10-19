@@ -333,15 +333,34 @@ export function noteNativeMount(name) {
   _ensureLifecycle();
 }
 
+// [2026-10-19 perf-scroll] fb guardava só o 1º motivo (ex.: row_zoom=no_hint mascarava
+// o resto) e o painel só via a chave. Agora fbw = {nome: {motivo: n}} (até 8 motivos
+// por nome) e o texto do beacon lista "nome:motivo×n" — o MOTIVO aparece no resumo.
+const _fbWhy = Object.create(null);
 export function noteNativeFallback(name, msg) {
   if (_off()) return;
   const n = String(name || '').slice(0, 32);
   if (!n) return;
+  const why = String((msg && (msg.message || msg)) || '').replace(/\s+/g, ' ').slice(0, 80) || '1';
   if (!_fallback[n]) {
-    _fallback[n] = String((msg && (msg.message || msg)) || '').replace(/\s+/g, ' ').slice(0, 80) || '1';
+    _fallback[n] = why;
     _coverageDirty = true;
   }
+  const w = _fbWhy[n] || (_fbWhy[n] = Object.create(null));
+  if (w[why] == null) {
+    if (Object.keys(w).length < 8) { w[why] = 1; _coverageDirty = true; }
+  } else {
+    w[why] += 1;
+  }
   _ensureLifecycle();
+}
+function _fbSummary() {
+  const parts = [];
+  for (const n of Object.keys(_fbWhy)) {
+    const w = _fbWhy[n];
+    for (const r of Object.keys(w)) parts.push(`${n}:${r}x${w[r]}`);
+  }
+  return parts.join(',').slice(0, 220);
 }
 
 function _probeModules() {
@@ -381,6 +400,7 @@ function _coverage() {
   try { api = require('../components/chat/nativeThreadList').nativeListApi() || 0; } catch {}
   return {
     api, mods: _probeModules(), mounted: { ..._mounted }, fb: { ..._fallback },
+    fbw: JSON.parse(JSON.stringify(_fbWhy)),
     failed, kills: kills.slice(0, 20), paths: { ..._paths },
   };
 }
@@ -394,7 +414,8 @@ export function flushNativeTelemetry(why) {
     if (_coverageDirty && _coverageSends < COVERAGE_MAX_SENDS) {
       _coverageDirty = false;
       _coverageSends++;
-      _send('native_coverage', `native_coverage ${why || ''} #${_coverageSends}`, _coverage());
+      const fbs = _fbSummary();
+      _send('native_coverage', `native_coverage ${why || ''} #${_coverageSends}${fbs ? ` fb=${fbs}` : ''}`, _coverage());
     }
   } catch {}
 }
@@ -423,6 +444,11 @@ const PREV_MAX_AGE_S = 6 * 3600;
 let _perfMod; // undefined = não sondado · null = ausente
 let _perfStarted = false;
 let _perfRoute = '';
+// [perf-scroll] fase (ver notePerfPhase)
+const PHASE_RANK = { open: 3, kb: 2, scroll: 1 };
+let _perfPhase = '';
+let _perfPhaseUntil = 0;
+let _perfPhaseTm = null;
 let _perfLastSend = 0;
 let _perfSending = false;
 let _perfSends = 0;
@@ -468,9 +494,55 @@ export function notePerfRoute(r) {
   const n = normalizePerfRoute(r);
   if (!n || n === _perfRoute) return;
   _perfRoute = n;
+  _perfPhase = ''; // fase é da rota anterior
   if (!_perfStarted) return;
   const m = _perfNative();
   if (m) { try { m.setRoute(n); } catch {} }
+}
+
+// ─── [2026-10-19 perf-scroll] fase da tela no contador nativo de quadros ──────
+// A conversa tinha um número só (slow ‰ de /chat-conversation) misturando
+// abertura, rolagem e teclado. A tela marca a fase e o contador nativo recebe
+// "<rota>~<fase>" (setRoute dobra a janela atual — custo ~0): aparecem no beacon
+// 'perf' como rotas "/chat-conversation~open", "~scroll", "~kb"; sem sufixo = parado.
+// A fase expira sozinha (ttl, renovada a cada nota); mais forte não é trocada
+// por mais fraca enquanto vale (open > kb > scroll). Stalls do JS seguem na rota base.
+// Kill switch (OTA): globalThis.__chatyy_perf_phase = false.
+
+function _perfApplyRoute() {
+  if (!_perfStarted || !_perfRoute) return;
+  const m = _perfNative();
+  if (!m) return;
+  const r = _perfPhase ? `${_perfRoute.slice(0, 40)}~${_perfPhase}` : _perfRoute;
+  try { m.setRoute(r); } catch {}
+}
+
+function _perfPhaseArm() {
+  if (_perfPhaseTm) return;
+  const wait = Math.max(30, _perfPhaseUntil - Date.now());
+  _perfPhaseTm = setTimeout(() => {
+    _perfPhaseTm = null;
+    if (!_perfPhase) return;
+    if (Date.now() < _perfPhaseUntil) { _perfPhaseArm(); return; }
+    _perfPhase = '';
+    _perfApplyRoute();
+  }, wait);
+}
+
+/** Marca a fase atual da tela ('open' | 'scroll' | 'kb') por ttlMs. Barato (chamar em todo onScroll). */
+export function notePerfPhase(phase, ttlMs = 600) {
+  if (_perfOff()) return;
+  try { if (globalThis.__chatyy_perf_phase === false) return; } catch {}
+  const p = String(phase || '');
+  if (!PHASE_RANK[p]) return;
+  const now = Date.now();
+  if (_perfPhase && _perfPhase !== p && now < _perfPhaseUntil && PHASE_RANK[_perfPhase] > PHASE_RANK[p]) return;
+  const until = now + Math.max(50, Math.min(5000, Number(ttlMs) || 600));
+  if (_perfPhase === p) { if (until > _perfPhaseUntil) _perfPhaseUntil = until; _perfPhaseArm(); return; }
+  _perfPhase = p;
+  _perfPhaseUntil = until;
+  _perfApplyRoute();
+  _perfPhaseArm();
 }
 
 /** Stall do JS (atraso do timer com o app ativo), ms ≥ 400. Só agrega. */
@@ -618,7 +690,7 @@ export function startPerfTelemetry() {
   const m = _perfNative();
   if (m) {
     try { m.start({}); } catch {}
-    try { if (_perfRoute) m.setRoute(_perfRoute); } catch {}
+    try { if (_perfRoute) m.setRoute(_perfPhase ? `${_perfRoute.slice(0, 40)}~${_perfPhase}` : _perfRoute); } catch {}
     try {
       if (typeof m.addListener === 'function') m.addListener('onPerfWindow', (e) => { try { _perfMaybeSend(e && e.why); } catch {} });
     } catch {}

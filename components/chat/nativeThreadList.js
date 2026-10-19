@@ -254,6 +254,14 @@ let _guardTripped = false;
 function _storage() {
   try { return require('../../services/mmkv'); } catch { return null; }
 }
+// [2026-10-19 store-rev] versão do formato das linhas gravadas na foto do store
+// (entra no rev). SUBA quando _buildRowInner mudar o que emite de um jeito que uma
+// foto antiga pintaria errado (o JS corrige ~100 ms depois, mas pisca).
+const ROW_SCHEMA = 1;
+// kill switch (OTA): globalThis.__chatyy_store_rev_v2 = false → rev volta a levar o dia
+function _storeRevV2On() {
+  try { return globalThis.__chatyy_store_rev_v2 !== false; } catch { return true; }
+}
 function _bundleTag() {
   try {
     const U = require('expo-updates');
@@ -1416,7 +1424,16 @@ function _isFwd(m, me) {
 function _buildRowInner(item, key, ctx) {
   const tt = item && item._type;
   if (tt === 'separator') {
-    return { k: key, kind: 'date', text: item._label || (ctx.dateLabel ? ctx.dateLabel(item.date) : '') };
+    const text = item._label || (ctx.dateLabel ? ctx.dateLabel(item.date) : '');
+    // [2026-10-19 store-rev, apiVersion 13] rótulo ABSOLUTO junto (só se o atual é
+    // relativo — Hoje/Ontem/dia da semana): a foto do store não leva mais o dia
+    // no rev; o nativo troca o texto na hora de pintar (store.dl ou este `ab`).
+    if (_api >= 13 && ctx.dateLabelAbs && item.date) {
+      let ab = '';
+      try { ab = String(ctx.dateLabelAbs(item.date) || ''); } catch { ab = ''; }
+      if (ab && ab !== text) return { k: key, kind: 'date', text, ab };
+    }
+    return { k: key, kind: 'date', text };
   }
   if (tt === 'unread_separator') {
     return { k: key, kind: 'unread', text: ctx.unreadLabel ? ctx.unreadLabel(item._count) : '' };
@@ -2194,17 +2211,47 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     return o;
   }, [stickyDate]);
 
-  // [native-store] {a, c, r, n}: r = assinatura do formato das linhas (versão do
-  // bundle + api + tema/fonte/escuro + idioma/grupo + dia local) — foto de outro
-  // formato não é pintada (o nativo compara e ignora).
+  // [native-store] {a, c, r, n}: r = assinatura do formato das linhas (api +
+  // ROW_SCHEMA + tema/fonte/escuro + idioma/grupo) — foto de outro formato não é
+  // pintada (o nativo compara e ignora).
+  // [2026-10-19 store-rev] SAIU o id do OTA (_bundleTag) e, com apiVersion ≥ 13, o
+  // dia local: todo OTA e toda virada de dia descartavam a foto (45 % why=rev →
+  // abertura pintada pelo JS, p50 87–99 ms vs 31 ms pela foto). O formato das
+  // linhas agora é versionado à mão (ROW_SCHEMA — SUBA ao mudar o que _buildRowInner
+  // emite de um jeito que a foto antiga pintaria errado). Os rótulos "Hoje/Ontem/
+  // dia da semana" vão em dl {m: {"A-M-D" (mês 0-based = chave sep-A-M-D): rótulo}}
+  // e o nativo (api 13) os reaplica ao pintar a foto. Binário < 13 mantém o dia.
+  const _dayTag = (() => { try { return require('../../services/nativeChatStore').localDay(); } catch { return ''; } })();
+  // ctx muda a cada mensagem (messagesById/seleção) → função lida por ref; o memo
+  // só refaz no dia/idioma/tema (objeto `store` estável = sem setStore à toa).
+  const _dlRef = useRef(null);
+  _dlRef.current = ctx && typeof ctx.dateLabel === 'function' ? ctx.dateLabel : null;
+  const _dlHas = !!_dlRef.current;
+  const _dlLoc = (ctx && ctx.dateLocale) || '';
   const nativeStore = useMemo(() => {
     if (_api < 4 || !storeConv || !storeConv.a || storeConv.c == null || storeConv.c === '') return undefined;
     let ns = null;
     try { ns = require('../../services/nativeChatStore'); } catch { ns = null; }
     if (!ns || !ns.nativeStoreEnabled()) return undefined;
-    const r = ns.fnv(JSON.stringify([_api, _bundleTag(), nativeTheme, fontSize, !!isDark, String(storeConv.x || ''), ns.localDay()]));
-    return { a: String(storeConv.a).trim().toLowerCase(), c: String(storeConv.c), r, n: String(storeConv.n || '') };
-  }, [storeConv, nativeTheme, fontSize, isDark]);
+    const _dlFn = _dlRef.current;
+    const relabel = _api >= 13 && typeof _dlFn === 'function' && _storeRevV2On();
+    const r = ns.fnv(JSON.stringify(relabel
+      ? [_api, 'rs' + ROW_SCHEMA, nativeTheme, fontSize, !!isDark, String(storeConv.x || '')]
+      : [_api, 'rs' + ROW_SCHEMA, nativeTheme, fontSize, !!isDark, String(storeConv.x || ''), _dayTag]));
+    const out = { a: String(storeConv.a).trim().toLowerCase(), c: String(storeConv.c), r, n: String(storeConv.n || '') };
+    if (relabel) {
+      const m = {};
+      const now = new Date();
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i, 12, 0, 0);
+        let l = '';
+        try { l = String(_dlFn(d.toISOString()) || ''); } catch { l = ''; }
+        if (l) m[`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`] = l;
+      }
+      out.dl = { m, loc: String(_dlLoc || '') };
+    }
+    return out;
+  }, [storeConv, nativeTheme, fontSize, isDark, _dayTag, _dlHas, _dlLoc]);
 
   // [native-store fase 2] ambiente de montagem p/ o sync montar FORA da tela as
   // linhas das mensagens que chegarem com a conversa fechada (services/nativeStoreRows).

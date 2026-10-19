@@ -40,6 +40,8 @@ import kotlin.math.min
 
 /** [native-store] linhas mais novas gravadas por conversa no store nativo. */
 private const val STORE_WINDOW = 60
+/** [2026-10-19 perf-scroll] células pré-criadas no pool ao abrir (ver warmPool) */
+private const val POOL_WARM = 10
 
 // [2026-10-14 native-list] ChatyyMessageList (Android) — RecyclerView com
 // LinearLayoutManager(reverseLayout = true): posição 0 = mensagem mais nova,
@@ -112,6 +114,8 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
   private var storeLoadStarted = false
   private var jsApplied = false
   private val storeDicts = HashMap<String, Map<String, Any?>>()
+  /** [2026-10-19 store-rev, apiVersion 13] rótulos de dia de hoje p/ as linhas de data da foto */
+  private val dayLabels = MLDayLabels()
   private val rawDicts = HashMap<String, Map<String, Any?>>()
   private var jsVersion = 0
   private var persistedVersion = 0
@@ -780,7 +784,9 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     try {
       (payload["rows"] as? List<*>)?.forEach { d ->
         @Suppress("UNCHECKED_CAST")
-        val m = d as? Map<String, Any?> ?: return@forEach
+        val m0 = d as? Map<String, Any?> ?: return@forEach
+        // [store-rev] foto: "Hoje/Ontem/dia da semana" recalculados p/ hoje
+        val m = if (fromStore) dayLabels.relabel(m0) else m0
         val k0 = m["k"] as? String
         if (k0 != null) {
           if (fromStore) {
@@ -974,6 +980,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
       persistedVersion = jsVersion
     }
     storeCfg = StoreCfg(a, c, r, n)
+    dayLabels.update(v["dl"])
     if (jsApplied || storeLoadStarted) return
     storeLoadStarted = true
     val db = try { ChatyyStoreDB.get(context) } catch (_: Throwable) { null } ?: return
@@ -1106,6 +1113,34 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     main.removeCallbacks(dsClearRunnable) // [tg-list]
     try { overlay.destroy(); popLayer.cancelAll() } catch (_: Throwable) {}
     try { worker.shutdownNow() } catch (_: Throwable) {}
+  }
+
+  // [2026-10-19 perf-scroll] pré-aquece o pool de células ao abrir a conversa: cria
+  // até POOL_WARM MLCellView no ocioso da main (1 por callback, não trava quadro),
+  // assim o 1º layout/rolagem reaproveita em vez de inflar (inflar = ~0,5-1 ms cada
+  // em aparelho médio, em rajada no 1º fling). RecyclerView: API pública putRecycledView.
+  private var poolWarmed = false
+
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    warmPool()
+  }
+
+  private fun warmPool() {
+    if (poolWarmed) return
+    poolWarmed = true
+    var made = 0
+    Looper.myQueue().addIdleHandler {
+      if (!isAttachedToWindow) return@addIdleHandler false
+      if (rv.recycledViewPool.getRecycledViewCount(0) >= POOL_WARM) return@addIdleHandler false
+      try {
+        rv.recycledViewPool.putRecycledView(adapter.createViewHolder(rv, 0))
+      } catch (_: Throwable) {
+        return@addIdleHandler false
+      }
+      made += 1
+      made < POOL_WARM
+    }
   }
 
   override fun onDetachedFromWindow() {

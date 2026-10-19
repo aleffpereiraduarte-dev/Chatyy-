@@ -29,7 +29,9 @@ class ChatyyMessageListModule : Module() {
     // 12 = [2026-10-19 tg-style] prop `tgStyle` {on: 0/1} → 2/8 dp entre bolhas/grupos, pílulas em
     //      cápsula 12sp, duração do vídeo em pílula, nota de voz com botão cheio, "Encaminhada"
     //      13sp regular, citação com cantos 6
-    Function("apiVersion") { 12 } // 9 = [vthumb] media.vf → 1º frame nativo (MLVideoFrames); 8 = [voz-wa] setAudioState {rl} → pílula 1×/1,5×/2× na onda; toque → action au:rate
+    // 13 = [2026-10-19 perf-scroll + store-rev] pool de células pré-aquecido, Path do recorte
+    //      reaproveitado · store.dl {m, loc} → rótulos de dia da foto recalculados ao pintar
+    Function("apiVersion") { 13 } // 9 = [vthumb] media.vf → 1º frame nativo (MLVideoFrames); 8 = [voz-wa] setAudioState {rl} → pílula 1×/1,5×/2× na onda; toque → action au:rate
 
     // [native-media-dl] pasta do cache do mediaCache + matriz de auto-download +
     // economia de dados + modelo "{a} de {b}" traduzido.
