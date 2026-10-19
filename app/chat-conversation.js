@@ -1639,7 +1639,30 @@ function computeTickState(msg, opts = {}) {
 // change instead of a hard UI swap. `status` is the _readStatus enum value
 // (1 = sent, 1.5 = delivered, 2 = read). Keyed by status so the outgoing
 // set gets naturally unmounted by React.
-function AnimatedCheckStatus({ status, color, pending = false, size = 15, readColor = '#53BDEB', style }) {
+// [2026-10-19 a11y-audit] rótulo do VoiceOver/TalkBack p/ botões só-ícone (fora do escopo do t()).
+function _axT(key, fb) {
+  try {
+    const v = require('../i18n').lookupKey(globalThis.__chatyyLang || 'pt-BR', key);
+    return typeof v === 'string' && v && v !== key ? v : fb;
+  } catch { return fb; }
+}
+// [2026-10-19 accent-real] ✓✓ lido na cor de destaque (Grafite = azul clássico);
+// balão na cor do destaque → ✓✓ na tinta do balão. [a11y] "✓✓ com forma" (daltonismo).
+function _ccA11y() { try { return require('../services/a11yPrefs').getA11y(); } catch { return null; } }
+function _ccAccent() { try { return require('../context/ThemeContext').getAccentSnapshot(); } catch { return null; } }
+function _accentBubblesOn() { const a = _ccAccent(); const x = _ccA11y(); return !!(a && a.on && a.hex && x && x.accentBubbles); }
+function _tickReadColor() {
+  const a = _ccAccent();
+  if (a && a.on && a.hex) return _accentBubblesOn() ? (a.onAccent || '#FFFFFF') : a.hex;
+  return '#53BDEB';
+}
+function _boostAlpha(c, a) {
+  const m = /^rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)$/.exec(String(c || ''));
+  if (!m) return c;
+  return Number(m[4]) >= a ? c : `rgba(${m[1]},${m[2]},${m[3]},${a})`;
+}
+function _shapeTicksOn() { const x = _ccA11y(); return !!(x && x.shapeTicks); }
+function AnimatedCheckStatus({ status, color, pending = false, size = 15, readColor = _tickReadColor(), style }) {
   // [2026-10-08 send-motion] ⏱ → ✓ → ✓✓ → ✓✓ azul, nível WhatsApp.
   //  • Largura RESERVADA (caixa = largura do ✓✓) em todos os estados → hora e
   //    balão não "andam" quando ✓ vira ✓✓.
@@ -1716,10 +1739,10 @@ function AnimatedCheckStatus({ status, color, pending = false, size = 15, readCo
   const pair = (
     <>
       <Animated.View style={{ opacity: grayOp }}>
-        <IconCheck size={size} color={color} />
+        <IconCheck size={size} strokeWidth={_shapeTicksOn() ? 1.6 : undefined} color={color} />
       </Animated.View>
       <Animated.View style={{ position: 'absolute', left: 0, top: 0, opacity: rd }}>
-        <IconCheck size={size} strokeWidth={2.6} color={readColor} />
+        <IconCheck size={size} strokeWidth={_shapeTicksOn() ? 3.6 : 2.6} color={readColor} />
       </Animated.View>
     </>
   );
@@ -6553,7 +6576,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
             <IconMapPin size={22} color={ACCENT} />
           </View>
           <Text style={{ flex: 1, marginLeft: 14, fontSize: 21, fontWeight: '800', color: colors.text }}>{t('chatConv.createMeetup') || 'Marcar Encontro'}</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={8} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={onClose} hitSlop={8} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
             <IconX size={18} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
@@ -6844,7 +6867,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
               {selectedSongs.length === 0 ? 'Adicione músicas pra começar' : `${selectedSongs.length} música${selectedSongs.length > 1 ? 's' : ''} selecionada${selectedSongs.length > 1 ? 's' : ''}`}
             </Text>
           </View>
-          <TouchableOpacity onPress={onClose} hitSlop={8} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={onClose} hitSlop={8} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
             <IconX size={18} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
@@ -6894,7 +6917,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
                 maxWidth: 200,
               }}>
                 <Text style={{ fontSize: 12, color: ACCENT, fontWeight: '700' }} numberOfLines={1}>{s.title}</Text>
-                <TouchableOpacity onPress={() => toggleSong(s)} hitSlop={6} style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: 'rgba(37,211,102,0.22)', alignItems: 'center', justifyContent: 'center' }}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => toggleSong(s)} hitSlop={6} style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: 'rgba(37,211,102,0.22)', alignItems: 'center', justifyContent: 'center' }}>
                   <IconX size={11} color={ACCENT} />
                 </TouchableOpacity>
               </View>
@@ -7106,7 +7129,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                 {songs.length > 0 ? ` · ${Math.round(songs.reduce((a, s) => a + (s.duration || 30), 0) / 60)} min` : ''}
               </Text>
             </View>
-            <TouchableOpacity
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')}
               onPress={onClose}
               hitSlop={10}
               style={{
@@ -7144,7 +7167,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                       <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>{s.title}</Text>
                       <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>{s.artist}</Text>
                     </View>
-                    <TouchableOpacity
+                    <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.delete', 'Excluir')}
                       onPress={() => removeSong(idx)}
                       disabled={busy}
                       style={{
@@ -7186,7 +7209,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
             />
             {searching && <ActivityIndicator size="small" color="#111111" />}
             {!!searchQuery && !searching && (
-              <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={8}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setSearchQuery('')} hitSlop={8}>
                 <IconX size={16} color={colors.textTertiary} />
               </TouchableOpacity>
             )}
@@ -8123,7 +8146,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
                         </View>
                       )}
                     </TouchableOpacity>
-                    <TouchableOpacity
+                    <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')}
                       onPress={() => removeAt(i)}
                       hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                       style={{
@@ -11899,9 +11922,11 @@ function ChatConversationInner() {
         segs = [...trimmed.replace(/\s/g, '')].length;
       }
     } catch { segs = [...trimmed.replace(/\s/g, '')].length; }
-    if (segs === 1) return 64;
-    if (segs === 2) return 52;
-    if (segs === 3) return 40;
+    // [2026-10-19 appearance] Aparência › Tamanho dos emojis (P/M/G → ×0.8/1/1.2; lista nativa recebe pronto)
+    let _es = 1; try { _es = require('../services/a11yPrefs').emojiScale(); } catch {}
+    if (segs === 1) return Math.round(64 * _es);
+    if (segs === 2) return Math.round(52 * _es);
+    if (segs === 3) return Math.round(40 * _es);
     return 0;
   }
   // [2026-10-08 chat-beauty-bubbles] Paleta P&B premium da área de mensagens.
@@ -14292,6 +14317,13 @@ function ChatConversationInner() {
   {
     const _wpb = _wpBubbleFor(wallpaperColor, isDark);
     if (_wpb) { ownBubbleBg = _wpb.bg; ownTextColor = _wpb.text; ownMetaColor = _wpb.meta; }
+    // [2026-10-19 accent-real] Aparência › "Balões na cor do destaque" (opcional; padrão P&B).
+    else if (colors.accentOn && _accentBubblesOn()) {
+      ownBubbleBg = colors.accent; ownTextColor = colors.onAccent || '#FFFFFF';
+      ownMetaColor = (colors.onAccent === '#111111') ? 'rgba(17,17,17,0.62)' : 'rgba(255,255,255,0.72)';
+    }
+    // [2026-10-19 a11y-complete] Aumentar contraste → hora/✓ da bolha própria mais opacos.
+    if (colors.highContrast) ownMetaColor = _boostAlpha(ownMetaColor, 0.9);
   }
   const [showWallpaperPicker, setShowWallpaperPicker] = _useStateT(false);
   const [showHeaderMenu, setShowHeaderMenu] = _useStateT(false);
@@ -14533,6 +14565,7 @@ function ChatConversationInner() {
               // [2026-10-18 wa-parity] só confirma se o servidor aceitou (antes: "bloqueado" mesmo com erro).
               if (r && r.success === false) throw new Error(r.message || r.error || (t('common.error') || 'Erro'));
               setIBlockedThem(true);
+              try { require('../services/infoCache').purgeContact(email); } catch {} // [2026-10-19 info-cache] privacidade
               safeAlert(t('chat.userBlocked'));
             } catch (e) {
               safeAlert(t('common.error'), e.message || 'Failed to block user');
@@ -24700,6 +24733,35 @@ function ChatConversationInner() {
     }
   }, [TX_REVEALED_KEY, language]);
 
+  // [2026-10-19 a11y-complete] Acessibilidade › "Legendas nas notas de voz": as
+  // RECEBIDAS mais recentes (até 6 por vez, uma de cada) são transcritas sozinhas
+  // e a legenda aparece na bolha. Desligado = só no toque em "Transcrever".
+  const _ctxThemeA11y = useTheme().a11y;
+  const _autoTxOn = !!(_ctxThemeA11y && _ctxThemeA11y.autoTranscribe);
+  const _autoTxDoneRef = useRef(new Set());
+  useEffect(() => {
+    if (!_autoTxOn || !Array.isArray(messages) || !messages.length) return undefined;
+    const cand = [];
+    for (let i = messages.length - 1; i >= 0 && cand.length < 6; i--) {
+      const m = messages[i];
+      if (!m || (m.type !== 'audio' && m.type !== 'voice')) continue;
+      if (m.sender_email === currentEmail || m._pending || m._uploading) continue;
+      if (typeof m.id !== 'number' || m.transcript || m.transcription || m._transcribing || m._transcribeError) continue;
+      if (_autoTxDoneRef.current.has(m.id)) continue;
+      cand.push(m);
+    }
+    if (!cand.length) return undefined;
+    let cancelled = false;
+    const tm = setTimeout(async () => {
+      for (const m of cand) {
+        if (cancelled || !mountedRef.current) return;
+        _autoTxDoneRef.current.add(m.id);
+        try { await handleTranscribeAudio(m); } catch {}
+      }
+    }, 1200);
+    return () => { cancelled = true; clearTimeout(tm); };
+  }, [_autoTxOn, messages, currentEmail, handleTranscribeAudio]);
+
   // Double-tap to heart react with animated pop
   const lastTapRef = useRef({});
   const lastTapTimerRef = useRef({});
@@ -25538,14 +25600,26 @@ function ChatConversationInner() {
     let alive = true;
     // [busca-conversa 2026-10-16] só o que a faixa mostra (servidor paginado; antes
     // vinham 300 linhas p/ exibir 9) + Links do SERVIDOR (antes: só as carregadas).
+    // [2026-10-19 info-cache] cópia salva da faixa pinta já; o que voltar é gravado (diff: só troca se mudou).
+    let _ic = null;
+    try { _ic = require('../services/infoCache'); } catch { _ic = null; }
+    try {
+      const m0 = _ic?.getConvInfo?.(conversationId)?.media;
+      if (m0) setInfoNativeMedia((p) => ({
+        media: p.media && p.media.length ? p.media : (m0.media || []),
+        files: p.files && p.files.length ? p.files : (m0.files || []),
+        links: Array.isArray(p.links) ? p.links : (Array.isArray(m0.links) ? m0.links : null),
+      }));
+    } catch {}
+    const _same = (a, b) => { try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; } };
     _sharedOrGallery('image', 9)
-      .then((r) => { if (alive && r?.success) setInfoNativeMedia((p) => ({ ...p, media: (r.data?.items || []).filter((it) => it?.file_url).slice(0, 9) })); })
+      .then((r) => { if (alive && r?.success) { const v = (r.data?.items || []).filter((it) => it?.file_url).slice(0, 9); setInfoNativeMedia((p) => (_same(p.media, v) ? p : { ...p, media: v })); try { _ic?.putConvInfo?.(conversationId, { media: { media: v } }); } catch {} } })
       .catch(() => {});
     _sharedOrGallery('file', 5)
-      .then((r) => { if (alive && r?.success) setInfoNativeMedia((p) => ({ ...p, files: (r.data?.items || []).slice(0, 5) })); })
+      .then((r) => { if (alive && r?.success) { const v = (r.data?.items || []).slice(0, 5); setInfoNativeMedia((p) => (_same(p.files, v) ? p : { ...p, files: v })); try { _ic?.putConvInfo?.(conversationId, { media: { files: v } }); } catch {} } })
       .catch(() => {});
     Promise.resolve(api.chatSharedItems?.(conversationId, 'link', '', 12))
-      .then((r) => { if (alive && r?.success) setInfoNativeMedia((p) => ({ ...p, links: r.data?.items || [] })); })
+      .then((r) => { if (alive && r?.success) { const v = r.data?.items || []; setInfoNativeMedia((p) => (_same(p.links, v) ? p : { ...p, links: v })); try { _ic?.putConvInfo?.(conversationId, { media: { links: v } }); } catch {} } })
       .catch(() => {});
     return () => { alive = false; };
   }, [_npOn, showContactInfo, showGroupInfo, conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -25719,6 +25793,9 @@ function ChatConversationInner() {
     version: _ciRosterKey,
     fallback: members,
     pageSize: _ciOn ? 80 : 50,
+    // [2026-10-19 info-cache] 1ª página salva pinta na hora; a nova é gravada.
+    initial: () => { try { const ci = require('../services/infoCache').getConvInfo(conversationId); return ci && Array.isArray(ci.members) && ci.members.length ? { items: ci.members, total: ci.membersTotal, hasMore: ci.membersMore } : null; } catch { return null; } },
+    onFirstPage: (items, total, more) => { try { require('../services/infoCache').putConvInfo(conversationId, { members: items, membersTotal: total, membersMore: more }); } catch {} },
   });
   // Busca da folha JS → servidor (members_q), com debounce; a nativa chama onMemberQuery.
   const _giSentQRef = useRef('');
@@ -26166,27 +26243,33 @@ function ChatConversationInner() {
     // [2026-10-14 offline-first] último @/bio/grupos em comum/miniaturas salvos (por conta) → pinta na hora.
     const _ciKey = ['contact_info', String(conversationId || ''), String(peer || '').toLowerCase()];
     const _ciThumbKey = ['conv_thumbs', String(conversationId || '')];
+    // [2026-10-19 info-cache] + services/infoCache (por contato, LRU 500, 60 dias) e telemetria de acerto.
+    let _ic = null;
+    try { _ic = require('../services/infoCache'); } catch { _ic = null; }
     try {
-      const c = _ciPeek(_ciKey);
-      if (c && c.identity) setContactIdentity(c.identity);
-      if (c && Array.isArray(c.groups)) setContactCommonGroups(c.groups);
-      const th = _ciPeek(_ciThumbKey);
-      if (Array.isArray(th)) setInfoMediaThumbs(th);
+      const c = _ciPeek(_ciKey) || (_ic && peer ? _ic.getContactInfo(peer) : null);
+      _ic?.noteInfoOpen?.('contact', !!(c && c.identity) || !!contactIdentity);
+      if (c && c.identity) setContactIdentity((p) => (p && JSON.stringify(p) === JSON.stringify(c.identity) ? p : c.identity));
+      if (c && Array.isArray(c.groups)) setContactCommonGroups((p) => (JSON.stringify(p) === JSON.stringify(c.groups) ? p : c.groups));
+      const th = _ciPeek(_ciThumbKey) || _ic?.getConvInfo?.(conversationId)?.thumbs;
+      if (Array.isArray(th)) setInfoMediaThumbs((p) => (JSON.stringify(p) === JSON.stringify(th) ? p : th));
     } catch {}
     if (peer) {
       Promise.resolve(api.profileGet?.(peer))
         .then((r) => {
           if (!alive || r?.success === false || !r) return;
-          if (r?.data?.identity) setContactIdentity(r.data.identity);
+          if (r?.data?.identity) setContactIdentity((p) => (p && JSON.stringify(p) === JSON.stringify(r.data.identity) ? p : r.data.identity));
           const groups = (r?.data?.common_chats || []).filter(c => c?.type === 'group');
-          setContactCommonGroups(groups);
+          setContactCommonGroups((p) => (JSON.stringify(p) === JSON.stringify(groups) ? p : groups));
           if (r?.data?.identity) _ciPut(_ciKey, { identity: r.data.identity, groups: groups.slice(0, 30) });
+          try { if (r?.data) _ic?.ingestProfile?.(peer, r.data); } catch {}
         })
         .catch(() => {});
+      try { _ic?.prefetchConversationInfo && require('../services/avatarCache').revalidateAvatar(require('../services/avatar').buildAvatarUrl(peer)); } catch {}
     }
     // Últimas fotos p/ a faixa de miniaturas de "Mídia, links e docs".
     _sharedOrGallery('image', 6) // [busca-conversa 2026-10-16]
-      .then((r) => { if (alive && r?.success) { const th = (r.data?.items || []).filter(it => it?.file_url).slice(0, 6); setInfoMediaThumbs(th); _ciPut(_ciThumbKey, th); } })
+      .then((r) => { if (alive && r?.success) { const th = (r.data?.items || []).filter(it => it?.file_url).slice(0, 6); setInfoMediaThumbs((p) => (JSON.stringify(p) === JSON.stringify(th) ? p : th)); _ciPut(_ciThumbKey, th); } })
       .catch(() => {});
     // Pinned ("Favoritas" in the list = pinned) — read from the account-scoped
     // conversation cache; the chat screen has no other source for it.
@@ -26202,12 +26285,45 @@ function ChatConversationInner() {
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showContactInfo, conversationId]);
+  // [2026-10-19 info-cache] Ao ABRIR a conversa: semeia "Dados do contato/grupo"
+  // da cópia salva (services/infoCache) e pré-busca em 2º plano (debounce 1,2 s,
+  // ≤ 1×/10 min) → tocar no cabeçalho pinta tudo na hora, sem esqueleto/piscar.
+  // Kill switch: globalThis.__chatyy_info_cache = false.
+  const _icPeer = conversationType === 'direct' ? String(getContactPeerEmail() || '').toLowerCase() : '';
+  useEffect(() => {
+    if (!conversationId || (conversationType !== 'direct' && conversationType !== 'group')) return undefined;
+    if (conversationType === 'direct' && !_icPeer) return undefined;
+    let ic = null;
+    try { ic = require('../services/infoCache'); } catch { return undefined; }
+    if (!ic.infoCacheEnabled()) return undefined;
+    const same = (a, b) => { try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; } };
+    const apply = () => {
+      try {
+        if (_icPeer) {
+          const c = ic.getContactInfo(_icPeer);
+          if (c && c.identity && c.identity.email) setContactIdentity((p) => (p && (same(p, c.identity) || String(p.email || '').toLowerCase() === _icPeer && p.phone !== undefined && Object.keys(p).length > Object.keys(c.identity).length) ? p : c.identity));
+          if (c && Array.isArray(c.groups)) setContactCommonGroups((p) => (same(p, c.groups) || (p && p.length && !c.groups.length) ? p : c.groups));
+        }
+        const ci = ic.getConvInfo(conversationId);
+        if (ci && Array.isArray(ci.thumbs) && ci.thumbs.length) setInfoMediaThumbs((p) => (p && p.length ? p : ci.thumbs));
+      } catch {}
+    };
+    apply();
+    return ic.prefetchConversationInfo({ conversationId, type: conversationType, peer: _icPeer }, apply);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, conversationType, _icPeer]);
   // [2026-10-10 contact-info] mesma faixa de miniaturas em "Dados do grupo".
   useEffect(() => {
     if (!showGroupInfo || !conversationId) return undefined;
     let alive = true;
     const _gtKey = ['conv_thumbs', String(conversationId)];
-    try { const th = _ciPeek(_gtKey); if (Array.isArray(th)) setInfoMediaThumbs(th); } catch {}
+    try {
+      const _ic = require('../services/infoCache'); // [2026-10-19 info-cache]
+      const ci = _ic.getConvInfo(conversationId);
+      _ic.noteInfoOpen('group', !!(ci && Array.isArray(ci.members) && ci.members.length));
+      const th = _ciPeek(_gtKey) || (ci && ci.thumbs);
+      if (Array.isArray(th)) setInfoMediaThumbs((p) => (JSON.stringify(p) === JSON.stringify(th) ? p : th));
+    } catch {}
     _sharedOrGallery('image', 6) // [busca-conversa 2026-10-16]
       .then((r) => { if (alive && r?.success) { const th = (r.data?.items || []).filter(it => it?.file_url).slice(0, 6); setInfoMediaThumbs(th); _ciPut(_gtKey, th); } })
       .catch(() => {});
@@ -32807,7 +32923,7 @@ function ChatConversationInner() {
                     {song.artist ? <Text style={{ fontSize: 10, color: isDark ? 'rgba(255,255,255,0.55)' : '#64748b' }} numberOfLines={1}>{song.artist}</Text> : null}
                   </View>
                   {song.url && /^https?:\/\//i.test(song.url) ? (
-                    <TouchableOpacity onPress={() => Linking.openURL(song.url).catch(() => {})} style={{ padding: 3 }}>
+                    <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.play', 'Reproduzir')} onPress={() => Linking.openURL(song.url).catch(() => {})} style={{ padding: 3 }}>
                       <IconPlay size={12} color={isDark ? '#f5f5f5' : '#111111'} />
                     </TouchableOpacity>
                   ) : null}
@@ -34911,7 +35027,7 @@ function ChatConversationInner() {
   }, [currentEmail, conversationType, t, isSavedMode, selectionMode, selectedIds, messagesById, isDark, translatedMessages, pinnedIdSet, disappearingTimer, disappearingSetAt, msgFontSize, msgLineHeight, colors, _nlCards, conversationId, conversationName, params.email, _nlVoicePill]);
   const _nlTheme = useMemo(() => ({
     ownBubble: ownBubbleBg, otherBubble: otherBubbleBg, ownText: ownTextColor, otherText: otherInk,
-    ownMeta: ownMetaColor, otherMeta: otherMetaColor, link: otherInk, read: '#53BDEB', wall: chatWallBg,
+    ownMeta: ownMetaColor, otherMeta: colors.highContrast ? _boostAlpha(otherMetaColor, 0.92) : otherMetaColor, link: (colors.accentOn && !_accentBubblesOn()) ? colors.accent : otherInk, read: _tickReadColor(), wall: chatWallBg, // [2026-10-19 accent-real/a11y]
     // [2026-10-17 polish-chat] pílula de data = a do JS/web (styles.dateTextLight/Dark):
     // quase opaca, lê sobre papel de parede (6% preto sumia no fundo branco).
     pillBg: isDark ? 'rgba(44,44,46,0.88)' : 'rgba(236,236,240,0.92)', pillText: isDark ? 'rgba(235,235,245,0.78)' : 'rgba(60,60,67,0.86)',
@@ -34926,7 +35042,7 @@ function ChatConversationInner() {
     // [tg-list] realce da busca na lista nativa (api 11): termo / resultado atual
     search: isDark ? 'rgba(255,214,10,0.30)' : 'rgba(255,204,0,0.38)', searchCur: isDark ? 'rgba(255,214,10,0.62)' : 'rgba(255,204,0,0.75)',
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [isDark, colors.textTertiary, ownBubbleBg, ownTextColor, ownMetaColor, otherBubbleBg, otherInk, otherMetaColor, chatWallBg]); // [2026-10-15 native-wallpaper] bolhas derivadas do tema · [2026-10-17 polish-chat] + recebida/fundo (trocar papel de parede no mesmo tema deixava borda da reação velha)
+  }), [isDark, colors.textTertiary, ownBubbleBg, ownTextColor, ownMetaColor, otherBubbleBg, otherInk, otherMetaColor, chatWallBg, colors.tickRead, colors.highContrast, colors.onAccent, colors.accent]); // [2026-10-15 native-wallpaper] bolhas derivadas do tema · [2026-10-17 polish-chat] + recebida/fundo (trocar papel de parede no mesmo tema deixava borda da reação velha)
   // [2026-10-15 native-store] foto da conversa no store NATIVO (services/nativeChatStore):
   // a lista nativa pinta a última janela sem esperar o 1º applyRows. n = chave mais
   // nova que o JS tem (foto mais velha que isso não é pintada). _nlStoreHas: cache JS
@@ -35944,7 +36060,7 @@ function ChatConversationInner() {
           <Text style={[styles.disappearingBannerText, { color: isDark ? '#fde68a' : '#92400e' }]}>
             {`Mensagens desta conversa somem após ${formatDisappearTimer(disappearingTimer)}`}
           </Text>
-          <TouchableOpacity
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')}
             onPress={async (e) => {
               e.stopPropagation?.();
               setVanishTimerBannerDismissed(true);
@@ -36007,7 +36123,7 @@ function ChatConversationInner() {
           <Text style={[styles.disappearingBannerText, { color: isDark ? '#fde68a' : '#92400e', fontSize: 11.5, flex: 1 }]}>
             {t('chatConv.e2eBannerTap') || 'Mensagens protegidas com criptografia ponta-a-ponta. Toque para verificar.'}
           </Text>
-          <TouchableOpacity
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')}
             onPress={async (e) => {
               e.stopPropagation?.();
               setE2eBannerDismissed(true);
@@ -36929,7 +37045,7 @@ function ChatConversationInner() {
             ) : (
               <ScrollView horizontal showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ alignItems: 'center', gap: 6, paddingRight: 8 }}>
-                <TouchableOpacity onPress={() => setSavedSearchOpen(true)} hitSlop={6}
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.search', 'Buscar')} onPress={() => setSavedSearchOpen(true)} hitSlop={6}
                   style={{
                     paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
                     backgroundColor: colors.surfaceVariant, flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -37210,7 +37326,7 @@ function ChatConversationInner() {
             borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : '#eef0f1',
             backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
           }}>
-            <TouchableOpacity onPress={() => setShowContactPicker(false)} hitSlop={12}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.back', 'Voltar')} onPress={() => setShowContactPicker(false)} hitSlop={12}>
               <IconArrowLeft size={22} color={colors.text} />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
@@ -37366,7 +37482,7 @@ function ChatConversationInner() {
                 <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
                   {t('chatConv.selectQuote') || 'Selecione o trecho a citar'}
                 </Text>
-                <TouchableOpacity onPress={() => setQuoteSelectModal(null)}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setQuoteSelectModal(null)}>
                   <IconX size={22} color={colors.textSecondary} />
                 </TouchableOpacity>
               </View>
@@ -38584,15 +38700,15 @@ function ChatConversationInner() {
                   }
                 }}
                 delayLongPress={400}
-                style={[styles.sendBtn, { backgroundColor: isDark ? '#ffffff' : '#111111', transform: [{ scale: sending ? 0.92 : 1 }] }]}
+                style={[styles.sendBtn, { backgroundColor: colors.accentOn ? colors.accent : (isDark ? '#ffffff' : '#111111'), transform: [{ scale: sending ? 0.92 : 1 }] }]}
                 accessibilityLabel={t('chatConv.send') || 'Send message'}
                 accessibilityRole="button"
               >
                 {/* [2026-10-08 chat-beauty-chrome] preto no claro / branco no escuro */}
                 {sending ? (
-                  <ActivityIndicator size="small" color={isDark ? '#111111' : '#ffffff'} />
+                  <ActivityIndicator size="small" color={colors.accentOn ? colors.onAccent : (isDark ? '#111111' : '#ffffff')} />
                 ) : (
-                  <IconSend size={20} color={isDark ? '#111111' : '#ffffff'} style={{ marginLeft: -2, marginBottom: -1 }} />
+                  <IconSend size={20} color={colors.accentOn ? colors.onAccent : (isDark ? '#111111' : '#ffffff')} style={{ marginLeft: -2, marginBottom: -1 }} />
                 )}
               </TouchableOpacity>
               {/* Schedule menu popup */}
@@ -40390,7 +40506,7 @@ function ChatConversationInner() {
         const _fepHead = (<>
             <View style={styles.emojiPickerHeader}>
               <Text style={[styles.emojiPickerTitle, { color: colors.text }]}>{t('chatConv.reactions') || 'Reactions'}</Text>
-              <TouchableOpacity onPress={_fepClose} style={{ padding: 4 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={_fepClose} style={{ padding: 4 }}>
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -40614,7 +40730,7 @@ function ChatConversationInner() {
       >
             <View style={styles.messageInfoHeader}>
               <Text style={[styles.messageInfoTitle, { color: colors.text }]}>{t('chatConv.messageInfo')}</Text>
-              <TouchableOpacity onPress={() => setMessageInfoModal(null)} style={{ padding: 4 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setMessageInfoModal(null)} style={{ padding: 4 }}>
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -41790,7 +41906,7 @@ function ChatConversationInner() {
             volta a valer no Yoga). Cabeçalho/busca opacos + zIndex, lista recortada. */}
         <NativeSheetKeyboardView enabled={USE_NATIVE_SHEETS} style={USE_NATIVE_SHEETS ? { paddingTop: 14, backgroundColor: colors.background, ...(Platform.OS === 'ios' ? { minHeight: Math.max(320, Math.round((_liftWinH || Dimensions.get('window').height || 0) - (insets.top || 0) - 10 - (insets.bottom || 0))) } : null) } : [styles.forwardModal, { backgroundColor: colors.background }]}>
           <View collapsable={false} style={[styles.forwardHeader, { borderBottomColor: colors.border, backgroundColor: colors.background, zIndex: 2 }]}>
-            <TouchableOpacity onPress={() => { setForwardMsg(null); setForwardSelected(new Set()); }} style={{ marginRight: 12 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => { setForwardMsg(null); setForwardSelected(new Set()); }} style={{ marginRight: 12 }}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={[styles.forwardTitle, { color: colors.text, flex: 1 }]}>
@@ -42256,7 +42372,7 @@ function ChatConversationInner() {
                       autoCapitalize="none"
                     />
                     {!!memberSearchQuery && (
-                      <TouchableOpacity onPress={() => setMemberSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setMemberSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                         <IconX size={14} color={colors.textTertiary} />
                       </TouchableOpacity>
                     )}
@@ -42418,7 +42534,7 @@ function ChatConversationInner() {
                             {m.role === 'admin' ? (t('chatConv.demote') || 'Remover admin') : (t('chatConv.promote') || 'Tornar admin')}
                           </Text>
                         </TouchableOpacity>
-                        <TouchableOpacity
+                        <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')}
                           activeOpacity={0.65}
                           onPress={() => handleRemoveMember(m.email, memberName)}
                           style={{ width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(220,38,38,0.12)' }}
@@ -43019,7 +43135,7 @@ function ChatConversationInner() {
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
                 {t('chatConv.pendingRequests') || 'Solicitações pendentes'}
               </Text>
-              <TouchableOpacity onPress={() => setShowPendingModal(false)}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setShowPendingModal(false)}>
                 <IconX size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -43126,7 +43242,7 @@ function ChatConversationInner() {
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
                 {t('chat.topics') || 'Tópicos'}
               </Text>
-              <TouchableOpacity onPress={() => setShowTopicsModal(false)}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setShowTopicsModal(false)}>
                 <IconX size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -43162,7 +43278,7 @@ function ChatConversationInner() {
                     {activeTopic?.id === topic.id && <IconCheck size={16} color={colors.primary} />}
                   </TouchableOpacity>
                   {isGroupAdmin && (
-                    <TouchableOpacity
+                    <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.delete', 'Excluir')}
                       onPress={async () => {
                         try {
                           await api.chatTopicDelete(topic.id);
@@ -43271,7 +43387,7 @@ function ChatConversationInner() {
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
                 {t('chat.createTopic') || 'Criar tópico'}
               </Text>
-              <TouchableOpacity onPress={() => setShowTopicCreate(false)}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setShowTopicCreate(false)}>
                 <IconX size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -43397,7 +43513,7 @@ function ChatConversationInner() {
               <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
                 {t('chatConv.editPermissions') || 'Editar permissões'}
               </Text>
-              <TouchableOpacity onPress={() => setRoleEditTarget(null)}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setRoleEditTarget(null)}>
                 <IconX size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -43850,7 +43966,7 @@ function ChatConversationInner() {
                 <Text style={{ flex: 1, fontSize: 18, fontWeight: '800', color: colors.text, letterSpacing: -0.3 }}>
                   {t('chatConv.stats') || 'Estatísticas'}
                 </Text>
-                <TouchableOpacity onPress={() => setShowStatsModal(false)} style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setShowStatsModal(false)} style={{ width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 17, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
                   <IconX size={18} color={colors.text} />
                 </TouchableOpacity>
               </View>
@@ -44074,7 +44190,7 @@ function ChatConversationInner() {
         const _stBody = (<>
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.forwardTitle, { color: colors.text }]}>{t('chat.starredMessages')}</Text>
-            <TouchableOpacity onPress={() => setShowStarredModal(false)}><IconX size={22} color={colors.text} /></TouchableOpacity>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setShowStarredModal(false)}><IconX size={22} color={colors.text} /></TouchableOpacity>
           </View>
           {starredLoading && starredMessages.length === 0 ? (
             <View style={{ flex: 1 }} />
@@ -44148,7 +44264,7 @@ function ChatConversationInner() {
                 <BiaIcon size={22} color={colors.primary} />
                 <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{t('chatAi.title') || 'Chatyy AI'}</Text>
               </View>
-              <TouchableOpacity onPress={() => { setShowAiModal(false); setAiResult(null); }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => { setShowAiModal(false); setAiResult(null); }}>
                 <IconX size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -44299,7 +44415,7 @@ function ChatConversationInner() {
             returnKeyType="search"
             autoFocus
           />
-          <TouchableOpacity onPress={() => setShowWebSearch(false)}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setShowWebSearch(false)}>
             <IconX size={20} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
@@ -44312,7 +44428,7 @@ function ChatConversationInner() {
             flexDirection: 'row', alignItems: 'center', paddingTop: insets.top + 8, paddingBottom: 8,
             paddingHorizontal: 12, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border,
           }}>
-            <TouchableOpacity onPress={() => setShowWebSearchResults(false)} style={{ padding: 8 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setShowWebSearchResults(false)} style={{ padding: 8 }}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={{ flex: 1, fontSize: 14, color: colors.textSecondary, marginLeft: 8 }} numberOfLines={1}>{webSearchUrl}</Text>

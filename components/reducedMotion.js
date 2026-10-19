@@ -117,6 +117,14 @@ export function setReduceMotionPreference(v) {
   try { const S = _storage(); S && S.setItem && S.setItem(PREF_KEY, _pref).catch?.(() => {}); } catch {}
 }
 
+// [2026-10-19 a11y-complete] ouvinte fora do React (services/a11yPrefs: Reduzir
+// movimento também desliga as animações da conversa / lista nativa).
+export function onReduceMotionChange(fn) {
+  if (typeof fn !== 'function') return () => {};
+  _subs.add(fn);
+  return () => { _subs.delete(fn); };
+}
+
 export function useReducedMotion() {
   const [v, setV] = useState(isReduceMotionEnabled());
   useEffect(() => {

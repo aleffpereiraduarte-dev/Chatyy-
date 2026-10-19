@@ -167,13 +167,17 @@ struct STPalette {
     if let c = CTColor.of(d["chipFg"]) { chipFg = c }
     if let c = CTColor.of(d["destructive"]) { destructive = c }
     if let c = CTColor.of(d["press"]) { press = c }
+    if let c = CTColor.of(d["accent"]) { accent = c } // [2026-10-19 accent-real]
   }
 
   /// Quadrado do ícone no modo "solid": grafite (claro #2C2C2E · escuro #3A3A3C).
   var solidChip: UIColor { return dark ? UIColor(clHex: 0x3A3A3C) : UIColor(clHex: 0x2C2C2E) }
 
-  // Interruptor igual ao NativeSwitch do JS (P&B).
-  var switchOn: UIColor { return dark ? UIColor(clHex: 0xF5F5F7) : UIColor(clHex: 0x111111) }
+  /// [2026-10-19 accent-real] cor de destaque escolhida (JS manda `accent` só quando ≠ Grafite).
+  var accent: UIColor? = nil
+
+  // Interruptor igual ao NativeSwitch do JS (P&B; com destaque = trilho na cor, knob branco).
+  var switchOn: UIColor { return accent ?? (dark ? UIColor(clHex: 0xF5F5F7) : UIColor(clHex: 0x111111)) }
   var switchOff: UIColor { return dark ? UIColor(clHex: 0x636366) : UIColor(clHex: 0xE9E9EA) }
-  var switchThumb: UIColor { return dark ? UIColor(clHex: 0x0B0B0B) : UIColor.white }
+  var switchThumb: UIColor { return accent != nil ? UIColor.white : (dark ? UIColor(clHex: 0x0B0B0B) : UIColor.white) }
 }

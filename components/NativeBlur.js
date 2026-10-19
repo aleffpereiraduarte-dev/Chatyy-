@@ -12,6 +12,8 @@ import { Platform, View, StyleSheet } from 'react-native';
 
 let _BlurView; // undefined = não resolvido; null = indisponível
 export function getNativeBlurView() {
+  // [2026-10-19 a11y-complete] Acessibilidade › Reduzir transparência (ou o do iOS) → fundos sólidos.
+  try { if (require('../services/a11yPrefs').getA11y().reduceTransparency) return null; } catch {}
   if (_BlurView !== undefined) return _BlurView;
   _BlurView = null;
   if (Platform.OS !== 'ios') return null;

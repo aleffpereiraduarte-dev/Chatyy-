@@ -8,6 +8,12 @@
 // prop → OTA), temas de cor da conversa (papel de parede da conta), emojis
 // grandes (jumbo_emoji) e "Reduzir animações" (flag central reducedMotion).
 // Tudo de verdade: cada controle tem consumidor na conversa.
+//
+// [2026-10-19 accent-real] COR DO DESTAQUE funcionando no app inteiro (antes só
+// trocava `primary` e quase nada lia): seletor novo (11 cores com nome +
+// Personalizada com matiz/brilho), prévia ao vivo, opção "Balões na cor do
+// destaque", "Tamanho dos emojis" (P/M/G) e "Animações da conversa" (flag
+// central __chatyy_motion → conversa JS + lista nativa).
 import { useState } from 'react';
 import { View } from 'react-native';
 import { useTheme } from '../../../context/ThemeContext';
@@ -15,15 +21,17 @@ import { useLanguage } from '../../../context/LanguageContext';
 import * as settingsCache from '../../../services/settingsCache';
 import SettingsSegmented from '../../SettingsSegmented';
 import { SettingsGroup, SettingsPickerRow, SettingsCardContent, SettingsSwitchRow } from '../SettingsKit';
-import { AccentColorGroup, WallpaperRow } from '../SettingsPanels';
+import { WallpaperRow } from '../SettingsPanels';
 import {
-  ChatPreviewCard, TextSizeSlider, ChatThemeCards,
+  ChatPreviewCard, TextSizeSlider, ChatThemeCards, AccentPicker,
   CHAT_FONT_KEY, JUMBO_KEY, ENUM_PX, FONT_DEFAULT, normFontPx, pxToEnum, emitAppearanceChanged,
 } from '../AppearanceExtras';
 import {
   useReducedMotion, isSystemReduceMotionEnabled, getReduceMotionPreference, setReduceMotionPreference,
 } from '../../../constants/motion';
 import { useSettingsHost, useLocalKeys, setStorage, useSection, useSaveNotifPref } from './shared';
+import { resolveAccent, accentLabel } from '../../../context/ThemeContext';
+import { useA11y, setA11yPref } from '../../../services/a11yPrefs';
 
 const LOCAL_KEYS = ['bubble_shape', CHAT_FONT_KEY, JUMBO_KEY];
 
@@ -33,7 +41,11 @@ function _bumpChatSettingsRev() {
 }
 
 export default function AppearanceCategory() {
-  const { colors, isDark, themeMode, setThemeMode } = useTheme();
+  const { colors, isDark, themeMode, setThemeMode, accent, setAccent } = useTheme();
+  const a11y = useA11y();
+  // prévia ao vivo enquanto arrasta a matiz da cor personalizada (null = a gravada)
+  const [accentPreview, setAccentPreview] = useState(null);
+  const shownAccentHex = accentPreview ? resolveAccent(accentPreview, isDark) : resolveAccent(accent, isDark);
   const { t } = useLanguage();
   const tx = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
   const { registerAnchor } = useSettingsHost();
@@ -78,7 +90,7 @@ export default function AppearanceCategory() {
   return (
     <View ref={registerAnchor('appearance')}>
       <SettingsGroup footer={tx('settings.appear.previewFooter', 'A prévia mostra como as conversas vão ficar com as opções abaixo.')}>
-        <ChatPreviewCard isDark={isDark} wallpaper={wallpaper} bubbleShape={bubble} fontPx={shownPx} tx={tx} />
+        <ChatPreviewCard isDark={isDark} wallpaper={wallpaper} bubbleShape={bubble} fontPx={shownPx} tx={tx} accentHex={shownAccentHex} accentBubbles={!!a11y.accentBubbles} />
       </SettingsGroup>
 
       <SettingsGroup
@@ -111,7 +123,30 @@ export default function AppearanceCategory() {
         <ChatThemeCards isDark={isDark} wallpaper={wallpaper} bubbleShape={bubble} onSelect={applyTheme} tx={tx} />
       </SettingsGroup>
 
-      <AccentColorGroup />
+      <SettingsGroup
+        header={tx('settings.accent.header', 'Cor do destaque')}
+        footer={shownAccentHex
+          ? tx('settings.accent.footerOn', 'Botões, links, interruptores, aba ativa, contadores, botão enviar e ✓✓ de lida usam esta cor. Fundo e balões continuam neutros.')
+          : tx('settings.accent.footerOff', 'Grafite mantém o visual preto e branco. Escolha uma cor para botões, links, interruptores, aba ativa, contadores, botão enviar e ✓✓ de lida.')}
+      >
+        <SettingsCardContent style={{ paddingHorizontal: 0, paddingVertical: 0 }}>
+          <AccentPicker
+            value={accent}
+            isDark={isDark}
+            tx={tx}
+            onPreview={setAccentPreview}
+            onChange={(v) => { if (typeof setAccent === 'function') setAccent(v); emitAppearanceChanged(); }}
+          />
+        </SettingsCardContent>
+        <SettingsSwitchRow
+          title={tx('settings.accent.bubbles', 'Balões na cor do destaque')}
+          subtitle={shownAccentHex ? accentLabel(accent, t) : tx('settings.accent.bubblesNeedColor', 'Escolha uma cor acima')}
+          value={!!a11y.accentBubbles && !!shownAccentHex}
+          disabled={!shownAccentHex}
+          onValueChange={(v) => { setA11yPref('accentBubbles', !!v); emitAppearanceChanged(); }}
+          testID="settings-accent-bubbles"
+        />
+      </SettingsGroup>
 
       <SettingsGroup footer={tx('settings.appear.bubbleFooter', 'Escolha uma foto, cor ou padrão e o formato dos balões das mensagens.')}>
         <WallpaperRow />
@@ -133,19 +168,40 @@ export default function AppearanceCategory() {
         header={tx('settings.appear.moreHeader', 'Mensagens e animações')}
         footer={systemReduce
           ? tx('settings.reduceMotionSystemOn', 'O "Reduzir movimento" do sistema está ativo, então as animações já estão reduzidas.')
-          : tx('settings.appear.moreFooter', 'Emojis grandes mostram mensagens com até 3 emojis em tamanho maior, sem balão. Reduzir animações troca molas e deslizes por transições discretas em todo o app.')}
+          : tx('settings.appear.moreFooter2', 'Animações da conversa: entrada das mensagens, ✓✓, reações e notas de voz. Reduzir animações troca molas e deslizes por transições discretas em todo o app.')}
       >
-        <SettingsSwitchRow
+        <SettingsPickerRow
           title={tx('settings.appear.jumbo', 'Emojis grandes')}
-          value={jumbo}
-          onValueChange={(v) => { setJumbo(!!v); setStorage(JUMBO_KEY, v ? 'true' : 'false'); emitAppearanceChanged(); }}
+          value={jumbo ? (a11y.emojiSize || 'm') : 'off'}
+          cancelLabel={t('common.cancel') || 'Cancelar'}
+          sheetMessage={tx('settings.appear.emojiSizeMsg', 'Mensagens com até 3 emojis aparecem sem balão, neste tamanho.')}
+          options={[
+            { value: 'off', label: tx('settings.appear.emojiOff', 'Desligado') },
+            { value: 's', label: tx('settings.appear.emojiS', 'Pequenos') },
+            { value: 'm', label: tx('settings.appear.emojiM', 'Médios') },
+            { value: 'l', label: tx('settings.appear.emojiL', 'Grandes') },
+          ]}
+          onChange={(v) => {
+            const on = v !== 'off';
+            setJumbo(on);
+            setStorage(JUMBO_KEY, on ? 'true' : 'false');
+            if (on) setA11yPref('emojiSize', v);
+            emitAppearanceChanged();
+          }}
           testID="settings-jumbo-emoji"
+        />
+        <SettingsSwitchRow
+          title={tx('settings.appear.chatMotion', 'Animações da conversa')}
+          value={!!a11y.chatMotion && !reduceOn}
+          disabled={reduceOn}
+          onValueChange={(v) => setA11yPref('chatMotion', !!v)}
+          testID="settings-chat-motion"
         />
         <SettingsSwitchRow
           title={tx('settings.appear.reduceMotion', 'Reduzir animações')}
           value={reduceOn || getReduceMotionPreference() === 'on'}
           disabled={systemReduce}
-          onValueChange={(v) => setReduceMotionPreference(v ? 'on' : 'system')}
+          onValueChange={(v) => { setReduceMotionPreference(v ? 'on' : 'system'); try { require('../../../services/a11yPrefs').refreshA11y(); } catch {} }}
           testID="settings-appearance-reduce-motion"
         />
       </SettingsGroup>

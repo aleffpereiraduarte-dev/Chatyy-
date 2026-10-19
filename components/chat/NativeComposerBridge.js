@@ -202,7 +202,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
 
   // Props "objeto" estáveis por conteúdo: o host do composer re-renderiza a
   // cada tecla; sem isso o Fabric reenviaria tema/labels/listas toda vez.
-  const themeKey = JSON.stringify([isDark, colors?.text, colors?.textSecondary, colors?.primary]);
+  const themeKey = JSON.stringify([isDark, colors?.text, colors?.textSecondary, colors?.primary, colors?.accentOn ? colors.accent : 0]);
   const theme = useMemo(() => {
     const chrome = isDark ? '#a1a1a6' : '#6e6e73';
     return {
@@ -215,8 +215,9 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
       placeholder: _pc(chrome),
       icon: _pc(chrome),
       iconActive: _pc(colors?.text || (isDark ? '#ffffff' : '#111111')),
-      action: _pc(isDark ? '#ffffff' : '#111111'),
-      actionIcon: _pc(isDark ? '#111111' : '#ffffff'),
+      // [2026-10-19 accent-real] botão enviar/gravar na cor de destaque (Grafite = P&B)
+      action: _pc(colors?.accentOn ? colors.accent : (isDark ? '#ffffff' : '#111111')),
+      actionIcon: _pc(colors?.accentOn ? (colors.onAccent || '#ffffff') : (isDark ? '#111111' : '#ffffff')),
       hairline: _pc(isDark ? '#262628' : 'rgba(0,0,0,0.10)'),
       accent: _pc(colors?.primary || (isDark ? '#ffffff' : '#111111')),
       mention: _pc(isDark ? '#7cb7ff' : '#1e6fd9'),

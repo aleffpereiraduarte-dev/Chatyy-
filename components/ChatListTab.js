@@ -114,6 +114,16 @@ import PressableRow from './PressableRow';
 import ListNamePromptModal from './ListNamePromptModal'; // [paridade-wa 2026-10-14]
 import { USE_NATIVE_SHEETS, NativeSheet, runAfterNativeSheet } from './NativeSheet'; // [2026-10-15 native-sheets-v2]
 import { BlurBackdrop } from './NativeBlur'; // [2026-10-07 native-ui-build]
+// [2026-10-19 accent-real] contador de não lidas, seleção e chips ativos na cor de destaque (Grafite = P&B).
+function _accBg(P) { try { const a = require('../context/ThemeContext').getAccentSnapshot(); if (a && a.on && a.hex) return a.hex; } catch {} return P.pillBg; }
+function _accTx(P) { try { const a = require('../context/ThemeContext').getAccentSnapshot(); if (a && a.on && a.hex) return a.onAccent || '#FFFFFF'; } catch {} return P.pillTxt; }
+// [2026-10-19 a11y-audit] rótulo do VoiceOver/TalkBack p/ botões só-ícone (fora do escopo do t()).
+function _axT(key, fb) {
+  try {
+    const v = require('../i18n').lookupKey(globalThis.__chatyyLang || 'pt-BR', key);
+    return typeof v === 'string' && v && v !== key ? v : fb;
+  } catch { return fb; }
+}
 import FadeSlideIn from './FadeSlideIn';
 // [2026-10-14 native-home] Lista de conversas NATIVA (UICollectionView / RecyclerView).
 // Binário sem o módulo → isAvailable() false → FlashList abaixo (idêntico ao antigo).
@@ -1870,11 +1880,11 @@ const ConversationRow = React.memo(function ConversationRow({
           {selectionMode && (
             <View style={{
               width: 26, height: 26, borderRadius: 13, marginRight: 10,
-              borderWidth: 2, borderColor: isSelected ? P.pillBg : (isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)'),
-              backgroundColor: isSelected ? P.pillBg : 'transparent',
+              borderWidth: 2, borderColor: isSelected ? _accBg(P) : (isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)'),
+              backgroundColor: isSelected ? _accBg(P) : 'transparent',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              {isSelected && <IconCheck size={16} color={P.pillTxt} />}
+              {isSelected && <IconCheck size={16} color={_accTx(P)} />}
             </View>
           )}
           {/* Avatar area */}
@@ -2089,8 +2099,8 @@ const ConversationRow = React.memo(function ConversationRow({
                     — it's differentiated from the count pill by the @ glyph +
                     weight, not by a new hue. Spring-pops when the count rises. */}
                 {conversation.unread_mentions > 0 && (
-                  <Animated.View style={[s.unreadBadge, { backgroundColor: P.pillBg, minWidth: 22, transform: [{ scale: mentionScale }] }]}>
-                    <Text maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: P.pillTxt, fontSize: 13, fontWeight: '800' }]}>@</Text>
+                  <Animated.View style={[s.unreadBadge, { backgroundColor: _accBg(P), minWidth: 22, transform: [{ scale: mentionScale }] }]}>
+                    <Text maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: _accTx(P), fontSize: 13, fontWeight: '800' }]}>@</Text>
                   </Animated.View>
                 )}
                 {unread && (
@@ -2098,11 +2108,11 @@ const ConversationRow = React.memo(function ConversationRow({
                     s.unreadBadge,
                     // [2026-10-08 chat-beauty-list] B&W pill: black/white
                     // (inverted in dark), flat — no glow. Muted = soft grey.
-                    { backgroundColor: (isMuted && !conversation.unread_mentions) ? P.mutedPillBg : P.pillBg },
+                    { backgroundColor: (isMuted && !conversation.unread_mentions) ? P.mutedPillBg : _accBg(P) },
                     // Spring-pop only when the unread count goes UP (see unreadScale).
                     { transform: [{ scale: unreadScale }] },
                   ]}>
-                    <Text maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: (isMuted && !conversation.unread_mentions) ? P.mutedPillTxt : P.pillTxt }]}>{conversation.unread_count > 99 ? '99+' : conversation.unread_count}</Text>
+                    <Text maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: (isMuted && !conversation.unread_mentions) ? P.mutedPillTxt : _accTx(P) }]}>{conversation.unread_count > 99 ? '99+' : conversation.unread_count}</Text>
                   </Animated.View>
                 )}
               </View>
@@ -3700,7 +3710,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
 
           {/* Close button */}
           <View style={{ position:'absolute', top: Platform.OS === 'ios' ? 54 : androidTopInset(40), left:12, right:12, flexDirection:'row', justifyContent:'space-between', alignItems:'center', zIndex: 10 }}>
-            <TouchableOpacity onPress={() => { setStatusEditor(null); setStatusCaption(''); setEditorFilterIdx(0); }} style={{ width:40, height:40, borderRadius:20, backgroundColor:'rgba(0,0,0,0.55)', alignItems:'center', justifyContent:'center' }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => { setStatusEditor(null); setStatusCaption(''); setEditorFilterIdx(0); }} style={{ width:40, height:40, borderRadius:20, backgroundColor:'rgba(0,0,0,0.55)', alignItems:'center', justifyContent:'center' }}>
               <IconX size={20} color="#fff" />
             </TouchableOpacity>
             {STATUS_FILTERS[editorFilterIdx]?.key !== 'normal' && (
@@ -3756,7 +3766,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                 multiline
               />
             </View>
-            <TouchableOpacity
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.send', 'Enviar')}
               disabled={statusPublishing}
               onPress={async () => {
                 if (statusPublishing) return;
@@ -8134,8 +8144,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     const active = filter === value;
     // [2026-10-08 chat-beauty-list] B&W pills: selected = solid black (white
     // in dark) + inverted text; unselected = soft grey fill, no outline.
-    const pillBg = active ? P.pillBg : P.chipBg;
-    const pillTxt = active ? P.pillTxt : P.chipTxt;
+    const pillBg = active ? _accBg(P) : P.chipBg;
+    const pillTxt = active ? _accTx(P) : P.chipTxt;
     return (
       <TouchableOpacity
         style={[
@@ -8193,7 +8203,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const _renderChip = ({ label, value, count, folder }, key) => {
     if (!_chipRailOn) return <FilterChip key={key || value} label={label} value={value} count={count} folder={folder} />;
     const content = (on) => {
-      const txt = on ? P.pillTxt : P.chipTxt;
+      const txt = on ? _accTx(P) : P.chipTxt;
       return (
         <>
           {folder ? <FolderGlyph folder={folder} size={14} color={txt} /> : null}
@@ -8217,7 +8227,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         active={filter === value}
         style={s.chip}
         baseBg={P.chipBg}
-        activeBg={P.pillBg}
+        activeBg={_accBg(P)}
         renderContent={content}
         onPress={() => setFilter(filter === value ? 'all' : value)}
         onLongPress={folder ? () => handleDeleteFolderChip(folder) : undefined}
@@ -8394,13 +8404,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 style={{
                   paddingHorizontal: 14, height: 32, borderRadius: 16,
                   flexDirection: 'row', alignItems: 'center', gap: 6,
-                  backgroundColor: P.pillBg, // [2026-10-10 polish-list] was #111 (invisible in dark)
+                  backgroundColor: _accBg(P), // [2026-10-10 polish-list] was #111 (invisible in dark)
                   ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
                 }}
                 accessibilityLabel={t?.('common.done') || 'Concluir'}
               >
-                <IconCheck size={14} color={P.pillTxt} />
-                <Text style={{ fontSize: 12, fontWeight: '700', color: P.pillTxt }}>
+                <IconCheck size={14} color={_accTx(P)} />
+                <Text style={{ fontSize: 12, fontWeight: '700', color: _accTx(P) }}>
                   {t?.('common.done') || 'Concluir'}
                 </Text>
               </TouchableOpacity>
@@ -9331,7 +9341,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         onLayout={_onFiltersLayout}
         onContentSizeChange={_onFiltersContentSize}
       >
-        <ChipRail activeKey={filter} pillColor={P.pillBg} onActiveLayout={_onActiveChipLayout}>
+        <ChipRail activeKey={filter} pillColor={_accBg(P)} onActiveLayout={_onActiveChipLayout}>
         {_renderChip({ label: t('chat.filterAll') || 'Todas', value: 'all' })}
         {_renderChip({ label: t('chat.filterUnread') || 'Não lidas', value: 'unread', count: unreadCount })}
         {/* [2026-10-18 tg-list] abas Telegram: Todas · Não lidas · Pessoais · Grupos · Canais · Favoritas · listas */}
@@ -9753,8 +9763,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               onPress={() => { toggleFabMenu(); router.push('/chat-new'); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: P.pillBg }]}>
-                <IconMessageSquare size={18} color={P.pillTxt} />
+              <View style={[s.fabMenuIcon, { backgroundColor: _accBg(P) }]}>
+                <IconMessageSquare size={18} color={_accTx(P)} />
               </View>
               <Text style={[s.fabMenuLabel, { color: colors.text }]}>{t('chat.newChat')}</Text>
             </TouchableOpacity>
@@ -9768,8 +9778,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               onPress={() => { toggleFabMenu(); if (!(require('./groupCreate/groupCreateDraft').openNativeGroupCreate(router, 'group'))) setShowCreateGroup(true); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: P.pillBg }]}>
-                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={P.pillTxt} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <View style={[s.fabMenuIcon, { backgroundColor: _accBg(P) }]}>
+                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={_accTx(P)} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <Path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
                   <SvgCircle cx="9" cy="7" r="4" />
                   <Path d="M23 21v-2a4 4 0 00-3-3.87" />
@@ -9788,8 +9798,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               onPress={() => { toggleFabMenu(); if (!(require('./groupCreate/groupCreateDraft').openNativeGroupCreate(router, 'channel'))) setShowCreateChannel(true); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: P.pillBg }]}>
-                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={P.pillTxt} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <View style={[s.fabMenuIcon, { backgroundColor: _accBg(P) }]}>
+                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={_accTx(P)} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <Path d="M3 11l18-5v12L3 13v-2z" />
                   <Path d="M11.6 16.8a3 3 0 11-5.8-1.6" />
                 </Svg>
@@ -9806,8 +9816,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               onPress={() => { toggleFabMenu(); setShowDiscoverChannels(true); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: P.pillBg }]}>
-                <IconSearch size={18} color={P.pillTxt} />
+              <View style={[s.fabMenuIcon, { backgroundColor: _accBg(P) }]}>
+                <IconSearch size={18} color={_accTx(P)} />
               </View>
               <Text style={[s.fabMenuLabel, { color: colors.text }]}>{t('channel.discover')}</Text>
             </TouchableOpacity>
@@ -9982,10 +9992,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                 onPress={handleSetNote}
                 style={{
                   flex: 1, paddingVertical: 10, borderRadius: 12,
-                  backgroundColor: P.pillBg, alignItems: 'center',
+                  backgroundColor: _accBg(P), alignItems: 'center',
                 }}
               >
-                <Text style={{ color: P.pillTxt, fontWeight: '700', fontSize: 14 }}>
+                <Text style={{ color: _accTx(P), fontWeight: '700', fontSize: 14 }}>
                   {t('common.save') || 'Save'}
                 </Text>
               </TouchableOpacity>

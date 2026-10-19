@@ -83,6 +83,7 @@ try {
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { isNativeTabletSplit } from '../utils/responsive'; // [2026-10-10 tablet-split]
 import '../services/disableLayoutAnimationIOS';
+import '../services/a11yGlobalPatch'; // [2026-10-19 a11y-complete] Texto em negrito + áreas de toque maiores no app inteiro
 import '../services/modalGuardIOS'; // [2026-10-17 freeze] serializa present/dismiss dos <Modal> no iOS (Modal órfão = toque bloqueado)
 import { setFreezeRoute as _setFreezeRoute, noteRootTouch as _noteRootTouch } from '../services/freezeWatch';
 import { noteUserActivity as _noteUserActivity } from '../services/userActivity'; // [2026-10-18 bg-sync] pausa o download de fundo durante toque/rolagem

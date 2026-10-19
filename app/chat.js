@@ -259,6 +259,26 @@ const WA_GREEN = '#25D366';
 const SHELL_DARK = '#0b0b0b';
 const TAB_ON_LIGHT = '#0b0b0b';
 const TAB_ON_DARK = '#f5f5f5';
+// [2026-10-19 accent-real] aba ativa / badge na cor de destaque (Grafite = P&B de sempre).
+function _tabOn(dark) {
+  try {
+    const T = require('../context/ThemeContext');
+    const snap = T.getAccentSnapshot();
+    const h = snap && snap.on ? T.resolveAccent(snap.value, dark) : null;
+    if (h) return h;
+  } catch {}
+  return dark ? TAB_ON_DARK : TAB_ON_LIGHT;
+}
+function _tabOnInk(dark) {
+  try {
+    const T = require('../context/ThemeContext');
+    const snap = T.getAccentSnapshot();
+    const h = snap && snap.on ? T.resolveAccent(snap.value, dark) : null;
+    if (h) return T.onAccentFor(h);
+  } catch {}
+  return dark ? '#0b0b0b' : '#ffffff';
+}
+function _reduceTransparency() { try { return !!require('../services/a11yPrefs').getA11y().reduceTransparency; } catch { return false; } }
 // [2026-10-13 design-system] inativos com contraste AA (era #9a9a9e 2.8:1 /
 // #7c7c80) — o estado ativo agora se distingue por ícone PREENCHIDO + pílula.
 const TAB_OFF_LIGHT = '#6e6e73';
@@ -1874,9 +1894,9 @@ function ChatHub() {
           items={nativeTabItems}
           selectedKey={(showAppsDrawer && !YOU_TAB) ? 'apps' : ((activeTab === 'chats' || activeTab === 'reels' || activeTab === 'calls') ? activeTab : null)}
           isDark={barDark}
-          translucent={GLASS_TAB_BAR}
+          translucent={GLASS_TAB_BAR && !_reduceTransparency()}
           bottomInset={insets.bottom}
-          activeColor={barDark ? TAB_ON_DARK : TAB_ON_LIGHT}
+          activeColor={_tabOn(barDark)}
           inactiveColor={barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT}
           backgroundColor={barDark ? SHELL_DARK : '#ffffff'}
           hairlineColor={barDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.12)'}
@@ -1929,7 +1949,7 @@ function ChatHub() {
         {isKids ? (
           <>
             <TabBarItem
-              icon={(active) => <IconChatsTab size={25} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconChatsTab size={25} color={active ? _tabOn(barDark) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('kids.chat') || 'Chats'}
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
@@ -1939,7 +1959,7 @@ function ChatHub() {
             />
             <TabBarItem
               icon={(active) => {
-                const c = active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT);
+                const c = active ? _tabOn(barDark) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT);
                 return (
                   <Svg width={25} height={25} viewBox="0 0 24 24" fill="none">
                     <Path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3z" fill={c} />
@@ -1991,7 +2011,7 @@ function ChatHub() {
         ) : (
           <>
             <TabBarItem
-              icon={(active) => <IconChatsTab size={TAB_ICON} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconChatsTab size={TAB_ICON} color={active ? _tabOn(barDark) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabChats') || 'Chats'}
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
@@ -2005,7 +2025,7 @@ function ChatHub() {
             {/* [2026-10-15] No web, quando o chat está no painel lateral (iframe) do inbox, o e-mail já está aberto ao lado — esconde a aba. */}
             {!(Platform.OS === 'web' && typeof window !== 'undefined' && (() => { try { return window.self !== window.top; } catch { return true; } })()) && (
             <TabBarItem
-              icon={(active) => <IconEmailTab size={TAB_ICON} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconEmailTab size={TAB_ICON} color={active ? _tabOn(barDark) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabEmail') || 'Email'}
               active={false}
               onPress={() => handleTabPress('email')}
@@ -2016,7 +2036,7 @@ function ChatHub() {
             )}
             {/* [reels-v1 2026-10-13] Reels no centro da barra (tela cheia + ranking "Para você"). */}
             <TabBarItem
-              icon={(active) => <IconReelsTab size={TAB_ICON} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconReelsTab size={TAB_ICON} color={active ? _tabOn(barDark) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('reels.title') || 'Reels'}
               active={activeTab === 'reels'}
               onPress={() => handleTabPress('reels')}
@@ -2024,7 +2044,7 @@ function ChatHub() {
               floating={FLOAT_TAB_BAR}
             />
             <TabBarItem
-              icon={(active) => <IconCallsTab size={TAB_ICON} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconCallsTab size={TAB_ICON} color={active ? _tabOn(barDark) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabCalls') || 'Ligações'}
               active={activeTab === 'calls'}
               onPress={() => handleTabPress('calls')}
@@ -2048,7 +2068,7 @@ function ChatHub() {
             return (
             <TabBarItem
               icon={(active) => (
-                <View style={{ width: box, height: box, borderRadius: box / 2, alignItems: 'center', justifyContent: 'center', borderWidth: active ? 1.5 : 0, borderColor: active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : 'transparent' }}>
+                <View style={{ width: box, height: box, borderRadius: box / 2, alignItems: 'center', justifyContent: 'center', borderWidth: active ? 1.5 : 0, borderColor: active ? _tabOn(barDark) : 'transparent' }}>
                   <AvatarCircle name={user?.name || user?.email} email={user?.email} size={active ? box - 6 : box - 2} offlineFirst />
                 </View>
               )}
@@ -2062,7 +2082,7 @@ function ChatHub() {
             );
             })() : (
             <TabBarItem
-              icon={(active) => <IconAppsTab size={TAB_ICON} color={active ? (barDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              icon={(active) => <IconAppsTab size={TAB_ICON} color={active ? _tabOn(barDark) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabApps') || 'Apps'}
               active={showAppsDrawer}
               onPress={() => handleTabPress('apps')}
@@ -2202,11 +2222,11 @@ function PulseBadge({ badge, isDark, style }) {
     <Animated.View style={[styles.badge, {
       // [2026-10-08 chat-beauty-list] B&W, inverted in dark (#111 on the dark
       // bar was invisible) + a ring in the bar colour so it cuts the icon.
-      backgroundColor: isDark ? TAB_ON_DARK : TAB_ON_LIGHT,
+      backgroundColor: _tabOn(isDark),
       borderWidth: 2, borderColor: isDark ? SHELL_DARK : '#ffffff',
       transform: [{ scale: pulseAnim }],
     }, style]}>
-      <Text style={[styles.badgeText, { color: isDark ? '#0b0b0b' : '#ffffff' }]}>{badge > 99 ? '99+' : badge}</Text>
+      <Text style={[styles.badgeText, { color: _tabOnInk(isDark) }]}>{badge > 99 ? '99+' : badge}</Text>
     </Animated.View>
   );
 }
@@ -2331,7 +2351,7 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
       </Animated.View>
       {/* [2026-10-18 you-tab-nolabel] sem rótulo → o tabItem (justifyContent center) centraliza o ícone na altura da barra. */}
       {!hideLabel && <Text selectable={false} numberOfLines={1} maxFontSizeMultiplier={1.3} style={[styles.tabLabel, floating && styles.tabLabelFloat, {
-        color: active ? (isDark ? TAB_ON_DARK : TAB_ON_LIGHT) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT),
+        color: active ? _tabOn(isDark) : (isDark ? TAB_OFF_DARK : TAB_OFF_LIGHT),
         // [2026-10-17 wa-polish] 700↔500 made labels jump width on switch; UITabBar keeps one weight.
         fontWeight: active ? '600' : '500',
         ...(isWeb ? { transition: 'color 0.15s ease' } : {}),

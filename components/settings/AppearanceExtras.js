@@ -16,13 +16,15 @@
 //   chat_font_px  '13'..'20' (ausente = enum do servidor small/medium/large)
 //   jumbo_emoji   'false' desliga os emojis grandes (padrão ligado)
 // Evento APPEARANCE_EVENT faz uma conversa já montada reler na hora.
-import React, { useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, PanResponder, StyleSheet, Platform, DeviceEventEmitter } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, Pressable, ScrollView, PanResponder, StyleSheet, Platform, DeviceEventEmitter, Animated, AccessibilityInfo } from 'react-native';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect, Path } from 'react-native-svg';
 import ChatWallpaper from '../wallpaper/ChatWallpaper';
 import { buildValue, bubbleFor, resolve as resolveWallpaper, specFor } from '../wallpaper/wallpaperSpec';
-import { IconCheck } from '../Icons';
+import { IconCheck, IconSend, IconPencil } from '../Icons';
 import { useGroupedColors } from './SettingsKit';
-import { feedback } from '../../constants/motion';
+import { feedback, isReduceMotionEnabled } from '../../constants/motion';
+import { ACCENT_PALETTE, resolveAccent, onAccentFor, normalizeAccent, luminance } from '../../context/ThemeContext';
 
 export const CHAT_FONT_KEY = 'chat_font_px';
 export const JUMBO_KEY = 'jumbo_emoji';
@@ -44,8 +46,19 @@ export function emitAppearanceChanged() {
 }
 
 // Tokens reais da bolha (app/chat-conversation.js [2026-10-08 chat-beauty-bubbles]).
-function bubbleTokens(isDark, wallpaper) {
+function bubbleTokens(isDark, wallpaper, accentHex, accentBubbles) {
   const tint = bubbleFor(wallpaper, isDark);
+  // [2026-10-19 accent-real] mesmas regras da conversa: ✓✓ lido no destaque;
+  // "Balões na cor do destaque" pinta só a bolha enviada (tema colorido vence).
+  if (!tint && accentHex && accentBubbles) {
+    const on = onAccentFor(accentHex);
+    return {
+      ownBg: accentHex, ownText: on, ownMeta: on === '#111111' ? 'rgba(17,17,17,0.62)' : 'rgba(255,255,255,0.72)',
+      otherBg: isDark ? '#1C1C1E' : '#EEEEF0', otherText: isDark ? '#F5F5F7' : '#111111',
+      otherMeta: isDark ? 'rgba(235,235,245,0.55)' : 'rgba(60,60,67,0.74)',
+      wall: isDark ? '#000000' : '#FFFFFF', read: on, link: isDark ? '#F5F5F7' : '#111111',
+    };
+  }
   return {
     ownBg: tint ? tint.bg : (isDark ? '#333336' : '#111111'),
     ownText: tint ? tint.text : (isDark ? '#F5F5F7' : '#FFFFFF'),
@@ -54,7 +67,8 @@ function bubbleTokens(isDark, wallpaper) {
     otherText: isDark ? '#F5F5F7' : '#111111',
     otherMeta: isDark ? 'rgba(235,235,245,0.55)' : 'rgba(60,60,67,0.74)',
     wall: isDark ? '#000000' : '#FFFFFF',
-    read: '#53BDEB',
+    read: accentHex || '#53BDEB',
+    link: accentHex || (isDark ? '#F5F5F7' : '#111111'),
   };
 }
 // bubble_shape → raio/rabicho (mesmos números da conversa).
@@ -75,7 +89,7 @@ function WallpaperLayer({ value, isDark, patternScale = 0.62 }) {
   );
 }
 
-function PreviewBubble({ own, text, time, tk, fontPx, shape, last }) {
+function PreviewBubble({ own, text, link, time, tk, fontPx, shape, last }) {
   const { r, tail } = shapeRadius(shape);
   const fs = fontPx;
   const lh = lineHeightFor(fontPx);
@@ -89,7 +103,10 @@ function PreviewBubble({ own, text, time, tk, fontPx, shape, last }) {
         paddingLeft: 11, paddingRight: 8, paddingTop: 6, paddingBottom: 5,
         flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end',
       }}>
-        <Text style={{ color: own ? tk.ownText : tk.otherText, fontSize: fs, lineHeight: lh, flexShrink: 1 }}>{text}</Text>
+        <Text style={{ color: own ? tk.ownText : tk.otherText, fontSize: fs, lineHeight: lh, flexShrink: 1 }}>
+          {text}
+          {link ? <Text style={{ color: tk.link, textDecorationLine: 'underline' }}>{' ' + link}</Text> : null}
+        </Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 8, marginBottom: Math.max(0, (lh - 14) / 4) }}>
           <Text style={{ color: own ? tk.ownMeta : tk.otherMeta, fontSize: 11, fontVariant: ['tabular-nums'] }}>{time}</Text>
           {own ? (
@@ -105,9 +122,11 @@ function PreviewBubble({ own, text, time, tk, fontPx, shape, last }) {
 }
 
 /** Conversa de exemplo, atualizada ao vivo. */
-export function ChatPreviewCard({ isDark, wallpaper, bubbleShape, fontPx, tx }) {
-  const tk = bubbleTokens(isDark, wallpaper);
+export function ChatPreviewCard({ isDark, wallpaper, bubbleShape, fontPx, tx, accentHex = null, accentBubbles = false }) {
+  const tk = bubbleTokens(isDark, wallpaper, accentHex, accentBubbles);
   const px = normFontPx(fontPx) || FONT_DEFAULT;
+  const sendBg = accentHex || (isDark ? '#FFFFFF' : '#111111');
+  const sendFg = accentHex ? onAccentFor(accentHex) : (isDark ? '#111111' : '#FFFFFF');
   return (
     <View
       style={{ backgroundColor: tk.wall, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 12, overflow: 'hidden' }}
@@ -119,8 +138,17 @@ export function ChatPreviewCard({ isDark, wallpaper, bubbleShape, fontPx, tx }) 
         <Text style={{ fontSize: 12, fontWeight: '600', color: isDark ? '#EBEBF5' : '#3C3C43' }}>{tx('settings.appear.previewToday', 'Hoje')}</Text>
       </View>
       <PreviewBubble own={false} tk={tk} fontPx={px} shape={bubbleShape} time="10:41" text={tx('settings.appear.previewMsg1', 'Bom dia! Viu como ficou o novo visual?')} />
-      <PreviewBubble own={false} last tk={tk} fontPx={px} shape={bubbleShape} time="10:41" text={tx('settings.appear.previewMsg2', 'Muda o tema e olha aqui.')} />
+      <PreviewBubble own={false} last tk={tk} fontPx={px} shape={bubbleShape} time="10:41" text={tx('settings.appear.previewMsg2', 'Muda o tema e olha aqui.')} link="chatyy.com.br" />
       <PreviewBubble own last tk={tk} fontPx={px} shape={bubbleShape} time="10:42" text={tx('settings.appear.previewMsg3', 'Ficou elegante. Vou deixar assim.')} />
+      {/* compositor de mentira: botão enviar na cor de destaque */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }} pointerEvents="none">
+        <View style={{ flex: 1, height: 34, borderRadius: 17, paddingHorizontal: 14, justifyContent: 'center', backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.14)' }}>
+          <Text style={{ fontSize: 14, color: isDark ? '#8E8E93' : '#8A8A8E' }} numberOfLines={1}>{tx('settings.appear.previewComposer', 'Mensagem')}</Text>
+        </View>
+        <View style={{ width: 34, height: 34, borderRadius: 17, marginLeft: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: sendBg }}>
+          <IconSend size={17} color={sendFg} style={{ marginLeft: -1 }} />
+        </View>
+      </View>
     </View>
   );
 }
@@ -274,5 +302,247 @@ export function ChatThemeCards({ isDark, wallpaper, bubbleShape, onSelect, tx })
         );
       })}
     </ScrollView>
+  );
+}
+
+// ─── [2026-10-19 accent-real] Seletor de COR DO DESTAQUE ─────────────────────
+// Paleta curada (ThemeContext.ACCENT_PALETTE) em bolinhas grandes com nome,
+// check, mola na seleção e háptico; "Personalizada" abre matiz + brilho (SVG,
+// sem dependência nativa nova). A prévia no topo da Aparência acompanha AO VIVO
+// (inclusive enquanto arrasta a matiz); a cor só é gravada ao soltar/tocar.
+const SWATCH = 46;
+
+// HSL → #RRGGBB
+export function hslHex(h, s, l) {
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  const c = (x) => Math.round(x * 255).toString(16).padStart(2, '0');
+  return ('#' + c(f(0)) + c(f(8)) + c(f(4))).toUpperCase();
+}
+// #RRGGBB → { h, l } (s fixo do editor)
+function hexHL(hex) {
+  const m = /^#([0-9a-f]{6})$/i.exec(String(hex || ''));
+  if (!m) return { h: 210, l: 0.45 };
+  const n = parseInt(m[1], 16);
+  const r = ((n >> 16) & 255) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  const l = (mx + mn) / 2;
+  let h = 0;
+  const d = mx - mn;
+  if (d > 0) {
+    if (mx === r) h = ((g - b) / d) % 6;
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return { h: Math.round(h), l: Math.max(0.22, Math.min(0.68, l)) };
+}
+const CUSTOM_SAT = 0.72;
+
+function SwatchItem({ label, color, selected, onPress, custom, isDark, g }) {
+  const scale = useRef(new Animated.Value(selected ? 1 : 0)).current;
+  useEffect(() => {
+    if (isReduceMotionEnabled()) { scale.setValue(selected ? 1 : 0); return; }
+    Animated.spring(scale, { toValue: selected ? 1 : 0, stiffness: 420, damping: 24, mass: 1, useNativeDriver: Platform.OS !== 'web' }).start();
+  }, [selected, scale]);
+  const ringScale = scale.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] });
+  const dotScale = scale.interpolate({ inputRange: [0, 1], outputRange: [1, 0.84] });
+  const checkInk = color ? onAccentFor(color) : '#FFFFFF';
+  const lowContrast = color ? (isDark ? luminance(color) < 0.04 : luminance(color) > 0.8) : false;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ selected: !!selected }}
+      accessibilityLabel={label}
+      style={({ pressed }) => ({ width: '16.66%', minWidth: 56, alignItems: 'center', paddingVertical: 6, opacity: pressed ? 0.75 : 1 })}
+    >
+      <View style={{ width: SWATCH + 10, height: SWATCH + 10, alignItems: 'center', justifyContent: 'center' }}>
+        <Animated.View pointerEvents="none" style={{
+          position: 'absolute', width: SWATCH + 10, height: SWATCH + 10, borderRadius: (SWATCH + 10) / 2,
+          borderWidth: 2.5, borderColor: color || g.ink, opacity: scale, transform: [{ scale: ringScale }],
+        }} />
+        <Animated.View style={{ width: SWATCH, height: SWATCH, borderRadius: SWATCH / 2, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', transform: [{ scale: dotScale }],
+          ...(lowContrast ? { borderWidth: StyleSheet.hairlineWidth, borderColor: g.separator } : null) }}>
+          {custom && !color ? (
+            <Svg width={SWATCH} height={SWATCH} viewBox="0 0 46 46">
+              {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => {
+                const a0 = (deg - 90) * Math.PI / 180;
+                const a1 = (deg + 45 - 90) * Math.PI / 180;
+                const x0 = 23 + 23 * Math.cos(a0), y0 = 23 + 23 * Math.sin(a0);
+                const x1 = 23 + 23 * Math.cos(a1), y1 = 23 + 23 * Math.sin(a1);
+                return <Path key={deg} d={`M23 23 L${x0.toFixed(2)} ${y0.toFixed(2)} A23 23 0 0 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z`} fill={hslHex(deg + 22, 0.7, 0.55)} />;
+              })}
+            </Svg>
+          ) : (
+            <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: color }} />
+          )}
+          {selected ? <IconCheck size={20} strokeWidth={3} color={custom && !color ? '#FFFFFF' : checkInk} /> : null}
+          {custom && color && !selected ? <IconPencil size={16} color={checkInk} /> : null}
+        </Animated.View>
+      </View>
+      <Text numberOfLines={1} style={{ marginTop: 3, fontSize: 11.5, fontWeight: selected ? '600' : '400', color: selected ? g.text : g.secondary, maxWidth: 64 }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function GradientTrack({ id, stops, height = 28 }) {
+  return (
+    <Svg width="100%" height={height} style={StyleSheet.absoluteFill} preserveAspectRatio="none">
+      <Defs>
+        <SvgLinearGradient id={id} x1="0" y1="0" x2="1" y2="0">
+          {stops.map((c, i) => <Stop key={i} offset={String(i / (stops.length - 1))} stopColor={c} stopOpacity="1" />)}
+        </SvgLinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="100%" height={height} rx={height / 2} ry={height / 2} fill={`url(#${id})`} />
+    </Svg>
+  );
+}
+
+/** Trilho arrastável 0–1 (matiz ou brilho). */
+function GradientSlider({ id, stops, value, onChange, onCommit, label, valueText, thumbColor }) {
+  const [w, setW] = useState(0);
+  const st = useRef({ w: 0, x0: 0, v: value, cb: onChange, commit: onCommit });
+  st.current.w = w; st.current.cb = onChange; st.current.commit = onCommit;
+  const H = 28; const T = 26;
+  const pick = (x) => {
+    const s = st.current;
+    const usable = Math.max(1, s.w - T);
+    const v = Math.max(0, Math.min(1, (x - T / 2) / usable));
+    s.v = v;
+    s.cb && s.cb(v);
+  };
+  const pan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_e, gs) => Math.abs(gs.dx) > Math.abs(gs.dy),
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: (e) => { st.current.x0 = e.nativeEvent.locationX; pick(st.current.x0); },
+    onPanResponderMove: (_e, gs) => pick(st.current.x0 + gs.dx),
+    onPanResponderRelease: () => { const s = st.current; try { feedback.selection(); } catch {} s.commit && s.commit(s.v); },
+    onPanResponderTerminate: () => { const s = st.current; s.commit && s.commit(s.v); },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
+  const step = (d) => {
+    const v = Math.max(0, Math.min(1, value + d));
+    try { feedback.selection(); } catch {}
+    onChange && onChange(v); onCommit && onCommit(v);
+  };
+  const x = (Math.max(0, Math.min(1, value))) * Math.max(0, w - T);
+  return (
+    <View
+      style={{ height: H + 8, justifyContent: 'center' }}
+      onLayout={(e) => setW(e.nativeEvent.layout.width)}
+      accessible
+      accessibilityRole="adjustable"
+      accessibilityLabel={label}
+      accessibilityValue={{ text: valueText }}
+      accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+      onAccessibilityAction={(e) => step(e.nativeEvent.actionName === 'increment' ? 0.05 : -0.05)}
+      {...pan.panHandlers}
+    >
+      <View pointerEvents="none" style={{ height: H, borderRadius: H / 2, overflow: 'hidden' }}>
+        {w > 0 ? <GradientTrack id={id} stops={stops} height={H} /> : null}
+      </View>
+      {w > 0 ? (
+        <View pointerEvents="none" style={{
+          position: 'absolute', left: x, top: (H + 8 - T) / 2, width: T, height: T, borderRadius: T / 2,
+          backgroundColor: thumbColor, borderWidth: 3, borderColor: '#FFFFFF',
+          ...Platform.select({
+            web: { boxShadow: '0 1px 5px rgba(0,0,0,0.30)' },
+            default: { shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 3 },
+          }),
+        }} />
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * Seletor completo. `value` = chave da paleta ou '#hex'; `onPreview(hexOuNull)`
+ * alimenta a prévia ao vivo; `onChange(valor)` grava.
+ */
+export function AccentPicker({ value, isDark, onChange, onPreview, tx }) {
+  const g = useGroupedColors();
+  const cur = normalizeAccent(value);
+  const isCustom = /^#/.test(cur);
+  const [open, setOpen] = useState(false);
+  const [hl, setHl] = useState(() => hexHL(isCustom ? cur : '#2F80ED'));
+  useEffect(() => { if (isCustom) setHl(hexHL(cur)); }, [cur, isCustom]);
+  const customHex = hslHex(hl.h, CUSTOM_SAT, hl.l);
+  const choose = (v) => {
+    try { feedback.selection(); } catch {}
+    onPreview && onPreview(null);
+    onChange && onChange(v);
+    try {
+      if (Platform.OS !== 'web') AccessibilityInfo.announceForAccessibility?.(tx('settings.accent.chosen', 'Cor do destaque alterada'));
+    } catch {}
+  };
+  const hueStops = useMemo(() => [0, 40, 80, 120, 160, 200, 240, 280, 320, 360].map((h) => hslHex(h, CUSTOM_SAT, 0.5)), []);
+  const lightStops = useMemo(() => [0.22, 0.34, 0.45, 0.56, 0.68].map((l) => hslHex(hl.h, CUSTOM_SAT, l)), [hl.h]);
+  const commitCustom = (next) => { const hex = hslHex(next.h, CUSTOM_SAT, next.l); onPreview && onPreview(null); onChange && onChange(hex); };
+  return (
+    <View style={{ paddingHorizontal: 8, paddingTop: 8, paddingBottom: 6 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }} accessibilityRole="radiogroup">
+        {ACCENT_PALETTE.map((p) => {
+          const color = p.key === 'graphite' ? (isDark ? '#F5F5F7' : '#111111') : (resolveAccent(p.key, isDark) || p.light);
+          return (
+            <SwatchItem
+              key={p.key}
+              g={g}
+              isDark={isDark}
+              label={tx(p.i18n, p.fb)}
+              color={color}
+              selected={cur === p.key}
+              onPress={() => { setOpen(false); if (cur !== p.key) choose(p.key); }}
+            />
+          );
+        })}
+        <SwatchItem
+          g={g}
+          isDark={isDark}
+          custom
+          label={tx('settings.accent.custom', 'Personalizada')}
+          color={isCustom ? (resolveAccent(cur, isDark) || cur) : null}
+          selected={isCustom}
+          onPress={() => {
+            try { feedback.selection(); } catch {}
+            if (!isCustom) { choose(customHex); setOpen(true); } else setOpen((o) => !o);
+          }}
+        />
+      </View>
+      {open ? (
+        <View style={{ marginTop: 8, marginHorizontal: 8, padding: 12, borderRadius: 14, backgroundColor: g.fill }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+            <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: resolveAccent(customHex, isDark) || customHex, marginRight: 8 }} />
+            <Text style={{ fontSize: 13, fontWeight: '600', color: g.text, flex: 1 }}>{tx('settings.accent.customTitle', 'Sua cor')}</Text>
+            <Text style={{ fontSize: 13, color: g.secondary, fontVariant: ['tabular-nums'] }} selectable>{customHex}</Text>
+          </View>
+          <Text style={{ fontSize: 12, color: g.secondary, marginBottom: 2 }}>{tx('settings.accent.hue', 'Matiz')}</Text>
+          <GradientSlider
+            id="chatyyHue"
+            stops={hueStops}
+            value={hl.h / 360}
+            thumbColor={hslHex(hl.h, CUSTOM_SAT, 0.5)}
+            label={tx('settings.accent.hue', 'Matiz')}
+            valueText={`${hl.h}°`}
+            onChange={(v) => { const n = { ...hl, h: Math.round(v * 360) % 360 }; setHl(n); onPreview && onPreview(hslHex(n.h, CUSTOM_SAT, n.l)); }}
+            onCommit={(v) => commitCustom({ ...hl, h: Math.round(v * 360) % 360 })}
+          />
+          <Text style={{ fontSize: 12, color: g.secondary, marginTop: 8, marginBottom: 2 }}>{tx('settings.accent.brightness', 'Brilho')}</Text>
+          <GradientSlider
+            id="chatyyLight"
+            stops={lightStops}
+            value={(hl.l - 0.22) / 0.46}
+            thumbColor={customHex}
+            label={tx('settings.accent.brightness', 'Brilho')}
+            valueText={`${Math.round(((hl.l - 0.22) / 0.46) * 100)}%`}
+            onChange={(v) => { const n = { ...hl, l: 0.22 + v * 0.46 }; setHl(n); onPreview && onPreview(hslHex(n.h, CUSTOM_SAT, n.l)); }}
+            onCommit={(v) => commitCustom({ ...hl, l: 0.22 + v * 0.46 })}
+          />
+        </View>
+      ) : null}
+    </View>
   );
 }

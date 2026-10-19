@@ -126,15 +126,17 @@ internal data class STPalette(
   val ripple: Int,
   // [2026-10-19 tg-settings] prop `iconStyle: "solid"` (api 5): glifo branco em
   // quadrado grafite cheio (Ajustes / Telegram, P&B) e linhas 44/52.
-  val solidIcons: Boolean = false
+  val solidIcons: Boolean = false,
+  // [2026-10-19 accent-real] cor de destaque escolhida (JS manda `accent` só quando ≠ Grafite)
+  val accent: Int? = null
 ) {
   /** Quadrado do ícone no modo "solid": grafite (claro #2C2C2E · escuro #3A3A3C). */
   val solidChip: Int get() = if (dark) 0xFF3A3A3C.toInt() else 0xFF2C2C2E.toInt()
 
   // Interruptor igual ao NativeSwitch do JS (P&B; Android).
-  val switchOnTrack: Int get() = if (dark) 0xFFF5F5F7.toInt() else 0xFF111111.toInt()
+  val switchOnTrack: Int get() = accent ?: (if (dark) 0xFFF5F5F7.toInt() else 0xFF111111.toInt())
   val switchOffTrack: Int get() = if (dark) 0xFF5F6368.toInt() else 0xFFC7C9CC.toInt()
-  val switchOnThumb: Int get() = if (dark) 0xFF0B0B0B.toInt() else Color.WHITE
+  val switchOnThumb: Int get() = if (accent != null) Color.WHITE else (if (dark) 0xFF0B0B0B.toInt() else Color.WHITE)
   val switchOffThumb: Int get() = if (dark) 0xFF9AA0A6.toInt() else Color.WHITE
 
   companion object {
@@ -189,7 +191,8 @@ internal data class STPalette(
         chipBg = color(m["chipBg"]) ?: b.chipBg,
         chipFg = color(m["chipFg"]) ?: b.chipFg,
         destructive = color(m["destructive"]) ?: b.destructive,
-        ripple = color(m["ripple"]) ?: b.ripple
+        ripple = color(m["ripple"]) ?: b.ripple,
+        accent = color(m["accent"])
       )
     }
   }

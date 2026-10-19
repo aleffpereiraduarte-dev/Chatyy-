@@ -51,7 +51,132 @@ export const ACCENT_PRESETS = [
   { key: 'orange', hex: '#F59E0B' },
   { key: 'slate',  hex: '#64748B' },
 ];
-const ACCENT_HEX_SET = new Set(ACCENT_PRESETS.map(p => p.hex));
+
+// ── [2026-10-19 accent-real] COR DO DESTAQUE de verdade ─────────────────────
+// Antes: o seletor gravava `theme_accent`, mas só `primary/chatPrimary` eram
+// trocados — barra de abas, switches, botão enviar, ✓✓ lido, badges e chips
+// usam tinta P&B fixa ou tokens (badge/chipActiveBg/unreadAccent) que nunca
+// eram tocados → "não faz nada". Agora:
+//   • Paleta curada (11 cores com nome, tom próprio p/ claro e p/ escuro) +
+//     "Personalizada" (qualquer #RRGGBB; no escuro clareia se ficar escura demais).
+//   • Grafite (padrão) = o P&B premium de sempre (nada muda para quem não escolhe).
+//   • `colors` ganha accent/onAccent/accentSoft/accentOn e as superfícies de AÇÃO
+//     (primary, badge, chips ativos, checkbox, foco, links, ✓✓ lido) passam a usar
+//     o destaque. Fundo/texto/bolhas continuam neutros.
+//   • Persistido POR CONTA (theme_accent@<conta>) + espelho global (conta nova
+//     herda o último), sincronizado ao vivo entre aparelhos via WS (user_setting_update).
+// Valor gravado: chave da paleta ('blue') ou hex ('#12AB34' = personalizada).
+export const ACCENT_PALETTE = [
+  { key: 'graphite', light: '#111111', dark: null,      i18n: 'settings.accent.graphite', fb: 'Grafite' },
+  { key: 'blue',     light: '#0A6CFF', dark: '#3D8BFF', i18n: 'settings.accent.blue',     fb: 'Azul' },
+  { key: 'indigo',   light: '#4F46E5', dark: '#7C83FF', i18n: 'settings.accent.indigo',   fb: 'Índigo' },
+  { key: 'purple',   light: '#8B3FD9', dark: '#B67CF5', i18n: 'settings.accent.purple',   fb: 'Roxo' },
+  { key: 'pink',     light: '#DB2E72', dark: '#FF6FA3', i18n: 'settings.accent.pink',     fb: 'Rosa' },
+  { key: 'red',      light: '#DC2F35', dark: '#FF6266', i18n: 'settings.accent.red',      fb: 'Vermelho' },
+  { key: 'orange',   light: '#E35D0E', dark: '#FF8A3D', i18n: 'settings.accent.orange',   fb: 'Laranja' },
+  { key: 'amber',    light: '#B87300', dark: '#FFB224', i18n: 'settings.accent.amber',    fb: 'Âmbar' },
+  { key: 'green',    light: '#15803D', dark: '#3DD178', i18n: 'settings.accent.green',    fb: 'Verde' },
+  { key: 'mint',     light: '#0B9488', dark: '#3FD9C6', i18n: 'settings.accent.mint',     fb: 'Menta' },
+  { key: 'petrol',   light: '#0E5A6B', dark: '#4BA3B8', i18n: 'settings.accent.petrol',   fb: 'Petróleo' },
+];
+const _PALETTE_BY_KEY = Object.fromEntries(ACCENT_PALETTE.map(p => [p.key, p]));
+const _HEX6 = /^#[0-9a-f]{6}$/i;
+// Hex antigos (seletor de 5 bolinhas) → chave nova.
+const _LEGACY_HEX = { '#111111': 'graphite', '#3B82F6': 'blue', '#F59E0B': 'amber' };
+
+/** Normaliza o valor gravado: chave da paleta ou '#RRGGBB'. Inválido → 'graphite'. */
+export function normalizeAccent(v) {
+  const s = String(v || '').trim();
+  if (_PALETTE_BY_KEY[s]) return s;
+  if (_HEX6.test(s)) {
+    const up = s.toUpperCase();
+    return _LEGACY_HEX[up] || up;
+  }
+  return 'graphite';
+}
+function _isValidAccentValue(v) {
+  const s = String(v || '').trim();
+  return !!_PALETTE_BY_KEY[s] || _HEX6.test(s);
+}
+
+function _rgb(hex) {
+  const n = parseInt(String(hex).slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function _hex(r, g, b) {
+  const c = (x) => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0');
+  return ('#' + c(r) + c(g) + c(b)).toUpperCase();
+}
+/** Luminância relativa WCAG (0–1). */
+export function luminance(hex) {
+  if (!_HEX6.test(String(hex || ''))) return 0;
+  const f = (c) => { const x = c / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
+  const [r, g, b] = _rgb(hex);
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+function _mix(hex, withHex, t) {
+  const a = _rgb(hex); const b = _rgb(withHex);
+  return _hex(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t);
+}
+/** Texto/ícone sobre o destaque: branco, ou tinta escura quando o destaque é claro. */
+export function onAccentFor(hex) {
+  return luminance(hex) > 0.3 ? '#111111' : '#FFFFFF'; // ~ponto de contraste igual (branco x tinta)
+}
+/** Resolve a cor de destaque p/ o modo atual. null = Grafite (P&B do tema). */
+export function resolveAccent(value, isDark) {
+  const v = normalizeAccent(value);
+  const p = _PALETTE_BY_KEY[v];
+  if (p) return isDark ? p.dark : (p.key === 'graphite' ? null : p.light);
+  // personalizada
+  let hex = v;
+  const L = luminance(hex);
+  if (L < 0.012) return null; // praticamente preto = Grafite
+  if (isDark && L < 0.16) hex = _mix(hex, '#FFFFFF', Math.min(0.55, (0.16 - L) * 3.2 + 0.18));
+  if (!isDark && L > 0.62) hex = _mix(hex, '#000000', Math.min(0.5, (L - 0.62) * 1.4 + 0.12));
+  return hex;
+}
+/** Rótulo (i18n) da cor gravada. */
+export function accentLabel(value, t) {
+  const v = normalizeAccent(value);
+  const p = _PALETTE_BY_KEY[v];
+  const tx = (k, fb) => { try { const r = t ? t(k) : null; return r && r !== k ? r : fb; } catch { return fb; } };
+  return p ? tx(p.i18n, p.fb) : tx('settings.accent.custom', 'Personalizada');
+}
+
+// Fora do React (lista nativa, helpers de módulo): última cor resolvida.
+let _accentSnap = { value: 'graphite', hex: null, on: false, onAccent: '#FFFFFF', isDark: false };
+export function getAccentSnapshot() { return _accentSnap; }
+
+function _acctKey() {
+  try {
+    const a = String(require('../services/api').getActiveAccountEmail?.() || '').trim().toLowerCase();
+    return a ? 'theme_accent@' + a : '';
+  } catch { return ''; }
+}
+function _readKey(k) {
+  if (!k) return null;
+  try {
+    if (Platform.OS === 'web') return typeof localStorage !== 'undefined' ? localStorage.getItem(k) : null;
+    const { getString } = require('../services/mmkv');
+    return getString ? getString(k) : null;
+  } catch { return null; }
+}
+function _writeKey(k, v) {
+  if (!k) return;
+  try {
+    if (Platform.OS === 'web') { if (typeof localStorage !== 'undefined') localStorage.setItem(k, v); return; }
+    const { setString } = require('../services/mmkv');
+    setString && setString(k, v);
+  } catch {}
+}
+/** Valor salvo (conta ativa > global). acct=true quando veio da conta. */
+function _readAccentSync() {
+  const a = _readKey(_acctKey());
+  if (a && _isValidAccentValue(a)) return { value: normalizeAccent(a), acct: true };
+  const g = _readKey('theme_accent');
+  if (g && _isValidAccentValue(g)) return { value: normalizeAccent(g), acct: false };
+  return { value: 'graphite', acct: false };
+}
 
 // Valid 3-state theme modes. 'system' derives isDark live from the OS
 // color scheme; 'light'/'dark' force the value. Persisted under `theme_mode`
@@ -132,7 +257,13 @@ export function ThemeProvider({ children }) {
   const _hydratedRef = useRef(Platform.OS === 'web');
   const [density, setDensityState] = useState('comfortable');
   const [inboxType, setInboxTypeState] = useState('default');
-  const [accentColor, setAccentColorState] = useState('#111111');
+  const [accentValue, setAccentValueState] = useState(() => _readAccentSync().value); // [2026-10-19 accent-real] chave da paleta ou #hex
+  const _acctAccentRef = useRef(_readAccentSync().acct); // achou valor DA CONTA → hidrate global não sobrescreve
+  const _accentAcctRef = useRef(_acctKey());
+  const [a11y, setA11yState] = useState(() => { try { return require('../services/a11yPrefs').getA11y(); } catch { return null; } });
+  useEffect(() => {
+    try { return require('../services/a11yPrefs').subscribeA11y(setA11yState); } catch { return undefined; }
+  }, []);
   const systemScheme = useStableColorScheme();
 
   // Load saved theme, density, inboxType
@@ -164,8 +295,9 @@ export function ThemeProvider({ children }) {
           if (savedDensity && DENSITY_CONFIG[savedDensity]) setDensityState(savedDensity);
           const savedInbox = localStorage.getItem('inbox_type');
           if (savedInbox) setInboxTypeState(savedInbox);
-          const savedAccent = localStorage.getItem('theme_accent');
-          if (savedAccent && ACCENT_HEX_SET.has(savedAccent)) setAccentColorState(savedAccent);
+          const _ra = _readAccentSync(); // [2026-10-19 accent-real] conta > global
+          setAccentValueState(_ra.value);
+          _acctAccentRef.current = _ra.acct;
         }
       } catch {}
     } else {
@@ -197,13 +329,12 @@ export function ThemeProvider({ children }) {
           }
           if (savedDensity && DENSITY_CONFIG[savedDensity]) setDensityState(savedDensity);
           if (savedInbox) setInboxTypeState(savedInbox);
-          if (savedAccent && ACCENT_HEX_SET.has(savedAccent)) setAccentColorState(savedAccent);
+          if (!_acctAccentRef.current && savedAccent && _isValidAccentValue(savedAccent)) setAccentValueState(normalizeAccent(savedAccent));
           _hydratedRef.current = true;
         }).catch(() => {});
         try {
-          const { getString } = require('../services/mmkv');
-          const mmkvAccent = getString?.('theme_accent');
-          if (mmkvAccent && ACCENT_HEX_SET.has(mmkvAccent)) setAccentColorState(mmkvAccent);
+          const _ra = _readAccentSync(); // [2026-10-19 accent-real] conta > global (mmkv síncrono)
+          if (_ra.acct || _ra.value !== 'graphite') { setAccentValueState(_ra.value); _acctAccentRef.current = _ra.acct; }
         } catch {}
       });
       return () => { try { task && task.cancel && task.cancel(); } catch {} };
@@ -402,19 +533,39 @@ export function ThemeProvider({ children }) {
     if (!_suppressBroadcast.current) _broadcastSetting('inbox_type', type);
   }, []);
 
-  const setAccentColor = useCallback((hex) => {
-    if (!hex || !ACCENT_HEX_SET.has(hex)) return;
-    setAccentColorState(hex);
-    if (Platform.OS === 'web') {
-      try { if (typeof localStorage !== 'undefined') localStorage.setItem('theme_accent', hex); } catch {}
-    } else {
-      AsyncStorage.setItem('theme_accent', hex).catch(() => {});
-      try {
-        const { setString } = require('../services/mmkv');
-        setString?.('theme_accent', hex);
-      } catch {}
-    }
-    if (!_suppressBroadcast.current) _broadcastSetting('theme_accent', hex);
+  // [2026-10-19 accent-real] grava POR CONTA + espelho global; aceita chave da
+  // paleta ('blue') ou '#RRGGBB' (personalizada). setAccentColor = nome antigo.
+  const _persistAccent = useCallback((v) => {
+    _writeKey(_acctKey(), v);
+    _writeKey('theme_accent', v);
+    if (Platform.OS !== 'web') AsyncStorage.setItem('theme_accent', v).catch(() => {});
+    _acctAccentRef.current = true;
+  }, []);
+  const setAccent = useCallback((value) => {
+    if (!_isValidAccentValue(value)) return;
+    const v = normalizeAccent(value);
+    setAccentValueState(v);
+    _persistAccent(v);
+    if (!_suppressBroadcast.current) _broadcastSetting('theme_accent', v);
+  }, [_persistAccent]);
+  const setAccentColor = setAccent;
+  // Troca de conta → relê a cor DAQUELA conta (checagem barata só com o app ativo).
+  useEffect(() => {
+    let timer = null;
+    const check = () => {
+      const k = _acctKey();
+      if (k === _accentAcctRef.current) return;
+      _accentAcctRef.current = k;
+      const ra = _readAccentSync();
+      _acctAccentRef.current = ra.acct;
+      setAccentValueState((prev) => (prev === ra.value ? prev : ra.value));
+    };
+    const arm = () => { if (!timer) timer = setInterval(check, 4000); };
+    const disarm = () => { if (timer) { clearInterval(timer); timer = null; } };
+    if (AppState.currentState === 'active' || Platform.OS === 'web') arm();
+    let sub = null;
+    try { sub = AppState.addEventListener('change', (st) => { if (st === 'active') { check(); arm(); } else disarm(); }); } catch {}
+    return () => { disarm(); try { sub && sub.remove && sub.remove(); } catch {} };
   }, []);
 
   // Subscribe to incoming user_setting_update frames from the WS relay so
@@ -465,17 +616,10 @@ export function ThemeProvider({ children }) {
               } else {
                 AsyncStorage.setItem('inbox_type', value).catch(() => {});
               }
-            } else if (key === 'theme_accent' && typeof value === 'string' && ACCENT_HEX_SET.has(value)) {
-              setAccentColorState(value);
-              if (Platform.OS === 'web') {
-                try { if (typeof localStorage !== 'undefined') localStorage.setItem('theme_accent', value); } catch {}
-              } else {
-                AsyncStorage.setItem('theme_accent', value).catch(() => {});
-                try {
-                  const { setString } = require('../services/mmkv');
-                  setString?.('theme_accent', value);
-                } catch {}
-              }
+            } else if (key === 'theme_accent' && typeof value === 'string' && _isValidAccentValue(value)) {
+              const v = normalizeAccent(value);
+              setAccentValueState(v);
+              _persistAccent(v);
             }
           } finally {
             _suppressBroadcast.current = false;
@@ -484,7 +628,7 @@ export function ThemeProvider({ children }) {
       });
     } catch {}
     return () => { try { off && off(); } catch {} };
-  }, [_persistDark, _persistMode, systemScheme]);
+  }, [_persistDark, _persistMode, systemScheme, _persistAccent]);
 
   // Override primary-related keys with the user-picked accent so all surfaces
   // (FABs, links, badges) re-tint live without touching every consumer.
@@ -500,19 +644,58 @@ export function ThemeProvider({ children }) {
     try { DeviceEventEmitter.emit(APP_THEME_DARK_EVENT, isDark); } catch {}
   }, [isDark]);
   const baseColors = isDark ? DarkColors : Colors;
-  // [2026-10-08 dark-black] The default accent is near-black ink (#111111). In
-  // dark mode that is invisible on the black surfaces, so a near-black accent
-  // keeps DarkColors' inverted (white) primary + black onPrimary. Colored
-  // accents (blue/orange/slate) still apply in both modes with white ink.
+  // [2026-10-08 dark-black] Grafite (padrão) = tinta P&B do tema: #111 no claro,
+  // branco invertido no escuro (DarkColors). [2026-10-19 accent-real] Cor de
+  // destaque escolhida → TODAS as superfícies de ação usam o destaque (com tom
+  // próprio p/ o escuro e tinta legível por cima); estrutura/bolhas seguem neutras.
+  // [2026-10-19 a11y-complete] Aumentar contraste → textos secundários e
+  // divisórias mais escuros (claro) / mais claros (escuro).
+  const accentHex = resolveAccent(accentValue, isDark);
+  const _hc = !!(a11y && a11y.highContrast);
   const colors = useMemo(() => {
-    if (isDark && _NEAR_BLACK.test(String(accentColor || ''))) return baseColors;
-    return {
-      ...baseColors,
-      primary: accentColor,
-      chatPrimary: accentColor,
-      ...(isDark ? { onPrimary: '#ffffff', textOnPrimary: '#ffffff' } : null),
-    };
-  }, [baseColors, accentColor, isDark]);
+    let c = baseColors;
+    const ink = c.primary;
+    if (accentHex) {
+      const on = onAccentFor(accentHex);
+      const [r, g, b] = _rgb(accentHex);
+      c = {
+        ...c,
+        primary: accentHex, chatPrimary: accentHex, primaryDark: accentHex,
+        onPrimary: on, textOnPrimary: on,
+        badge: accentHex, onBadge: on, unreadAccent: accentHex,
+        chipActiveBg: accentHex, chipActiveText: on,
+        selectedCheckbox: accentHex, focusBorder: accentHex,
+        composeBg: accentHex, composeText: on,
+        accentSoft: `rgba(${r},${g},${b},${isDark ? 0.22 : 0.12})`,
+      };
+    } else {
+      c = { ...c, accentSoft: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17,17,17,0.07)' };
+    }
+    c.accent = accentHex || ink;
+    c.onAccent = accentHex ? onAccentFor(accentHex) : c.onPrimary;
+    c.accentOn = !!accentHex;
+    // ✓✓ lido: destaque quando há cor; Grafite mantém o azul clássico.
+    c.tickRead = accentHex || '#53BDEB';
+    if (_hc) {
+      c = {
+        ...c,
+        textSecondary: isDark ? '#D1D1D6' : '#3A3A3F',
+        textTertiary: isDark ? '#AEAEB2' : '#55555B',
+        chipText: isDark ? '#D1D1D6' : '#3A3A3F',
+        border: isDark ? '#545458' : '#B8B8BE',
+        borderLight: isDark ? '#3A3A3C' : '#D1D1D6',
+        divider: isDark ? '#48484A' : '#C6C6C8',
+        headerBorder: isDark ? '#48484A' : '#C6C6C8',
+        starEmpty: isDark ? '#8E8E93' : '#8E8E93',
+        highContrast: true,
+      };
+    }
+    return c;
+  }, [baseColors, accentHex, isDark, _hc]);
+  _accentSnap = { value: accentValue, hex: accentHex, on: !!accentHex, onAccent: colors.onAccent, isDark: !!isDark };
+  try { globalThis.__chatyy_accent = _accentSnap; } catch {}
+  // compat: consumidores antigos (lista nativa → listAccentHex) esperam #111 p/ "sem cor".
+  const accentColor = accentHex || '#111111';
   const densityConfig = DENSITY_CONFIG[density];
 
   // Memoize context value to prevent re-renders in all consumers when an
@@ -521,7 +704,8 @@ export function ThemeProvider({ children }) {
     colors, isDark, toggle, themeMode, setThemeMode,
     density, setDensity, densityConfig, inboxType, setInboxType,
     accentColor, setAccentColor,
-  }), [colors, isDark, toggle, themeMode, setThemeMode, density, setDensity, densityConfig, inboxType, setInboxType, accentColor, setAccentColor]);
+    accent: accentValue, setAccent, accentOn: !!accentHex, a11y,
+  }), [colors, isDark, toggle, themeMode, setThemeMode, density, setDensity, densityConfig, inboxType, setInboxType, accentColor, setAccentColor, accentValue, setAccent, accentHex, a11y]);
 
   return (
     <ThemeContext.Provider value={contextValue}>

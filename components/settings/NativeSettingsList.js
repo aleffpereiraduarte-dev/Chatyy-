@@ -26,6 +26,7 @@ import { StyleSheet, View, processColor } from 'react-native';
 import { getNativeSettingsListView, settingsListApiVersion } from '../../modules/expo-chat-conversation-list';
 import { createPatcher } from '../chatlist/nativeAdapter';
 import { Spacing } from '../../constants/theme';
+import { useTheme } from '../../context/ThemeContext'; // [2026-10-19 accent-real]
 
 export function isNativeSettingsListAvailable() {
   try { return !!getNativeSettingsListView(); } catch { return false; }
@@ -79,6 +80,8 @@ function Inner(props) {
   // Paleta → números ARGB (o nativo não interpreta 'rgba(...)'). Chave
   // estável: useGroupedColors devolve objeto novo a cada render e cada troca
   // de `colors` faz o nativo re-tematizar a lista inteira.
+  let _accentHex = null;
+  try { const th = useTheme(); _accentHex = th && th.colors && th.colors.accentOn ? th.colors.accent : null; } catch { _accentHex = null; }
   const paletteKey = PALETTE_KEYS.map(k => String(palette?.[k] ?? '')).join('|') + (isDark ? '|d' : '|l');
   const colors = useMemo(() => {
     const out = {};
@@ -90,9 +93,11 @@ function Inner(props) {
     }
     out.press = processColor(isDark ? '#2C2C2E' : '#E5E5EA'); // [2026-10-17 settings-wa] destaque do toque um degrau acima do cartão #1C1C1E
     out.ripple = processColor(isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
+    // [2026-10-19 accent-real] destaque (switches nativos); binário antigo ignora a chave.
+    if (_accentHex) { const a = processColor(_accentHex); if (typeof a === 'number') out.accent = a; }
     return out;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paletteKey]);
+  }, [paletteKey, _accentHex]);
 
   const [headerH, setHeaderH] = useState(0);
   const onHeaderLayout = useMemo(() => (e) => {

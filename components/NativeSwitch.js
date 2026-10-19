@@ -64,14 +64,16 @@ export default function NativeSwitch({
   ios_backgroundColor, // eslint-disable-line no-unused-vars — overridden
   ...props
 }) {
-  const { isDark } = useTheme() || {};
-  const onTrack = isDark ? '#F5F5F7' : '#111111';
+  const { isDark, colors } = useTheme() || {};
+  // [2026-10-19 accent-real] cor de destaque escolhida → trilho ligado no destaque (knob branco).
+  const _acc = colors && colors.accentOn ? colors.accent : null;
+  const onTrack = _acc || (isDark ? '#F5F5F7' : '#111111');
   // [2026-10-14 dark-contrast] escuro: trilho desligado #39393D sobre célula
   // #1C1C1E sumia (≈1.3:1) → #636366 (systemGray do iOS, ≈2.6:1 + knob branco).
   const offTrack = Platform.OS === 'ios'
     ? (isDark ? '#636366' : '#E9E9EA')
     : (isDark ? '#5F6368' : '#C7C9CC');
-  const onThumb = isDark ? '#0b0b0b' : '#ffffff';
+  const onThumb = _acc ? '#ffffff' : (isDark ? '#0b0b0b' : '#ffffff');
   const offThumb = Platform.OS === 'android' ? (isDark ? '#9AA0A6' : '#ffffff') : '#ffffff';
 
   const handleChange = (v) => {
