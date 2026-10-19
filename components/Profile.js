@@ -4372,7 +4372,7 @@ export default function Profile({
   // mídia NATIVO (modules/expo-media-viewer: pager + zoom + vídeo) com as
   // publicações carregadas. Sem módulo / item sem mídia real (vídeo só com
   // pôster) / falhou → visualizador JS de antes (ProfilePostViewer, com
-  // curtidas/comentários). Kill switch: globalThis.__chatyy_profile_native_viewer = false.
+  // curtidas/comentários). Opt-in: globalThis.__chatyy_profile_native_viewer = true (padrão = JS c/ curtidas).
   const _npPostMedia = (p) => {
     if (!p || p.__create) return null;
     const mu = Array.isArray(p.media_urls) ? p.media_urls : [];
@@ -4395,7 +4395,7 @@ export default function Profile({
   const _npOpenPost = (it) => {
     const jsOpen = () => { try { onGridItemPress(it, 'posts'); } catch {} };
     let off = false;
-    try { off = globalThis.__chatyy_profile_native_viewer === false; } catch {}
+    try { off = globalThis.__chatyy_profile_native_viewer !== true; } catch {}
     if (off || !it || !_npPostMedia(it)) { jsOpen(); return; }
     const list = (combinedPostsAll || []).filter((p) => p && !p.__create);
     const idx = list.findIndex((p) => String(p.id) === String(it.id));
