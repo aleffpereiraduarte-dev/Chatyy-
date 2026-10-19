@@ -249,6 +249,7 @@ import { WebView } from 'react-native-webview';
 import ChatMediaViewer from '../components/ChatMediaViewer';
 import ChatMedia from '../components/ChatMedia';
 import AvatarCircle from '../components/AvatarCircle';
+import ConvStatsBody from '../components/chat/ConvStatsBody';
 import AvatarLightbox from '../components/AvatarLightbox';
 import WallpaperPicker, { WallpaperBackground } from '../components/WallpaperPicker';
 // [2026-10-15 native-wallpaper] fundo nativo (gradiente animado/padrão/foto/paralaxe) + bolhas derivadas do tema
@@ -14400,18 +14401,6 @@ function ChatConversationInner() {
   // in services/pushNotifications.js can read it on the next conv push.
   const [showNotifSettingsSheet, setShowNotifSettingsSheet] = _useStateT(false);
   const [showStatsModal, setShowStatsModal] = _useStateT(false);
-  // [2026-10-11 fluidez-2] O conteúdo do modal de estatísticas (varre TODAS as
-  // mensagens: por remetente/tipo/hora) era um IIFE no JSX → rodava em CADA
-  // render da tela, com o modal fechado (~30% do JS do render no perfil de
-  // msg recebida). Agora só calcula com o modal aberto e quando as deps mudam;
-  // fechando, mantém o último conteúdo p/ a animação de saída.
-  const _statsCacheRef = useRef({ deps: null, el: null });
-  const _statsMemo = (fn, deps) => {
-    const c = _statsCacheRef.current;
-    if (!showStatsModal) return c.el;
-    if (!c.deps || c.deps.length !== deps.length || c.deps.some((d, ix) => d !== deps[ix])) { c.deps = deps; c.el = fn(); }
-    return c.el;
-  };
   // Real server-computed stats (chat_conversation_stats). Loaded on open so
   // the modal reflects the FULL conversation history, not the rendered window.
   // Fetch whenever the modal opens.
@@ -44064,156 +44053,8 @@ function ChatConversationInner() {
             </View>
 
         </>);
-        const _stList = (<>
-              {_statsMemo(() => {
-                const msgs = (messages || []).filter(m => !m._pending && m.type !== 'system');
-                const total = msgs.length;
-                const bySender = {};
-                const byType = { text: 0, image: 0, video: 0, audio: 0, sticker: 0, gif: 0, file: 0, location: 0, other: 0 };
-                const byHour = new Array(24).fill(0);
-                let totalChars = 0;
-                let firstTs = Infinity, lastTs = 0;
-                for (const m of msgs) {
-                  const s = m.sender_email || '?';
-                  bySender[s] = (bySender[s] || 0) + 1;
-                  const tp = ['text','image','video','audio','sticker','gif','file','location'].includes(m.type) ? m.type : 'other';
-                  byType[tp]++;
-                  if (typeof m.content === 'string') totalChars += m.content.length;
-                  try {
-                    const ts = new Date(m.created_at).getTime();
-                    if (!isNaN(ts)) {
-                      if (ts < firstTs) firstTs = ts;
-                      if (ts > lastTs) lastTs = ts;
-                      const h = new Date(ts).getHours();
-                      if (h >= 0 && h < 24) byHour[h]++;
-                    }
-                  } catch {}
-                }
-                const sorted = Object.entries(bySender).sort((a, b) => b[1] - a[1]);
-                const topHour = byHour.indexOf(Math.max(...byHour));
-                const avgLen = total > 0 ? Math.round(totalChars / total) : 0;
-                const days = (firstTs !== Infinity && lastTs > 0) ? Math.max(1, Math.ceil((lastTs - firstTs) / (1000 * 60 * 60 * 24))) : 1;
-                const msgsPerDay = Math.round(total / days);
-                const typeLabels = {
-                  text: t('chatConv.statsTypeText') || 'Texto',
-                  image: t('chatConv.statsTypeImage') || 'Fotos',
-                  video: t('chatConv.statsTypeVideo') || 'Vídeos',
-                  audio: t('chatConv.statsTypeAudio') || 'Áudios',
-                  sticker: t('chatConv.statsTypeSticker') || 'Stickers',
-                  gif: 'GIFs',
-                  file: t('chatConv.statsTypeFile') || 'Arquivos',
-                  location: t('chatConv.statsTypeLocation') || 'Local',
-                  other: t('chatConv.statsTypeOther') || 'Outros',
-                };
-                const typeColors = { text: '#3B82F6', image: '#111111', video: '#F59E0B', audio: '#111111', sticker: '#10B981', gif: '#EF4444', file: '#64748B', location: '#06B6D4', other: '#94A3B8' };
-                const typeIcons = {
-                  text: IconMessageSquare, image: IconImage, video: IconFilm, audio: IconMusic,
-                  sticker: IconSparkles, gif: IconFilm, file: IconPaperclip, location: IconMapPin,
-                  other: IconBarChart,
-                };
-
-                // [beauty 2026-10-02] Mono + theme-aware. The per-card color
-                // (green/amber) is intentionally ignored now so the stats read
-                // on-brand, and the number uses colors.text so it stays visible
-                // in dark mode (the old hardcoded hex vanished on dark).
-                const HeroCard = ({ label, value, sub, IconCmp }) => (
-                  <View style={{ flex: 1, padding: 14, borderRadius: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                    <View style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)' }}>
-                      <IconCmp size={18} color={colors.text} />
-                    </View>
-                    <Text style={{ fontSize: 24, fontWeight: '800', color: colors.text, marginTop: 10, letterSpacing: -0.5 }}>{value}</Text>
-                    <Text style={{ fontSize: 11, color: colors.textSecondary, fontWeight: '700', marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</Text>
-                    {sub ? <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>{sub}</Text> : null}
-                  </View>
-                );
-
-                const charsLabel = t('chatConv.statsChars') || 'caracteres';
-                const daySingular = t('chatConv.statsDay') || 'dia';
-                const dayPlural = t('chatConv.statsDays') || 'dias';
-                const msgsLabel = t('chatConv.statsMsgs') || 'msgs';
-
-                return (
-                  <>
-                    {/* Hero cards 2x2 */}
-                    <View style={{ flexDirection: 'row', gap: 10 }}>
-                      <HeroCard label={t('chatConv.statsTotal') || 'Mensagens'} value={total.toLocaleString()} color="#10B981" IconCmp={IconMessageSquare} />
-                      <HeroCard label={t('chatConv.statsAvgLen') || 'Média'} value={`${avgLen}`} sub={charsLabel} color="#111111" IconCmp={IconFileText} />
-                    </View>
-                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                      <HeroCard label={t('chatConv.statsPerDay') || 'Por dia'} value={msgsPerDay.toLocaleString()} sub={`${days} ${days === 1 ? daySingular : dayPlural}`} color="#F59E0B" IconCmp={IconCalendar} />
-                      <HeroCard label={t('chatConv.statsPeakHour') || 'Hora pico'} value={`${topHour}h`} sub={`${byHour[topHour]} ${msgsLabel}`} color="#111111" IconCmp={IconClock} />
-                    </View>
-
-                    {/* 24h activity bar chart */}
-                    {byHour.some(h => h > 0) && (
-                      <View style={{ marginTop: 20, padding: 14, borderRadius: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, marginBottom: 10 }}>{t('chatConv.statsActivity24h') || 'Atividade em 24h'}</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 60, gap: 2 }}>
-                          {byHour.map((h, i) => {
-                            const maxH = Math.max(...byHour, 1);
-                            const pct = (h / maxH) * 100;
-                            return (
-                              <View key={i} style={{ flex: 1, height: `${Math.max(pct, 3)}%`, backgroundColor: i === topHour ? '#111111' : '#111111', borderRadius: 2, opacity: h === 0 ? 0.15 : 1 }} />
-                            );
-                          })}
-                        </View>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
-                          <Text style={{ fontSize: 10, color: colors.textTertiary }}>0h</Text>
-                          <Text style={{ fontSize: 10, color: colors.textTertiary }}>6h</Text>
-                          <Text style={{ fontSize: 10, color: colors.textTertiary }}>12h</Text>
-                          <Text style={{ fontSize: 10, color: colors.textTertiary }}>18h</Text>
-                          <Text style={{ fontSize: 10, color: colors.textTertiary }}>23h</Text>
-                        </View>
-                      </View>
-                    )}
-
-                    {/* Per sender */}
-                    <Text style={{ color: colors.text, fontSize: 14, marginTop: 22, marginBottom: 10, fontWeight: '700' }}>
-                      {t('chatConv.statsBySender') || 'Por participante'}
-                    </Text>
-                    <View style={{ padding: 14, borderRadius: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                      {sorted.slice(0, 8).map(([email, count], i) => {
-                        const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-                        const name = email === currentEmail ? (t('chatConv.statsYou') || 'Você') : (email.split('@')[0] || email);
-                        // [beauty 2026-10-02] Mono bars (was a rainbow palette) + theme-aware.
-                        const barColor = colors.text;
-                        return (
-                          <View key={email} style={{ paddingVertical: 8 }}>
-                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 }}>
-                              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{name}</Text>
-                              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '600' }}>{count} · {pct}%</Text>
-                            </View>
-                            <View style={{ height: 8, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', borderRadius: 4, overflow: 'hidden' }}>
-                              <View style={{ width: `${pct}%`, height: '100%', backgroundColor: barColor, borderRadius: 4 }} />
-                            </View>
-                          </View>
-                        );
-                      })}
-                    </View>
-
-                    {/* Per type chips */}
-                    <Text style={{ color: colors.text, fontSize: 14, marginTop: 22, marginBottom: 10, fontWeight: '700' }}>
-                      {t('chatConv.statsByType') || 'Por tipo'}
-                    </Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                      {Object.entries(byType).filter(([,c]) => c > 0).sort((a, b) => b[1] - a[1]).map(([tp, c]) => {
-                        const IconCmp = typeIcons[tp] || IconBarChart;
-                        // [beauty 2026-10-02] Mono chips (was rainbow per-type) + theme-aware.
-                        const chipBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)';
-                        return (
-                          <View key={tp} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 12, backgroundColor: chipBg, gap: 6 }}>
-                            <IconCmp size={14} color={colors.text} />
-                            <Text style={{ fontSize: 13, color: colors.text, fontWeight: '700' }}>
-                              {typeLabels[tp] || tp} · {c}
-                            </Text>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  </>
-                );
-              }, [messages, colors, isDark, t, currentEmail])}
-        </>);
+        // [2026-10-19 stats-v2] corpo próprio: stats reais do servidor (histórico todo) + reserva local.
+        const _stList = (<ConvStatsBody conversationId={conversationId} messages={messages} myEmail={currentEmail} colors={colors} isDark={isDark} t={t} />);
         if (_convSheetsOn()) {
           return (
             <NativeSheet visible={!!_lmV} onClose={() => setShowStatsModal(false)} detents={[0.6, 1]} backgroundColor={colors.background}>
