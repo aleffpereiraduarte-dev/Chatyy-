@@ -39,7 +39,7 @@ function BiaHomeCard({ isDark, t, router, P, avatarSize = 54, compact = false, n
             <Text maxFontSizeMultiplier={1.1} style={[hc.badgeText, { color: P.sub }]}>{t('chat.aiBadge')}</Text>
           </View>
         </View>
-        <Text maxFontSizeMultiplier={1.3} style={[previewStyle, { color: P.sub, marginTop: compact ? 2 : 3, marginRight: 0 }]} numberOfLines={daily ? 2 : 1}>
+        <Text maxFontSizeMultiplier={1.3} style={[previewStyle, { color: P.sub, marginTop: compact ? 2 : 3, marginRight: 0 }]} numberOfLines={1} ellipsizeMode="tail">
           <Text style={{ color: P.text, fontWeight: '500' }}>{hello}</Text>
           {` · ${tip}`}
         </Text>
