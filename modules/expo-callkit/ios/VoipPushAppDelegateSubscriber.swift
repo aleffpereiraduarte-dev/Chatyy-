@@ -950,6 +950,16 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         // `lk_token`+`lk_url` (server-side fast-path) OR JS may have
         // persisted them ahead of time via `persistPendingLkToken`. Try
         // inline first, then App Group cache, then async token fetch.
+        // [2026-10-19 chamada-queda] grupo → preconnect com as opções de
+        // reconexão antigas (a GroupCallViewController não faz rejoin próprio).
+        do {
+            let g = dict["is_group"]
+            let isGroup = (g as? String).map { $0 == "1" || $0.lowercased() == "true" }
+                ?? (g as? Bool) ?? (g as? NSNumber)?.boolValue ?? false
+            if isGroup || (dict["type"] as? String) == "incoming_group_call" {
+                NativeCallTokenFetcher.markGroupCall(callId)
+            }
+        }
         let lkTokenInline = (dict["lk_token"] as? String) ?? ""
         let lkUrlInline   = (dict["lk_url"]   as? String) ?? ""
         if !lkTokenInline.isEmpty && !lkUrlInline.isEmpty {

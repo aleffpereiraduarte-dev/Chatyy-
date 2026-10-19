@@ -10,8 +10,8 @@
 //
 //   {"enabled":true,            master switch (false = legacy behaviour)
 //    "reconnect_tone":true,     soft beep while "Reconectando…"
-//    "peer_grace_s":30,         wait this long for a peer that left the SFU (legacy 15)
-//    "hold_cap_s":45,           hard cap of continuous "Reconectando…" before ending (0 = off)
+//    "peer_grace_s":40,         wait this long for a peer that left the SFU (legacy 15)
+//    "hold_cap_s":60,           hard cap of continuous "Reconectando…" before ending (0 = off)
 //    "end_notice":true,         "Chamada encerrada — conexão perdida" notice
 //    "video_autopause":true,    pause OUR camera when the uplink is very poor
 //    "vpause_after_s":12,       poor/lost this long → pause
@@ -31,6 +31,24 @@
 //                               local "Chamada perdida de X" notification
 //    "diag_identity":true       voip_diag events carry user email + role
 //
+// [2026-10-19 chamada-queda] More keys (master enabled=false = all OFF):
+//    "app_rejoin":true,         LiveKit gave up its own reconnect on a call whose
+//                               media flowed → keep "Reconectando…" and REJOIN
+//                               the same room with a FRESH token (loop until
+//                               hold_cap_s) instead of ending the call
+//    "lk_fast_reconnect":true,  1:1 ConnectOptions 3 tentativas × 1 s (quick,
+//                               quick, FULL) + transport timeout 7 s, em vez de
+//                               10 × 1,5 s em que o SDK 2.0.18 só tentava o FULL
+//                               na 10ª (resume recusado = "could not restart
+//                               participant" repetido até o usuário desligar)
+//    "stall_watch":true,        áudio do par parado (packetsReceived congelado,
+//    "stall_s":5,               par não mudo) por stall_s → "Reconectando…" +
+//    "stall_full_s":12,         ICE restart; stall_full_s → FULL reconnect. O
+//                               quick reconnect do SDK 2.0.18 NÃO muda o
+//                               connectionState (tela ficava "Conectado" muda)
+//    "path_restart":true        NWPathMonitor: troca de rede (Wi-Fi↔celular,
+//                               volta da rede) → ICE restart/resume na hora
+//
 // Pieces:
 //   CallResilience.flags()      — read (cheap; UserDefaults is cached)
 //   CallReconnectGuard          — polls the screen's "reconnecting" state
@@ -41,6 +59,7 @@
 import Foundation
 import AVFoundation
 import UIKit
+import Network
 
 final class CallResilience {
     static let appGroup = "group.com.onemundo.mail"
@@ -49,8 +68,8 @@ final class CallResilience {
     struct Flags {
         var enabled: Bool = true
         var reconnectTone: Bool = true
-        var peerGraceS: Double = 30
-        var holdCapS: Double = 45
+        var peerGraceS: Double = 40 // [2026-10-19 chamada-queda] 30 → 40 (WhatsApp ~30–45 s)
+        var holdCapS: Double = 60   // [2026-10-19 chamada-queda] 45 → 60: cobre o rejoin com token novo
         var endNotice: Bool = true
         var videoAutoPause: Bool = true
         var videoPauseAfterS: Double = 12
@@ -61,6 +80,13 @@ final class CallResilience {
         var voipStaleS: Double = 45
         var dndMissedNotif: Bool = true
         var diagIdentity: Bool = true
+        // [2026-10-19 chamada-queda]
+        var appRejoin: Bool = true
+        var lkFastReconnect: Bool = true
+        var stallWatch: Bool = true
+        var stallS: Double = 5
+        var stallFullS: Double = 12
+        var pathRestart: Bool = true
     }
 
     private static func num(_ v: Any?) -> Double? {
@@ -98,6 +124,13 @@ final class CallResilience {
         if let v = num(obj["voip_stale_s"]) { f.voipStaleS = (v <= 0) ? 0 : min(180, max(20, v)) }
         if let v = bool(obj["dnd_missed_notif"]) { f.dndMissedNotif = v }
         if let v = bool(obj["diag_identity"]) { f.diagIdentity = v }
+        if let v = bool(obj["app_rejoin"]) { f.appRejoin = v }
+        if let v = bool(obj["lk_fast_reconnect"]) { f.lkFastReconnect = v }
+        if let v = bool(obj["stall_watch"]) { f.stallWatch = v }
+        if let v = num(obj["stall_s"]) { f.stallS = min(20, max(3, v)) }
+        if let v = num(obj["stall_full_s"]) { f.stallFullS = min(60, max(6, v)) }
+        if let v = bool(obj["path_restart"]) { f.pathRestart = v }
+        if f.stallFullS < f.stallS + 3 { f.stallFullS = f.stallS + 3 }
         if !f.enabled {
             // Master OFF = exactly the pre-2026-10-18 behaviour.
             f.reconnectTone = false
@@ -110,6 +143,10 @@ final class CallResilience {
             f.voipStaleS = 0
             f.dndMissedNotif = false
             f.diagIdentity = false
+            f.appRejoin = false
+            f.lkFastReconnect = false
+            f.stallWatch = false
+            f.pathRestart = false
         }
         return f
     }
@@ -541,4 +578,66 @@ final class CallDiagRole {
         if let r = s.range(of: "call_") { return String(s[r.lowerBound...]) }
         return s
     }
+}
+
+// MARK: - [2026-10-19 chamada-queda] Network path watcher
+
+/// NWPathMonitor for one call. `onChange(reason)` fires on the MAIN thread
+/// (debounced 0.6 s) when the network really changed: primary interface type
+/// switched (Wi-Fi ↔ cellular), or the path came back (unsatisfied →
+/// satisfied). Not on the first report. `isSatisfied` = last known status.
+final class CallPathWatcher {
+    private let monitor = NWPathMonitor()
+    private let queue = DispatchQueue(label: "chatyy.call.path")
+    private let onChange: (String) -> Void
+    private var lastKind: String?
+    private var lastSatisfied: Bool?
+    private var pending: DispatchWorkItem?
+    private(set) var isSatisfied: Bool = true
+
+    init(onChange: @escaping (String) -> Void) {
+        self.onChange = onChange
+    }
+
+    private static func kind(_ p: NWPath) -> String {
+        if p.usesInterfaceType(.wifi) { return "wifi" }
+        if p.usesInterfaceType(.cellular) { return "cell" }
+        if p.usesInterfaceType(.wiredEthernet) { return "eth" }
+        if p.status != .satisfied { return "none" }
+        return "other"
+    }
+
+    func start() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            let k = CallPathWatcher.kind(path)
+            let sat = path.status == .satisfied
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isSatisfied = sat
+                defer { self.lastKind = k; self.lastSatisfied = sat }
+                guard let pk = self.lastKind, let ps = self.lastSatisfied else { return } // first report
+                var why: String? = nil
+                if sat && !ps { why = "back_\(k)" }
+                else if sat && pk != k { why = "\(pk)_to_\(k)" }
+                guard let reason = why else { return }
+                self.pending?.cancel()
+                let w = DispatchWorkItem { [weak self] in
+                    guard let self = self, self.isSatisfied else { return }
+                    self.onChange(reason)
+                }
+                self.pending = w
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: w)
+            }
+        }
+        monitor.start(queue: queue)
+    }
+
+    func stop() {
+        pending?.cancel()
+        pending = nil
+        monitor.pathUpdateHandler = nil
+        monitor.cancel()
+    }
+
+    deinit { monitor.cancel() }
 }

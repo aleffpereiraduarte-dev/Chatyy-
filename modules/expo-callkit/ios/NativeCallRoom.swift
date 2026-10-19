@@ -561,7 +561,11 @@ public enum NativeCallRoomEvent {
     /// MAIN THREAD. Returns nil when there is nothing to do (no Room for this
     /// call, or it is not dead); otherwise the shared Task (true = connected).
     @discardableResult
-    public func rejoinIfDead(callId: String, reason: String) -> Task<Bool, Never>? {
+    /// [2026-10-19 chamada-queda] `freshFirst`: 1ª tentativa com token NOVO
+    /// (chat_livekit_token; JWT de 1 h → ligação longa não volta com o
+    /// guardado), 2ª com o guardado se o fetch falhar. Usado pelo rejoin da
+    /// CallViewController depois que o SDK desistiu do resume/full.
+    public func rejoinIfDead(callId: String, reason: String, freshFirst: Bool = false) -> Task<Bool, Never>? {
         guard let r = room, let active = _callId, active == callId else { return nil }
         if let inFlight = rejoinTask { return inFlight }
         let st = r.connectionState
@@ -584,7 +588,21 @@ public enum NativeCallRoomEvent {
             var url = storedUrl
             var token = storedToken
             for attempt in 1...2 {
-                if attempt == 2 || token.isEmpty || url.isEmpty {
+                if freshFirst && attempt == 1 {
+                    do {
+                        let fresh = try await NativeCallTokenFetcher.shared.fetchToken(
+                            roomName: callId, identity: identity, role: "publisher")
+                        url = fresh.url; token = fresh.token
+                    } catch {
+                        nativeCallDiag("room_rejoin_token_failed", callId, "attempt=1 fresh_first=1 err=\(error)")
+                        if storedToken.isEmpty || storedUrl.isEmpty { break }
+                        url = storedUrl; token = storedToken
+                    }
+                } else if freshFirst && attempt == 2 {
+                    // 2ª volta: credencial guardada (a nova falhou no connect).
+                    if storedToken.isEmpty || storedUrl.isEmpty || storedToken == token { break }
+                    url = storedUrl; token = storedToken
+                } else if attempt == 2 || token.isEmpty || url.isEmpty {
                     // 2nd try (or no stored creds): mint a fresh token. The dead
                     // Room already left the SFU, so a new token can't create a
                     // duplicate identity.
@@ -606,7 +624,7 @@ public enum NativeCallRoomEvent {
                 if r.connectionState == .connected { return true }
                 do {
                     try await r.connect(url: url, token: token,
-                                        connectOptions: NativeCallTokenFetcher.connectOptions(forToken: token))
+                                        connectOptions: NativeCallTokenFetcher.connectOptions(forToken: token, oneToOne: freshFirst))
                     let ms = Int(Date().timeIntervalSince(t0) * 1000)
                     nativeCallDiag("room_rejoined", callId, "reason=\(reason) attempt=\(attempt) ms=\(ms)")
                     await MainActor.run {
@@ -1119,10 +1137,42 @@ public class NativeCallTokenFetcher {
         return iceByToken[token] ?? []
     }
 
+    // [2026-10-19 chamada-queda] callIds que o push marcou como GRUPO
+    // (is_group=1 / incoming_group_call): o preconnect do toque pode ser
+    // adotado pela GroupCallViewController, que NÃO faz o rejoin com token
+    // novo → ela mantém as 10 × 1,5 s do SDK.
+    private static var groupCallIds: [String] = []
+    public static func markGroupCall(_ callId: String) {
+        guard !callId.isEmpty else { return }
+        iceLock.lock(); defer { iceLock.unlock() }
+        if !groupCallIds.contains(callId) { groupCallIds.append(callId) }
+        while groupCallIds.count > 16 { groupCallIds.removeFirst() }
+    }
+    public static func isGroupCall(_ callId: String) -> Bool {
+        iceLock.lock(); defer { iceLock.unlock() }
+        return groupCallIds.contains(callId)
+    }
+
     /// ConnectOptions com os iceServers do token, ou nil (→ connect sem options,
     /// idêntico ao comportamento anterior).
-    public static func connectOptions(forToken token: String) -> ConnectOptions? {
+    public static func connectOptions(forToken token: String, oneToOne: Bool = false) -> ConnectOptions? {
         let ice = iceServers(forToken: token)
+        // [2026-10-19 chamada-queda] 1:1 (CallViewController, que agora faz o
+        // REJOIN com token novo quando o SDK desiste): 3 tentativas × 1 s =
+        // quick, quick, FULL. No SDK 2.0.18 o FULL só roda na ÚLTIMA tentativa
+        // (Room+Engine startReconnect) → com 10 × 1,5 s um resume recusado pelo
+        // SFU ("could not restart participant", participante já fechado por
+        // PEER_CONNECTION_DISCONNECTED) se repetia ~9× até o usuário desligar
+        // (call_1792442467735_42a0dhkwd). Flag lk_fast_reconnect (OFF = 10×1,5).
+        if oneToOne, CallResilience.flags().lkFastReconnect {
+            if ice.isEmpty {
+                return ConnectOptions(reconnectAttempts: 3, reconnectAttemptDelay: 1.0,
+                                      primaryTransportConnectTimeout: 7, publisherTransportConnectTimeout: 7)
+            }
+            return ConnectOptions(reconnectAttempts: 3, reconnectAttemptDelay: 1.0,
+                                  primaryTransportConnectTimeout: 7, publisherTransportConnectTimeout: 7,
+                                  iceServers: ice, iceTransportPolicy: .all)
+        }
         // [2026-10-11 ligacao-melhorias] SDK 2.0.18 padrão = 3 tentativas/2s → queda de ~10s já encerrava a ligação; 10×1,5s aguenta ~25–30s.
         if ice.isEmpty { return ConnectOptions(reconnectAttempts: 10, reconnectAttemptDelay: 1.5) }
         return ConnectOptions(reconnectAttempts: 10, reconnectAttemptDelay: 1.5, iceServers: ice, iceTransportPolicy: .all)

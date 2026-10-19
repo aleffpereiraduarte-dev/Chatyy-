@@ -404,6 +404,25 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // camera auto-pause on a very poor uplink (CallResilience.swift).
     private var reconnectGuard: CallReconnectGuard?
     private var videoAutoPause: CallVideoAutoPause?
+    // [2026-10-19 chamada-queda] call_1792442467735_42a0dhkwd: Wi-Fi do caller
+    // caiu ~40 s; o SFU fechou o participante (PEER_CONNECTION_DISCONNECTED) e
+    // o SDK 2.0.18 seguiu tentando RESUME ("could not restart participant")
+    // com a tela em "Conectado" (o quick reconnect não muda connectionState) —
+    // o usuário desligou. Agora: rejoin com token novo quando o SDK desiste,
+    // watchdog de áudio parado e ICE restart na troca de rede.
+    private var appRejoinActive = false
+    private var appRejoinEpisodes = 0
+    private var appRejoinWake = false
+    private var pathWatcher: CallPathWatcher?
+    private var stallTimer: Timer?
+    private var stallLastPackets: UInt64 = 0
+    private var stallLastTrackSid: String = ""
+    private var stallSince: Date?
+    private var stallActive = false
+    private var stallQuickKicked = false
+    private var stallFullKicked = false
+    private var lastPathRestartAt: Date?
+    private var lastStallFullAt: Date?
 
     // [2026-10-12 deinit-guard] Live CallViewController instances (weak). A
     // duplicate VC for the same call (safety-net re-present, redial while the
@@ -525,6 +544,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // WE are the ones offline (our Room is reconnecting): the peer's
             // absence says nothing yet — LiveKit's own reconnect decides
             // (didDisconnectWithError ends the call if it gives up).
+            // [2026-10-19 chamada-queda] …idem durante o nosso rejoin com token
+            // novo (Room .disconnected entre tentativas; o hold cap decide).
+            if self.appRejoinActive, self.peerGoneRearms < 4 {
+                self.peerGoneRearms += 1
+                nativeCallDiag("peer_left_grace_rearm", self.callId, "lk=app_rejoin n=\(self.peerGoneRearms)")
+                self.schedulePeerGoneTimeout()
+                return
+            }
             if let r = self.room, r.connectionState == .reconnecting || r.connectionState == .connecting,
                self.peerGoneRearms < 3 {
                 self.peerGoneRearms += 1
@@ -579,6 +606,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         )
         reconnectGuard = g
         g.start()
+        installConnectionWatch(f) // [2026-10-19 chamada-queda]
         if f.videoAutoPause {
             let vp = CallVideoAutoPause(
                 flags: f,
@@ -615,13 +643,21 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         reconnectGuard?.stop()
         reconnectGuard = nil
         videoAutoPause?.stop()
+        // [2026-10-19 chamada-queda]
+        pathWatcher?.stop()
+        pathWatcher = nil
+        stallTimer?.invalidate()
+        stallTimer = nil
+        appRejoinActive = false
     }
 
     /// "Reconectando…" for `hold_cap_s` straight. A Room that is connected
     /// with the peer present means the flag is stale (no frozen screen): clear
     /// it; otherwise the connection is really gone → end.
     private func reconnectHoldCapReached() {
-        if let r = room, r.connectionState == .connected, !r.remoteParticipants.isEmpty,
+        // [2026-10-19 chamada-queda] Áudio parado (stallActive) com a Room
+        // "connected" = quick reconnect invisível do SDK → NÃO é flag velho.
+        if !stallActive, !appRejoinActive, let r = room, r.connectionState == .connected, !r.remoteParticipants.isEmpty,
            !P2PCallBridge.ownsMedia(callId) {
             nativeCallDiag("call_reconnect_stale", callId, "remotes=\(r.remoteParticipants.count)")
             peerGoneWork?.cancel(); peerGoneWork = nil
@@ -644,9 +680,253 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if f.endNotice { CallEndNotice.show(txt, delay: 0.6) }
     }
 
+    // MARK: - [2026-10-19 chamada-queda] rejoin / stall watch / path restart
+
+    /// Main thread (installCallResilience). Path watcher + 1 Hz stall watch.
+    private func installConnectionWatch(_ f: CallResilience.Flags) {
+        if f.pathRestart, pathWatcher == nil {
+            let w = CallPathWatcher { [weak self] why in
+                self?.networkPathChanged(why: why)
+            }
+            pathWatcher = w
+            w.start()
+        }
+        if f.stallWatch, stallTimer == nil {
+            let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+                self?.stallTick()
+            }
+            RunLoop.main.add(t, forMode: .common)
+            stallTimer = t
+        }
+    }
+
+    /// Rede mudou (Wi-Fi ↔ celular / voltou). Main thread.
+    private func networkPathChanged(why: String) {
+        guard !didHangup else { return }
+        appRejoinWake = true // o loop do rejoin tenta já, sem esperar o intervalo
+        guard callConnectedAt != nil, !P2PCallBridge.ownsMedia(callId), !appRejoinActive,
+              let r = room, r.connectionState == .connected else { return }
+        if let last = lastPathRestartAt, Date().timeIntervalSince(last) < 3 { return }
+        lastPathRestartAt = Date()
+        let cid = callId
+        nativeCallDiag("path_ice_restart", cid, "why=\(why)")
+        // ICE restart + resume do sinal AGORA (o SDK só reagiria quando o ICE
+        // desse "disconnected", ~5–15 s depois). Já reconectando → invalidState
+        // (ignorado): o SDK já está nisso.
+        Task.detached {
+            do { try await r.debug_simulate(scenario: .quickReconnect) }
+            catch { nativeCallDiag("path_ice_restart_skip", cid, "err=\(error)") }
+        }
+    }
+
+    /// 1 Hz. Áudio do par parado com a Room "connected" (o quick reconnect do
+    /// SDK 2.0.18 não muda connectionState): stall_s → "Reconectando…" + ICE
+    /// restart; stall_full_s → FULL reconnect (republica as tracks).
+    /// Sai do estado "áudio parado". `restore` = devolve "Conectado" se a
+    /// Room está de pé, sem grace do par nem rejoin em curso.
+    private func clearStall(why: String) {
+        stallSince = nil
+        stallQuickKicked = false
+        stallFullKicked = false
+        guard stallActive else { return }
+        stallActive = false
+        nativeCallDiag("media_stall_end", callId, "why=\(why)")
+        if !didHangup, !appRejoinActive, session.isReconnecting, peerGoneWork == nil,
+           room?.connectionState == .connected {
+            session.isReconnecting = false
+            session.status = "Conectado"
+        }
+    }
+
+    private func stallTick() {
+        guard !didHangup, !appRejoinActive, callConnectedAt != nil, !P2PCallBridge.ownsMedia(callId),
+              !session.onHold, !peerOnHold, let r = room, r.connectionState == .connected else {
+            clearStall(why: "ineligible")
+            return
+        }
+        // 1:1 apenas (grade = vários pares; cada um com a sua rede).
+        guard r.remoteParticipants.count == 1, let rp = r.remoteParticipants.values.first,
+              let pub = rp.audioTracks.first(where: { $0.source == .microphone }) ?? rp.audioTracks.first,
+              !pub.isMuted, let track = pub.track as? RemoteAudioTrack,
+              let inbound = track.statistics?.inboundRtpStream.first,
+              let pkts = inbound.packetsReceived else {
+            clearStall(why: "no_track")
+            return
+        }
+        let sid = "\(pub.sid)"
+        if sid != stallLastTrackSid || pkts != stallLastPackets {
+            // Pacotes chegando (DTX manda ~2,5/s mesmo em silêncio).
+            stallLastTrackSid = sid
+            stallLastPackets = pkts
+            clearStall(why: "packets")
+            return
+        }
+        let now = Date()
+        guard let since = stallSince else { stallSince = now; return }
+        let f = CallResilience.flags()
+        let stalled = now.timeIntervalSince(since) + 1.0 // +1: o 1º tick congelado já é 1 s
+        if stalled >= f.stallS && !stallActive {
+            stallActive = true
+            nativeCallDiag("media_stall", callId, "s=\(Int(stalled)) peer_q=\(rp.connectionQuality) my_q=\(r.localParticipant.connectionQuality)")
+            session.isReconnecting = true
+            session.status = "Reconectando..."
+        }
+        let cid = callId
+        if stallActive && !stallQuickKicked {
+            stallQuickKicked = true
+            Task.detached {
+                do { try await r.debug_simulate(scenario: .quickReconnect) }
+                catch { nativeCallDiag("media_stall_quick_skip", cid, "err=\(error)") }
+            }
+        }
+        if stalled >= f.stallFullS && !stallFullKicked
+            && (lastStallFullAt.map { now.timeIntervalSince($0) > 45 } ?? true) { // par morto: não refaz o join a cada 12 s
+            stallFullKicked = true
+            lastStallFullAt = now
+            nativeCallDiag("media_stall_full", cid, "s=\(Int(stalled))")
+            // SDK ocioso → FULL reconnect dele (novo join, republica tracks).
+            // Já reconectando (quick em curso) → invalidState: com 3 tentativas
+            // (lk_fast_reconnect) o FULL dele vem em seguida, e se desistir o
+            // didDisconnectWithError entra no rejoin com token novo.
+            Task.detached {
+                do { try await r.debug_simulate(scenario: .fullReconnect) }
+                catch { nativeCallDiag("media_stall_full_skip", cid, "err=\(error)") }
+            }
+        }
+    }
+
+    /// LiveKit desistiu (erro de rede) numa ligação com mídia → em vez de
+    /// encerrar: "Reconectando…" e REJOIN na mesma sala com token NOVO, em
+    /// loop até o hold cap (CallReconnectGuard encerra com "conexão perdida").
+    /// Main thread. false = não aplicável (segue o encerramento antigo).
+    private func startAppRejoin(room r: Room, why: String) -> Bool {
+        if appRejoinActive { return true }
+        let f = CallResilience.flags()
+        guard f.appRejoin, !didHangup, callConnectedAt != nil else { return false }
+        if NativeCallRoom.shared.currentRoom() == nil {
+            NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId, url: lkUrl, token: lkToken)
+        }
+        guard NativeCallRoom.shared.currentRoom() === r else { return false }
+        appRejoinActive = true
+        appRejoinEpisodes += 1
+        stallActive = false
+        stallSince = nil
+        let n = appRejoinEpisodes
+        let t0 = Date()
+        session.isReconnecting = true
+        session.status = "Reconectando..."
+        nativeCallDiag("app_rejoin_start", callId, "why=\(why) n=\(n)")
+        let cid = callId
+        let budget: Double = f.holdCapS > 0 ? f.holdCapS + 5 : 75
+        Task { [weak self] in
+            var attempt = 0
+            while true {
+                attempt += 1
+                let go: Bool = await MainActor.run {
+                    guard let self = self else { return false }
+                    self.appRejoinWake = false
+                    return self.appRejoinActive && !self.didHangup && self.room === r
+                }
+                if !go { return }
+                let a = attempt
+                if Date().timeIntervalSince(t0) > budget {
+                    await MainActor.run {
+                        guard let self = self, self.appRejoinActive else { return }
+                        self.appRejoinActive = false
+                        nativeCallDiag("app_rejoin_giveup", cid, "n=\(n) attempts=\(a - 1)")
+                        self.endForConnectionLoss(reason: "app_rejoin_timeout")
+                    }
+                    return
+                }
+                let task: Task<Bool, Never>? = await MainActor.run {
+                    guard NativeCallRoom.shared.currentRoom() === r else { return nil }
+                    return NativeCallRoom.shared.rejoinIfDead(callId: cid, reason: "app_rejoin_\(a)", freshFirst: true)
+                }
+                var ok = false
+                if let task = task { ok = await task.value }
+                if ok || r.connectionState == .connected {
+                    await MainActor.run { self?.appRejoinSucceeded(room: r, n: n, attempt: a, t0: t0) }
+                    return
+                }
+                // Intervalo curto; troca de rede (appRejoinWake) adianta.
+                for _ in 0..<6 {
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    let wake: Bool = await MainActor.run { self?.appRejoinWake ?? true }
+                    if wake { break }
+                }
+            }
+        }
+        return true
+    }
+
+    /// Main thread. Room de volta → republica mic (respeitando o mudo) e câmera.
+    private func appRejoinSucceeded(room r: Room, n: Int, attempt: Int, t0: Date) {
+        guard appRejoinActive else { return }
+        appRejoinActive = false
+        let ms = Int(Date().timeIntervalSince(t0) * 1000)
+        nativeCallDiag("app_rejoin_ok", callId, "n=\(n) attempt=\(attempt) ms=\(ms)")
+        guard !didHangup else { return }
+        if peerGoneWork == nil || !r.remoteParticipants.isEmpty {
+            session.isReconnecting = false
+            session.status = "Conectado"
+        }
+        // Voltamos e o par não está na sala (saiu enquanto estávamos fora):
+        // nenhum participantDidDisconnect vai chegar → arma o grace do par.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self = self, !self.didHangup, self.room === r,
+                  r.connectionState == .connected, r.remoteParticipants.isEmpty else { return }
+            self.startPeerGoneGrace(identity: "after_rejoin")
+        }
+        let micOn = session.micEnabled
+        let camOn = session.camEnabled
+        let p2p = P2PCallBridge.ownsMedia(callId)
+        Task { [weak self] in
+            guard let self = self else { return }
+            if micOn && !p2p {
+                do {
+                    let pub = try await r.localParticipant.setMicrophone(
+                        enabled: true, captureOptions: Self.defaultAudioCaptureOptions())
+                    if let t = pub?.track as? LocalAudioTrack {
+                        await MainActor.run { self.localAudioTrackRef = t }
+                    }
+                } catch {
+                    nativeCallDiag("app_rejoin_mic_failed", self.callId, "\(error)")
+                }
+            }
+            if camOn {
+                do {
+                    let pos = await MainActor.run { self.currentCameraPosition }
+                    let pub = try await r.localParticipant.setCamera(
+                        enabled: true,
+                        captureOptions: Self.defaultCameraCaptureOptions(position: pos),
+                        publishOptions: Self.defaultVideoPublishOptions())
+                    if let t = pub?.track as? LocalVideoTrack {
+                        await MainActor.run {
+                            self.session.localVideoTrack = t
+                            self.applyLocalVideoTrack(t)
+                        }
+                    }
+                } catch {
+                    nativeCallDiag("app_rejoin_cam_failed", self.callId, "\(error)")
+                }
+            }
+        }
+    }
+
     /// LiveKit `didDisconnectWithError` → localized "connection lost" text when
     /// the error is a network-class failure on a call whose media flowed;
     /// nil for our own leave, kicks, room deleted, duplicate identity.
+    /// [2026-10-19 chamada-queda] Queda de rede/servidor recuperável (não é
+    /// nossa saída, expulsão, sala apagada nem identidade duplicada).
+    private static func isRecoverableDrop(_ e: LiveKitError) -> Bool {
+        switch e.type {
+        case .cancelled, .duplicateIdentity, .participantRemoved, .roomDeleted:
+            return false
+        default:
+            return true
+        }
+    }
+
     private static func connectionLostText(error: LiveKitError?, mediaFlowed: Bool) -> String? {
         guard mediaFlowed, let e = error, CallResilience.flags().endNotice else { return nil }
         switch e.type {
@@ -2167,7 +2447,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     // [CALL-TRACE 2026-05-20 WAVE42] Step 8/12 — viewDidLoad
                     // path connect (non-preconnect — fresh CallVC mount).
                     NSLog("[CallTrace][8/12] LK Room.connect roomName=\(self.callId) serverUrl=\(url) tokenLen=\(token.count) path=viewDidLoad")
-                    try await r.connect(url: url, token: token, connectOptions: NativeCallTokenFetcher.connectOptions(forToken: token))
+                    try await r.connect(url: url, token: token, connectOptions: NativeCallTokenFetcher.connectOptions(
+                        forToken: token, oneToOne: !self.session.isGroup)) // [2026-10-19 chamada-queda]
                     NSLog("[CallTrace][8b/12] LK Room state=\(r.connectionState) after connect (path=viewDidLoad)")
                     // [Wave B audio, 2026-05-18 / restored 2026-05-19] Pin
                     // AudioCaptureOptions on the first publish too — RoomOptions
@@ -5519,7 +5800,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 // LK SFU on the preconnect path. The viewDidLoad async-connect
                 // path (~line 365) has its own [8/12] tracer below if used.
                 NSLog("[CallTrace][8/12] LK Room.connect roomName=\(callId) serverUrl=\(url) tokenLen=\(token.count) path=preconnect")
-                try await r.connect(url: url, token: token, connectOptions: NativeCallTokenFetcher.connectOptions(forToken: token))
+                try await r.connect(url: url, token: token, connectOptions: NativeCallTokenFetcher.connectOptions(
+                    forToken: token, oneToOne: !NativeCallTokenFetcher.isGroupCall(callId))) // [2026-10-19 chamada-queda]
                 NSLog("[CallTrace][8b/12] LK Room state=\(r.connectionState) after connect (path=preconnect)")
                 // [2026-05-22 #1330 fix] PUBLISH DEFERRAL — do NOT call
                 // setMicrophone(enabled: true) here during the ring window.
@@ -7991,6 +8273,12 @@ extension CallViewController: RoomDelegate {
                     self.session.status = (self.callConnectedAt != nil) ? "Conectado" : self.statusDotsBase
                 }
             case .disconnected:
+                // [2026-10-19 chamada-queda] rejoin com token novo em curso.
+                // (didDisconnectWithError chega DEPOIS deste evento: numa
+                // ligação com mídia ele decide rejoin ou encerramento e põe o
+                // texto certo — sem piscar "Desconectado" antes.)
+                if !self.didHangup && (self.appRejoinActive
+                    || (self.callConnectedAt != nil && CallResilience.flags().appRejoin)) { break }
                 self.session.status = "Desconectado"
                 self.session.isReconnecting = false
             default: break
@@ -8021,6 +8309,28 @@ extension CallViewController: RoomDelegate {
             }
             return
         }
+        // [2026-10-19 chamada-queda] O SDK desistiu (resume recusado / rede
+        // fora além das 3 tentativas) numa ligação 1:1 com mídia → rejoin na
+        // mesma sala com token NOVO (não encerra). Nossa saída (error nil),
+        // expulsão, sala apagada e identidade duplicada seguem encerrando.
+        if let e = error, Self.isRecoverableDrop(e), CallResilience.flags().appRejoin,
+           !didHangup, callConnectedAt != nil {
+            let errType = String(describing: e.type)
+            nativeCallDiag("lk_disconnect_app_rejoin", callId, "err=\(errType)")
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                if !self.startAppRejoin(room: room, why: "lk_" + errType) {
+                    self.teardownAfterLkDisconnect(room, error: error)
+                }
+            }
+            return
+        }
+        teardownAfterLkDisconnect(room, error: error)
+    }
+
+    /// Encerramento clássico após o LiveKit desconectar (era o corpo de
+    /// didDisconnectWithError; extraído p/ o rejoin poder cair nele).
+    private func teardownAfterLkDisconnect(_ room: Room, error: LiveKitError?) {
         nativeCallDiag("call_close_lk_disconnect", callId, "err=\(String(describing: error))")
         // [#1207 NativeCallRoom REAL] Fanout to JS BEFORE we tear down the
         // session. JS listeners need the disconnect event so they can swap

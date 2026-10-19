@@ -50,8 +50,8 @@ object CallResilience {
   data class Flags(
     val enabled: Boolean = true,
     val reconnectTone: Boolean = true,
-    val peerGraceMs: Long = 30_000L,
-    val holdCapMs: Long = 45_000L,
+    val peerGraceMs: Long = 40_000L, // [2026-10-19 chamada-queda] 30 → 40 s (WhatsApp ~30–45 s)
+    val holdCapMs: Long = 60_000L,   // [2026-10-19 chamada-queda] 45 → 60 s: cobre o rejoin com token novo
     val endNotice: Boolean = true,
     val videoAutoPause: Boolean = true,
     val videoPauseAfterMs: Long = 12_000L,
@@ -61,6 +61,9 @@ object CallResilience {
     val lkFastConnect: Boolean = true,
     val fcmFirstLaunch: Boolean = true,
     val diagIdentity: Boolean = true,
+    // [2026-10-19 chamada-queda] rejoin do CallActivity: token NOVO a partir
+    // da 2ª tentativa (JWT de 1 h) e até 6 tentativas (antes 3, mesmo token).
+    val rejoinFresh: Boolean = true,
   )
 
   private fun clampS(v: Double, lo: Double, hi: Double): Long {
@@ -84,6 +87,7 @@ object CallResilience {
           enabled = false, reconnectTone = false, peerGraceMs = 15_000L, holdCapMs = 0L,
           endNotice = false, videoAutoPause = false,
           earlyMic = false, lkFastConnect = false, fcmFirstLaunch = false, diagIdentity = false,
+          rejoinFresh = false,
         )
       } else {
         val hold = o.optDouble("hold_cap_s", def.holdCapMs / 1000.0)
@@ -100,6 +104,7 @@ object CallResilience {
           lkFastConnect = o.optBoolean("lk_fast_connect", def.lkFastConnect),
           fcmFirstLaunch = o.optBoolean("fcm_first_launch", def.fcmFirstLaunch),
           diagIdentity = o.optBoolean("diag_identity", def.diagIdentity),
+          rejoinFresh = o.optBoolean("rejoin_fresh", def.rejoinFresh),
         )
       }
     } catch (t: Throwable) {

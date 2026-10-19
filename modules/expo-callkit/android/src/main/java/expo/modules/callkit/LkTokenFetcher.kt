@@ -270,6 +270,21 @@ object LkTokenFetcher {
         }
     }
 
+    /**
+     * [2026-10-19 chamada-queda] Token NOVO (ignora o cache) p/ o rejoin do
+     * CallActivity depois de uma queda: o cache/Intent pode ter um JWT de 1 h
+     * já vencido numa ligação longa. IO dispatcher; null em qualquer erro.
+     */
+    suspend fun fetchFresh(ctx: Context, callId: String, intentExtras: Bundle?): Result? {
+        if (callId.isEmpty()) return null
+        return withContext(Dispatchers.IO) {
+            try { doFetch(ctx, callId, resolveIdentity(ctx), intentExtras) } catch (t: Throwable) {
+                Log.w(TAG, "fetchFresh failed: ${t.message}")
+                null
+            }
+        }
+    }
+
     // ────────────────── cache (warm path) ──────────────────
 
     /**

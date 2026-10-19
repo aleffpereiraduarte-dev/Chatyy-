@@ -2952,10 +2952,17 @@ class CallActivity : ComponentActivity() {
   private var lkRejoinJob: Job? = null
   private var peerGoneJob: Job? = null
 
+  // [2026-10-19 chamada-queda] kill switch: globalThis.__chatyy_call_res = { rejoin_fresh: false }
+  private fun rejoinFreshOn(): Boolean =
+    try { CallResilience.flags(applicationContext).rejoinFresh } catch (_: Throwable) { false }
+
+  /** 6 tentativas com token novo (o hold cap de 60 s encerra antes se não voltar); 3 = legado. */
+  private fun maxLkRejoins(): Int = if (rejoinFreshOn()) 6 else MAX_LK_REJOINS
+
   private fun shouldRejoinAfter(reason: DisconnectReason?): Boolean {
     if (finishing || isFinishing) return false
     if (lkUrl.isNullOrEmpty() || lkToken.isNullOrEmpty()) return false
-    if (lkRejoinAttempts >= MAX_LK_REJOINS) return false
+    if (lkRejoinAttempts >= maxLkRejoins()) return false
     return when (reason) {
       DisconnectReason.CLIENT_INITIATED,
       DisconnectReason.DUPLICATE_IDENTITY,
@@ -3083,8 +3090,20 @@ class CallActivity : ComponentActivity() {
     lkRejoinJob = lifecycleScope.launch {
       delay(400L * attempt)
       if (finishing || isFinishing) return@launch
-      val url = lkUrl
-      val token = lkToken
+      var url = lkUrl
+      var token = lkToken
+      // [2026-10-19 chamada-queda] 2ª tentativa em diante: token NOVO (o mesmo
+      // JWT pode ter vencido — 1 h — ou o SFU recusar o resume do participante
+      // que ele já fechou). Falhou o fetch → segue com o guardado.
+      if (attempt >= 2 && rejoinFreshOn()) {
+        val fresh = try { LkTokenFetcher.fetchFresh(applicationContext, callId, intent?.extras) } catch (_: Throwable) { null }
+        if (finishing || isFinishing) return@launch
+        if (fresh != null) {
+          url = fresh.url; token = fresh.token
+          lkUrl = fresh.url; lkToken = fresh.token
+          CallDiag.log("lk_rejoin_fresh_token", callId, "attempt=$attempt", applicationContext)
+        }
+      }
       if (url.isNullOrEmpty() || token.isNullOrEmpty()) { finishCall("room_disconnect"); return@launch }
       val t0 = System.currentTimeMillis()
       try {
@@ -3094,12 +3113,14 @@ class CallActivity : ComponentActivity() {
         r.connect(url, token, LkTokenFetcher.connectOptionsFor(token))
         publishLocalMediaAfterConnect(r)
         CallDiag.log("lk_rejoin_ok", callId, "attempt=$attempt ms=${System.currentTimeMillis() - t0}", applicationContext)
+        // [2026-10-19 chamada-queda] cada queda tem o seu orçamento (antes 3 no total da ligação).
+        if (rejoinFreshOn()) lkRejoinAttempts = 0
         state.isReconnecting = false
         state.status = steadyStatusLabel()
       } catch (t: Throwable) {
         Log.w(TAG, "LK rejoin attempt=$attempt failed: ${t.message}")
         CallDiag.log("lk_rejoin_fail", callId, "attempt=$attempt err=${t.message?.take(120)}", applicationContext)
-        if (!finishing && attempt < MAX_LK_REJOINS) {
+        if (!finishing && attempt < maxLkRejoins()) {
           lkRejoinJob = null
           scheduleLkRejoin(r, "retry")
         } else {
