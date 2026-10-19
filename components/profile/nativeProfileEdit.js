@@ -349,6 +349,14 @@ export function useNativeProfileEdit(ctx) {
       },
       { header: '', footer: '', rows: [{ id: 'more', title: tr('profileEdit.moreOptions', 'Links extras e tipo de conta'), val: '', nav: true }] },
     ];
+    // [perfil-fotos 2026-10-19] galeria de fotos (Telegram) + publicar no perfil → ctx.onRow.
+    try {
+      const PP = require('../../services/profilePhotos');
+      const ppRows = [];
+      if (PP.isProfileGalleryEnabled()) ppRows.push({ id: 'pp_add', title: PP.ppT(t, 'addPhoto'), val: '', nav: true });
+      if (PP.isProfilePostsCiEnabled()) ppRows.push({ id: 'pp_publish', title: PP.ppT(t, 'publish'), val: '', nav: true });
+      if (ppRows.length) groups.splice(0, 0, { header: PP.ppT(t, 'photos'), footer: PP.ppT(t, 'addPhotoHint'), rows: ppRows });
+    } catch {}
     return {
       on,
       seq,

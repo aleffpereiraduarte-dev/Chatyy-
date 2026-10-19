@@ -38,6 +38,14 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
   private var media: [CIMedia] = []
   private var mediaIndex: [String: Int] = [:]
   private var mediaEndAskedAt = -1
+  // [perfil-fotos 2026-10-19] apiVersion 6: itens da grade separados da faixa (prop gridMedia).
+  private var gridMedia: [CIMedia] = []
+  private var gridMediaIndex: [String: Int] = [:]
+  private var gridMediaSet = false
+  private var gridItems: [CIMedia] { return gridMediaSet ? gridMedia : media }
+  private var gridIndexMap: [String: Int] { return gridMediaSet ? gridMediaIndex : mediaIndex }
+  private var photoSwipes: [UISwipeGestureRecognizer] = []
+  private let photoSwipeDelegate = CIGestureGate()
   // [2026-10-19 profile-grid-native] faixa de destaques (linha k "hl").
   private var highlights: [CIHighlight] = []
   private var members = CIMembers()
@@ -135,8 +143,10 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       cell.onItem = { [weak self] key in self?.onMediaPress(["key": key]) }
     }
     let gridReg = UICollectionView.CellRegistration<CIGridCell, String> { [weak self] cell, _, id in
-      guard let self = self, let i = self.mediaIndex[String(id.dropFirst(2))], i < self.media.count else { return }
-      cell.configure(self.media[i], palette: self.palette, label: self.labels.get("post", "Publicação"))
+      guard let self = self else { return }
+      let items = self.gridItems
+      guard let i = self.gridIndexMap[String(id.dropFirst(2))], i < items.count else { return }
+      cell.configure(items[i], palette: self.palette, label: self.labels.get("post", "Publicação"))
     }
     let hlReg = UICollectionView.CellRegistration<CIHighlightsCell, String> { [weak self] cell, _, _ in
       guard let self = self else { return }
@@ -341,6 +351,42 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     needsApply = true
   }
 
+  /// [perfil-fotos 2026-10-19] apiVersion 6: grade (k "grid") com itens próprios.
+  /// nil = volta a usar `media` (contrato da api 5).
+  func setGridMedia(_ arr: [[String: Any]]?) {
+    guard let arr = arr else {
+      if gridMediaSet {
+        gridMediaSet = false
+        gridMedia = []
+        gridMediaIndex = [:]
+        mediaEndAskedAt = -1
+        needsApply = true
+      }
+      return
+    }
+    var next: [CIMedia] = []
+    var seen = Set<String>()
+    for d in arr {
+      let m = CIMedia(d)
+      if m.key.isEmpty || seen.contains(m.key) { continue }
+      seen.insert(m.key)
+      next.append(m)
+    }
+    if gridMediaSet && next == gridMedia && appliedOnce { return }
+    var oldMap: [String: CIMedia] = [:]
+    for m in gridMedia { oldMap[m.key] = m }
+    var idx: [String: Int] = [:]
+    for (i, m) in next.enumerated() {
+      idx[m.key] = i
+      if oldMap[m.key] != m { dirty.insert("g|" + m.key) }
+    }
+    if !gridMediaSet || next.count != gridMedia.count { mediaEndAskedAt = -1 }
+    gridMediaSet = true
+    gridMedia = next
+    gridMediaIndex = idx
+    needsApply = true
+  }
+
   /// [2026-10-19 profile-grid-native] apiVersion 5: destaques da linha k "hl".
   func setHighlights(_ arr: [[String: Any]]?) {
     var next: [CIHighlight] = []
@@ -456,6 +502,15 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       tap.delegate = photoTapDelegate
       collectionView.addGestureRecognizer(tap)
       photoTap = tap
+      // [perfil-fotos 2026-10-19] api 6: deslizar para os lados troca a foto expandida.
+      photoSwipeDelegate.shouldBegin = { [weak self] g in self?.photoSwipeShouldBegin(g) ?? false }
+      for dir in [UISwipeGestureRecognizer.Direction.left, .right] {
+        let sw = UISwipeGestureRecognizer(target: self, action: #selector(photoSwiped(_:)))
+        sw.direction = dir
+        sw.delegate = photoSwipeDelegate
+        collectionView.addGestureRecognizer(sw)
+        photoSwipes.append(sw)
+      }
     } else {
       stopExpandLink()
       expandTarget = 0
@@ -466,6 +521,8 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       header = nil
       if let tap = photoTap { collectionView.removeGestureRecognizer(tap) }
       photoTap = nil
+      for sw in photoSwipes { collectionView.removeGestureRecognizer(sw) }
+      photoSwipes = []
     }
     headerDirty = true
     needsApply = true
@@ -574,7 +631,7 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
       if r.kind == "grid" {
         // [2026-10-19 profile-grid-native] grade: legenda (hd) + uma célula por publicação.
         flush()
-        let items = media.map { "g|" + $0.key }.filter { seenItems.insert($0).inserted }
+        let items = gridItems.map { "g|" + $0.key }.filter { seenItems.insert($0).inserted }
         if !items.isEmpty {
           let key = "\(n)|grid"
           if !r.header.isEmpty {
@@ -820,6 +877,25 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     fireHeaderHit(h.hit(g.location(in: h)))
   }
 
+  /// [perfil-fotos 2026-10-19] só na foto expandida, com hero.swipe e mais de uma foto.
+  private func photoSwipeShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+    guard let h = header, expandTarget > 0, hero.swipe, !hero.photos.isEmpty else { return false }
+    switch h.hit(g.location(in: h)) {
+    case .avatar, .photo: return true
+    default: return false
+    }
+  }
+
+  @objc private func photoSwiped(_ g: UISwipeGestureRecognizer) {
+    guard g.state == .ended, let h = header else { return }
+    let dir = g.direction == .left ? 1 : -1
+    if h.cycle(dir) {
+      UISelectionFeedbackGenerator().selectionChanged()
+    } else {
+      UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.5)
+    }
+  }
+
   private func photoTapShouldBegin(_ g: UIGestureRecognizer) -> Bool {
     guard let h = header, expandTarget > 0 else { return false }
     let loc = g.location(in: collectionView)
@@ -897,8 +973,8 @@ public final class ChatyyChatInfoView: ExpoView, UICollectionViewDelegate {
     guard let id = dataSource.itemIdentifier(for: indexPath) else { return }
     if id.hasPrefix("g|") {
       // [2026-10-19 profile-grid-native] perto do fim da grade → JS pagina.
-      guard let gi = mediaIndex[String(id.dropFirst(2))] else { return }
-      let mc = media.count
+      guard let gi = gridIndexMap[String(id.dropFirst(2))] else { return }
+      let mc = gridItems.count
       if gi >= mc - 9 && mediaEndAskedAt != mc {
         mediaEndAskedAt = mc
         onMediaEnd(["count": mc])

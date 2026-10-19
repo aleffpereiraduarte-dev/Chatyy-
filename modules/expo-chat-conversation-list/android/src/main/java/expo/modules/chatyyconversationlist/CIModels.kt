@@ -108,7 +108,9 @@ internal data class CIHero(
   val back: Boolean = false,
   // [2026-10-19 profile-cover-hero] apiVersion 5: capa atrás do avatar + anel de status.
   val cover: CIPic = CIPic(),
-  val ring: String = ""
+  val ring: String = "",
+  // [perfil-fotos 2026-10-19] apiVersion 6: deslizar entre as fotos na foto expandida.
+  val swipe: Boolean = false
 ) {
   companion object {
     fun from(m: Map<String, Any?>?): CIHero {
@@ -124,7 +126,7 @@ internal data class CIHero(
       val seen = HashSet<String>()
       if (main.url.isNotEmpty()) seen.add(main.url)
       CLVal.list(m["photos"])?.forEach { x ->
-        if (pics.size >= 9) return@forEach
+        if (pics.size >= 20) return@forEach
         val p = CIPic.from(x)
         if (p.url.isEmpty() || !seen.add(p.url)) return@forEach
         pics.add(p)
@@ -142,7 +144,8 @@ internal data class CIHero(
         navLabel = if (nav != null) CLVal.str(nav["label"]) else "",
         back = CLVal.bool(m["back"]),
         cover = CIPic.from(m["cover"]),
-        ring = CLVal.str(m["ring"])
+        ring = CLVal.str(m["ring"]),
+        swipe = CLVal.bool(m["swipe"])
       )
     }
   }

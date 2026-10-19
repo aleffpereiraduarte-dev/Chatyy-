@@ -19,7 +19,10 @@ class ChatyyChatInfoModule : Module() {
     // [2026-10-19 profile-grid-native] 5 = hero.cover (capa atrás do avatar) +
     // hero.ring (anel de status) + linhas k "grid" (grade 3 colunas, evento
     // onMediaEnd) e k "hl" (prop `highlights`, toque → onMediaPress "hl|<key>").
-    Function("apiVersion") { 5 }
+    // [perfil-fotos 2026-10-19] 6 = hero.swipe (deslizar entre as fotos na foto
+    // expandida), até 20 fotos no carrossel e prop `gridMedia` (itens da grade
+    // separados de `media`, usada em "Dados do contato").
+    Function("apiVersion") { 6 }
 
     View(ChatyyChatInfoView::class) {
       Events(
@@ -43,6 +46,7 @@ class ChatyyChatInfoModule : Module() {
       Prop("media") { view: ChatyyChatInfoView, v: List<Any?>? -> view.setMediaProp(v) }
       Prop("members") { view: ChatyyChatInfoView, v: Map<String, Any?>? -> view.setMembersProp(v) }
       Prop("highlights") { view: ChatyyChatInfoView, v: List<Any?>? -> view.setHighlightsProp(v) }
+      Prop("gridMedia") { view: ChatyyChatInfoView, v: List<Any?>? -> view.setGridMediaProp(v) }
       Prop("colors") { view: ChatyyChatInfoView, v: Map<String, Any?>? -> view.setColors(v) }
       Prop("dark") { view: ChatyyChatInfoView, v: Boolean? -> view.setDark(v ?: false) }
       Prop("labels") { view: ChatyyChatInfoView, v: Map<String, Any?>? -> view.setLabelsProp(v) }

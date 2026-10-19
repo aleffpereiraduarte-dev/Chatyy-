@@ -29,12 +29,16 @@ import UIKit
 //         (grade 3 colunas de `media` + evento onMediaEnd {count}) e k "hl"
 //         (faixa de destaques da prop `highlights` [{key,u,a,title}] →
 //         onMediaPress {key "hl|<key>" / "hl!|<key>" no toque longo}).
+// [perfil-fotos 2026-10-19] apiVersion 6: hero.swipe (deslizar para os lados
+//         troca a foto na foto expandida), até 20 fotos no carrossel e prop
+//         `gridMedia` [{key,u,a,video}] = itens da grade k "grid" separados de
+//         `media` (faixa "Mídia, links e docs" de "Dados do contato").
 public class ChatyyChatInfoModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyChatInfo")
 
     Function("apiVersion") { () -> Int in
-      return 5
+      return 6
     }
 
     View(ChatyyChatInfoView.self) {
@@ -68,6 +72,9 @@ public class ChatyyChatInfoModule: Module {
       }
       Prop("highlights") { (view: ChatyyChatInfoView, value: [[String: Any]]?) in
         view.setHighlights(value)
+      }
+      Prop("gridMedia") { (view: ChatyyChatInfoView, value: [[String: Any]]?) in
+        view.setGridMedia(value)
       }
       Prop("colors") { (view: ChatyyChatInfoView, value: [String: Any]?) in
         view.setColors(value)

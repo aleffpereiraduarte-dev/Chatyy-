@@ -101,6 +101,18 @@ export function isNativeProfileV5Enabled() {
 }
 
 /**
+ * [perfil-fotos 2026-10-19] ChatInfo api ≥ 6: hero.swipe (deslizar para os lados
+ * entre as fotos na foto expandida), até 20 fotos no carrossel e prop
+ * `gridMedia` (grade de publicações SEPARADA da faixa "Mídia, links e docs" —
+ * usada em "Dados do contato"). Kill switch: globalThis.__chatyy_profile_gallery
+ * = false (sem deslizar/galeria) e __chatyy_profile_posts_ci = false (sem grade
+ * no contato).
+ */
+export function chatInfoV6() {
+  try { return chatInfoApiVersion() >= 6; } catch { return false; }
+}
+
+/**
  * [2026-10-18 profile-edit-native] "Editar perfil" NATIVO (Telegram) dentro da
  * mesma view: binário api ≥ 4 + perfil nativo ligado + kill switch OTA
  * globalThis.__chatyy_native_profile_edit = false (volta à folha JS).
@@ -182,6 +194,13 @@ function Inner(props) {
 
   // [2026-10-19 profile-grid-native] api ≥ 5: capa/anel/grade/destaques.
   const v5 = (() => { try { return chatInfoApiVersion() >= 5; } catch { return false; } })();
+  // [perfil-fotos 2026-10-19] api ≥ 6: deslizar entre fotos + grade separada (gridMedia).
+  const v6 = chatInfoV6();
+  let _galOn = true;
+  try { _galOn = globalThis.__chatyy_profile_gallery !== false; } catch {}
+  const gridMediaKey = v6 && Array.isArray(props.gridMedia) ? JSON.stringify(props.gridMedia) : '';
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableGridMedia = useMemo(() => (v6 && Array.isArray(props.gridMedia) ? props.gridMedia : null), [gridMediaKey]);
   const nativeRows = useMemo(() => (Array.isArray(rows) ? rows.filter((r) => r && r.id != null && (v5 || (r.k !== 'grid' && r.k !== 'hl'))).map(_stripRow) : []), [rows, v5]);
   const hlKey = v5 && Array.isArray(props.highlights) ? JSON.stringify(props.highlights) : '';
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -200,7 +219,8 @@ function Inner(props) {
       busy: !!h.busy,
       actions: heroActions.map((a) => ({ key: String(a.key), icon: String(a.icon || ''), label: String(a.label || ''), active: !!a.active })),
       // [2026-10-18 profile-native] api ≥ 3 (binários velhos ignoram).
-      photos: Array.isArray(h.photos) ? h.photos.filter((p) => p && p.u).slice(0, 9).map((p) => ({ u: String(p.u), a: p.a ? 1 : 0 })) : [],
+      photos: Array.isArray(h.photos) ? h.photos.filter((p) => p && p.u).slice(0, v6 ? 20 : 9).map((p) => ({ u: String(p.u), a: p.a ? 1 : 0 })) : [],
+      ...(v6 && _galOn && h.swipe ? { swipe: 1 } : null),
       nav: h.nav && h.nav.key && h.nav.label ? { key: String(h.nav.key), label: String(h.nav.label) } : null,
       back: !!h.back,
       // [2026-10-19 profile-cover-hero] api ≥ 5 (binários velhos ignoram).
@@ -208,7 +228,7 @@ function Inner(props) {
       ...(v5 && h.ring ? { ring: String(h.ring) } : null),
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hero, rows, v5]);
+  }, [hero, rows, v5, v6, _galOn]);
   const heroKey = JSON.stringify(nativeHero);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const stableHero = useMemo(() => nativeHero, [heroKey]);
@@ -316,6 +336,7 @@ function Inner(props) {
       authToken={authToken}
       {...(stableEdit ? { edit: stableEdit } : null)}
       {...(stableHighlights ? { highlights: stableHighlights } : null)}
+      {...(stableGridMedia ? { gridMedia: stableGridMedia } : null)}
       {...handlers}
     />
   );

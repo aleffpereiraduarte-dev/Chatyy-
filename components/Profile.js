@@ -65,8 +65,10 @@ import { humanizeCount as _humanizeDiamonds } from './gifts/giftCatalog';
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import HighlightEditSheet from './HighlightEditSheet';
 import ReportSheet from './ReportSheet'; // [central-moderacao 2026-10-14] motivos padronizados
-import NativeChatInfo, { isNativeProfileEnabled, isNativeProfileV5Enabled } from './chat/NativeChatInfo'; // [2026-10-18 profile-native] + [2026-10-19 profile-grid-native] api 5
+import NativeChatInfo, { isNativeProfileEnabled, isNativeProfileV5Enabled, chatInfoV6 } from './chat/NativeChatInfo'; // [2026-10-18 profile-native] + [2026-10-19 profile-grid-native] api 5
 import { buildNativeProfileInfo } from './profile/nativeProfileInfo'; // [2026-10-18 profile-native]
+import { ProfilePhotoGalleryHost } from './profile/ProfilePhotoGallery'; // [perfil-fotos 2026-10-19]
+import * as ProfilePhotos from '../services/profilePhotos'; // [perfil-fotos 2026-10-19] galeria + publicar no perfil
 import { useNativeProfileEdit, isNativeProfileEditEnabled } from './profile/nativeProfileEdit'; // [2026-10-18 profile-edit-native]
 import { PLAN_NAME } from '../services/brandPlan'; // [2026-10-18 profile-native]
 import HighlightShareSheet from './HighlightShareSheet';
@@ -1999,6 +2001,20 @@ export default function Profile({
   const _npIdentity = identity || _npSeed;
   const _npActive = _npOn && !err && (_npFirst ? !!_npIdentity : (!loading && !!identity));
   const _npV5 = _npActive && isNativeProfileV5Enabled();
+  // [perfil-fotos 2026-10-19] Galeria de fotos do perfil (Telegram): várias fotos,
+  // privacidade aplicada no servidor (profile_photos). Kill: __chatyy_profile_gallery = false.
+  const _ppEmail = String(identity?.email || '').toLowerCase();
+  const _ppOn = ProfilePhotos.isProfileGalleryEnabled();
+  const [_ppPhotos, _setPpPhotos] = useState(() => (_ppEmail ? (ProfilePhotos.getCachedProfilePhotos(_ppEmail)?.photos || null) : null));
+  useEffect(() => {
+    if (!_ppEmail || !_ppOn) return undefined;
+    let alive = true;
+    const c = ProfilePhotos.getCachedProfilePhotos(_ppEmail);
+    if (c) _setPpPhotos(c.photos);
+    ProfilePhotos.fetchProfilePhotos(_ppEmail).then((r) => { if (alive && r) _setPpPhotos(r.photos); }).catch(() => {});
+    const off = ProfilePhotos.subscribeProfilePhotos((ev) => { if (alive && ev && ev.email === _ppEmail) _setPpPhotos(ev.value?.photos || []); });
+    return () => { alive = false; off(); };
+  }, [_ppEmail, _ppOn]);
   const [_npOverlaysReady, setNpOverlaysReady] = useState(false);
   useEffect(() => {
     if (!_npActive || _npOverlaysReady) return undefined;
@@ -4062,6 +4078,7 @@ export default function Profile({
     // Bug 7174: AvatarLightbox (foto em tela cheia c/ pinça e arrastar p/ fechar),
     // não StoryViewer/HighlightViewer (cromado de story).
     const url = identity?.avatar_url || (identity?.email ? api.getAvatarUrlForEmail?.(identity.email) : '');
+    if (_ppHasGallery()) { _ppOpenGallery(0, () => { if (url) setAvatarLightboxOpen(true); }); return; } // [perfil-fotos 2026-10-19]
     if (url) setAvatarLightboxOpen(true);
   };
   const avatarActionNode = actions?.is_self ? (
@@ -4074,6 +4091,8 @@ export default function Profile({
       onAddStatus={_onAvatarAddStatus}
       onEditPhoto={_onAvatarEditPhoto}
       onViewPhoto={_onAvatarViewPhoto}
+      onAddPhoto={_ppOn ? () => { _ppAddPhoto(); } : undefined}
+      onPublishPost={ProfilePhotos.isProfilePostsCiEnabled() ? () => { _ppPublish(); } : undefined}
     />
   ) : null;
 
@@ -4340,6 +4359,9 @@ export default function Profile({
       if (rid === 'privacy') { _npGo('/settings-section?section=privacy'); return; }
       if (rid === 'more') { _npEdit.close(true); _npGo('/edit-profile?legacy=1'); return; }
       if (rid === 'email' && identity?.email) _npCopy(identity.email);
+      // [perfil-fotos 2026-10-19] atalhos do editor nativo.
+      if (rid === 'pp_add') { _ppAddPhoto(); return; }
+      if (rid === 'pp_publish') { _npEdit.close(true); _ppPublish(); }
     },
   });
   const _autoEditFiredRef = useRef(false);
@@ -4412,7 +4434,33 @@ export default function Profile({
       allowSave: true,
     })).then((sid) => { if (!sid) jsOpen(); }, jsOpen);
   };
+  // [perfil-fotos 2026-10-19] galeria em tela cheia (viewer nativo ou JS) a partir da foto `index`.
+  const _ppHasGallery = () => _ppOn && Array.isArray(_ppPhotos) && _ppPhotos.length > 0;
+  const _ppOpenGallery = (index, onFail) => {
+    const avatarUrl = identity?.avatar_url ? resolveMedia(String(identity.avatar_url)) : (identity?.email ? api.getAvatarUrlForEmail?.(identity.email) : '');
+    Promise.resolve(ProfilePhotos.openProfilePhotoGallery({
+      email: identity?.email || '', name: identity?.name || '', photos: _ppPhotos, avatarUrl, index, t, isSelf: !!actions?.is_self,
+    })).then((ok) => { if (!ok && onFail) onFail(); }, () => { if (onFail) onFail(); });
+  };
+  const _ppAfterAvatarChange = (r) => {
+    const d = r && r.success ? (r.data || {}) : null;
+    if (!d) return;
+    invalidateProfileCache(fetchKey);
+    if (d.avatar_version) {
+      setData(prev => prev ? { ...prev, identity: { ...prev.identity, avatar_version: d.avatar_version, ...(d.avatar_url ? { avatar_url: d.avatar_url } : null) } } : prev);
+    }
+  };
+  const _ppAddPhoto = async () => {
+    const r = await ProfilePhotos.pickAndAddProfilePhoto({ t, email: identity?.email || '' });
+    _ppAfterAvatarChange(r);
+  };
+  const _ppPublish = () => { ProfilePhotos.startProfilePost(router, t); };
+  const _ppPostsOn = ProfilePhotos.isProfilePostsCiEnabled();
   const _npAvatar = (index, uri) => {
+    if (_ppHasGallery() && (index > 0 || (stories.length === 0 && !actions?.is_self))) {
+      _ppOpenGallery(index, () => { if (index > 0 && uri) { setLightboxUri(uri); setAvatarLightboxOpen(true); } else { setLightboxUri(null); setAvatarLightboxOpen(true); } });
+      return;
+    }
     if (index > 0 && uri) { setLightboxUri(uri); setAvatarLightboxOpen(true); return; }
     if (stories.length > 0) { openStoriesAt(0); return; }
     if (actions?.is_self) { setAvatarActionOpen(true); return; }
@@ -4455,6 +4503,10 @@ export default function Profile({
     // [2026-10-19 profile-grid-native] api ≥ 5: capa no cabeçalho, anel de
     // status no avatar, grade 3 colunas de publicações e faixa de destaques nativas.
     v5: _npV5,
+    // [perfil-fotos 2026-10-19] galeria no carrossel + deslizar (api 6) + atalhos do dono.
+    gallery: _ppOn ? _ppPhotos : null,
+    v6: _npV5 && chatInfoV6(),
+    ownerCta: actions?.is_self ? { photo: _ppOn, post: _ppPostsOn } : null,
     storyRing: stories.length > 0 ? ((!actions?.is_self && _profileStatusRing?.allViewed) ? 'seen' : 'unseen') : '',
     postsHasMore: _canPageMore,
     presenceText,
@@ -4492,6 +4544,8 @@ export default function Profile({
         setHighlightSheet({ open: true, highlight: { id: h.id, title: h.title, cover_url: h.cover_url, isSelf: !!actions?.is_self } });
       },
       morePosts: () => { try { loadMorePosts(); } catch {} },
+      addPhoto: _ppAddPhoto,
+      publish: _ppPublish,
       group: (c) => { try { require('../services/openConversation').openConversation(`/chat-conversation?id=${c.id}`); } catch {} },
       menu: () => setMenuOpen(true),
       block: handleBlock,
@@ -4577,6 +4631,7 @@ export default function Profile({
         {selfStatusHostNode}
         {highlightActionSheetNode}
         {avatarActionNode}
+        {_ppOn ? <ProfilePhotoGalleryHost t={t} onChanged={(d) => _ppAfterAvatarChange({ success: true, data: d || {} })} /> : null}
         {menuNode}
         {nicknameModalNode}
         {_npOverlaysOn ? (

@@ -62,8 +62,9 @@ import { FontSize, Spacing, BorderRadius, LetterSpacing } from '../constants/the
 import {
   IconArrowLeft, IconSparkles, IconPlusCircle, IconMessageSquare, IconGlobe, IconBell, IconShield, IconUser,
   IconMail, IconDatabase, IconX, IconHelpCircle, IconSearch, IconUserPlus, IconType,
-  IconMonitor, IconStar, IconCreditCard, IconPalette, IconFolder, IconBroadcast, IconUsers,
+  IconMonitor, IconStar, IconCreditCard, IconPalette, IconFolder, IconBroadcast, IconUsers, IconCamera, IconImage,
 } from '../components/Icons';
+import * as ProfilePhotos from '../services/profilePhotos'; // [perfil-fotos 2026-10-19]
 import * as settingsCache from '../services/settingsCache';
 import { useWallet, refreshWallet } from '../services/diamonds';
 import { WALLET_ENABLED } from '../constants/featureFlags';
@@ -481,11 +482,14 @@ function SettingsScreenInner() {
     [
       { key: 'plus', type: 'r', icon: PLUS_NATIVE_ICON(), Icon: IconPlusCircle, title: PLAN_NAME, sub: plusValue ? '' : tr('me.plusSub', 'Assinaturas e armazenamento'), value: plusValue, route: '/settings-one' },
       { key: 'public', type: 'r', icon: 'followers', Icon: IconUsers, title: tr('me.publicProfile', 'Perfil público'), sub: tr('me.publicProfileSub', 'Posts, seguidores e destaques'), go: openPublicProfile },
+      // [perfil-fotos 2026-10-19] galeria de fotos do perfil (Telegram) + publicar no perfil.
+      ProfilePhotos.isProfileGalleryEnabled() ? { key: 'ppAdd', type: 'r', icon: 'camera', Icon: IconCamera, title: ProfilePhotos.ppT(t, 'addPhoto'), sub: ProfilePhotos.ppT(t, 'addPhotoHint'), go: () => { ProfilePhotos.pickAndAddProfilePhoto({ t, email: user?.email || '' }); } } : null,
+      ProfilePhotos.isProfilePostsCiEnabled() ? { key: 'ppPublish', type: 'r', icon: 'image', Icon: IconImage, title: ProfilePhotos.ppT(t, 'publish'), sub: ProfilePhotos.ppT(t, 'publishHint'), go: () => { ProfilePhotos.startProfilePost(router, t); } } : null,
       { key: 'lists', type: 'r', icon: 'archive', Icon: IconFolder, title: tr('me.lists', 'Listas'), route: '/chat-folders' },
       { key: 'broadcast', type: 'r', icon: 'forward', Icon: IconBroadcast, title: tr('me.broadcast', 'Mensagens de transmissão'), route: '/chat-new' },
       { key: 'starred', type: 'r', icon: 'star', Icon: IconStar, title: t('chat.starredMessages') || 'Mensagens favoritas', route: '/starred-messages' },
       { key: 'devices', type: 'r', icon: 'device', Icon: IconMonitor, title: t('settings.linkedDevices') || 'Aparelhos conectados', route: '/linked-devices' },
-    ],
+    ].filter(Boolean),
     CATEGORY_GROUPS[0].map(catRow),
     [
       (walletDiamonds !== null && walletDiamonds !== undefined) ? {

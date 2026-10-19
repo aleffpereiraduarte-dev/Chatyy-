@@ -9,6 +9,7 @@ import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { StackActions, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NativeChatInfo from '../../components/chat/NativeChatInfo';
+import { ProfilePhotoGalleryHost } from '../../components/profile/ProfilePhotoGallery'; // [perfil-fotos 2026-10-19] galeria JS de reserva
 import { useGroupedColors } from '../../components/settings/SettingsKit';
 import { useLanguage } from '../../context/LanguageContext';
 import { getInfo, subscribeInfo, screenMounted, screenGone } from '../../services/chatInfoRoute';
@@ -104,6 +105,7 @@ export default function ChatInfoRouteScreen() {
         closeLabel={(t && t('common.back')) || 'Voltar'}
       />
       {props.overlay || null}
+      <ProfilePhotoGalleryHost t={t} />
     </View>
     </ChatyySecureView>
   );

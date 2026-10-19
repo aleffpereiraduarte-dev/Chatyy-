@@ -28,9 +28,16 @@
 // (faixa nativa de destaques — descritores em `highlights`) e k:'grid'
 // (publicações em grade 3 colunas no fim; onMediaEnd → on.morePosts).
 // Novos handlers: on.highlight(h), on.highlightMenu(h), on.morePosts().
+// [perfil-fotos 2026-10-19] ctx.gallery = fotos da galeria (services/profilePhotos,
+// já filtradas pela privacidade no servidor) → carrossel do cabeçalho (avatar +
+// demais fotos; a capa sai do carrossel). ctx.v6 (ChatInfo api ≥ 6) → hero.swipe
+// (deslizar entre as fotos na foto expandida). Dono: ctx.ownerCta → linhas
+// "Adicionar foto de perfil" / "Publicar no perfil" (on.addPhoto / on.publish)
+// e, sem publicações, "Adicionar publicação" no lugar da grade.
 import { initialsOf, gradientIndex } from '../chatlist/nativeAdapter';
 import { avatarRefForEmail, avatarRefForUrl } from '../chat/NativeProfileBridge';
 import { normalizeCoverUrl } from '../../services/profileCover';
+import { heroExtraPhotos, ppT } from '../../services/profilePhotos';
 
 function _pic(ref, name, email) {
   const pic = { i: initialsOf(name, email), g: gradientIndex(name || email || '') };
@@ -90,14 +97,22 @@ export function buildNativeProfileInfo(ctx) {
   const photoUris = [avatarRef && avatarRef.uri ? avatarRef.uri : ''];
   const cover = normalizeCoverUrl(String(id.cover_url || '').trim()); // [capa-2026-10-19] host antigo → media
   const coverAbs = cover ? abs(cover) : '';
-  if (cover && avatarRef && avatarRef.uri) {
+  // [perfil-fotos 2026-10-19] galeria de fotos do perfil substitui capa/fotos soltas no carrossel.
+  const gallery = Array.isArray(ctx.gallery) ? ctx.gallery : null;
+  const galleryExtras = gallery && avatarRef && avatarRef.uri ? heroExtraPhotos(gallery, ctx.v6 ? 20 : 8) : [];
+  for (const g of galleryExtras) {
+    if (photoUris.includes(g.u)) continue;
+    photos.push(g);
+    photoUris.push(g.u);
+  }
+  if (galleryExtras.length === 0 && cover && avatarRef && avatarRef.uri) {
     const u = abs(cover);
     if (u) {
       photos.push({ u, a: /\/api\//.test(u) ? 1 : 0 });
       photoUris.push(u);
     }
   }
-  if (Array.isArray(id.photos)) {
+  if (galleryExtras.length === 0 && Array.isArray(id.photos)) {
     for (const p of id.photos) {
       const raw = typeof p === 'string' ? p : (p && (p.url || p.u));
       const u = raw ? abs(String(raw)) : '';
@@ -128,6 +143,7 @@ export function buildNativeProfileInfo(ctx) {
     if (coverAbs) hero.cover = { u: coverAbs, a: /\/api\//.test(coverAbs) ? 1 : 0 };
     if (ctx.storyRing) hero.ring = String(ctx.storyRing);
   }
+  if (ctx.v6 && photos.length > 0) hero.swipe = 1;
   if (!self) {
     if (actions.can_message) hero.actions.push({ key: 'msg', icon: 'message', label: tr('profile.message', 'Mensagem'), onPress: () => on.chat?.() });
     if (actions.can_call) {
@@ -161,6 +177,12 @@ export function buildNativeProfileInfo(ctx) {
     });
   }
   if (website) rows.push({ id: 'site', k: 'about', sid: 'info', title: website, sub: tr('nativeProfile.website', 'Site'), onPress: () => on.link?.(website) });
+
+  // [perfil-fotos 2026-10-19] Dono: atalhos de galeria e publicação.
+  const ownerCta = self && !loading && !!ctx.ownerCta;
+  const hasPosts = Array.isArray(ctx.posts) && ctx.posts.some((p) => p && !p.__create);
+  if (ownerCta && ctx.ownerCta.photo) rows.push({ id: 'pp_add', sid: 'owner', icon: 'camera', title: ppT(t, 'addPhoto'), onPress: () => on.addPhoto?.() });
+  if (ownerCta && ctx.ownerCta.post && hasPosts) rows.push({ id: 'pp_publish', sid: 'owner', icon: 'image', title: ppT(t, 'publish'), onPress: () => on.publish?.() });
 
   // [2026-10-18 profile-edit-native] Perfil próprio = SÓ conteúdo público
   // (informações, status, destaques, seguidores, publicações). Nada de lista
@@ -252,6 +274,11 @@ export function buildNativeProfileInfo(ctx) {
       rows.push({ id: 'block', k: 'a', sid: 'danger', dest: true, icon: 'block', title: tr('chat.blockUser', 'Bloquear usuário'), onPress: () => on.block?.() });
       rows.push({ id: 'report', k: 'a', sid: 'danger', dest: true, icon: 'flag', title: tr('chat.reportUser', 'Denunciar usuário'), onPress: () => on.report?.() });
     }
+  }
+
+  // [perfil-fotos 2026-10-19] sem publicações: visitante não vê nada; dono vê o convite.
+  if (ownerCta && ctx.ownerCta.post && media.length === 0) {
+    rows.push({ id: 'pp_first_post', sid: 'posts', hd: postsLabel, icon: 'image', title: ppT(t, 'addPost'), onPress: () => on.publish?.() });
   }
 
   // [2026-10-19 profile-grid-native] api ≥ 5: publicações no FIM da lista como

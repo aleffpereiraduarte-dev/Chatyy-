@@ -65,6 +65,11 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
   private var rowOrder: List<String> = emptyList()
   private var media: List<CIMedia> = emptyList()
   private var mediaEndAskedAt = -1
+  // [perfil-fotos 2026-10-19] apiVersion 6: grade com itens próprios (prop gridMedia; null = `media`).
+  private var gridMedia: List<CIMedia>? = null
+  private val gridItems: List<CIMedia> get() = gridMedia ?: media
+  private var swiping = false
+  private var swipeArmed = false
   // [2026-10-19 profile-grid-native] faixa de destaques (linha k "hl").
   private var highlights: List<CIHighlight> = emptyList()
   private var members = CIMembers()
@@ -153,6 +158,29 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
       needsApply = true
     } catch (e: Throwable) {
       onNativeError(mapOf("message" to ("media: " + (e.message ?: e.javaClass.simpleName))))
+    }
+  }
+
+  /** [perfil-fotos 2026-10-19] apiVersion 6: itens da grade (k "grid") separados da faixa. */
+  fun setGridMediaProp(list: List<Any?>?) {
+    try {
+      if (list == null) {
+        if (gridMedia != null) { gridMedia = null; mediaEndAskedAt = -1; needsApply = true }
+        return
+      }
+      val seen = HashSet<String>()
+      val next = ArrayList<CIMedia>()
+      list.forEach { x ->
+        val m = CLVal.map(x) ?: return@forEach
+        val it2 = CIMedia.from(m)
+        if (it2.key.isEmpty() || !seen.add(it2.key)) return@forEach
+        next.add(it2)
+      }
+      if (gridMedia == null || next.size != gridMedia?.size) mediaEndAskedAt = -1
+      gridMedia = next
+      needsApply = true
+    } catch (e: Throwable) {
+      onNativeError(mapOf("message" to ("gridMedia: " + (e.message ?: e.javaClass.simpleName))))
     }
   }
 
@@ -406,6 +434,11 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
         downX = ev.x
         downY = ev.y
         pulling = false
+        // [perfil-fotos 2026-10-19] api 6: deslizar para os lados na foto expandida troca a foto.
+        swiping = false
+        val hh = header
+        swipeArmed = hero.swipe && hero.photos.isNotEmpty() && expandTarget > 0f && hh != null &&
+          (hh.hit(ev.x, ev.y)?.let { it == "avatar" || it.startsWith("p:") } ?: false)
         if (stretchAnim?.isRunning == true) stretchAnim?.cancel()
         if (stretch > 0f) {
           // Pegou o elástico no meio da volta: continua o puxão de onde está.
@@ -415,9 +448,14 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
         }
       }
       MotionEvent.ACTION_MOVE -> {
-        if (pulling) return true
+        if (pulling || swiping) return true
         val dy = ev.y - downY
         val dx = ev.x - downX
+        if (swipeArmed && abs(dx) > touchSlop * 2 && abs(dx) > abs(dy) * 1.5f) {
+          swiping = true
+          parent?.requestDisallowInterceptTouchEvent(true)
+          return true
+        }
         if (dy > touchSlop && dy > abs(dx) * 1.2f && !recycler.canScrollVertically(-1)) {
           pulling = true
           downY = ev.y
@@ -442,6 +480,18 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
 
   @SuppressLint("ClickableViewAccessibility")
   override fun onTouchEvent(ev: MotionEvent): Boolean {
+    if (swiping) {
+      if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) {
+        val dx = ev.x - downX
+        swiping = false
+        swipeArmed = false
+        if (ev.actionMasked == MotionEvent.ACTION_UP && abs(dx) > touchSlop * 2) {
+          val h = header
+          if (h != null && h.cycle(if (dx < 0) 1 else -1)) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        }
+      }
+      return true
+    }
     if (!pulling) return super.onTouchEvent(ev)
     when (ev.actionMasked) {
       MotionEvent.ACTION_MOVE -> {
@@ -559,7 +609,7 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
         if (r.kind == "grid") {
           // [2026-10-19 profile-grid-native] grade: legenda + linhas de 3 (borda a borda).
           flush()
-          val list = media
+          val list = gridItems
           if (list.isNotEmpty() && seen.add("grid|" + id)) {
             if (r.header.isNotEmpty()) next.add(Item.Caption("h|$n|grid", r.header, false, ins, 0))
             val gIns = gridInset()
@@ -678,7 +728,7 @@ class ChatyyChatInfoView(context: Context, appContext: AppContext) : ExpoView(co
   }
 
   private fun maybeAskMoreMedia(rowIndex: Int, totalRows: Int) {
-    val count = media.size
+    val count = gridItems.size
     if (rowIndex >= totalRows - 3 && mediaEndAskedAt != count) {
       mediaEndAskedAt = count
       recycler.post { onMediaEnd(mapOf("count" to count)) }

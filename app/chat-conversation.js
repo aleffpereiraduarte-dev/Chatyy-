@@ -280,7 +280,7 @@ import { detectReminder as detectChatReminder, createReminder as createChatRemin
 import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
 import NativeEmojiPanel, { shouldUseNativeEmojiPanel, shouldUseNativeStickerPanel, insertAtSelection as _npInsert, deleteBackward as _npDelete } from '../components/chat/NativeEmojiPanelBridge'; // [2026-10-15 native-emoji]
-import NativeChatInfo, { isNativeChatInfoEnabled, nativeChatInfoOwnsHeader, isNativeProfileEnabled, useGroupMembersPager } from '../components/chat/NativeChatInfo'; // [2026-10-18 chat-info-native] [2026-10-18 elegance] cabeçalho que encolhe
+import NativeChatInfo, { isNativeChatInfoEnabled, nativeChatInfoOwnsHeader, isNativeProfileEnabled, useGroupMembersPager, chatInfoV6 } from '../components/chat/NativeChatInfo'; // [2026-10-18 chat-info-native] [2026-10-18 elegance] cabeçalho que encolhe
 import GroupInfoEditor from '../components/chat/GroupInfoEditor'; // [2026-10-18 chat-info-native]
 import { contactTile } from '../components/contacts/contactListAdapter'; // [2026-10-18 chat-info-native]
 import ForwardNativeList, { nativeForwardEnabled, markNativeForwardFailed } from '../components/chat/ForwardNativeList'; // [2026-10-18 fwd-native]
@@ -25983,6 +25983,9 @@ function ChatConversationInnerBody() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberSearchQuery, _ciOn, showGroupInfo, conversationType]);
   const _ciTr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+  // [perfil-fotos 2026-10-19] galeria de fotos + publicações do contato (Telegram) em "Dados do contato".
+  const _ppPeer = conversationType === 'direct' && showContactInfo ? String(getContactPeerEmail() || '').toLowerCase() : '';
+  const _ppContact = require('../components/profile/contactProfileExtras').useContactProfileExtras(_ppPeer, !!_ppPeer && _ppPeer !== String(currentEmail || '').toLowerCase());
   // ── [2026-10-18 chat-info-push] Dados do contato/grupo como ROTA EMPURRADA
   // (app/chat-info/[id].js): swipe-back nativo, pilha de verdade. Esta tela
   // segue dona dos descritores/handlers e publica a cada render enquanto aberta
@@ -26152,11 +26155,11 @@ function ChatConversationInnerBody() {
     else rows.push({ id: 'block', sid: 'danger', k: 'a', dest: true, icon: 'block', title: `${_ciTr('chat.blockUser', 'Bloquear')} ${peerName}`.trim(), onPress: () => go(() => handleBlockUser(peer)) });
     rows.push({ id: 'report', sid: 'danger', k: 'a', dest: true, icon: 'flag', title: `${_ciTr('chat.reportUser', 'Denunciar')} ${peerName}`.trim(), onPress: () => go(() => handleReportUser(peer, null, false)) });
     rows.push({ id: 'reportLeave', sid: 'danger', k: 'a', dest: true, icon: 'logout', title: _ciTr('chatConv.reportAndLeave', 'Reportar e sair'), onPress: () => go(handleReportAndLeave) });
-    return {
+    return require('../components/profile/contactProfileExtras').decorateContactChatInfo({
       hero, rows, media: _ciMedia(),
       onMediaPress: () => _ciOpenGallery(go),
       labels: { photo: _ciTr('chatConv.viewPhoto', 'Ver foto') },
-    };
+    }, _ppContact, { t, router, peerName, v6: chatInfoV6() });
   };
   const _ciSaveGroupField = async (field, value) => {
     try {

@@ -106,6 +106,8 @@ struct CIHero: Equatable {
   //   ring   "unseen" | "seen" | "" anel de status em volta do avatar
   var cover = CIPic()
   var ring: String = ""
+  // [perfil-fotos 2026-10-19] apiVersion 6: deslizar entre as fotos na foto expandida.
+  var swipe = false
 
   init() {}
 
@@ -113,6 +115,7 @@ struct CIHero: Equatable {
     guard let d = d else { return }
     cover = CIPic(d["cover"])
     ring = CLVal.str(d["ring"])
+    swipe = CLVal.bool(d["swipe"])
     title = CLVal.str(d["title"])
     sub = CLVal.str(d["sub"])
     pic = CIPic(d["tile"])
@@ -133,7 +136,7 @@ struct CIHero: Equatable {
         if p.url.isEmpty || seen.contains(p.url) { continue }
         seen.insert(p.url)
         photos.append(p)
-        if photos.count >= 9 { break }
+        if photos.count >= 20 { break }
       }
     }
     if let nav = d["nav"] as? [String: Any] {

@@ -23,8 +23,9 @@ import NativeSwitch from '../NativeSwitch';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../ui/useDragToDismiss';
 import { androidBottomInset } from '../../utils/systemInsets';
 import {
-  IconShare, IconAlertTriangle, IconLock, IconEdit, IconTrash, IconPlus, IconGrid, IconEyeOff,
+  IconShare, IconAlertTriangle, IconLock, IconEdit, IconTrash, IconPlus, IconGrid, IconEyeOff, IconCamera, IconImage,
 } from '../Icons';
+import { ppT } from '../../services/profilePhotos'; // [perfil-fotos 2026-10-19]
 
 /** Sheets do sistema no perfil? (lido no render do dono). */
 export function profileNativeSheetsOn(mode) {
@@ -273,7 +274,7 @@ export const ProfileNicknameDialog = memo(forwardRef(function ProfileNicknameDia
 
 // ── Avatar (meu perfil): Adicionar ao status / Mudar foto / Ver foto ────────
 export const ProfileAvatarActionsSheet = memo(forwardRef(function ProfileAvatarActionsSheet(
-  { native, colors, isDark, t, onAddStatus, onEditPhoto, onViewPhoto }, ref,
+  { native, colors, isDark, t, onAddStatus, onEditPhoto, onViewPhoto, onAddPhoto, onPublishPost }, ref,
 ) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -304,6 +305,9 @@ export const ProfileAvatarActionsSheet = memo(forwardRef(function ProfileAvatarA
       fn: onViewPhoto,
     },
   ];
+  // [perfil-fotos 2026-10-19] galeria de fotos (Telegram) + publicar no perfil.
+  if (typeof onAddPhoto === 'function') rows.splice(1, 0, { key: 'addPhoto', label: ppT(t, 'addPhoto'), hint: ppT(t, 'addPhotoHint'), Icon: IconCamera, fn: onAddPhoto });
+  if (typeof onPublishPost === 'function') rows.push({ key: 'publishPost', label: ppT(t, 'publish'), hint: ppT(t, 'publishHint'), Icon: IconImage, fn: onPublishPost });
   return (
     <SheetShell native={native} visible={open} onClose={close} bg={bg} isDark={isDark} drag={drag} panelExtra={{ paddingTop: 4 }}>
       {rows.map((row) => (
