@@ -118,7 +118,9 @@ async function mintEphemeralToken() {
   // [bia-ferramentas-voz 2026-10-18] tools=1 = este app sabe executar ferramentas
   // (one_tool_exec). Servidor sem o kit ignora o campo → sessão sem ferramentas,
   // nada muda.
-  const res = await api.apiCall('realtime_ephemeral_token', { tools: 1, timezone: userTimezone() }, 'POST');
+  // [bia-escuta 2026-10-19] turn_ctl=1: o servidor cria a sessão SEM resposta
+  // automática e o app dispara a resposta após a pausa de "pensando".
+  const res = await api.apiCall('realtime_ephemeral_token', { tools: 1, turn_ctl: 1, timezone: userTimezone() }, 'POST');
   if (!res?.success || !res?.data?.client_secret) {
     throw new Error(res?.message || 'token mint failed');
   }
@@ -126,6 +128,7 @@ async function mintEphemeralToken() {
     token: res.data.client_secret,
     model: res.data.model || 'gpt-realtime',
     toolsEnabled: Number(res.data.tools_enabled || 0) > 0,
+    turnCtl: Number(res.data.turn_ctl || 0) === 1,
   };
 }
 
@@ -172,6 +175,16 @@ export class OneRealtimeSession {
     this.remoteAudioEl = null; // web <audio>
     this.active = false;
     this._stopped = false; // [bia-lenta 2026-10-19] parada é definitiva (não religa)
+    // [bia-escuta 2026-10-19] fim de turno paciente + barge-in de verdade
+    this._turnCtl = false;          // servidor aceitou turn_ctl → o app dispara response.create
+    this._userSpeaking = false;
+    this._speechStoppedAt = 0;
+    this._respTimer = null;
+    this._txWaitTimer = null;
+    this._botSpeaking = false;      // áudio da Bia tocando (output_audio_buffer.started..stopped)
+    this._botAudioStartAt = 0;
+    this._assistantItemId = null;
+    this._bargeItem = null;         // item do usuário que interrompeu a Bia
     this.currentState = 'idle';
   }
 
@@ -255,9 +268,10 @@ export class OneRealtimeSession {
 
     this._alive();
     // 1. Ephemeral token from our backend
-    const { token, model, toolsEnabled } = await mintEphemeralToken();
+    const { token, model, toolsEnabled, turnCtl } = await mintEphemeralToken();
     this._alive();
     this._toolsEnabled = !!toolsEnabled;
+    this._turnCtl = !!turnCtl;
 
     // 2. Mic stream
     const __ls = await mediaDevices.getUserMedia({
@@ -403,6 +417,58 @@ export class OneRealtimeSession {
     this._emit('onTranscriptDiscarded', { itemId, reason, text, wasShown });
   }
 
+  // ── [bia-escuta 2026-10-19] ─────────────────────────────────────
+  // Corta o áudio da Bia NA HORA no aparelho (track remoto mudo) — não espera o
+  // servidor. Volta a tocar quando a próxima resposta começa.
+  _setBotAudio(on) {
+    try {
+      if (this.remoteAudioEl) this.remoteAudioEl.muted = !on;
+      const rs = this.pc?.getReceivers?.() || [];
+      for (const r of rs) { if (r?.track && r.track.kind === 'audio') r.track.enabled = !!on; }
+    } catch {}
+  }
+  _clearRespTimers() {
+    if (this._respTimer) { clearTimeout(this._respTimer); this._respTimer = null; }
+    if (this._txWaitTimer) { clearTimeout(this._txWaitTimer); this._txWaitTimer = null; }
+  }
+  // A pessoa voltou a falar enquanto a Bia falava/gerava: para tudo e escuta.
+  // cancel + clear + truncate no ponto OUVIDO (o modelo sabe até onde ela falou).
+  _interruptBot(byItemId) {
+    this._setBotAudio(false);
+    if (this._responseActive) this._send({ type: 'response.cancel' });
+    this._send({ type: 'output_audio_buffer.clear' });
+    if (this._assistantItemId && this._botAudioStartAt) {
+      const ms = Math.max(0, Date.now() - this._botAudioStartAt);
+      this._send({ type: 'conversation.item.truncate', item_id: this._assistantItemId, content_index: 0, audio_end_ms: ms });
+    }
+    this._botSpeaking = false;
+    this._botAudioStartAt = 0;
+    if (byItemId) this._bargeItem = byItemId;
+  }
+  // Pública: toque na tela/orb enquanto a Bia fala = interromper.
+  interrupt() {
+    if (!this.active) return;
+    this._clearRespTimers();
+    this._interruptBot(null);
+    this._setState('listening');
+  }
+  // Pausa de "pensando": responde só se ninguém falou de novo em ~0,75 s desde o
+  // fim da fala. Falas seguidas viram UMA resposta (os itens se acumulam).
+  _scheduleResponse() {
+    if (!this._turnCtl || !this.active) return;
+    if (this._respTimer) clearTimeout(this._respTimer);
+    const since = this._speechStoppedAt ? Date.now() - this._speechStoppedAt : 0;
+    const wait = Math.max(150, 750 - since);
+    this._respTimer = setTimeout(() => {
+      this._respTimer = null;
+      if (!this.active || this._userSpeaking) return;
+      if (this._toolInflight > 0) { this._needResponse = true; return; }
+      if (this._responseActive) this._send({ type: 'response.cancel' });
+      this._bargeItem = null;
+      this._send({ type: 'response.create' });
+    }, wait);
+  }
+
   _onEvent(raw) {
     let msg;
     try { msg = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return; }
@@ -410,6 +476,9 @@ export class OneRealtimeSession {
 
     // ── Usuário (STT) ──────────────────────────────────────────────
     if (t === 'input_audio_buffer.speech_started') {
+      this._userSpeaking = true;
+      this._clearRespTimers(); // continuou falando → não responde ainda
+      if (this._botSpeaking || this._responseActive) this._interruptBot(msg.item_id);
       const it = this._item(msg.item_id);
       if (it) {
         it.startMs = typeof msg.audio_start_ms === 'number' ? msg.audio_start_ms : null;
@@ -419,6 +488,8 @@ export class OneRealtimeSession {
       return;
     }
     if (t === 'input_audio_buffer.speech_stopped') {
+      this._userSpeaking = false;
+      this._speechStoppedAt = Date.now();
       const it = this._item(msg.item_id);
       if (it) {
         it.endMs = typeof msg.audio_end_ms === 'number' ? msg.audio_end_ms : null;
@@ -428,6 +499,11 @@ export class OneRealtimeSession {
     }
     if (t === 'input_audio_buffer.committed') {
       if (msg.item_id) this._lastCommittedItem = msg.item_id;
+      // rede de segurança: se a transcrição não chegar, responde mesmo assim (o modelo ouviu o áudio)
+      if (this._turnCtl) {
+        if (this._txWaitTimer) clearTimeout(this._txWaitTimer);
+        this._txWaitTimer = setTimeout(() => { this._txWaitTimer = null; if (!this._userSpeaking) this._scheduleResponse(); }, 3000);
+      }
       return;
     }
     if (t === 'conversation.item.input_audio_transcription.delta' && msg.delta) {
@@ -445,18 +521,28 @@ export class OneRealtimeSession {
       const text = String(msg.transcript || '').trim();
       const it = this._items.get(msg.item_id);
       const verdict = classifyUserTranscript(text, this._segInfo(it));
-      if (verdict !== 'ok') { this._discardItem(msg.item_id, verdict, text); return; }
+      if (this._txWaitTimer) { clearTimeout(this._txWaitTimer); this._txWaitTimer = null; }
+      if (verdict !== 'ok') {
+        const wasBarge = this._bargeItem && this._bargeItem === msg.item_id;
+        this._discardItem(msg.item_id, verdict, text);
+        // ruído interrompeu a Bia → ela retoma (responde de novo) em vez de ficar muda
+        if (wasBarge && !this._userSpeaking) { this._bargeItem = null; this._scheduleResponse(); }
+        return;
+      }
       if (it) it.text = text;
       this._userTurnSeq += 1;
       this._lastUserText = text;
       this._emit('onTranscript', text, { itemId: msg.item_id });
       this._items.delete(msg.item_id);
+      if (!this._userSpeaking) this._scheduleResponse();
       return;
     }
     if (t === 'conversation.item.input_audio_transcription.failed') {
       const it = this._items.get(msg.item_id);
       if (it?.shown) this._emit('onTranscriptDiscarded', { itemId: msg.item_id, reason: 'failed', wasShown: true });
       this._items.delete(msg.item_id);
+      if (this._txWaitTimer) { clearTimeout(this._txWaitTimer); this._txWaitTimer = null; }
+      if (!this._userSpeaking) this._scheduleResponse(); // sem texto, mas o áudio está no contexto
       return;
     }
 
@@ -469,7 +555,11 @@ export class OneRealtimeSession {
       this._emit('onAssistantText', { transcript: msg.transcript, done: true });
       return;
     }
-    if (t === 'response.created') { this._responseActive = true; return; }
+    if (t === 'response.created') { this._responseActive = true; this._setBotAudio(true); return; }
+    if (t === 'response.output_item.added' && msg.item?.type === 'message' && msg.item?.role === 'assistant' && msg.item.id) {
+      this._assistantItemId = msg.item.id;
+      return;
+    }
     // ── Ferramentas (GA) ───────────────────────────────────────────
     if (t === 'response.function_call_arguments.done' && msg.call_id) {
       this._onFunctionCall(msg.call_id, msg.name, msg.arguments);
@@ -481,15 +571,22 @@ export class OneRealtimeSession {
     }
     if (t === 'output_audio_buffer.started') {
       this._audioBufEvents = true;
+      this._botSpeaking = true;
+      this._botAudioStartAt = Date.now();
+      this._setBotAudio(true);
       this._setState('speaking');
       return;
     }
     if (t === 'output_audio_buffer.stopped' || t === 'output_audio_buffer.cleared') {
       this._audioBufEvents = true;
+      this._botSpeaking = false;
+      this._botAudioStartAt = 0;
       if (this.active) this._setState('listening');
       return;
     }
     if (t === 'response.output_audio.delta' || t === 'response.audio.delta') {
+      if (!this._botAudioStartAt) this._botAudioStartAt = Date.now();
+      this._botSpeaking = true;
       this._setState('speaking');
       return;
     }
@@ -507,7 +604,7 @@ export class OneRealtimeSession {
       // cancel/delete de item que já não existe → erro benigno, não propaga.
       const code = String(msg.error?.code || '');
       const em = String(msg.error?.message || '');
-      if (code === 'response_cancel_not_active' || /no active response|cancel.*not active|item.*(does not exist|not found)/i.test(em)) return;
+      if (code === 'response_cancel_not_active' || /no active response|cancel.*not active|item.*(does not exist|not found)|truncat|already.*active response/i.test(em)) return;
       this._emit('onError', msg.error || msg);
     }
   }
@@ -588,6 +685,7 @@ export class OneRealtimeSession {
 
   stop() {
     this._stopped = true;
+    this._clearRespTimers();
     LIVE_SESSIONS.delete(this);
     this.active = false;
     try { this.dc?.close?.(); } catch {}

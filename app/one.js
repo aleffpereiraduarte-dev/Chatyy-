@@ -195,8 +195,10 @@ let _currentTtsBlobUrl = null;
 // Primary: ElevenLabs TTS via API
 async function speakElevenLabs(text, lang, onDone) {
   try {
+    const __gen = _speakGen; // [bia-escuta 2026-10-19] parou no meio do await → não toca
     // Stop any current playback
     await stopSpeakAsync();
+    if (__gen !== _speakGen) return false;
 
     if (Platform.OS === 'web') {
       const url = await api.oneTTS(text);
@@ -2331,6 +2333,26 @@ export default function OneScreen() {
     setTimeout(() => { if (isMountedRef.current && !voiceModeRef.current) enterVoiceRef.current(); }, 350);
   }, [params?.voice]);
 
+  // [bia-escuta 2026-10-19] tocar no orb enquanto a Bia fala/pensa: ela para na hora
+  // e volta a ouvir. Realtime: corta o áudio local + cancel/clear/truncate. Legado
+  // (sem cancelamento de eco, não dá p/ ouvir durante a fala): para a voz/resposta e grava.
+  const interruptVoice = useCallback(() => {
+    if (!voiceModeRef.current) return;
+    haptic('light');
+    if (realtimeRef.current) {
+      try { realtimeRef.current.interrupt(); } catch {}
+      setVoiceState('listening');
+      return;
+    }
+    abortVoiceSpeaking();
+    setSpeakingId(null);
+    if (loadingRef.current) cancelInflightTurn();
+    if (!audioRecordingRef.current) {
+      setVoiceState('listening');
+      startListeningForVoiceMode();
+    }
+  }, [startListeningForVoiceMode, cancelInflightTurn]);
+
   const exitVoiceMode = useCallback(() => {
     // Bump the session token so any in-flight onend / 8s timer / whisper
     // result becomes stale immediately.
@@ -2790,6 +2812,7 @@ export default function OneScreen() {
           transcriptKey={voiceTranscriptKey}
           onStop={exitVoiceMode}
           onKeyboard={exitVoiceMode}
+          onInterrupt={interruptVoice}
           getLevel={getVoiceLevel}
           insets={insets}
         />

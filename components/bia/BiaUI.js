@@ -878,7 +878,7 @@ const ss = StyleSheet.create({
 });
 
 // ─── modo voz em tela cheia ──────────────────────────────────────────────────
-export function BiaVoiceScreen({ isDark, t, voiceState, transcript, transcriptKey, onStop, onKeyboard, getLevel, insets }) {
+export function BiaVoiceScreen({ isDark, t, voiceState, transcript, transcriptKey, onStop, onKeyboard, onInterrupt, getLevel, insets }) {
   const P = biaPalette(isDark);
   const fade = useRef(new Animated.Value(0)).current;
   const [elapsed, setElapsed] = useState('0:00');
@@ -912,9 +912,17 @@ export function BiaVoiceScreen({ isDark, t, voiceState, transcript, transcriptKe
         <View style={{ width: 64 }} />
       </View>
       <View style={vs.center}>
-        <Animated.View style={{ transform: [{ scale: sc }] }}>
-          <BiaOrb size={size} mode={orbMode} getLevel={getLevel} isDark={isDark} />
-        </Animated.View>
+        {/* [bia-escuta 2026-10-19] tocar no orb enquanto a Bia fala/pensa = interromper e ouvir */}
+        <Pressable
+          disabled={!onInterrupt || orbMode === 'listening'}
+          onPress={() => onInterrupt?.()}
+          accessibilityRole="button"
+          accessibilityLabel={t('one.interrupt') || 'Interromper e falar'}
+        >
+          <Animated.View style={{ transform: [{ scale: sc }] }}>
+            <BiaOrb size={size} mode={orbMode} getLevel={getLevel} isDark={isDark} />
+          </Animated.View>
+        </Pressable>
         {/* [2026-10-18 bia-voz-centro] status CENTRADO logo abaixo do orb (antes: alignSelf flex-start → "Ouvindo..." à esquerda
             e a legenda centrada). Linha de altura fixa: trocar Ouvindo/Pensando/Falando não pula o layout. */}
         <View style={vs.stateRow}>
