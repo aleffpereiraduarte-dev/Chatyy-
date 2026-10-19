@@ -3875,6 +3875,8 @@ export default function Profile({
         // Bust cache so the new bio/name shows on the next open from
         // anywhere else in the app (sidebar, chat header, /u/...).
         invalidateProfileCache(fetchKey);
+        // [2026-10-19 me-cover] mesmo cache do topo "Você" (capa/nome na hora).
+        try { require('../services/profileCover').patchMyProfileCache(next, identity?.email); } catch {}
       }}
       colors={colors}
       isDark={isDark}
@@ -4279,6 +4281,8 @@ export default function Profile({
     onSaved: (next) => {
       setData(prev => prev ? { ...prev, identity: { ...prev.identity, ...next } } : prev);
       invalidateProfileCache(fetchKey);
+      // [2026-10-19 me-cover] capa trocada no editor nativo → topo "Você" na hora.
+      try { require('../services/profileCover').patchMyProfileCache(next, identity?.email); } catch {}
       try { if (identity?.username && identity.username !== fetchKey) invalidateProfileCache(identity.username); } catch {}
     },
     onAvatarChanged: () => { invalidateProfileCache(fetchKey); },

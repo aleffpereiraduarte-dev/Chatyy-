@@ -92,6 +92,8 @@ export default function EditProfileScreen() {
           currentEmail={identity?.email || user?.email}
           onSaved={(next) => {
             setIdentity(prev => ({ ...(prev || {}), ...next }));
+            // [2026-10-19 me-cover] mesmo cache do topo "Você" (capa/nome na hora).
+            try { require('../services/profileCover').patchMyProfileCache(next, user?.email); } catch {}
             // Bust the shared profile cache so /u/me + the settings header
             // card show the new name/photo/bio immediately.
             try { require('../components/Profile').invalidateProfileCache(user?.email); } catch {}

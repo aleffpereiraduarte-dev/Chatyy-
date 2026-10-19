@@ -45,7 +45,8 @@ import { HapticsCompat as Haptics } from '../services/haptics';
 import AccountSwitcherSheet from '../components/AccountSwitcherSheet';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { SettingsGroup, SettingsRow, SettingsSearchContext, useGroupedColors } from '../components/settings/SettingsKit';
-import MeHeader from '../components/settings/MeHeader';
+import MeHeader, { MeStatusScrim } from '../components/settings/MeHeader';
+import { normalizeCoverUrl, meHeroImmersiveOn, prefetchCover } from '../services/profileCover'; // [2026-10-19 me-cover]
 import { normalizePlanState, planDisplayName } from '../services/planState';
 import { PLAN_NAME } from '../services/brandPlan';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
@@ -224,6 +225,7 @@ function SettingsScreenInner() {
   useEffect(() => settingsCache.subscribe('profile', (v) => {
     if (!v || typeof v !== 'object') return;
     setMyProfile(v);
+    try { if (v.cover_url) prefetchCover(v.cover_url); } catch {}
     const u = v.avatar_url || '';
     if (u !== _avatarUrlRef.current) { _avatarUrlRef.current = u; setAvatarKey(Date.now()); }
   }), []);
@@ -444,6 +446,11 @@ function SettingsScreenInner() {
   }, [searchAnim]);
   closeSearchRef.current = closeSearch;
   const multiAccount = (accounts?.length || 0) > 1;
+  // [2026-10-19 me-cover] Raiz imersiva (nativo, 1 painel): header nativo
+  // escondido → a capa vai até o topo da tela e voltar/buscar/QR/Editar ficam
+  // numa linha só dentro do MeHeader. Capa do perfil em cache = 1º frame.
+  const meImmersive = USE_NATIVE_HEADER && !twoPane && activeCategory === null && meHeroImmersiveOn();
+  const meCoverUrl = normalizeCoverUrl(myProfile?.cover_url || '');
   const heroNode = (
     <MeHeader
       user={user}
@@ -458,6 +465,9 @@ function SettingsScreenInner() {
       onAvatar={() => { try { Haptics.selectionAsync?.(); } catch {} setAvatarOpen(true); }}
       onChangePhoto={openEditProfile}
       onSwitch={openAccountSwitcher}
+      coverUrl={meCoverUrl}
+      topInset={meImmersive ? insets.top : 0}
+      onBack={meImmersive ? handleBack : undefined}
     />
   );
 
@@ -590,7 +600,7 @@ function SettingsScreenInner() {
         automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
         contentContainerStyle={{ paddingBottom: 40 + insets.bottom }}
       >
-        <View style={[s.searchSticky, { backgroundColor: gc.pageBg }]}>
+        <View style={[s.searchSticky, { backgroundColor: gc.pageBg }, meImmersive && !IOS_AUTO_INSET ? { paddingTop: Spacing.sm + insets.top } : null]}>
           <View style={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>{searchBarNode}</View>
         </View>
         <View style={[s.searchBody, { maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }]}>
@@ -677,7 +687,7 @@ function SettingsScreenInner() {
     noResults: t('settings.noMatches') || 'Nenhum resultado',
   }), [t]);
   const showNativeRoot = useNativeRoot && activeCategory === null;
-  const bottomPad = IOS_AUTO_INSET ? 40 : 80 + insets.bottom;
+  const bottomPad = IOS_AUTO_INSET && !meImmersive ? 40 : 80 + insets.bottom;
   // [2026-10-17 settings-freeze] iOS: SEM título grande quando a raiz é a lista
   // NATIVA. Crash 704 (watchdog 0x8BADF00D, thread principal em loop):
   // UICollectionView.setContentOffset → UINavigationController acompanha o
@@ -689,7 +699,7 @@ function SettingsScreenInner() {
   // "content scroll view" do header (autoInset off → .never, sem ajuste
   // automático de offset). Religar por OTA: globalThis.__chatyy_native_list_large_title = true
   // (nativeListLargeTitleOn, mesmo gate do _layout → o header não troca após o 1º frame).
-  const rootLargeTitle = Platform.OS === 'ios' && (!showNativeRoot || nativeListLargeTitleOn());
+  const rootLargeTitle = Platform.OS === 'ios' && !meImmersive && (!showNativeRoot || nativeListLargeTitleOn()); // [2026-10-19 me-cover] imersiva = sem header
   const nativeAutoInset = IOS_AUTO_INSET && rootLargeTitle;
   const nativeBottomPad = nativeAutoInset ? 40 : 40 + insets.bottom;
 
@@ -708,6 +718,9 @@ function SettingsScreenInner() {
           gestureEnabled: !inCategorySubpage,
           fullScreenGestureEnabled: !inCategorySubpage,
           contentStyle: { backgroundColor: gc.pageBg },
+          // [2026-10-19 me-cover] Raiz imersiva: sem header nativo (o MeHeader
+          // desenha voltar/buscar/QR/Editar sobre a capa). Igual ao _layout.
+          headerShown: !meImmersive,
           // iOS: título GRANDE que colapsa ao rolar — raiz E categorias (como o
           // Ajustes do iPhone). Explícito (setOptions MESCLA) e igual ao que o
           // _layout aplica antes do 1º frame (sem salto do header).
@@ -789,7 +802,7 @@ function SettingsScreenInner() {
                   <Animated.ScrollView
                     key={activeCategory || 'root'}
                     ref={scrollRef}
-                    contentInsetAdjustmentBehavior={IOS_AUTO_INSET ? 'automatic' : undefined}
+                    contentInsetAdjustmentBehavior={IOS_AUTO_INSET ? (meImmersive ? 'never' : 'automatic') : undefined}
                     keyboardShouldPersistTaps="handled"
                     keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
                     contentContainerStyle={[s.scroll, { paddingBottom: bottomPad, maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }]}
@@ -807,6 +820,7 @@ function SettingsScreenInner() {
                 </SettingsSearchContext.Provider>
               </FadeSlideIn>
             )}
+            {meImmersive && !searchLayer ? <MeStatusScrim height={insets.top} /> : null}
             {searchOverlayNode}
           </View>
         </View>

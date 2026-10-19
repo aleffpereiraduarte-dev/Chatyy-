@@ -8,13 +8,60 @@
 //   • telefone · @usuário
 // RN puro (SVG) → mesmo desenho na lista nativa (cabeçalho RN hospedado pela
 // ChatyySettingsList, qualquer binário) e na lista JS / web. Sem emoji.
-import React from 'react';
-import { View, Text, StyleSheet, Platform } from 'react-native';
-import Svg, { Path, Rect } from 'react-native-svg';
+//
+// [2026-10-19 me-cover] FOTO DE CAPA como fundo do topo (perfil estilo
+// Telegram/Instagram): capa em largura total (~240 pt, por baixo da status
+// bar no modo imersivo), expo-image c/ cache em disco (vem do perfil em
+// cache → aparece no 1º frame), degradê transparente→fundo da página em baixo
+// (nome/telefone legíveis no claro e no escuro) + véu suave no topo (status
+// bar/botões). Avatar sobrepõe a borda de baixo da capa com anel da cor do
+// fundo. Botões sobre a capa = círculos de vidro (blur no iOS, translúcido nos
+// demais). Sem capa = visual de antes.
+// Modo imersivo (settings.js esconde o header nativo da raiz): voltar ·
+// buscar · QR · Editar numa LINHA só (antes o voltar ocupava uma linha
+// própria acima). Desligar por OTA: globalThis.__chatyy_me_hero_immersive = false.
+import React, { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, Platform, Image as RNImage } from 'react-native';
+import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
 import PressableScale from '../PressableScale';
 import { useGroupedColors } from './SettingsKit';
-import { IconSearch, IconCamera, IconChevronDown } from '../Icons';
+import { IconSearch, IconCamera, IconChevronDown, IconChevronLeft, IconArrowLeft } from '../Icons';
+import { getNativeBlurView } from '../NativeBlur';
+import { Spacing } from '../../constants/theme';
+
+let _ExpoImage; // undefined = não resolvido; null = indisponível
+function getExpoImage() {
+  if (_ExpoImage !== undefined) return _ExpoImage;
+  _ExpoImage = null;
+  if (Platform.OS === 'web') return null;
+  try { _ExpoImage = require('expo-image').Image || null; } catch { _ExpoImage = null; }
+  return _ExpoImage;
+}
+
+// '#RGB' / '#RRGGBB' / 'rgb(a)(...)' → rgba com alfa `a`.
+export function withAlpha(color, a) {
+  const c = String(color || '').trim();
+  let m = /^#([0-9a-f]{3})$/i.exec(c);
+  if (m) {
+    const h = m[1];
+    return `rgba(${parseInt(h[0] + h[0], 16)},${parseInt(h[1] + h[1], 16)},${parseInt(h[2] + h[2], 16)},${a})`;
+  }
+  m = /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/i.exec(c);
+  if (m) {
+    const h = m[1];
+    return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},${a})`;
+  }
+  m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(c);
+  if (m) return `rgba(${m[1]},${m[2]},${m[3]},${a})`;
+  return a >= 0.5 ? c : 'transparent';
+}
+
+const AVATAR = 120;
+const RING = 4;
+// Quanto do avatar fica DENTRO da capa (o resto sobra para o fundo da página).
+const AVATAR_IN_COVER = 78;
+const COVER_MIN_H = 220;
 
 function QrGlyph({ size = 18, color }) {
   return (
@@ -43,7 +90,24 @@ function _tgHeader() {
   try { return globalThis.__chatyy_tg_list !== false; } catch { return true; }
 }
 
-function BarButton({ onPress, label, testID, children }) {
+// Fundo do botão: sem capa = pílula cinza de sempre; sobre a capa = vidro
+// (UIVisualEffectView no iOS; translúcido da cor da página nos demais).
+function BtnBg({ glass, radius }) {
+  const g = useGroupedColors();
+  if (!glass) return null;
+  const BlurView = getNativeBlurView();
+  if (BlurView) {
+    return (
+      <View pointerEvents="none" style={[StyleSheet.absoluteFill, { borderRadius: radius, overflow: 'hidden' }]}>
+        <BlurView tint={g.isDark ? 'dark' : 'light'} intensity={60} style={StyleSheet.absoluteFill} />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: withAlpha(g.pageBg, 0.28) }]} />
+      </View>
+    );
+  }
+  return <View pointerEvents="none" style={[StyleSheet.absoluteFill, { borderRadius: radius, backgroundColor: withAlpha(g.pageBg, 0.78) }]} />;
+}
+
+function BarButton({ onPress, label, testID, glass, children }) {
   const g = useGroupedColors();
   return (
     <PressableScale
@@ -54,10 +118,80 @@ function BarButton({ onPress, label, testID, children }) {
       accessibilityRole="button"
       accessibilityLabel={label}
       testID={testID}
-      style={[st.barBtn, { backgroundColor: g.fill }]}
+      style={[st.barBtn, { backgroundColor: glass ? 'transparent' : g.fill }]}
     >
+      <BtnBg glass={glass} radius={19} />
       {children}
     </PressableScale>
+  );
+}
+
+// Capa: expo-image (cache memória+disco → mesma URL do perfil em cache
+// pinta no 1º frame, sem "pop") com fallback RN Image (web / sem módulo).
+function CoverImage({ uri, onError }) {
+  const ExpoImage = getExpoImage();
+  if (ExpoImage) {
+    return (
+      <ExpoImage
+        source={{ uri }}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        cachePolicy="memory-disk"
+        transition={120}
+        recyclingKey={uri}
+        priority="high"
+        onError={onError}
+        accessible={false}
+      />
+    );
+  }
+  return <RNImage source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" onError={onError} accessible={false} />;
+}
+
+function CoverLayer({ uri, height, pageBg, onError }) {
+  return (
+    <View pointerEvents="none" style={[st.cover, { height }]} testID="settings-me-cover">
+      <CoverImage uri={uri} onError={onError} />
+      {/* Véu no topo (status bar + botões) e degradê até o fundo da página em
+          baixo (nome/telefone sempre legíveis, claro e escuro). */}
+      <Svg width="100%" height="100%" style={StyleSheet.absoluteFill} preserveAspectRatio="none">
+        <Defs>
+          <SvgLinearGradient id="meCoverTop" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={pageBg} stopOpacity={0.55} />
+            <Stop offset="1" stopColor={pageBg} stopOpacity={0} />
+          </SvgLinearGradient>
+          <SvgLinearGradient id="meCoverBottom" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={pageBg} stopOpacity={0} />
+            <Stop offset="0.55" stopColor={pageBg} stopOpacity={0.45} />
+            <Stop offset="1" stopColor={pageBg} stopOpacity={1} />
+          </SvgLinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="100%" height="28%" fill="url(#meCoverTop)" />
+        <Rect x="0" y="45%" width="100%" height="55%" fill="url(#meCoverBottom)" />
+      </Svg>
+    </View>
+  );
+}
+
+// [2026-10-19 me-cover] Modo imersivo (sem header nativo): faixa fixa sob a
+// status bar, degradê da cor da página → transparente. Sobre a capa é só um
+// véu leve; com a lista rolada esconde as linhas atrás do relógio/bateria.
+export function MeStatusScrim({ height }) {
+  const g = useGroupedColors();
+  if (!(height > 0)) return null;
+  return (
+    <View pointerEvents="none" style={[st.statusScrim, { height: height + 10 }]}>
+      <Svg width="100%" height="100%" preserveAspectRatio="none">
+        <Defs>
+          <SvgLinearGradient id="meStatusScrim" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={g.pageBg} stopOpacity={0.85} />
+            <Stop offset="0.7" stopColor={g.pageBg} stopOpacity={0.55} />
+            <Stop offset="1" stopColor={g.pageBg} stopOpacity={0} />
+          </SvgLinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="100%" height="100%" fill="url(#meStatusScrim)" />
+      </Svg>
+    </View>
   );
 }
 
@@ -72,25 +206,69 @@ export function meDisplay(user, profile) {
 
 /**
  * props: user, profile, avatarKey, multiAccount, t, onSearch, onQr, onEdit,
- *        onAvatar, onChangePhoto, onSwitch, onAbout
+ *        onAvatar, onChangePhoto, onSwitch, onAbout,
+ *        coverUrl (já normalizada; '' = sem capa),
+ *        topInset (status bar — só no modo imersivo, header nativo escondido),
+ *        onBack (modo imersivo: voltar na MESMA linha de buscar/QR/Editar)
+ * O pai (lista nativa / ScrollView) aplica paddingHorizontal 16 + paddingTop
+ * Spacing.md; a capa "sangra" essas margens (largura total).
  */
 export default function MeHeader({
   user, profile, avatarKey, multiAccount, t,
   onSearch, onQr, onEdit, onAvatar, onChangePhoto, onSwitch, onAbout,
+  coverUrl, topInset = 0, onBack,
 }) {
   const g = useGroupedColors();
   const tr = (k, fb) => { try { const v = t(k); return v && v !== k ? v : fb; } catch { return fb; } };
   const { name, handle, phone, about } = meDisplay(user, profile);
   const idLine = [phone, handle ? '@' + handle : ''].filter(Boolean).join('  •  ') || (user?.email || '');
 
+  // Capa que falhou (404/rede) some até a URL mudar → volta ao visual sem capa.
+  const [failedCover, setFailedCover] = useState('');
+  const cover = coverUrl && coverUrl !== failedCover ? coverUrl : '';
+  const onCoverError = useCallback(() => { setFailedCover(coverUrl || ''); }, [coverUrl]);
+  const glass = !!cover;
+  const bleed = !!cover || topInset > 0;
+  const padTop = Spacing.md;
+  // Altura da capa = topo do avatar (medido) + parte do avatar dentro dela.
+  // Estimativa inicial ≈ medida típica (sem salto no 1º frame).
+  const [avatarTop, setAvatarTop] = useState(0);
+  const estTop = padTop + topInset + 6 + 38 + 6 + 34 + 21;
+  const coverH = Math.max(COVER_MIN_H + Math.min(topInset, 24), (avatarTop || estTop) + AVATAR_IN_COVER);
+  const onTopLayout = useCallback((e) => {
+    const h = Math.round(e?.nativeEvent?.layout?.height || 0);
+    if (h > 0) setAvatarTop((prev) => (prev === h + padTop + topInset ? prev : h + padTop + topInset));
+  }, [padTop, topInset]);
+  const BackIcon = Platform.OS === 'ios' ? IconChevronLeft : IconArrowLeft;
+
   return (
-    <View style={st.wrap} testID="settings-me-header">
+    <View
+      style={[st.wrap, bleed ? { marginHorizontal: -16, paddingHorizontal: 16, marginTop: -padTop, paddingTop: padTop + topInset } : null]}
+      testID="settings-me-header"
+    >
+      {cover ? <CoverLayer uri={cover} height={coverH} pageBg={g.pageBg} onError={onCoverError} /> : null}
+      <View onLayout={onTopLayout}>
       <View style={st.bar}>
-        <BarButton onPress={onSearch} label={tr('me.search', 'Buscar nas configurações')} testID="settings-me-search">
-          <IconSearch size={18} color={g.text} />
-        </BarButton>
-        <View style={{ flex: 1 }} />
-        <BarButton onPress={onQr} label={tr('profile.qrCode', 'QR code')} testID="settings-me-qr">
+        {onBack ? (
+          <>
+            <BarButton onPress={onBack} label={tr('common.back', 'Voltar')} testID="settings-me-back" glass={glass}>
+              <BackIcon size={Platform.OS === 'ios' ? 22 : 20} color={g.text} />
+            </BarButton>
+            <View style={{ flex: 1 }} />
+            <BarButton onPress={onSearch} label={tr('me.search', 'Buscar nas configurações')} testID="settings-me-search" glass={glass}>
+              <IconSearch size={18} color={g.text} />
+            </BarButton>
+            <View style={{ width: 10 }} />
+          </>
+        ) : (
+          <>
+            <BarButton onPress={onSearch} label={tr('me.search', 'Buscar nas configurações')} testID="settings-me-search" glass={glass}>
+              <IconSearch size={18} color={g.text} />
+            </BarButton>
+            <View style={{ flex: 1 }} />
+          </>
+        )}
+        <BarButton onPress={onQr} label={tr('profile.qrCode', 'QR code')} testID="settings-me-qr" glass={glass}>
           <QrGlyph size={18} color={g.text} />
         </BarButton>
         <View style={{ width: 10 }} />
@@ -104,12 +282,13 @@ export default function MeHeader({
             accessibilityRole="button"
             accessibilityLabel={tr('settings.editProfile', 'Editar perfil')}
             testID="settings-me-edit"
-            style={[st.editPill, { backgroundColor: g.fill }]}
+            style={[st.editPill, { backgroundColor: glass ? 'transparent' : g.fill }]}
           >
+            <BtnBg glass={glass} radius={17} />
             <Text style={[st.editPillText, { color: g.text }]} maxFontSizeMultiplier={1.3}>{tr('common.edit', 'Editar')}</Text>
           </PressableScale>
         ) : (
-          <BarButton onPress={onEdit} label={tr('settings.editProfile', 'Editar perfil')} testID="settings-me-edit">
+          <BarButton onPress={onEdit} label={tr('settings.editProfile', 'Editar perfil')} testID="settings-me-edit" glass={glass}>
             <PencilGlyph size={18} color={g.text} />
           </BarButton>
         )}
@@ -132,8 +311,11 @@ export default function MeHeader({
         </PressableScale>
         <View style={[st.dot1, { backgroundColor: g.cardBg, borderColor: g.separator }]} />
         <View style={[st.dot2, { backgroundColor: g.cardBg, borderColor: g.separator }]} />
+      </View>
+      </View>
 
-        <View style={st.avatarBox}>
+      <View style={st.center}>
+        <View style={[st.avatarBox, cover ? st.avatarBoxRing : null]}>
           <PressableScale
             onPress={onAvatar}
             haptic="light"
@@ -141,8 +323,9 @@ export default function MeHeader({
             accessibilityRole="imagebutton"
             accessibilityLabel={tr('profile.avatarView', 'Ver foto')}
             testID="settings-profile-card"
+            style={cover ? [st.ring, { backgroundColor: g.pageBg }] : null}
           >
-            <AvatarCircle key={avatarKey} email={user?.email} uri={profile?.avatar_url || undefined} name={name || user?.email} size={120} />
+            <AvatarCircle key={avatarKey} email={user?.email} uri={profile?.avatar_url || undefined} name={name || user?.email} size={AVATAR} />
           </PressableScale>
           <PressableScale
             onPress={onChangePhoto || onEdit}
@@ -152,7 +335,7 @@ export default function MeHeader({
             accessibilityRole="button"
             accessibilityLabel={tr('profile.avatarEditPhoto', 'Mudar foto de perfil')}
             testID="settings-me-photo"
-            style={[st.camBadge, { backgroundColor: g.ink, borderColor: g.pageBg }]}
+            style={[st.camBadge, cover ? st.camBadgeRing : null, { backgroundColor: g.ink, borderColor: g.pageBg }]}
           >
             <IconCamera size={15} color={g.onInk} />
           </PressableScale>
@@ -177,13 +360,15 @@ export default function MeHeader({
 const st = StyleSheet.create({
   wrap: { paddingBottom: 22 },
   bar: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  statusScrim: { position: 'absolute', top: 0, left: 0, right: 0 },
+  cover: { position: 'absolute', top: 0, left: 0, right: 0, overflow: 'hidden' },
   barBtn: {
-    width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center',
+    width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   center: { alignItems: 'center' },
   editPill: {
-    height: 34, paddingHorizontal: 16, borderRadius: 17, alignItems: 'center', justifyContent: 'center',
+    height: 34, paddingHorizontal: 16, borderRadius: 17, alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   editPillText: { fontSize: 15, fontWeight: '600', letterSpacing: -0.2 },
@@ -195,7 +380,12 @@ const st = StyleSheet.create({
   noteText: { fontSize: 13.5, lineHeight: 18, textAlign: 'center', letterSpacing: -0.1 },
   dot1: { width: 9, height: 9, borderRadius: 5, borderWidth: StyleSheet.hairlineWidth, marginTop: 3, marginLeft: -18 },
   dot2: { width: 5, height: 5, borderRadius: 3, borderWidth: StyleSheet.hairlineWidth, marginTop: 2, marginLeft: -6, marginBottom: 4 },
-  avatarBox: { width: 120, height: 120, marginBottom: 14 },
+  avatarBox: { width: AVATAR, height: AVATAR, marginBottom: 14 },
+  // Com capa: anel da cor da página (avatar "recortado" sobre a capa); a caixa
+  // cresce RING p/ cada lado sem mexer no centro do avatar.
+  avatarBoxRing: { width: AVATAR + RING * 2, height: AVATAR + RING * 2, marginTop: -RING, marginBottom: 14 - RING },
+  ring: { width: AVATAR + RING * 2, height: AVATAR + RING * 2, borderRadius: (AVATAR + RING * 2) / 2, padding: RING },
+  camBadgeRing: { right: RING, bottom: 2 + RING },
   camBadge: {
     position: 'absolute', right: 0, bottom: 2, width: 32, height: 32, borderRadius: 16,
     alignItems: 'center', justifyContent: 'center', borderWidth: 3,
