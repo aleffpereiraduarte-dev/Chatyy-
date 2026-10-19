@@ -28,6 +28,13 @@ export function redirectSystemPath({ path, initial }) {
     if (typeof path === 'string' && (path.includes('dataUrl=') || /sharekey/i.test(path))) {
       return initial ? '/' : null;
     }
+    // [2026-10-19 family-hub] Convite da Família: onemundomail://family/join/<token>
+    // (link/QR da folha "Convidar familiar") → /family?join=<token>, que abre a
+    // folha "Entrar com convite" já preenchida. Antes caía em "Unmatched Route".
+    if (typeof path === 'string') {
+      const fj = path.match(/(?:^|\/)family\/join\/([A-Za-z0-9_-]{8,128})/i);
+      if (fj) return '/family?join=' + encodeURIComponent(fj[1]);
+    }
     // [2026-10-12 nav-dedup] Warm-start chat deep links (Android native
     // notification tap, widgets, Siri/shortcuts: onemundomail://chat-conversation?id=…)
     // used to be routed by expo-router as a blind NAVIGATE → a chat already in

@@ -1,584 +1,293 @@
 /**
- * Family — a premium, Apple-Family-Sharing-style hub, wired to the REAL
- * `family_*` backend (email.php).
+ * Família — hub premium (Compartilhamento Familiar da Apple + Life360) em
+ * preto e branco, ligado ao backend REAL `family_*` (email.php).
  *
- * The backend AUTO-CREATES a solo family on the first `family_info` call, so
- * a family ALWAYS exists — a brand-new user already owns a family containing
- * just themselves. There is therefore NO "create / no-family" state: the
- * "has family" view is the default and the primary action for a solo family
- * is "Convidar familiar". We keep graceful Loading + Error states.
+ * [2026-10-19 family-hub] Redesenho completo (antes: botão/blocos azuis,
+ * avatar grande único, recursos escondidos em linhas com chevron):
+ *   • Título GRANDE nativo ("Família", colapsa ao rolar) + pull-to-refresh.
+ *   • Capa: avatares empilhados, nome (lápis p/ o responsável), contagem,
+ *     selo do meu papel e o CTA "Convidar familiar" em pílula (colors.primary
+ *     → segue o destaque do usuário; P&B por padrão).
+ *   • Membros: fileira horizontal de cartões (avatar, nome, papel, status ao
+ *     vivo: online / localização há X / visto há X). Família só comigo →
+ *     estado vazio com chips Pai · Mãe · Cônjuge · Filho(a) (já abre o
+ *     convite com o papel certo).
+ *   • Atalhos: grade 3 colunas com ícones monocromáticos em quadrado grafite.
+ *   • Prévias reais: 3 itens da lista de compras (marcar/adicionar ali mesmo),
+ *     4 últimas fotos do álbum, próximo evento do calendário.
+ *   • Folhas nativas: convite (papel → contato/QR/código), ver tudo de cada
+ *     recurso, renomear, entrar com convite.
  *
- * Real contract:
- *   family_info → { data: { family:{id,name,photo_url,owner_email,share_plan},
- *                   members:[{email,name,online,last_seen,presence}],  // SIBLING
- *                   my_role, is_owner } }
- *     · members has NO avatar_url / is_me / role → computed client-side
- *       (is_me = email === current user; avatar from AvatarCircle(email)).
- *   family_invite {target, role} → { data:{ token, role, link } }  (rate-limited
- *       10/24h → surfaces a pt-BR message). `link` = chatyy://family/join/<token>
- *       → shared via the OS Share sheet.
- *   family_join {token} · family_update {name?,photo_url?} ·
- *   family_remove_member {email} · family_leave
- *   Shared features (all real): family_shared_album_list / _add ·
- *   family_calendar_list / _add · family_shopping_list_get / _add {text} /
- *   _toggle {id} · family_location_all.
+ * Contrato real:
+ *   family_info → { data:{ family:{id,name,photo_url,owner_email,share_plan},
+ *                   members:[{email,name,online,last_seen,presence,role}],
+ *                   my_role, is_owner } }  (auto-cria a família solo)
+ *   family_invite {target, role} → { data:{ token, role, link } }
+ *   family_join {token} · family_update {name} · family_remove_member {email}
+ *   family_leave · family_location_all → { locations:[{email,updated_at,…}] }
+ *   compras / álbum / calendário → components/family/FamilyShared.js
  *
- * OTA-safe (RN Animated only; expo-image-picker dynamically imported — it's
- * already a native dep). Fully theme-aware (no #111111 hardcodes — accent
- * derives from `colors` so dark mode stays legible). ErrorBoundary-wrapped.
+ * Deep link: onemundomail://family/join/<token> → app/+native-intent.js →
+ * /family?join=<token> → abre a folha "Entrar com convite" preenchida.
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, Alert, ActivityIndicator, TextInput, Modal, Share, Animated, Easing, Image } from 'react-native';
-import { useRouter, Stack } from 'expo-router';
-import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
-import { useTheme } from '../context/ThemeContext';
+import { View, Text, StyleSheet, ScrollView, Pressable, Platform, Alert, ActivityIndicator, TextInput, RefreshControl, Animated, Easing, useWindowDimensions } from 'react-native';
+import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, nativeScrollInsetProps, NativeInsetView } from '../components/nativeHeader';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
-  IconArrowLeft, IconUsers, IconPlus, IconChevronRight, IconChevronDown, IconShield,
-  IconImage, IconStar, IconNavigation, IconShare, IconMessageCircle,
-  IconLogout, IconKey, IconEdit, IconSparkles, IconCalendar, IconCheckbox, IconCheckboxChecked,
+  IconArrowLeft, IconUsers, IconPlus, IconShield, IconStar, IconMessageCircle,
+  IconLogout, IconKey, IconEdit, IconCalendar, IconImage,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import ErrorBoundary from '../components/ErrorBoundary';
 import PressableScale from '../components/PressableScale';
-import FadeSlideIn from '../components/FadeSlideIn';
-import { FontSize, BorderRadius, Shadow, haptic } from '../constants/theme';
+import NativeSheetDialog from '../components/NativeSheetDialog';
+import { haptic } from '../constants/theme';
 import * as api from '../services/api';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { PLANS_ENABLED } from '../constants/featureFlags';
-import useDragToDismiss, { DragSheetRoot, DragPanel } from '../components/ui/useDragToDismiss';
+import { SettingsGroup, SettingsRow } from '../components/settings/SettingsKit';
+import { useFamilyColors, IconCart, IconMap, GraphiteTile, HubSectionHeader, relativeAgo, memberLabel, firstName } from '../components/family/familyUi';
+import { useFamilyShared, ShoppingPreview, AlbumPreview, NextEventPreview, ShoppingSheetBody, AlbumSheetBody, CalendarSheetBody } from '../components/family/FamilyShared';
+import FamilyInviteSheet from '../components/family/FamilyInviteSheet';
 
-// Theme-aware accent + helpers. `colors.primary` is a neutral near-black in
-// BOTH themes, so using it raw as an accent went invisible in dark mode. We
-// derive a legible accent (ink in light, near-white in dark) + an inverted
-// "on-accent" color for filled buttons.
-function useFamilyPalette() {
-  const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
-  const accent = isDark ? colors.text : colors.primary;
-  const onAccent = isDark ? colors.background : '#ffffff';
-  const heroBg = isDark ? colors.surfaceVariant : '#f5f6f8';
-  const roles = {
-    parent: { bg: accent + '1A', fg: accent, label: t('family.role.parent') },
-    spouse: { bg: (isDark ? '#F472B6' : '#DB2777') + '22', fg: isDark ? '#F9A8D4' : '#DB2777', label: t('family.role.spouse') },
-    child:  { bg: (colors.success || '#10B981') + '22', fg: colors.success || '#10B981', label: t('family.role.child') },
-  };
-  return { colors, isDark, accent, onAccent, heroBg, roles };
-}
+const lower = (s) => String(s || '').toLowerCase();
+const isOnline = (m) => !!m?.online || m?.presence === 'online';
 
-// Relative "last seen" — tolerant of seconds / ms epochs and ISO strings.
-function relativeSeen(lastSeen, t) {
-  if (!lastSeen) return null;
-  let ts = 0;
-  if (typeof lastSeen === 'number') ts = lastSeen < 1e12 ? lastSeen * 1000 : lastSeen;
-  else {
-    const n = Number(lastSeen);
-    if (!Number.isNaN(n) && n > 0) ts = n < 1e12 ? n * 1000 : n;
-    else { const d = Date.parse(lastSeen); if (!Number.isNaN(d)) ts = d; }
-  }
-  if (!ts) return null;
-  const diff = Date.now() - ts;
-  if (diff < 90000) return t('family.seen.now');
-  const min = Math.floor(diff / 60000);
-  if (min < 60) return t('family.seen.min', { n: min });
-  const h = Math.floor(min / 60);
-  if (h < 24) return t('family.seen.hour', { n: h });
-  const d = Math.floor(h / 24);
-  if (d < 7) return t(d === 1 ? 'family.seen.day' : 'family.seen.days', { n: d });
-  const w = Math.floor(d / 7);
-  if (w < 5) return t('family.seen.week', { n: w });
-  const mo = Math.floor(d / 30);
-  return t(mo === 1 ? 'family.seen.month' : 'family.seen.months', { n: mo });
-}
-
-// Normalize any "list" response body into a plain array (the real handlers'
-// exact wrapper key is confirmed at runtime; we accept the common shapes).
-function pickArray(body, ...keys) {
-  const d = body?.data ?? body;
-  if (Array.isArray(d)) return d;
-  for (const k of keys) {
-    if (Array.isArray(d?.[k])) return d[k];
-    if (Array.isArray(body?.[k])) return body[k];
-  }
-  if (Array.isArray(d?.items)) return d.items;
-  if (Array.isArray(d?.list)) return d.list;
-  if (Array.isArray(d?.rows)) return d.rows;
-  return [];
-}
-const truthy = (v) => v === true || v === 1 || v === '1' || v === 'true';
-
-// Composite avatar — up to 4 members in a 2×2 grid; defensive.
-function FamilyComposite({ members, size = 100, accent }) {
-  const slice = (Array.isArray(members) ? members : []).filter(Boolean).slice(0, 4);
-  const cell = size / 2;
-  if (slice.length === 0) {
-    return (
-      <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: accent + '1A', alignItems: 'center', justifyContent: 'center' }}>
-        <IconUsers size={size * 0.44} color={accent} />
-      </View>
-    );
-  }
-  if (slice.length === 1) {
-    return <AvatarCircle email={slice[0].email} name={slice[0].name} size={size} ringColor={accent} />;
+// ── Avatares empilhados (capa) ────────────────────────────────────────────
+function AvatarStack({ members, size = 58 }) {
+  const c = useFamilyColors();
+  const list = (members || []).slice(0, 4);
+  const extra = Math.max(0, (members || []).length - list.length);
+  const overlap = Math.round(size * 0.32);
+  if (!list.length) {
+    return <GraphiteTile Icon={IconUsers} size={size} radius={size / 2} />;
   }
   return (
-    <View style={{ width: size, height: size, borderRadius: size / 2, overflow: 'hidden', flexDirection: 'row', flexWrap: 'wrap', borderWidth: 3, borderColor: accent }}>
-      {slice.map((m, idx) => (
-        <View key={m.email || idx} style={{ width: cell, height: cell }}>
-          <AvatarCircle email={m.email} name={m.name} size={cell} />
+    <View style={{ flexDirection: 'row', alignItems: 'center' }} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      {list.map((m, i) => (
+        <View key={m.email || i} style={{ marginLeft: i === 0 ? 0 : -overlap, zIndex: 10 - i, borderRadius: (size + 6) / 2, padding: 3, backgroundColor: c.cardBg }}>
+          <AvatarCircle email={m.email} name={m.name} size={size} />
         </View>
       ))}
-    </View>
-  );
-}
-
-function SectionHeader({ title, colors }) {
-  return <Text style={[s.sectionHeader, { color: colors.textSecondary }]}>{title}</Text>;
-}
-
-function FeatureRow({ icon: Icon, color, title, subtitle, onPress, colors, badge, last }) {
-  return (
-    <PressableScale
-      onPress={onPress}
-      scaleTo={0.985}
-      style={[s.row, { borderBottomColor: colors.border }, last && { borderBottomWidth: 0 }]}
-      accessibilityRole="button"
-      accessibilityLabel={title}
-    >
-      <View style={[s.rowIcon, { backgroundColor: color + '22' }]}>
-        <Icon size={20} color={color} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={[s.rowTitle, { color: colors.text }]}>{title}</Text>
-        {!!subtitle && <Text style={[s.rowSub, { color: colors.textSecondary }]} numberOfLines={1}>{subtitle}</Text>}
-      </View>
-      {!!badge && (
-        <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: color + '22', marginRight: 6 }}>
-          <Text style={{ fontSize: 11, fontWeight: '800', color }}>{badge}</Text>
-        </View>
-      )}
-      <IconChevronRight size={18} color={colors.textSecondary} />
-    </PressableScale>
-  );
-}
-
-// Expandable feature card — header toggles; the body component mounts only
-// while open, so it self-loads its data on first expand (and refreshes on
-// re-expand).
-function CollapsibleFeature({ icon: Icon, color, title, subtitle, colors, badge, renderBody, last }) {
-  const [open, setOpen] = useState(false);
-  const rot = useRef(new Animated.Value(0)).current;
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
-    try { haptic.select(); } catch {}
-    Animated.timing(rot, { toValue: next ? 1 : 0, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-  };
-  return (
-    <View style={{ borderBottomWidth: last ? 0 : StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
-      <PressableScale onPress={toggle} scaleTo={0.985} style={[s.row, { borderBottomWidth: 0 }]} accessibilityRole="button" accessibilityLabel={title} accessibilityState={{ expanded: open }}>
-        <View style={[s.rowIcon, { backgroundColor: color + '22' }]}>
-          <Icon size={20} color={color} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={[s.rowTitle, { color: colors.text }]}>{title}</Text>
-          {!!subtitle && <Text style={[s.rowSub, { color: colors.textSecondary }]} numberOfLines={1}>{subtitle}</Text>}
-        </View>
-        {!!badge && (
-          <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: color + '22', marginRight: 6 }}>
-            <Text style={{ fontSize: 11, fontWeight: '800', color }}>{badge}</Text>
-          </View>
-        )}
-        <Animated.View style={{ transform: [{ rotate: rot.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] }) }] }}>
-          <IconChevronDown size={18} color={colors.textSecondary} />
-        </Animated.View>
-      </PressableScale>
-      {open && (
-        <FadeSlideIn distance={6} duration={180}>
-          <View style={{ paddingHorizontal: 14, paddingBottom: 14 }}>{renderBody()}</View>
-        </FadeSlideIn>
-      )}
-    </View>
-  );
-}
-
-// ── Shared shopping list — fully interactive (get / add {text} / toggle {id}) ──
-function SharedShoppingList({ colors, accent, onAccent }) {
-  const { t } = useLanguage();
-  const [items, setItems] = useState(null); // null = not loaded
-  const [busy, setBusy] = useState(false);
-  const [text, setText] = useState('');
-  const [adding, setAdding] = useState(false);
-
-  const normalize = (body) => pickArray(body, 'items', 'list', 'shopping').map((it, i) => ({
-    id: it.id ?? it.item_id ?? it._id ?? String(i),
-    text: (it.text ?? it.name ?? it.title ?? it.label ?? '').toString(),
-    checked: truthy(it.checked ?? it.done ?? it.completed ?? it.is_checked),
-  }));
-
-  const load = useCallback(async () => {
-    setBusy(true);
-    try {
-      const r = await api.familyShoppingListGet();
-      setItems(r?.success ? normalize(r) : (r ? normalize(r) : []));
-    } catch { setItems([]); } finally { setBusy(false); }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const add = async () => {
-    const v = text.trim();
-    if (!v) return;
-    setAdding(true);
-    setText('');
-    try {
-      const r = await api.familyShoppingListAdd(v);
-      if (r?.success) { try { haptic.light(); } catch {} load(); }
-      else { setText(v); Alert.alert(t('family.shopping.title'), r?.message || t('notifPref.addFailed')); }
-    } catch { setText(v); } finally { setAdding(false); }
-  };
-
-  const toggle = async (id) => {
-    setItems(prev => (prev || []).map(it => it.id === id ? { ...it, checked: !it.checked } : it));
-    try { haptic.select(); } catch {}
-    try { const r = await api.familyShoppingListToggle(id); if (!r?.success) load(); } catch { load(); }
-  };
-
-  if (items === null) {
-    return busy
-      ? <ActivityIndicator color={accent} style={{ marginVertical: 10 }} />
-      : <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 6 }}>{t('family.tapToLoad')}</Text>;
-  }
-  return (
-    <View>
-      {items.length === 0 && !busy && (
-        <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 8 }}>{t('family.shopping.empty')}</Text>
-      )}
-      {items.map(it => (
-        <TouchableOpacity key={it.id} onPress={() => toggle(it.id)} activeOpacity={0.6} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9 }} accessibilityRole="checkbox" accessibilityState={{ checked: it.checked }} accessibilityLabel={it.text}>
-          {it.checked
-            ? <IconCheckboxChecked size={22} color={colors.success || '#10B981'} />
-            : <IconCheckbox size={22} color={colors.textSecondary} />}
-          <Text style={{ flex: 1, fontSize: FontSize.base, color: it.checked ? colors.textSecondary : colors.text, textDecorationLine: it.checked ? 'line-through' : 'none' }}>{it.text}</Text>
-        </TouchableOpacity>
-      ))}
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
-        <TextInput
-          value={text}
-          onChangeText={setText}
-          onSubmitEditing={add}
-          returnKeyType="done"
-          placeholder={t('family.shopping.addPh')}
-          placeholderTextColor={colors.textSecondary}
-          style={{ flex: 1, backgroundColor: colors.borderLight, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9, color: colors.text, fontSize: FontSize.base }}
-        />
-        <TouchableOpacity onPress={add} disabled={adding || !text.trim()} style={{ backgroundColor: accent, borderRadius: 10, width: 42, height: 40, alignItems: 'center', justifyContent: 'center', opacity: (adding || !text.trim()) ? 0.5 : 1 }} accessibilityRole="button" accessibilityLabel={t('family.shopping.add')}>
-          {adding ? <ActivityIndicator color={onAccent} /> : <IconPlus size={20} color={onAccent} />}
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
-// ── Shared album — grid of photos + add via picker ──
-function SharedAlbum({ colors, accent }) {
-  const { t } = useLanguage();
-  const [items, setItems] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [uploading, setUploading] = useState(false);
-
-  const normalize = (body) => pickArray(body, 'items', 'photos', 'album', 'media').map((it, i) => ({
-    id: it.id ?? it._id ?? String(i),
-    url: it.url || it.image_url || it.photo_url || it.media_url || it.thumb || it.src || it.thumbnail || '',
-    caption: it.caption || it.title || '',
-  })).filter(x => x.url);
-
-  const load = useCallback(async () => {
-    setBusy(true);
-    try { const r = await api.familySharedAlbumList(); setItems(normalize(r || {})); }
-    catch { setItems([]); } finally { setBusy(false); }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const addPhoto = async () => {
-    try {
-      const ImagePicker = await import('expo-image-picker').catch(() => null);
-      if (!ImagePicker) { Alert.alert(t('family.album.short'), t('family.album.pickerUnavailable')); return; }
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) { Alert.alert(t('common.permissionDenied'), t('family.album.permBody')); return; }
-      if (Platform.OS === 'ios') await new Promise(r => setTimeout(r, 300));
-      const pick = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
-      if (pick.canceled || !pick.assets?.length) return;
-      setUploading(true);
-      const r = await api.familySharedAlbumAdd(pick.assets[0].uri, '');
-      if (r?.success) { try { haptic.success(); } catch {} load(); }
-      else Alert.alert(t('family.album.short'), r?.message || t('profile.avatarUploadFailed'));
-    } catch { Alert.alert(t('family.album.short'), t('profile.avatarUploadFailed')); }
-    finally { setUploading(false); }
-  };
-
-  if (items === null) {
-    return busy
-      ? <ActivityIndicator color={accent} style={{ marginVertical: 10 }} />
-      : <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 6 }}>{t('family.tapToLoad')}</Text>;
-  }
-  return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 }}>
-      {items.map(it => (
-        <Image key={it.id} source={{ uri: it.url }} style={{ width: 84, height: 84, borderRadius: 12, backgroundColor: colors.borderLight }} />
-      ))}
-      <TouchableOpacity onPress={addPhoto} disabled={uploading} style={{ width: 84, height: 84, borderRadius: 12, borderWidth: 1.5, borderColor: colors.border, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', backgroundColor: accent + '0D' }} accessibilityRole="button" accessibilityLabel={t('family.album.add')}>
-        {uploading ? <ActivityIndicator color={accent} /> : <IconPlus size={24} color={accent} />}
-      </TouchableOpacity>
-      {items.length === 0 && !busy && (
-        <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, width: '100%', marginTop: 8 }}>{t('family.album.empty')}</Text>
-      )}
-    </View>
-  );
-}
-
-// ── Shared calendar — upcoming events list + quick add ──
-function SharedCalendar({ colors, accent, onAccent }) {
-  const { t } = useLanguage();
-  const [items, setItems] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [addOpen, setAddOpen] = useState(false);
-  const [title, setTitle] = useState('');
-  const [date, setDate] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const normalize = (body) => pickArray(body, 'events', 'items', 'calendar').map((it, i) => ({
-    id: it.id ?? it._id ?? String(i),
-    title: (it.title ?? it.name ?? it.summary ?? t('eventDetail.title')).toString(),
-    date: it.date || it.start || it.when || it.datetime || it.start_date || '',
-  }));
-
-  const load = useCallback(async () => {
-    setBusy(true);
-    try { const r = await api.familyCalendarList(); setItems(normalize(r || {})); }
-    catch { setItems([]); } finally { setBusy(false); }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const save = async () => {
-    const tt = title.trim();
-    if (!tt) { Alert.alert(t('eventDetail.title'), t('family.event.needTitle')); return; }
-    setSaving(true);
-    try {
-      const r = await api.familyCalendarAdd({ title: tt, date: date.trim() });
-      if (r?.success) { try { haptic.success(); } catch {} setAddOpen(false); setTitle(''); setDate(''); load(); }
-      else Alert.alert(t('eventDetail.title'), r?.message || t('profile.saveFailed'));
-    } catch { Alert.alert(t('eventDetail.title'), t('common.networkError')); } finally { setSaving(false); }
-  };
-
-  const fmtDate = (d) => {
-    const r = relativeSeen(d, t); // reuse epoch/ISO parsing; fall back to raw
-    if (!d) return '';
-    const parsed = Date.parse(typeof d === 'number' ? d : d);
-    if (!Number.isNaN(parsed)) {
-      try { return new Date(parsed).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }); } catch {}
-    }
-    return (typeof d === 'string') ? d : (r || '');
-  };
-
-  if (items === null) {
-    return busy
-      ? <ActivityIndicator color={accent} style={{ marginVertical: 10 }} />
-      : <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 6 }}>{t('family.tapToLoad')}</Text>;
-  }
-  return (
-    <View>
-      {items.length === 0 && !busy && (
-        <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, paddingVertical: 8 }}>{t('family.event.empty')}</Text>
-      )}
-      {items.map(ev => (
-        <View key={ev.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9 }}>
-          <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: accent + '14', alignItems: 'center', justifyContent: 'center' }}>
-            <IconCalendar size={17} color={accent} />
-          </View>
-          <Text style={{ flex: 1, fontSize: FontSize.base, color: colors.text }} numberOfLines={1}>{ev.title}</Text>
-          {!!ev.date && <Text style={{ fontSize: FontSize.sm, color: colors.textSecondary, fontWeight: '600' }}>{fmtDate(ev.date)}</Text>}
-        </View>
-      ))}
-      <TouchableOpacity onPress={() => setAddOpen(true)} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, paddingVertical: 8 }} accessibilityRole="button" accessibilityLabel={t('one.newEvent')}>
-        <IconPlus size={18} color={accent} />
-        <Text style={{ color: accent, fontWeight: '700', fontSize: FontSize.base }}>{t('one.newEvent')}</Text>
-      </TouchableOpacity>
-
-      <Modal visible={addOpen} transparent animationType="fade" onRequestClose={() => setAddOpen(false)}>
-        <View style={s.centerOverlay}>
-          <View style={[s.centerCard, { backgroundColor: colors.surface }]}>
-            <Text style={[s.modalTitle, { color: colors.text }]}>{t('one.newEvent')}</Text>
-            <TextInput value={title} onChangeText={setTitle} placeholder={t('eventDetail.titleField')} placeholderTextColor={colors.textSecondary} style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border, marginTop: 14 }]} autoFocus />
-            <TextInput value={date} onChangeText={setDate} placeholder={t('family.event.datePh')} placeholderTextColor={colors.textSecondary} autoCapitalize="none" style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border, marginTop: 10 }]} />
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-              <TouchableOpacity onPress={() => setAddOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]}><Text style={[s.btnText, { color: colors.text }]}>{t('common.cancel')}</Text></TouchableOpacity>
-              <TouchableOpacity onPress={save} disabled={saving} style={[s.btn, { backgroundColor: accent, flex: 1, opacity: saving ? 0.6 : 1 }]}>{saving ? <ActivityIndicator color={onAccent} /> : <Text style={[s.btnText, { color: onAccent }]}>{t('common.save')}</Text>}</TouchableOpacity>
-            </View>
+      {extra > 0 && (
+        <View style={{ marginLeft: -overlap, borderRadius: (size + 6) / 2, padding: 3, backgroundColor: c.cardBg }}>
+          <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: c.tileBg, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: c.tileFg, fontWeight: '700', fontSize: size * 0.3 }}>+{extra}</Text>
           </View>
         </View>
-      </Modal>
+      )}
     </View>
   );
 }
 
-function MemberRow({ member, colors, roles, ownerEmail, isMe, onRemove, index = 0 }) {
+// ── Cartão de membro (fileira horizontal) ─────────────────────────────────
+function MemberCard({ member, isMe, ownerEmail, location, onPress, index }) {
+  const c = useFamilyColors();
   const { t } = useLanguage();
-  const safeEmail = (member?.email || member?.child_email || '').toString();
-  const safeName = (member?.name || member?.child_name || (safeEmail.includes('@') ? safeEmail.split('@')[0] : safeEmail) || '').toString();
-  const online = !!member?.online || member?.presence === 'online';
-  const seen = online ? null : relativeSeen(member?.last_seen, t);
-  // Role badge: owner → "Responsável"; else the member's role if the backend
-  // provides one; else nothing (the contract's member shape has no role).
-  const isOwnerEmail = !!ownerEmail && safeEmail.toLowerCase() === ownerEmail.toLowerCase();
-  const palette = isOwnerEmail
-    ? { bg: (colors.primary || '#111') + '00', fg: colors.text, label: t('family.role.owner'), owner: true }
-    : (member?.role && roles[member.role]) ? roles[member.role] : null;
-
   const enter = useRef(new Animated.Value(0)).current;
-  const avatarScale = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     const tm = setTimeout(() => {
-      Animated.timing(enter, { toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-    }, Math.min(index, 8) * 55);
+      Animated.timing(enter, { toValue: 1, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    }, Math.min(index, 6) * 45);
     return () => clearTimeout(tm);
   }, [enter, index]);
-  const bounceAvatar = () => {
-    try { haptic.light(); } catch {}
-    Animated.sequence([
-      Animated.timing(avatarScale, { toValue: 0.9, duration: 90, useNativeDriver: true }),
-      Animated.spring(avatarScale, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
-    ]).start();
-  };
+
+  const online = isOnline(member);
+  const isOwnerM = !!ownerEmail && lower(member.email) === lower(ownerEmail);
+  const roleKey = isOwnerM ? 'family.role.owner'
+    : member.role === 'spouse' ? 'family.role.spouse'
+      : member.role === 'child' ? 'family.role.child'
+        : 'family.hub.role.adult';
+  const locAgo = location?.updated_at ? relativeAgo(location.updated_at, t) : null;
+  const seenAgo = !online && member.last_seen ? relativeAgo(member.last_seen, t) : null;
+  const status = online ? t('family.hub.onlineNow')
+    : locAgo ? t('family.hub.locationAgo', { ago: locAgo })
+      : seenAgo ? t('family.hub.seenAgo', { ago: seenAgo }) : '';
+  const name = isMe ? t('family.hub.you') : firstName(member);
 
   return (
-    <Animated.View style={[s.memberRow, { borderBottomColor: colors.border }, { opacity: enter, transform: [{ scale: enter.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) }] }]}>
-      <TouchableOpacity activeOpacity={0.85} onPress={bounceAvatar} accessibilityRole="image" accessibilityLabel={safeName || safeEmail || t('family.memberFallback')}>
-        <Animated.View style={{ transform: [{ scale: avatarScale }] }}>
-          <AvatarCircle email={safeEmail} name={safeName} size={46} online={online} showStatus ringColor={colors.success || '#10B981'} />
-        </Animated.View>
-      </TouchableOpacity>
-      <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={[s.memberName, { color: colors.text }]} numberOfLines={1}>
-          {safeName || safeEmail || t('family.memberFallback')}{isMe ? ` (${t('chatConv.you')})` : ''}
-        </Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-          {palette && (
-            <View style={{ paddingHorizontal: palette.owner ? 0 : 8, paddingVertical: 2, borderRadius: 8, backgroundColor: palette.bg }}>
-              <Text style={{ fontSize: 11, fontWeight: '700', color: palette.fg }}>{palette.label}</Text>
-            </View>
-          )}
-          {online ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success || '#10B981' }} />
-              <Text style={{ fontSize: 12, fontWeight: '600', color: colors.success || '#10B981' }}>{t('parental.onlineNow')}</Text>
-            </View>
-          ) : !!seen && <Text style={{ fontSize: 12, color: colors.textSecondary }}>{seen}</Text>}
+    <Animated.View style={{ opacity: enter, transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }] }}>
+      <PressableScale onPress={onPress} scaleTo={0.96} style={[st.memberCard, { backgroundColor: c.cardBg }]}
+        accessibilityRole="button" accessibilityLabel={[memberLabel(member), t(roleKey), status].filter(Boolean).join(', ')}>
+        <View>
+          <AvatarCircle email={member.email} name={member.name} size={58} />
+          {online && <View style={[st.onlineDot, { backgroundColor: c.online, borderColor: c.cardBg }]} />}
         </View>
-      </View>
-      {onRemove && !isMe && (
-        <TouchableOpacity onPress={() => onRemove(member)} accessibilityLabel={t('family.removeA11y', { name: safeName || safeEmail })} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 6 }}>
-          <Text style={{ color: colors.error || '#ef4444', fontSize: 13, fontWeight: '700' }}>{t('common.remove')}</Text>
-        </TouchableOpacity>
-      )}
+        <Text style={[st.memberName, { color: c.text }]} numberOfLines={1}>{name}</Text>
+        <Text style={[st.memberRole, { color: c.secondary }]} numberOfLines={1}>{t(roleKey)}</Text>
+        {!!status && (
+          <Text style={[st.memberStatus, { color: online ? c.online : c.secondary }]} numberOfLines={1}>{status}</Text>
+        )}
+      </PressableScale>
     </Animated.View>
   );
 }
 
-// Idle pulse ring behind the "Convidar familiar" CTA while the family is small.
-function InvitePulseRing({ active, accent }) {
-  const ring = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    if (!active) return;
-    const loop = Animated.loop(Animated.sequence([
-      Animated.timing(ring, { toValue: 1, duration: 1400, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-      Animated.timing(ring, { toValue: 0, duration: 0, useNativeDriver: true }),
-    ]));
-    loop.start();
-    return () => loop.stop();
-  }, [active, ring]);
+function AddMemberCard({ onPress }) {
+  const c = useFamilyColors();
+  const { t } = useLanguage();
   return (
-    <Animated.View pointerEvents="none" style={{ position: 'absolute', left: 14, top: '50%', marginTop: -19, width: 38, height: 38, borderRadius: 19, borderWidth: 2, borderColor: accent, opacity: ring.interpolate({ inputRange: [0, 1], outputRange: [0.4, 0] }), transform: [{ scale: ring.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1.7] }) }] }} />
+    <PressableScale onPress={onPress} scaleTo={0.96} style={[st.memberCard, st.addCard, { borderColor: c.tertiary }]} accessibilityRole="button" accessibilityLabel={t('family.invite.cta')}>
+      <View style={{ width: 58, height: 58, borderRadius: 29, backgroundColor: c.chip, alignItems: 'center', justifyContent: 'center' }}>
+        <IconPlus size={24} color={c.text} />
+      </View>
+      <Text style={[st.memberName, { color: c.text }]} numberOfLines={1}>{t('family.hub.inviteShort')}</Text>
+      <Text style={[st.memberRole, { color: c.secondary }]} numberOfLines={1}>{t('family.hub.addSomeone')}</Text>
+    </PressableScale>
   );
 }
 
-function FamilySkeleton({ colors }) {
-  const block = (h, w = '100%', mb = 10) => (
-    <View style={{ height: h, width: w, borderRadius: 12, backgroundColor: colors.borderLight, marginBottom: mb }} />
-  );
+// ── Estado vazio: só eu na família ────────────────────────────────────────
+function InviteEmpty({ onInvite }) {
+  const c = useFamilyColors();
+  const { t } = useLanguage();
+  const chips = [
+    { k: 'father', role: 'parent', label: t('family.hub.chip.father') },
+    { k: 'mother', role: 'parent', label: t('family.hub.chip.mother') },
+    { k: 'spouse', role: 'spouse', label: t('family.hub.chip.spouse') },
+    { k: 'child', role: 'child', label: t('family.hub.chip.child') },
+  ];
   return (
-    <View style={{ padding: 20 }}>
-      <View style={{ alignItems: 'center', marginBottom: 28 }}>
-        <View style={{ width: 100, height: 100, borderRadius: 50, backgroundColor: colors.borderLight, marginBottom: 14 }} />
-        {block(22, 180, 8)}{block(13, 120, 0)}
+    <View style={[st.emptyCard, { backgroundColor: c.cardBg }]}>
+      <Text style={[st.emptyTitle, { color: c.text }]}>{t('family.hub.emptyTitle')}</Text>
+      <Text style={[st.emptySub, { color: c.secondary }]}>{t('family.hub.emptySub')}</Text>
+      <View style={st.chipsRow}>
+        {chips.map(ch => (
+          <Pressable key={ch.k} onPress={() => { try { haptic.select(); } catch {} onInvite(ch.role); }} accessibilityRole="button" accessibilityLabel={t('family.hub.inviteRoleA11y', { role: ch.label })}
+            style={({ pressed }) => [st.roleChip, { backgroundColor: c.chip }, pressed && { opacity: 0.6 }]}>
+            <IconPlus size={14} color={c.text} />
+            <Text style={{ color: c.text, fontSize: 15, fontWeight: '600' }}>{ch.label}</Text>
+          </Pressable>
+        ))}
       </View>
-      <View style={{ height: 14 }} />
-      {block(64)}{block(64)}{block(64)}
     </View>
   );
 }
 
+// ── Atalho da grade ───────────────────────────────────────────────────────
+function QuickTile({ Icon, label, sub, onPress, width }) {
+  const c = useFamilyColors();
+  return (
+    <PressableScale onPress={onPress} scaleTo={0.96} style={[st.tile, { backgroundColor: c.cardBg, width }]} accessibilityRole="button" accessibilityLabel={sub ? `${label}, ${sub}` : label}>
+      <GraphiteTile Icon={Icon} size={40} />
+      <Text style={[st.tileLabel, { color: c.text }]} numberOfLines={1}>{label}</Text>
+      {!!sub && <Text style={[st.tileSub, { color: c.secondary }]} numberOfLines={1}>{sub}</Text>}
+    </PressableScale>
+  );
+}
+
+function FamilySkeleton() {
+  const c = useFamilyColors();
+  const b = (h, w = '100%', mb = 10, r = 14) => <View style={{ height: h, width: w, borderRadius: r, backgroundColor: c.placeholder, marginBottom: mb }} />;
+  return (
+    <View style={{ padding: 16 }}>
+      <View style={[st.hero, { backgroundColor: c.cardBg }]}>
+        <View style={{ flexDirection: 'row', gap: 6, marginBottom: 16 }}>{b(58, 58, 0, 29)}{b(58, 58, 0, 29)}{b(58, 58, 0, 29)}</View>
+        {b(24, 190, 8, 8)}{b(14, 120, 18, 7)}{b(48, '100%', 0, 24)}
+      </View>
+      <View style={{ height: 24 }} />
+      <View style={{ flexDirection: 'row', gap: 10 }}>{b(132, 118)}{b(132, 118)}{b(132, 118)}</View>
+      <View style={{ height: 16 }} />
+      {b(96)}{b(96)}
+    </View>
+  );
+}
+
+// Folha simples (renomear / entrar com convite).
+function FormSheet({ visible, onClose, title, sub, children }) {
+  const c = useFamilyColors();
+  return (
+    <NativeSheetDialog
+      visible={visible}
+      onClose={onClose}
+      overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}
+      panelStyle={{ backgroundColor: c.pageBg, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 16, paddingTop: 22, paddingBottom: 28, width: '100%', maxWidth: 560, alignSelf: 'center' }}
+      animationType="slide"
+    >
+      <Text style={[st.sheetTitle, { color: c.text }]} accessibilityRole="header">{title}</Text>
+      {!!sub && <Text style={[st.sheetSub, { color: c.secondary }]}>{sub}</Text>}
+      {children}
+    </NativeSheetDialog>
+  );
+}
+
+// Folha "ver tudo" de um recurso compartilhado.
+function ListSheet({ visible, onClose, children }) {
+  const c = useFamilyColors();
+  return (
+    <NativeSheetDialog
+      visible={visible}
+      onClose={onClose}
+      overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}
+      panelStyle={{ backgroundColor: c.pageBg, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 24, width: '100%', maxWidth: 640, alignSelf: 'center', maxHeight: '88%' }}
+      animationType="slide"
+    >
+      {children}
+    </NativeSheetDialog>
+  );
+}
+
 function FamilyScreenInner() {
-  // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
-  const _drag929 = useDragToDismiss({ onDismiss: () => { const f = () => setInviteOpen(false); f(); } });
   const router = useRouter();
-  const { colors, accent, onAccent, heroBg, roles } = useFamilyPalette();
-  const { isDark } = useTheme();
+  const params = useLocalSearchParams();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const c = useFamilyColors();
+  const { colors, isDark } = c;
   const { user } = useAuth();
   const { t } = useLanguage();
+  const shared = useFamilyShared();
 
   const [loading, setLoading] = useState(true);
   const [errored, setErrored] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [family, setFamily] = useState(null);
   const [planShare, setPlanShare] = useState(null);
+  const [locations, setLocations] = useState({}); // email → { updated_at, … }
 
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteTarget, setInviteTarget] = useState('');
   const [inviteRole, setInviteRole] = useState('child');
-  const [inviteSending, setInviteSending] = useState(false);
-
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState('');
-
   const [joinOpen, setJoinOpen] = useState(false);
   const [joinValue, setJoinValue] = useState('');
   const [joinBusy, setJoinBusy] = useState(false);
+  const [sheet, setSheet] = useState(null); // 'shopping' | 'album' | 'calendar' | 'calendarAdd'
 
-  const myEmail = (user?.email || '').toLowerCase();
+  const myEmail = lower(user?.email);
 
   const loadInfo = useCallback(async () => {
     setErrored(false);
     try {
-      const [r1, r2] = await Promise.all([
+      const [r1, r2, r3] = await Promise.all([
         api.familyInfo(),
         PLANS_ENABLED ? api.familyPlanShare().catch(() => null) : Promise.resolve(null),
+        api.familyLocationAll().catch(() => null), // também aquece a fonte do mapa
       ]);
       if (r1?.success && r1?.data) {
         const d = r1.data;
-        // REAL contract: members is a SIBLING of family (data.members), and
-        // my_role / is_owner live at data level.
-        const members = Array.isArray(d.members)
-          ? d.members.filter(m => m && (typeof m.email === 'string') && m.email)
-          : [];
-        setFamily({
-          ...(d.family || {}),
-          members,
-          my_role: d.my_role,
-          is_owner: !!d.is_owner,
-        });
+        // members é IRMÃO de family (data.members); my_role / is_owner no nível data.
+        const members = Array.isArray(d.members) ? d.members.filter(m => m && typeof m.email === 'string' && m.email) : [];
+        setFamily({ ...(d.family || {}), members, my_role: d.my_role, is_owner: !!d.is_owner });
       } else {
-        // Backend auto-creates a solo family, so this is rare. Synthesize a
-        // minimal solo family from the signed-in user so the screen never
-        // renders blank.
+        // O backend auto-cria a família solo; isto é raro. Sintetiza uma família
+        // mínima com o usuário logado p/ a tela nunca ficar em branco.
         setFamily({
-          id: 'self', name: '', owner_email: myEmail, is_owner: true,
-          members: [{ email: myEmail || 'me', name: user?.name || myEmail || t('common.you'), online: true, presence: 'online' }],
+          id: 'self', name: '', owner_email: myEmail, is_owner: true, my_role: 'parent',
+          members: [{ email: myEmail || 'me', name: user?.name || myEmail || t('common.you'), online: true, presence: 'online', role: 'parent' }],
         });
       }
       if (r2?.success && r2.data) setPlanShare(r2.data);
+      const locs = r3?.data?.locations || r3?.locations;
+      if (Array.isArray(locs)) {
+        const map = {};
+        locs.forEach(l => { if (l?.email && l.updated_at) map[lower(l.email)] = l; });
+        setLocations(map);
+      }
     } catch {
       setErrored(true);
     } finally {
@@ -586,52 +295,48 @@ function FamilyScreenInner() {
     }
   }, [myEmail, user?.name, t]);
 
-  useEffect(() => { try { console.log('[FAMILIA-DIAG][family][mount]'); } catch {} loadInfo(); }, [loadInfo]);
+  useEffect(() => { loadInfo(); shared.loadAll(); }, [loadInfo]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const members = family?.members || [];
+  // Deep link /family?join=<token> → folha "Entrar com convite" preenchida.
+  const joinParam = typeof params?.join === 'string' ? params.join : '';
+  useEffect(() => {
+    if (!joinParam) return;
+    setJoinValue(joinParam);
+    setJoinOpen(true);
+  }, [joinParam]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try { haptic.light(); } catch {}
+    await Promise.all([loadInfo(), shared.loadAll()]);
+    setRefreshing(false);
+  }, [loadInfo, shared]);
+
+  const members = useMemo(() => {
+    const list = family?.members || [];
+    // Eu primeiro, depois o responsável, depois quem está online.
+    const owner = lower(family?.owner_email);
+    return [...list].sort((a, b) => {
+      const sa = (lower(a.email) === myEmail ? 4 : 0) + (lower(a.email) === owner ? 2 : 0) + (isOnline(a) ? 1 : 0);
+      const sb = (lower(b.email) === myEmail ? 4 : 0) + (lower(b.email) === owner ? 2 : 0) + (isOnline(b) ? 1 : 0);
+      return sb - sa;
+    });
+  }, [family?.members, family?.owner_email, myEmail]);
   const isOwner = !!family?.is_owner;
+  const myRole = family?.my_role || (isOwner ? 'parent' : 'child');
+  const isKid = myRole === 'child' && !isOwner;
+  const canInvite = isOwner || myRole === 'parent' || myRole === 'spouse';
   const ownerEmail = family?.owner_email || '';
   const memberCount = members.length;
-  const onlineCount = useMemo(
-    () => members.filter(m => (m.online || m.presence === 'online') && (m.email || '').toLowerCase() !== myEmail).length,
-    [members, myEmail]
-  );
+  const onlineCount = useMemo(() => members.filter(m => isOnline(m) && lower(m.email) !== myEmail).length, [members, myEmail]);
 
-  // ── Invite → share deep-link ──
-  const handleInvite = async () => {
-    const target = inviteTarget.trim();
-    if (!target) { Alert.alert(t('family.invite.title'), t('family.invite.needTarget')); return; }
-    const tgtLower = target.toLowerCase();
-    if (tgtLower === myEmail) { Alert.alert(t('family.invite.title'), t('family.invite.self')); return; }
-    if (members.some(m => (m.email || '').toLowerCase() === tgtLower)) {
-      Alert.alert(t('family.invite.title'), t('family.invite.already')); return;
-    }
-    setInviteSending(true);
-    try {
-      const r = await api.familyInvite(target, inviteRole);
-      if (r?.success) {
-        try { haptic.success(); } catch {}
-        setInviteOpen(false); setInviteTarget('');
-        const link = r?.data?.link;
-        if (link) {
-          Alert.alert(t('family.invite.created'), t('family.invite.createdBody', { target }), [
-            { text: t('common.close'), style: 'cancel' },
-            { text: t('common.share'), onPress: () => { Share.share({ message: t('family.invite.shareMsg', { family: family?.name || t('family.myFamilyLower'), link }) }).catch(() => {}); } },
-          ]);
-        } else {
-          Alert.alert(t('family.invite.sent'), t('family.invite.sentBody', { target }));
-        }
-        loadInfo();
-      } else {
-        // Rate-limit (10/24h) and other failures return a pt-BR message.
-        Alert.alert(t('family.invite.title'), r?.message || t('family.invite.sendFailed'));
-      }
-    } catch {
-      Alert.alert(t('family.invite.title'), t('common.networkError'));
-    } finally { setInviteSending(false); }
-  };
+  const openInvite = useCallback((role = 'child') => {
+    try { haptic.light(); } catch {}
+    setInviteRole(role);
+    setInviteOpen(true);
+  }, []);
 
-  // ── Join by pasted invite link / token ──
+  // ── Entrar por link/código colado ──
   const handleJoin = async () => {
     const raw = joinValue.trim();
     if (!raw) { Alert.alert(t('family.invite.title'), t('family.join.needValue')); return; }
@@ -645,6 +350,7 @@ function FamilyScreenInner() {
         setJoinOpen(false); setJoinValue('');
         setLoading(true);
         await loadInfo();
+        shared.loadAll();
       } else {
         Alert.alert(t('family.invite.title'), r?.message || t('family.join.invalid'));
       }
@@ -652,18 +358,24 @@ function FamilyScreenInner() {
     finally { setJoinBusy(false); }
   };
 
-  // ── Rename (owner, optimistic) ──
+  // ── Renomear (responsável, otimista) ──
+  const openRename = () => {
+    if (!isOwner) { Alert.alert(t('family.nameTitle'), t('family.ownerOnlyRename')); return; }
+    setRenameValue(family?.name || '');
+    setRenameOpen(true);
+  };
   const handleRename = async () => {
     const name = renameValue.trim();
     if (!name) return;
     const prevName = family?.name;
     setFamily(prev => prev ? { ...prev, name } : prev);
     setRenameOpen(false);
+    try { haptic.success(); } catch {}
     try { const r = await api.familyUpdate({ name }); if (!r?.success) setFamily(prev => prev ? { ...prev, name: prevName } : prev); }
     catch { setFamily(prev => prev ? { ...prev, name: prevName } : prev); }
   };
 
-  // ── Remove member (owner) ──
+  // ── Remover membro (responsável) ──
   const confirmRemove = (member) => {
     const label = member.name || member.email;
     const doRemove = async () => { try { await api.familyRemoveMember(member.email); } catch {} loadInfo(); };
@@ -677,9 +389,9 @@ function FamilyScreenInner() {
     }
   };
 
-  // ── Leave (non-owner) ──
+  // ── Sair (não responsável) ──
   const confirmLeave = () => {
-    const doLeave = async () => { try { await api.familyLeave(); } catch {} setLoading(true); await loadInfo(); };
+    const doLeave = async () => { try { await api.familyLeave(); } catch {} setLoading(true); await loadInfo(); shared.loadAll(); };
     if (Platform.OS === 'web') {
       if (typeof window !== 'undefined' && window.confirm(t('family.leave.confirmWeb'))) doLeave();
     } else {
@@ -690,362 +402,290 @@ function FamilyScreenInner() {
     }
   };
 
-  // ── Find My Family → prefetch locations, then open the map ──
+  // ── Encontrar minha família → pré-carrega e abre o mapa ──
   const openFamilyMap = () => {
-    api.familyLocationAll().catch(() => {}); // warm the map's data source
+    try { haptic.light(); } catch {}
+    api.familyLocationAll().catch(() => {});
     try { require('../services/snapMapPrefetch').prefetchSnapMap(); } catch {} // [2026-10-12 snapmap-speed]
     router.push('/snap-map');
   };
 
-  // [2026-10-09 native-sheets-headers] Nativo: UINavigationBar/Toolbar do sistema
-  // (antes o header JS ficava sob a status bar — sem inset do topo).
-  const Header = USE_NATIVE_HEADER ? (
+  const openChatWith = (email) => {
+    try { require('../services/openConversation').openConversation('/chat-conversation?email=' + encodeURIComponent(email), { source: 'family' }); }
+    catch { router.push('/chat-conversation?email=' + encodeURIComponent(email)); }
+  };
+
+  // Toque no cartão: eu → nada além do toque; outros → mensagem / remover.
+  const onMemberPress = (m, isMe) => {
+    try { haptic.light(); } catch {}
+    if (isMe) return;
+    const label = memberLabel(m);
+    const buttons = [{ text: t('family.hub.sendMessage'), onPress: () => openChatWith(m.email) }];
+    if (isOwner) buttons.push({ text: t('common.remove'), style: 'destructive', onPress: () => confirmRemove(m) });
+    buttons.push({ text: t('common.cancel'), style: 'cancel' });
+    if (Platform.OS === 'web') { openChatWith(m.email); return; }
+    Alert.alert(label, m.email, buttons);
+  };
+
+  const openSheet = (k) => { try { haptic.select(); } catch {} setSheet(k); };
+
+  const header = USE_NATIVE_HEADER ? (
     <Stack.Screen options={nativeHeaderOptions({
       colors,
       isDark,
       title: t('menu.family'),
-      headerRight: isOwner && !loading && !errored ? () => (
-        <HeaderIconButton onPress={() => setInviteOpen(true)} accessibilityLabel={t('chat.invite')}>
+      largeTitle: true,
+      headerShadowVisible: false,
+      headerStyle: { backgroundColor: c.pageBg },
+      headerLargeStyle: { backgroundColor: c.pageBg },
+      contentStyle: { backgroundColor: c.pageBg },
+      headerRight: canInvite && !loading && !errored ? () => (
+        <HeaderIconButton onPress={() => openInvite('child')} accessibilityLabel={t('family.invite.cta')}>
           <IconPlus size={22} color={colors.text} />
         </HeaderIconButton>
       ) : () => null,
     })} />
   ) : (
-    <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-      <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel={t('common.back')}>
-        <IconArrowLeft size={22} color={colors.text} />
-      </TouchableOpacity>
-      <Text style={[s.headerTitle, { color: colors.text }]}>{t('menu.family')}</Text>
-      {isOwner && !loading && !errored ? (
-        <TouchableOpacity onPress={() => setInviteOpen(true)} style={s.backBtn} accessibilityRole="button" accessibilityLabel={t('family.invite.cta')}>
-          <IconPlus size={22} color={accent} />
-        </TouchableOpacity>
-      ) : <View style={{ width: 30 }} />}
+    <View style={[st.webHeader, { paddingTop: insets.top + 6, backgroundColor: c.pageBg }]}>
+      <Pressable onPress={() => router.back()} style={st.webBtn} accessibilityRole="button" accessibilityLabel={t('common.back')}>
+        <IconArrowLeft size={22} color={c.text} />
+      </Pressable>
+      <Text style={[st.webTitle, { color: c.text }]} accessibilityRole="header">{t('menu.family')}</Text>
+      {canInvite && !loading && !errored ? (
+        <Pressable onPress={() => openInvite('child')} style={st.webBtn} accessibilityRole="button" accessibilityLabel={t('family.invite.cta')}>
+          <IconPlus size={22} color={c.text} />
+        </Pressable>
+      ) : <View style={st.webBtn} />}
     </View>
   );
 
   if (loading) {
-    return <View style={[s.container, { backgroundColor: colors.background }]}>{Header}<FamilySkeleton colors={colors} /></View>;
-  }
-
-  if (errored) {
     return (
-      <View style={[s.container, { backgroundColor: colors.background }]}>
-        {Header}
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-          <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: accent + '14', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-            <IconUsers size={34} color={accent} />
-          </View>
-          <Text style={{ fontSize: FontSize.lg, fontWeight: '800', color: colors.text, marginBottom: 6 }}>{t('family.loadErrorTitle')}</Text>
-          <Text style={{ fontSize: FontSize.sm, color: colors.textSecondary, textAlign: 'center', marginBottom: 20, lineHeight: 19 }}>{t('family.loadErrorBody')}</Text>
-          <PressableScale onPress={() => { require('../utils/userRetry').noteUserRetry(); setLoading(true); loadInfo(); }} style={[s.cta, { backgroundColor: accent }]} accessibilityRole="button" accessibilityLabel={t('common.tryAgain')}>
-            <Text style={{ color: onAccent, fontWeight: '800', fontSize: FontSize.base }}>{t('common.tryAgain')}</Text>
-          </PressableScale>
-        </View>
+      <View style={[st.container, { backgroundColor: c.pageBg }]}>
+        {header}
+        <NativeInsetView><FamilySkeleton /></NativeInsetView>
       </View>
     );
   }
 
+  if (errored) {
+    return (
+      <View style={[st.container, { backgroundColor: c.pageBg }]}>
+        {header}
+        <NativeInsetView contentContainerStyle={{ alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+          <GraphiteTile Icon={IconUsers} size={64} radius={32} />
+          <Text style={{ fontSize: 20, fontWeight: '700', color: c.text, marginTop: 16, marginBottom: 6 }}>{t('family.loadErrorTitle')}</Text>
+          <Text style={{ fontSize: 15, color: c.secondary, textAlign: 'center', marginBottom: 22, lineHeight: 20 }}>{t('family.loadErrorBody')}</Text>
+          <PressableScale onPress={() => { try { require('../utils/userRetry').noteUserRetry(); } catch {} setLoading(true); loadInfo(); shared.loadAll(); }}
+            style={[st.pill, { backgroundColor: c.pill }]} accessibilityRole="button" accessibilityLabel={t('common.tryAgain')}>
+            <Text style={[st.pillText, { color: c.onPill }]}>{t('common.tryAgain')}</Text>
+          </PressableScale>
+        </NativeInsetView>
+      </View>
+    );
+  }
+
+  // Grade de atalhos (3 colunas; 2 em telas muito estreitas).
+  const cols = width < 340 ? 2 : 3;
+  const gridW = Math.min(width, 720) - 32;
+  const tileW = Math.floor((gridW - (cols - 1) * 10) / cols);
+  const pendingShop = (shared.shopping || []).filter(x => !x.checked).length;
+  const tiles = [
+    { k: 'map', Icon: IconMap, label: t('family.hub.tile.map'), sub: onlineCount > 0 ? t('family.onlineCount', { n: onlineCount }) : t('family.hub.tile.mapSub'), onPress: openFamilyMap },
+    { k: 'chat', Icon: IconMessageCircle, label: t('family.hub.tile.chat'), sub: t('family.hub.tile.chatSub'), onPress: () => router.push('/chat-new') },
+    { k: 'shop', Icon: IconCart, label: t('family.hub.tile.shopping'), sub: pendingShop ? t('family.hub.pendingN', { n: pendingShop }) : t('family.hub.tile.shoppingSub'), onPress: () => openSheet('shopping') },
+    { k: 'album', Icon: IconImage, label: t('family.hub.tile.album'), sub: shared.album && shared.album.length ? t('family.hub.photosN', { n: shared.album.length }) : t('family.hub.tile.albumSub'), onPress: () => openSheet('album') },
+    { k: 'cal', Icon: IconCalendar, label: t('family.hub.tile.calendar'), sub: shared.upcoming && shared.upcoming.length ? t('family.hub.eventsN', { n: shared.upcoming.length }) : t('family.hub.tile.calendarSub'), onPress: () => openSheet('calendar') },
+    !isKid && { k: 'parental', Icon: IconShield, label: t('family.hub.tile.parental'), sub: t('family.hub.tile.parentalSub'), onPress: () => router.push('/parental') },
+  ].filter(Boolean);
+
+  const myRoleLabel = isOwner ? t('family.role.owner')
+    : myRole === 'spouse' ? t('family.role.spouse')
+      : myRole === 'child' ? t('family.role.child') : t('family.hub.role.adult');
+
   return (
-    <View style={[s.container, { backgroundColor: colors.background }]}>
-      {Header}
-      <FadeSlideIn>
-      <ScrollView contentContainerStyle={{ paddingBottom: 48 }}>
-        {/* Hero */}
-        <View style={[s.hero, { backgroundColor: heroBg }]}>
-          <FamilyComposite members={members} size={100} accent={accent} />
-          <TouchableOpacity
-            disabled={!isOwner}
-            onPress={() => { setRenameValue(family?.name || ''); setRenameOpen(true); }}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel={isOwner ? t('family.rename') : t('family.nameTitle')}
-            style={{ marginTop: 16, alignItems: 'center' }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-              <Text style={[s.heroTitle, { color: colors.text }]}>{family?.name || t('family.myFamily')}</Text>
-              {isOwner && <IconEdit size={16} color={colors.textSecondary} />}
-            </View>
-            <Text style={[s.heroSub, { color: colors.textSecondary }]}>
+    <View style={[st.container, { backgroundColor: c.pageBg }]}>
+      {header}
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: 40 + (USE_NATIVE_HEADER ? 0 : insets.bottom), paddingTop: USE_NATIVE_HEADER ? 8 : 4 }}
+        {...nativeScrollInsetProps()}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.secondary} colors={[c.text]} />}
+      >
+        {/* ── Capa ── */}
+        <View style={[st.hero, { backgroundColor: c.cardBg, marginHorizontal: 16 }]}>
+          <AvatarStack members={members} />
+          <Pressable onPress={openRename} disabled={!isOwner} accessibilityRole="button" accessibilityLabel={isOwner ? t('family.rename') : (family?.name || t('family.myFamily'))}
+            style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 }, pressed && { opacity: 0.6 }]}>
+            <Text style={[st.heroTitle, { color: c.text }]} numberOfLines={2}>{family?.name || t('family.myFamily')}</Text>
+            {isOwner && <IconEdit size={17} color={c.secondary} />}
+          </Pressable>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 8 }}>
+            <Text style={{ color: c.secondary, fontSize: 15 }}>
               {t(memberCount === 1 ? 'family.memberCount1' : 'family.memberCountN', { n: memberCount })}
               {onlineCount > 0 ? ` · ${t('family.onlineCount', { n: onlineCount })}` : ''}
             </Text>
-          </TouchableOpacity>
-
-          {memberCount <= 1 && isOwner && (
-            <PressableScale onPress={() => setInviteOpen(true)} style={[s.cta, { backgroundColor: accent, marginTop: 18, paddingHorizontal: 22 }]} accessibilityRole="button" accessibilityLabel={t('family.invite.cta')}>
-              <IconPlus size={18} color={onAccent} />
-              <Text style={{ color: onAccent, fontWeight: '800', fontSize: FontSize.base }}>{t('family.invite.cta')}</Text>
+            <View style={[st.badge, { borderColor: c.separator }]}>
+              {isOwner && <IconStar size={11} color={c.text} />}
+              <Text style={{ color: c.text, fontSize: 12, fontWeight: '600' }}>{myRoleLabel}</Text>
+            </View>
+          </View>
+          {canInvite && (
+            <PressableScale onPress={() => openInvite('child')} style={[st.pill, { backgroundColor: c.pill, marginTop: 18, alignSelf: 'stretch' }]} accessibilityRole="button" accessibilityLabel={t('family.invite.cta')}>
+              <IconPlus size={18} color={c.onPill} />
+              <Text style={[st.pillText, { color: c.onPill }]}>{t('family.invite.cta')}</Text>
             </PressableScale>
           )}
         </View>
 
-        {/* Members */}
-        <View style={s.section}>
-          <SectionHeader title={t('community.members')} colors={colors} />
-          <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-            {members.map((m, idx) => (
-              <MemberRow
-                key={m.email || idx}
-                member={m}
-                index={idx}
-                colors={colors}
-                roles={roles}
-                ownerEmail={ownerEmail}
-                isMe={(m.email || '').toLowerCase() === myEmail}
-                onRemove={isOwner ? confirmRemove : null}
-              />
-            ))}
-            {isOwner && (
-              <TouchableOpacity onPress={() => setInviteOpen(true)} activeOpacity={0.7} style={[s.row, { borderBottomWidth: 0 }]} accessibilityRole="button" accessibilityLabel={t('family.invite.cta')}>
-                <InvitePulseRing active={memberCount <= 1} accent={accent} />
-                <View style={[s.rowIcon, { backgroundColor: accent + '1A' }]}>
-                  <IconPlus size={20} color={accent} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.rowTitle, { color: accent, fontWeight: '700' }]}>{t('family.invite.cta')}</Text>
-                  <Text style={[s.rowSub, { color: colors.textSecondary }]}>{t('family.invite.rowSub')}</Text>
-                </View>
-                <IconChevronRight size={18} color={accent} />
-              </TouchableOpacity>
-            )}
-          </View>
+        {/* ── Membros ── */}
+        <HubSectionHeader title={t('community.members')} />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}>
+          {members.map((m, idx) => {
+            const me = lower(m.email) === myEmail;
+            return (
+              <MemberCard key={m.email || idx} member={m} index={idx} isMe={me} ownerEmail={ownerEmail}
+                location={locations[lower(m.email)]} onPress={() => onMemberPress(m, me)} />
+            );
+          })}
+          {canInvite && memberCount > 1 && <AddMemberCard onPress={() => openInvite('child')} />}
+        </ScrollView>
+        {canInvite && memberCount <= 1 && <View style={{ marginTop: 10 }}><InviteEmpty onInvite={openInvite} /></View>}
+
+        {/* ── Atalhos ── */}
+        <HubSectionHeader title={t('family.hub.quick')} />
+        <View style={[st.grid, { width: gridW }]}>
+          {tiles.map(tl => <QuickTile key={tl.k} Icon={tl.Icon} label={tl.label} sub={tl.sub} onPress={tl.onPress} width={tileW} />)}
         </View>
 
-        {/* Smart section — real, functional shared features */}
-        <View style={s.section}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 4, marginBottom: 8 }}>
-            <IconSparkles size={14} color={accent} />
-            <Text style={[s.sectionHeader, { color: colors.textSecondary, marginBottom: 0, marginLeft: 0 }]}>{t('family.smart')}</Text>
-          </View>
-          <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-            <FeatureRow
-              icon={IconNavigation}
-              color={accent}
-              title={t('family.find.title')}
-              subtitle={onlineCount > 0 ? t(onlineCount === 1 ? 'family.find.subOnline1' : 'family.find.subOnlineN', { n: onlineCount }) : t('family.find.sub')}
-              badge={onlineCount > 0 ? t('family.onlineCount', { n: onlineCount }) : null}
-              onPress={openFamilyMap}
-              colors={colors}
-            />
-            <FeatureRow
-              icon={IconMessageCircle}
-              color={accent}
-              title={t('family.chat.title')}
-              subtitle={t('family.chat.sub')}
-              onPress={() => router.push('/chat-new')}
-              colors={colors}
-            />
-            <CollapsibleFeature
-              icon={IconCheckbox}
-              color={accent}
-              title={t('family.shopping.title')}
-              subtitle={t('family.shopping.sub')}
-              colors={colors}
-              renderBody={() => <SharedShoppingList colors={colors} accent={accent} onAccent={onAccent} />}
-            />
-            <CollapsibleFeature
-              icon={IconImage}
-              color={accent}
-              title={t('family.album.title')}
-              subtitle={t('family.album.sub')}
-              colors={colors}
-              renderBody={() => <SharedAlbum colors={colors} accent={accent} />}
-            />
-            <CollapsibleFeature
-              icon={IconCalendar}
-              color={accent}
-              title={t('family.calendar.title')}
-              subtitle={t('family.calendar.sub')}
-              colors={colors}
-              renderBody={() => <SharedCalendar colors={colors} accent={accent} onAccent={onAccent} />}
-              last
-            />
-          </View>
+        {/* ── Prévias reais ── */}
+        <HubSectionHeader title={t('family.hub.shared')} />
+        <View style={{ gap: 12 }}>
+          <ShoppingPreview data={shared} onOpen={() => openSheet('shopping')} />
+          <NextEventPreview data={shared} onOpen={() => openSheet('calendar')} onAdd={() => openSheet('calendarAdd')} />
+          <AlbumPreview data={shared} onOpen={() => openSheet('album')} />
         </View>
 
-        {/* Plan / parental (gated) */}
-        {(PLANS_ENABLED) && (
-          <View style={s.section}>
-            <SectionHeader title={t('family.sharedSection')} colors={colors} />
-            <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-              <FeatureRow
-                icon={IconStar}
-                color={accent}
-                title={planShare?.plan_name ? t('family.plan.named', { name: planShare.plan_name }) : t('family.plan.default')}
-                subtitle={planShare?.shared ? t('family.plan.sharedWith', { n: planShare.shared_with || memberCount }) : t('family.plan.shareUpTo')}
-                badge={planShare?.shared ? t('plans.active') : null}
-                onPress={() => router.push('/plans')}
-                colors={colors}
-                last
-              />
-            </View>
-          </View>
+        {/* ── Plano (gated) ── */}
+        {PLANS_ENABLED && (
+          <SettingsGroup header={t('family.sharedSection')}>
+            <SettingsRow
+              icon={IconStar}
+              title={planShare?.plan_name ? t('family.plan.named', { name: planShare.plan_name }) : t('family.plan.default')}
+              subtitle={planShare?.shared ? t('family.plan.sharedWith', { n: planShare.shared_with || memberCount }) : t('family.plan.shareUpTo')}
+              value={planShare?.shared ? t('plans.active') : undefined}
+              onPress={() => router.push('/plans')}
+            />
+          </SettingsGroup>
         )}
 
-        {/* Settings */}
-        <View style={s.section}>
-          <SectionHeader title={t('family.settings')} colors={colors} />
-          <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-            <FeatureRow
-              icon={IconUsers}
-              color={accent}
-              title={t('family.nameTitle')}
-              subtitle={isOwner ? (family?.name || t('family.setName')) : t('family.ownerOnlyEdits', { name: family?.name || '—' })}
-              onPress={() => { if (isOwner) { setRenameValue(family?.name || ''); setRenameOpen(true); } else Alert.alert(t('family.nameTitle'), t('family.ownerOnlyRename')); }}
-              colors={colors}
-            />
-            <FeatureRow
-              icon={IconShield}
-              color={accent}
-              title={t('settings.parentalControls')}
-              subtitle={t('family.parental.sub')}
-              onPress={() => router.push('/parental')}
-              colors={colors}
-            />
-            <FeatureRow
-              icon={IconKey}
-              color={accent}
-              title={t('family.join.rowTitle')}
-              subtitle={t('family.join.rowSub')}
-              onPress={() => { setJoinValue(''); setJoinOpen(true); }}
-              colors={colors}
-              last={isOwner}
-            />
-            {!isOwner && (
-              <FeatureRow
-                icon={IconLogout}
-                color={colors.error || '#EF4444'}
-                title={t('family.leave.title')}
-                subtitle={t('family.leave.sub')}
-                onPress={confirmLeave}
-                colors={colors}
-                last
-              />
-            )}
-          </View>
-        </View>
+        {/* ── Ajustes ── */}
+        <SettingsGroup header={t('family.settings')}>
+          <SettingsRow
+            icon={IconUsers}
+            title={t('family.nameTitle')}
+            subtitle={isOwner ? (family?.name || t('family.setName')) : t('family.ownerOnlyEdits', { name: family?.name || '—' })}
+            onPress={openRename}
+          />
+          {!isKid && (
+            <SettingsRow icon={IconShield} title={t('settings.parentalControls')} subtitle={t('family.parental.sub')} onPress={() => router.push('/parental')} />
+          )}
+          <SettingsRow icon={IconKey} title={t('family.join.rowTitle')} subtitle={t('family.join.rowSub')} onPress={() => { setJoinValue(''); setJoinOpen(true); }} />
+          {!isOwner && (
+            <SettingsRow icon={IconLogout} title={t('family.leave.title')} subtitle={t('family.leave.sub')} destructive onPress={confirmLeave} />
+          )}
+        </SettingsGroup>
       </ScrollView>
-      </FadeSlideIn>
 
-      {/* Invite sheet */}
-      <Modal visible={inviteOpen} transparent animationType="slide" onRequestClose={() => setInviteOpen(false)}>
-        <DragSheetRoot>
-        <View style={s.sheetOverlay}>
-          <View style={[s.sheet, { backgroundColor: colors.surface }]}>
-            <View style={[s.grabber, { backgroundColor: colors.border }]} />
-            <Text style={[s.modalTitle, { color: colors.text }]}>{t('family.invite.cta')}</Text>
-            <Text style={[s.modalSub, { color: colors.textSecondary }]}>{t('family.invite.sheetSub')}</Text>
+      {/* ── Folhas ── */}
+      <FamilyInviteSheet
+        visible={inviteOpen}
+        onClose={() => setInviteOpen(false)}
+        initialRole={inviteRole}
+        familyName={family?.name}
+        members={members}
+        myEmail={myEmail}
+        onInvited={loadInfo}
+      />
 
-            <Text style={[s.label, { color: colors.textSecondary }]}>{t('family.invite.targetLabel')}</Text>
-            <TextInput
-              value={inviteTarget}
-              onChangeText={setInviteTarget}
-              placeholder={t('family.invite.targetPh')}
-              placeholderTextColor={colors.textSecondary}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border }]}
-            />
+      <ListSheet visible={sheet === 'shopping'} onClose={() => setSheet(null)}>
+        <ShoppingSheetBody data={shared} />
+      </ListSheet>
+      <ListSheet visible={sheet === 'album'} onClose={() => setSheet(null)}>
+        <AlbumSheetBody data={shared} />
+      </ListSheet>
+      <ListSheet visible={sheet === 'calendar' || sheet === 'calendarAdd'} onClose={() => setSheet(null)}>
+        <CalendarSheetBody data={shared} startAdding={sheet === 'calendarAdd'} />
+      </ListSheet>
 
-            <Text style={[s.label, { color: colors.textSecondary, marginTop: 16 }]}>{t('family.invite.roleLabel')}</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 18 }}>
-              {[{ key: 'child', label: t('family.role.child') }, { key: 'parent', label: t('family.role.parent') }, { key: 'spouse', label: t('family.role.spouse') }].map(opt => {
-                const sel = inviteRole === opt.key;
-                const palette = roles[opt.key];
-                return (
-                  <TouchableOpacity key={opt.key} onPress={() => { try { haptic.select(); } catch {} setInviteRole(opt.key); }} activeOpacity={0.75} style={{ flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: sel ? palette.bg : colors.borderLight, borderWidth: 2, borderColor: sel ? palette.fg : 'transparent' }} accessibilityRole="button">
-                    <Text style={{ fontSize: 13, fontWeight: '700', color: sel ? palette.fg : colors.text }}>{opt.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <DragPanel drag={_drag929} style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity onPress={() => setInviteOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]} accessibilityRole="button">
-                <Text style={[s.btnText, { color: colors.text }]}>{t('common.cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleInvite} disabled={inviteSending} style={[s.btn, { backgroundColor: accent, flex: 1, opacity: inviteSending ? 0.6 : 1 }]} accessibilityRole="button">
-                {inviteSending ? <ActivityIndicator color={onAccent} /> : <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}><IconShare size={16} color={onAccent} /><Text style={[s.btnText, { color: onAccent }]}>{t('family.invite.generate')}</Text></View>}
-              </TouchableOpacity>
-            </DragPanel>
-          </View>
+      <FormSheet visible={renameOpen} onClose={() => setRenameOpen(false)} title={t('family.nameTitle')}>
+        <TextInput value={renameValue} onChangeText={setRenameValue} placeholder={t('family.renamePh')} placeholderTextColor={c.secondary}
+          style={[st.input, { color: c.text, backgroundColor: c.cardBg }]} maxLength={60} autoFocus returnKeyType="done" onSubmitEditing={handleRename} />
+        <View style={st.btnRow}>
+          <Pressable onPress={() => setRenameOpen(false)} style={[st.btn, { backgroundColor: c.chip }]} accessibilityRole="button">
+            <Text style={[st.btnText, { color: c.text }]}>{t('common.cancel')}</Text>
+          </Pressable>
+          <Pressable onPress={handleRename} disabled={!renameValue.trim()} style={[st.btn, { backgroundColor: c.pill, opacity: renameValue.trim() ? 1 : 0.5 }]} accessibilityRole="button">
+            <Text style={[st.btnText, { color: c.onPill }]}>{t('common.save')}</Text>
+          </Pressable>
         </View>
-        </DragSheetRoot>
-      </Modal>
+      </FormSheet>
 
-      {/* Rename */}
-      <Modal visible={renameOpen} transparent animationType="fade" onRequestClose={() => setRenameOpen(false)}>
-        <View style={s.centerOverlay}>
-          <View style={[s.centerCard, { backgroundColor: colors.surface }]}>
-            <Text style={[s.modalTitle, { color: colors.text }]}>{t('family.nameTitle')}</Text>
-            <TextInput value={renameValue} onChangeText={setRenameValue} placeholder={t('family.renamePh')} placeholderTextColor={colors.textSecondary} style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border, marginTop: 14 }]} maxLength={60} autoFocus />
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-              <TouchableOpacity onPress={() => setRenameOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]}><Text style={[s.btnText, { color: colors.text }]}>{t('common.cancel')}</Text></TouchableOpacity>
-              <TouchableOpacity onPress={handleRename} style={[s.btn, { backgroundColor: accent, flex: 1 }]}><Text style={[s.btnText, { color: onAccent }]}>{t('common.save')}</Text></TouchableOpacity>
-            </View>
-          </View>
+      <FormSheet visible={joinOpen} onClose={() => setJoinOpen(false)} title={t('family.join.modalTitle')} sub={t('family.join.modalSub')}>
+        <TextInput value={joinValue} onChangeText={setJoinValue} placeholder={t('family.join.ph')} placeholderTextColor={c.secondary}
+          autoCapitalize="none" autoCorrect={false} autoFocus={!joinValue}
+          style={[st.input, { color: c.text, backgroundColor: c.cardBg }]} returnKeyType="go" onSubmitEditing={handleJoin} />
+        <View style={st.btnRow}>
+          <Pressable onPress={() => setJoinOpen(false)} style={[st.btn, { backgroundColor: c.chip }]} accessibilityRole="button">
+            <Text style={[st.btnText, { color: c.text }]}>{t('common.cancel')}</Text>
+          </Pressable>
+          <Pressable onPress={handleJoin} disabled={joinBusy} style={[st.btn, { backgroundColor: c.pill, opacity: joinBusy ? 0.6 : 1 }]} accessibilityRole="button">
+            {joinBusy ? <ActivityIndicator color={c.onPill} /> : <Text style={[st.btnText, { color: c.onPill }]}>{t('meetings.join')}</Text>}
+          </Pressable>
         </View>
-      </Modal>
-
-      {/* Join by invite */}
-      <Modal visible={joinOpen} transparent animationType="fade" onRequestClose={() => setJoinOpen(false)}>
-        <View style={s.centerOverlay}>
-          <View style={[s.centerCard, { backgroundColor: colors.surface }]}>
-            <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: accent + '14', alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 12 }}>
-              <IconKey size={24} color={accent} />
-            </View>
-            <Text style={[s.modalTitle, { color: colors.text, textAlign: 'center' }]}>{t('family.join.modalTitle')}</Text>
-            <Text style={[s.modalSub, { color: colors.textSecondary, textAlign: 'center' }]}>{t('family.join.modalSub')}</Text>
-            <TextInput value={joinValue} onChangeText={setJoinValue} placeholder={t('family.join.ph')} placeholderTextColor={colors.textSecondary} autoCapitalize="none" autoCorrect={false} style={[s.input, { color: colors.text, backgroundColor: colors.borderLight, borderColor: colors.border }]} autoFocus />
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
-              <TouchableOpacity onPress={() => setJoinOpen(false)} style={[s.btn, { backgroundColor: colors.borderLight, flex: 1 }]}><Text style={[s.btnText, { color: colors.text }]}>{t('common.cancel')}</Text></TouchableOpacity>
-              <TouchableOpacity onPress={handleJoin} disabled={joinBusy} style={[s.btn, { backgroundColor: accent, flex: 1, opacity: joinBusy ? 0.6 : 1 }]}>{joinBusy ? <ActivityIndicator color={onAccent} /> : <Text style={[s.btnText, { color: onAccent }]}>{t('meetings.join')}</Text>}</TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      </FormSheet>
     </View>
   );
 }
 
-const s = StyleSheet.create({
+const st = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 14, borderBottomWidth: 1 },
-  backBtn: { padding: 4, minWidth: 30, alignItems: 'center' },
-  headerTitle: { fontSize: FontSize.xxl, fontWeight: '700' },
+  webHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingBottom: 8 },
+  webBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  webTitle: { fontSize: 17, fontWeight: '600' },
 
-  hero: { alignItems: 'center', paddingVertical: 30, paddingHorizontal: 20 },
-  heroTitle: { fontSize: FontSize.heading, fontWeight: '800', letterSpacing: -0.4 },
-  heroSub: { fontSize: FontSize.sm, marginTop: 5, fontWeight: '500' },
+  hero: { borderRadius: 24, alignItems: 'center', paddingHorizontal: 20, paddingTop: 22, paddingBottom: 20 },
+  heroTitle: { fontSize: 26, fontWeight: '700', letterSpacing: -0.5, textAlign: 'center', flexShrink: 1 },
+  badge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: StyleSheet.hairlineWidth * 2, borderRadius: 999, paddingHorizontal: 9, paddingVertical: 3 },
+  pill: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 999, paddingVertical: 14, paddingHorizontal: 24 },
+  pillText: { fontSize: 16, fontWeight: '600' },
 
-  section: { paddingHorizontal: 16, paddingTop: 20 },
-  sectionHeader: { fontSize: 12, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 8, marginLeft: 4 },
-  card: { borderRadius: BorderRadius.xxl, borderWidth: 1, overflow: 'hidden' },
+  memberCard: { width: 118, borderRadius: 18, alignItems: 'center', paddingTop: 16, paddingBottom: 14, paddingHorizontal: 8 },
+  addCard: { borderWidth: 1.2, borderStyle: 'dashed', backgroundColor: 'transparent' },
+  onlineDot: { position: 'absolute', right: 1, bottom: 1, width: 15, height: 15, borderRadius: 8, borderWidth: 2.5 },
+  memberName: { fontSize: 15, fontWeight: '600', marginTop: 10, maxWidth: '100%' },
+  memberRole: { fontSize: 13, marginTop: 2 },
+  memberStatus: { fontSize: 12, marginTop: 4, fontWeight: '500' },
 
-  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 14, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth },
-  rowIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  rowTitle: { fontSize: FontSize.lg, fontWeight: '600' },
-  rowSub: { fontSize: FontSize.xs, marginTop: 2 },
+  emptyCard: { marginHorizontal: 16, borderRadius: 18, padding: 18 },
+  emptyTitle: { fontSize: 17, fontWeight: '600' },
+  emptySub: { fontSize: 15, lineHeight: 20, marginTop: 4 },
+  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
+  roleChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999 },
 
-  memberRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  memberName: { fontSize: FontSize.lg, fontWeight: '700' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, alignSelf: 'center' },
+  tile: { borderRadius: 18, paddingHorizontal: 12, paddingTop: 14, paddingBottom: 12, minHeight: 112 },
+  tileLabel: { fontSize: 15, fontWeight: '600', marginTop: 12, letterSpacing: -0.2 },
+  tileSub: { fontSize: 12, marginTop: 2 },
 
-  cta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingVertical: 14, paddingHorizontal: 24, borderRadius: BorderRadius.xxl, ...Shadow.md },
-
-  sheetOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
-  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingTop: 12, paddingBottom: 30 },
-  grabber: { width: 40, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 14, opacity: 0.6 },
-  centerOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 24 },
-  centerCard: { borderRadius: 22, padding: 22, ...Shadow.float },
-
-  modalTitle: { fontSize: FontSize.xxl, fontWeight: '800' },
-  modalSub: { fontSize: FontSize.sm, marginTop: 5, marginBottom: 16, lineHeight: 19 },
-  label: { fontSize: 12, fontWeight: '700', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.4 },
-  input: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13, fontSize: FontSize.lg, borderWidth: 1 },
-
-  btn: { borderRadius: 12, paddingVertical: 14, alignItems: 'center', justifyContent: 'center' },
-  btnText: { fontSize: FontSize.lg, fontWeight: '700' },
+  sheetTitle: { fontSize: 22, fontWeight: '700', letterSpacing: -0.3, paddingHorizontal: 4 },
+  sheetSub: { fontSize: 15, lineHeight: 20, marginTop: 5, paddingHorizontal: 4 },
+  input: { borderRadius: 14, paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 14 : 11, fontSize: 16, marginTop: 16 },
+  btnRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  btn: { flex: 1, borderRadius: 999, paddingVertical: 14, alignItems: 'center', justifyContent: 'center' },
+  btnText: { fontSize: 16, fontWeight: '600' },
 });
 
 export default function FamilyScreen() {

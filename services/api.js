@@ -12818,11 +12818,15 @@ export async function familyCalendarAdd(event) {
 export async function familyShoppingListGet() {
   return apiCall('family_shopping_list_get');
 }
+// [2026-10-19 family-hub] o handler lê `item` (mandávamos só `text` → 400) e
+// `checked` (sem ele desmarcava sempre). Mandamos os dois nomes por compat.
 export async function familyShoppingListAdd(text) {
-  return apiCall('family_shopping_list_add', { text }, 'POST');
+  return apiCall('family_shopping_list_add', { item: text, text }, 'POST');
 }
-export async function familyShoppingListToggle(id) {
-  return apiCall('family_shopping_list_toggle', { id }, 'POST');
+export async function familyShoppingListToggle(id, checked) {
+  const body = { id };
+  if (typeof checked === 'boolean') body.checked = checked;
+  return apiCall('family_shopping_list_toggle', body, 'POST');
 }
 
 // Find My Family — last known location for every member (feeds /snap-map).
