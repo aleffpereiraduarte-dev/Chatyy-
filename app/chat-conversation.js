@@ -21672,7 +21672,7 @@ function ChatConversationInnerBody() {
     let L; try { L = require('../services/locationRequest'); } catch { return; }
     if (!msg || msg.id == null || typeof msg.id === 'string') return;
     const st = L.locReqState(msg, currentEmail);
-    if (!L.locReqActionable(msg, st)) return;
+    if (act === 'cancel' ? !L.locReqCancelable(msg, st) : !L.locReqActionable(msg, st)) return;
     const patch = (meta) => setMessages(prev => _mapKeep(prev, m => (String(m.id) === String(msg.id) ? L.withMeta(m, meta) : m)));
     const toast = (k, fb) => { setScheduleToast(L.tr(t, k, fb)); setTimeout(() => setScheduleToast(''), 2400); };
     const onFail = (r) => {
@@ -21684,10 +21684,10 @@ function ChatConversationInnerBody() {
       else if (err.startsWith('already_')) toast('locReq.alreadyAnswered', 'Este pedido já foi respondido.');
       else toast('common.error', 'Erro');
     };
-    if (act === 'decline') {
+    if (act === 'decline' || act === 'cancel') { // [loc-pedido v2] cancelar = quem pediu
       try { Haptics.selectionAsync(); } catch {}
-      patch({ ...(st.meta || {}), status: 'declined', responded_at: new Date().toISOString() });
-      L.respond(msg.id, 'decline').then((r) => { if (!r || !r.success) onFail(r); else if (r.data && r.data.meta) patch(r.data.meta); }).catch(() => onFail(null));
+      patch({ ...(st.meta || {}), status: act === 'cancel' ? 'cancelled' : 'declined', responded_at: new Date().toISOString() });
+      L.respond(msg.id, act).then((r) => { if (!r || !r.success) onFail(r); else if (r.data && r.data.meta) patch(r.data.meta); }).catch(() => onFail(null));
       return;
     }
     if (act !== 'share') return;

@@ -49,7 +49,7 @@ export function locReqState(m, myEmail, now) {
   const me = String(myEmail || '').toLowerCase();
   const own = !!me && String(m?.sender_email || meta.requester || '').toLowerCase() === me;
   let status = String(meta.status || 'pending');
-  if (status !== 'shared' && status !== 'declined') status = 'pending';
+  if (status !== 'shared' && status !== 'declined' && status !== 'cancelled') status = 'pending';
   if (status === 'pending') {
     const exp = _ts(meta.expires_at) || (_ts(m?.created_at) ? _ts(m.created_at) + LOC_REQ_TTL_MS : 0);
     if (exp && (now || Date.now()) > exp) status = 'expired';
@@ -57,25 +57,51 @@ export function locReqState(m, myEmail, now) {
   return { status, own, live: !!meta.live, responseId: meta.response_message_id || null, meta };
 }
 
-/** Textos do cartão. peerName = nome do outro lado da conversa. */
+/**
+ * Textos do cartão. peerName = nome do outro lado da conversa.
+ * [v2] title fixo "Pedido de localização"; sub = quem pediu a quem; chip = estado.
+ */
 export function locReqTexts(t, st, peerName, senderName) {
   const peer = String(peerName || '').trim() || tr(t, 'locReq.someone', 'Contato');
   const who = String(senderName || '').trim() || peer;
-  const title = st.own
+  const sub = st.own
     ? tr(t, 'locReq.titleOut', 'Você pediu a localização de {name}', { name: peer })
     : tr(t, 'locReq.titleIn', '{name} pediu sua localização', { name: who });
-  let sub = '';
-  if (st.status === 'shared') sub = tr(t, 'locReq.shared', 'Localização compartilhada');
-  else if (st.status === 'declined') sub = tr(t, 'locReq.declined', 'Recusado');
-  else if (st.status === 'expired') sub = tr(t, 'locReq.expired', 'Pedido expirado');
-  else sub = st.own ? tr(t, 'locReq.waiting', 'Aguardando resposta') : tr(t, 'locReq.hint', 'Só quem você escolher vê onde você está.');
+  let chip = '';
+  if (st.status === 'shared') chip = tr(t, 'locReq.chipShared', 'Compartilhada');
+  else if (st.status === 'declined') chip = tr(t, 'locReq.declined', 'Recusado');
+  else if (st.status === 'cancelled') chip = st.own ? tr(t, 'locReq.chipCancelled', 'Cancelado') : tr(t, 'locReq.cancelledIn', 'Pedido cancelado');
+  else if (st.status === 'expired') chip = tr(t, 'locReq.chipExpired', 'Expirado');
+  else chip = tr(t, 'locReq.waiting', 'Aguardando resposta');
   return {
-    title, sub,
+    title: tr(t, 'locReq.preview', 'Pedido de localização'),
+    sub, chip,
     share: tr(t, 'locReq.share', 'Compartilhar'),
     decline: tr(t, 'locReq.decline', 'Recusar'),
+    cancel: tr(t, 'locReq.cancel', 'Cancelar pedido'),
     label: tr(t, 'locReq.preview', 'Pedido de localização'),
   };
 }
+
+/** Quem pediu pode cancelar enquanto pendente (e já confirmado no servidor). */
+export function locReqCancelable(m, st) {
+  return !!m && st.own && st.status === 'pending' && !m._pending && !(typeof m.id === 'string' && m.id.startsWith('tmp_'));
+}
+
+// ─── ilustração do mapa (P&B) — mesmos números no JS (react-native-svg) e na lista nativa ──
+// Palco 236×120: quarteirões, ruas finas, 1 avenida larga, 1 diagonal, anéis de pulso + pino.
+export const MAP_W = 236;
+export const MAP_H = 120;
+export const MAP_STREETS_H = [22, 58, 96];           // y das ruas horizontais finas
+export const MAP_STREETS_V = [34, 92, 168, 206];     // x das ruas verticais finas
+export const MAP_AVE_H = 76;                         // avenida horizontal (y, 7 de altura)
+export const MAP_AVE_V = 128;                        // avenida vertical (x, 7 de largura)
+export const MAP_BLOCKS = [[8, 30, 20, 22], [44, 4, 40, 14], [176, 30, 24, 22], [140, 100, 22, 16]]; // [x,y,w,h] quarteirões claros
+export const MAP_DIAG = 'M0 116L70 52L120 30';       // via diagonal (quadrado 120×120 no canto esquerdo do palco)
+// Pino (viewBox 24): gota cheia + furo central (pintado na cor do palco).
+export const PIN_OUTER = 'M12 1.5C7.6 1.5 4.2 4.9 4.2 9.2C4.2 14.8 12 22.5 12 22.5C12 22.5 19.8 14.8 19.8 9.2C19.8 4.9 16.4 1.5 12 1.5Z';
+export const PIN_HOLE = 'M12 6.1A3 3 0 1 1 12 12.1A3 3 0 1 1 12 6.1Z';
+export const MAP_BG = '#0b0b0b';
 
 /** O cartão mostra os botões? (só quem recebeu, pedido pendente e já confirmado no servidor). */
 export function locReqActionable(m, st) {

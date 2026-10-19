@@ -5857,6 +5857,11 @@ export default {
   'locReq.live15': 'En vivo por 15 min',
   'locReq.live1h': 'En vivo por 1 h',
   'locReq.live8h': 'En vivo por 8 h',
+  'locReq.chipShared': 'Compartida',
+  'locReq.chipCancelled': 'Cancelado',
+  'locReq.cancelledIn': 'Solicitud cancelada',
+  'locReq.chipExpired': 'Vencido',
+  'locReq.cancel': 'Cancelar solicitud',
   'location.decline': 'Rechazar',
   // Cross-app push login (SuperBora & friends ask Chatyy to sign-in the user)
   'pushLogin.modalTitle': 'Confirmar inicio de sesión en {app}',

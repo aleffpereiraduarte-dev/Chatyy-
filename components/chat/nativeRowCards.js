@@ -26,7 +26,7 @@
 // Ações (`a` dos nós → onRowPress part 'action', url = ação):
 //   loc · loc_stop · jloc · ct_msg · ct_inv · ct_save · ct_call · ct_open · poll:<i> ·
 //   rsvp:<going|maybe|not_going> · pl_edit · pl_song:<i> · call_back:<v|a> ·
-//   call_join · st_open · vn_open · gift_thank · lp:<url> · lr:<share|decline>
+//   call_join · st_open · vn_open · gift_thank · lp:<url> · lr:<share|decline|cancel>
 import { Platform } from 'react-native';
 import {
   vstack, hstack, zstack, text, image, avatar, loader, videoNote, icon, toArgb, spacer, iconPaths,
@@ -1168,37 +1168,54 @@ function buildGame(m, row, ctx, C, own) {
 }
 
 // [loc-pedido 2026-10-19] Pedido de localização — espelho de components/chat/LocationRequestCard.js.
-// Ações: lr:share · lr:decline (só p/ quem recebeu, pedido pendente).
+// Ações: lr:share · lr:decline (quem recebeu) · lr:cancel (quem pediu).
 function _lrOn() { try { return require('../../services/locationRequest').locReqEnabled(); } catch { return false; } }
 function buildLocReq(m, row, ctx, C, own) {
+  // [loc-pedido v2 2026-10-19] Palco escuro com mapa P&B (ruas, avenidas, quarteirões, via diagonal),
+  // anéis de pulso e pino grande no centro — só nós v/z + iconPaths (o MESMO mecanismo do presente:
+  // paths crus; icon(IconMapPin) saía vazio no iOS). Título/sub centralizados + chip de estado.
+  // Ações: lr:share · lr:decline (quem recebeu) · lr:cancel (quem pediu), só com o pedido pendente.
   const L = require('../../services/locationRequest');
   const st = L.locReqState(m, ctx.myEmail, C.now);
   const T = L.locReqTexts(C.t, st, C.peerName, m.sender_name);
   const col = C.colors || {};
-  const ink = own ? C.ownText : (col.text || '#111111');
-  const sub = own ? C.ownMeta : (col.textSecondary || C.otherMeta || '#6b7280');
-  const line = own ? 'rgba(255,255,255,0.18)' : (C.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
-  const disc = inkAlpha(ink, C.isDark && !own ? 0.12 : 0.14);
-  const w = 260;
-  const StIc = st.status === 'shared' ? IconCheck : st.status === 'declined' ? IconX : st.status === 'expired' ? IconClock : null;
-  const kids = [hstack([
-    vstack([icon(IconMapPin, { s: 20, c: ink })], { w: 40, h: 40, r: 20, bg: disc, al: 'c', jc: 'c' }),
-    vstack([
-      text(T.title, { fs: 14.5, fw: 700, c: ink, lh: 19, ml: 3 }),
-      hstack([StIc ? icon(StIc, { s: 13, c: sub }) : null, text(T.sub, { fs: 12.5, c: sub, lh: 16, ml: 2, fl: 1 })], { g: 4, al: 'c', m: [2, 0, 0, 0] }),
-    ], { fl: 1 }),
-  ], { w: -1, g: 10, al: 'c', p: [2, 0, 0, 0] })];
+  const textColor = own ? C.ownText : (col.text || '#111111');
+  const subColor = own ? C.ownMeta : (col.textSecondary || C.otherMeta || '#6b7280');
+  const chipBg = own ? 'rgba(255,255,255,0.14)' : 'rgba(127,127,127,0.14)';
+  const W = L.MAP_W; const H = L.MAP_H;
+  const street = 'rgba(255,255,255,0.09)';
+  const ave = 'rgba(255,255,255,0.13)';
+  const block = 'rgba(255,255,255,0.05)';
+  const done = st.status !== 'pending';
+  const map = [vstack([], { w: W, h: H, r: 16, bg: L.MAP_BG })];
+  L.MAP_BLOCKS.forEach(([x, y, w, h]) => map.push(vstack([], { pos: 'tl', m: [y, 0, 0, x], w, h, r: 4, bg: block })));
+  L.MAP_STREETS_H.forEach((y) => map.push(vstack([], { pos: 'tl', m: [y, 0, 0, 0], w: W, h: 1.5, bg: street })));
+  L.MAP_STREETS_V.forEach((x) => map.push(vstack([], { pos: 'tl', m: [0, 0, 0, x], w: 1.5, h: H, bg: street })));
+  map.push(vstack([], { pos: 'tl', m: [L.MAP_AVE_H, 0, 0, 0], w: W, h: 7, bg: ave }));
+  map.push(vstack([], { pos: 'tl', m: [0, 0, 0, L.MAP_AVE_V], w: 7, h: H, bg: ave }));
+  map.push(vstack([iconPaths([{ d: L.MAP_DIAG, k: ave, w: 6 }], { s: 120, vb: 120 })], { pos: 'tl', m: [0, 0, 0, 0] }));
+  map.push(vstack([], { pos: 'c', w: 92, h: 92, r: 46, bw: 1, bc: done ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.14)' }));
+  map.push(vstack([], { pos: 'c', w: 60, h: 60, r: 30, bg: done ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.10)' }));
+  map.push(vstack([], { pos: 'c', w: 30, h: 30, r: 15, bg: done ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.18)' }));
+  map.push(vstack([iconPaths([{ d: L.PIN_OUTER, f: done ? '#9a9a9a' : '#ffffff' }, { d: L.PIN_HOLE, f: L.MAP_BG }], { s: 44 })], { pos: 'c', m: [0, 0, 18, 0] }));
+  const kids = [
+    zstack(map, { m: [0, 0, 10, 0], r: 16 }),
+    text(T.title, { fs: 16, fw: 800, c: textColor, ml: 1, ta: 'c' }),
+    text(T.sub, { fs: 12.5, fw: 600, c: subColor, ml: 2, ta: 'c', m: [3, 6, 0, 6] }),
+    hstack([text(T.chip, { fs: 11.5, fw: 700, c: textColor })], { h: 22, r: 11, p: [0, 10, 0, 10], bg: chipBg, al: 'c', jc: 'c', m: [8, 0, 0, 0] }),
+  ];
   if (L.locReqActionable(m, st)) {
     const pbg = own || C.isDark ? '#FFFFFF' : '#111111';
     const pink = own || C.isDark ? '#111111' : '#FFFFFF';
-    kids.push(vstack([], { w: -1, h: 0.5, bg: line, m: [10, 0, 8, 0] }));
     kids.push(hstack([
-      vstack([text(T.decline, { fs: 13.5, fw: 700, c: ink })], { fl: 1, p: [8, 0, 8, 0], r: 10, al: 'c', bw: 1, bc: line, a: 'lr:decline' }),
-      vstack([text(T.share, { fs: 13.5, fw: 700, c: pink })], { fl: 1, p: [8, 0, 8, 0], r: 10, al: 'c', bg: pbg, a: 'lr:share' }),
-    ], { w: -1, g: 8 }));
+      vstack([text(T.decline, { fs: 14, fw: 700, c: textColor })], { fl: 1, h: 36, r: 18, bw: 1.2, bc: textColor, al: 'c', jc: 'c', a: 'lr:decline' }),
+      vstack([text(T.share, { fs: 14, fw: 700, c: pink })], { fl: 1, h: 36, r: 18, bg: pbg, al: 'c', jc: 'c', a: 'lr:share' }),
+    ], { w: -1, g: 8, m: [12, 0, 0, 0] }));
+  } else if (L.locReqCancelable(m, st)) {
+    kids.push(vstack([text(T.cancel, { fs: 14, fw: 700, c: textColor })], { w: -1, h: 36, r: 18, bw: 1.2, bc: textColor, al: 'c', jc: 'c', m: [12, 0, 0, 0], a: 'lr:cancel' }));
   }
-  row.bl = [vstack(kids, { w })];
-  row.cw = w; row.pad = PAD; row.mp = 'below';
+  row.bl = [vstack(kids, { al: 'c', p: [6, 6, 2, 6], w: W + 12 })];
+  row.cw = W + 12; row.pad = PAD; row.mp = 'below';
 }
 
 export function buildFallbackCard(item, row, ctx, reason) {

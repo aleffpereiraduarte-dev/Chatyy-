@@ -5856,6 +5856,11 @@ export default {
   'locReq.live15': 'Live for 15 min',
   'locReq.live1h': 'Live for 1 h',
   'locReq.live8h': 'Live for 8 h',
+  'locReq.chipShared': 'Shared',
+  'locReq.chipCancelled': 'Cancelled',
+  'locReq.cancelledIn': 'Request cancelled',
+  'locReq.chipExpired': 'Expired',
+  'locReq.cancel': 'Cancel request',
   'location.decline': 'Decline',
   // Cross-app push login (SuperBora & friends ask Chatyy to sign-in the user)
   'pushLogin.modalTitle': 'Confirm sign-in to {app}',
