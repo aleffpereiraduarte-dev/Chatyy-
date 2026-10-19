@@ -58,8 +58,11 @@ export default function useVanishMode({
   const gate = vanishGateOn();
   const eligible = gate && !!cid && conversationType === 'direct';
   const active = eligible && !!vanishMode;
-  const visitedOnRef = useRef(false);
-  if (active) visitedOnRef.current = true;
+  // Por conversa (Set de cids): a tela pode trocar de id no lugar (setParams) e o
+  // flush da conversa anterior roda na limpeza do efeito, depois do novo render.
+  const visitedOnRef = useRef(null);
+  if (!visitedOnRef.current) visitedOnRef.current = new Set();
+  if (active && cid) visitedOnRef.current.add(cid);
   const cbRef = useRef({ getLastReadId, onPurged, hasVanishMsgs });
   cbRef.current = { getLastReadId, onPurged, hasVanishMsgs };
 
@@ -82,6 +85,7 @@ export default function useVanishMode({
         const v = d.enabled ?? d.vanish_mode;
         if (typeof v === 'boolean') { try { setVanishMode(v); } catch {} }
         if (Array.isArray(d.purged) && d.purged.length) {
+          try { purgeVanishLocal(cid, d.purged); } catch {} // caches locais também (não só a tela)
           try { cbRef.current.onPurged && cbRef.current.onPurged(d.purged); } catch {}
         }
       });
@@ -111,7 +115,7 @@ export default function useVanishMode({
   // Saiu da conversa / app foi para o fundo → somem as já vistas.
   const flush = useCallback(async () => {
     if (!cid || !gate) return;
-    let pending = visitedOnRef.current;
+    let pending = !!(visitedOnRef.current && visitedOnRef.current.has(cid));
     if (!pending) { try { pending = !!(cbRef.current.hasVanishMsgs && cbRef.current.hasVanishMsgs()); } catch {} }
     if (!pending) return;
     let lr = 0;
@@ -127,12 +131,14 @@ export default function useVanishMode({
   useEffect(() => {
     if (!cid || !gate) return undefined;
     let sub = null;
+    // flush DESTA conversa (flushRef.current na limpeza já seria o do id novo).
+    const flushThis = flush;
     try {
       sub = AppState.addEventListener('change', (s) => { if (s === 'background') flushRef.current(); });
     } catch {}
     return () => {
       try { sub && sub.remove && sub.remove(); } catch {}
-      flushRef.current();
+      flushThis();
     };
   }, [cid, gate]);
 

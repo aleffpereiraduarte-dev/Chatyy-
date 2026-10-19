@@ -24,7 +24,7 @@ import { acquireCaptureProtection, addScreenshotListener, sendScreenshotNotice }
 function useInfoCaptureProtect(t) {
   const scope = useCaptureScope();
   const cid = scope ? scope.cid : '';
-  const notify = !!scope && scope.reasons.some((r) => r === 'adv' || r === 'vanish' || r === 'global');
+  const notify = !!scope && scope.reasons.some((r) => r === 'adv' || r === 'vanish' || r === 'global' || r === 'member');
   useEffect(() => {
     if (!cid) return undefined;
     const release = acquireCaptureProtection(`chatyy-chatinfo-protected-${cid}`, {
