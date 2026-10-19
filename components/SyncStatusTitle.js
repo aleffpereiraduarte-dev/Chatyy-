@@ -29,15 +29,27 @@ function SyncStatusTitle({
   // Mantém o último rótulo durante o fade-out (senão o texto sumiria antes).
   const [shown, setShown] = useState(st);
   const anim = useRef(new Animated.Value(visible ? 1 : 0)).current;
-
+  // [2026-10-19 sync-title-overlap] Fim da animação → opacidades FIXAS (sem o
+  // driver nativo). No título grande hospedado no header da lista nativa o
+  // crossfade às vezes parava no meio ("Conectando…" por cima de um "Conversas"
+  // meio apagado, founder 19/10). `settled` = estado já assentado; enquanto não
+  // assenta, a animação manda; depois, valores estáticos 0/1.
+  const [settled, setSettled] = useState(visible);
   useEffect(() => {
     if (visible) setShown(st);
+    let done = false;
+    const dur = visible ? 180 : 260;
+    const settle = () => { if (!done) { done = true; setSettled(visible); } };
     Animated.timing(anim, {
       toValue: visible ? 1 : 0,
-      duration: visible ? 180 : 260,
+      duration: dur,
       useNativeDriver: Platform.OS !== 'web',
-    }).start();
+    }).start(() => settle());
+    // Rede de segurança: callback do driver nativo que nunca chega.
+    const t = setTimeout(settle, dur + 120);
+    return () => { done = true; clearTimeout(t); };
   }, [st, visible, anim]);
+  const isSettled = settled === visible;
 
   const label = syncStatusLabel(shown, t) || '';
 
@@ -53,7 +65,8 @@ function SyncStatusTitle({
   }, [announce, visible, st, t]);
 
   const muted = isDark ? 'rgba(255,255,255,0.62)' : 'rgba(0,0,0,0.55)';
-  const titleOpacity = anim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
+  const titleOpacity = isSettled ? (visible ? 0 : 1) : anim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
+  const statusOpacity = isSettled ? (visible ? 1 : 0) : anim;
   const isOffline = shown.kind === 'offline';
 
   return (
@@ -82,7 +95,7 @@ function SyncStatusTitle({
           {
             flexDirection: 'row', alignItems: 'center', gap: 8,
             justifyContent: align === 'center' ? 'center' : 'flex-start',
-            opacity: anim,
+            opacity: statusOpacity,
           },
         ]}
       >

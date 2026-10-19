@@ -63,13 +63,16 @@ public class ChatyyTabBarModule: Module {
 
     // 3 = [2026-10-18 you-tab-avatar] items[].avatarUrl (foto redonda na aba Você).
     // 4 = [2026-10-18 you-tab-nolabel] items[].hideLabel (sem rótulo; ícone/foto centralizado e maior).
+    // 5 = [2026-10-19 tabbar-api5] foto por cima do ícone (itens nunca mudam de imagem), autochecagem
+    //     de visibilidade real (fora da tela / sem conteúdo → onBarFail), onBarProbe + onAvatarState.
     Function("apiVersion") { () -> Int in
-      return 4
+      return 5
     }
 
     View(ChatyyTabBarView.self) {
       // onBarFail{reason} = [2026-10-18 tabbar-invisivel] api 4: barra não se desenha → JS usa a barra JS.
-      Events("onTabPress", "onTabLongPress", "onPreferredHeight", "onBarFail")
+      // onBarProbe{reason,frame,win,…} / onAvatarState{state,reason,scheme} = api 5.
+      Events("onTabPress", "onTabLongPress", "onPreferredHeight", "onBarFail", "onBarProbe", "onAvatarState")
 
       Prop("items") { (view: ChatyyTabBarView, v: [NTBItemRecord]?) in
         view.setItems(v ?? [])

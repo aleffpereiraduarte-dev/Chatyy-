@@ -62,7 +62,7 @@ import PlusOnboardingTour, { checkShouldShowPlusOnboarding } from '../components
 import GlobalSearch from '../components/GlobalSearch';
 import FirstRunGate from '../components/onboarding/FirstRunGate'; // [2026-10-07 welcome]
 import { BarMaterial, canNativeBlur } from '../components/NativeBlur'; // [2026-10-07 native-ui-build]
-import NativeHomeTabBar, { nativeTabsAvailable, nativeTabsApi, useNativeTabAvatar } from '../components/NativeHomeTabBar'; // [2026-10-15 native-tabs]
+import NativeHomeTabBar, { nativeTabsAvailable, nativeTabsApi, useNativeTabAvatar, sendTabbarProbe, noteTabbarAvatarState } from '../components/NativeHomeTabBar'; // [2026-10-15 native-tabs]
 import { useCollapsedTitleAnim } from '../components/LargeTitleHeader'; // [2026-10-15 nav-motion]
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad } from '../components/NativeSheet'; // [2026-10-15 native-sheets-v2]
 import AppsDrawerModal from '../components/apps/AppsSheet'; // [2026-10-15 apps-v3]
@@ -593,7 +593,22 @@ function ChatHub() {
   // (mesma URL/cache do AvatarCircle). Binário < 3 → ícone de antes.
   const NATIVE_YOU_AVATAR = useMemo(() => NATIVE_TABS && YOU_TAB && nativeTabsApi() >= 3
     && (() => { try { return globalThis.__chatyy_you_tab_avatar !== false; } catch { return true; } })(), [NATIVE_TABS, YOU_TAB]);
-  const youTabAvatar = useNativeTabAvatar(user?.email, user?.name || user?.email, NATIVE_YOU_AVATAR);
+  // [2026-10-19 tabbar-avatar] iOS api 5: URL https + Bearer direto (o nativo cacheia;
+  // file:// do Documents muda de UUID a cada build). Falhou (onAvatarState) → até 2
+  // novas tentativas com URL nova (&ntbr=N) 20 s depois. Telemetria 1×/sessão/estado.
+  const [youAvatarRetry, setYouAvatarRetry] = useState(0);
+  const youAvatarRetryTimer = useRef(null);
+  useEffect(() => () => { if (youAvatarRetryTimer.current) clearTimeout(youAvatarRetryTimer.current); }, []);
+  const onYouAvatarState = useCallback((state, reason, scheme) => {
+    noteTabbarAvatarState(state, reason, scheme);
+    if (state !== 'failed' || /^no_anchor/.test(reason || '') || youAvatarRetryTimer.current) return;
+    youAvatarRetryTimer.current = setTimeout(() => {
+      youAvatarRetryTimer.current = null;
+      setYouAvatarRetry((n) => (n < 2 ? n + 1 : n));
+    }, 20000);
+  }, []);
+  const youTabAvatar = useNativeTabAvatar(user?.email, user?.name || user?.email, NATIVE_YOU_AVATAR,
+    { remote: Platform.OS === 'ios' && nativeTabsApi() >= 5, retry: youAvatarRetry });
   const youAvatarUrl = youTabAvatar?.uri || null;
   const youAvatarHeaders = youTabAvatar?.headers || null;
   // [2026-10-18 you-tab-nolabel] api 4+: aba "Você" SÓ com a foto redonda (sem o
@@ -602,6 +617,45 @@ function ChatHub() {
   // Binário api < 4 ignora → continua com rótulo. Kill switch da foto
   // (__chatyy_you_tab_avatar=false) → ícone + rótulo como antes.
   const NATIVE_YOU_NOLABEL = NATIVE_YOU_AVATAR && nativeTabsApi() >= 4;
+  // [2026-10-19 tabbar-api5] `tabbar_probe`: o lado JS do diagnóstico da barra
+  // (layout da raiz, tabBarH, barra nativa ou JS, aba, estado de conexão).
+  const homeRootLayoutRef = useRef({ w: 0, h: 0 });
+  const onHomeRootLayout = useCallback((e) => {
+    const l = e?.nativeEvent?.layout;
+    if (l) homeRootLayoutRef.current = { w: Math.round(l.width || 0), h: Math.round(l.height || 0) };
+  }, []);
+  const tabProbeStateRef = useRef({});
+  tabProbeStateRef.current = { NATIVE_TABS, tabBarH, activeTab, nativeTabsFailed };
+  const tabbarProbeExtra = useCallback(() => {
+    const st = tabProbeStateRef.current || {};
+    let sync = '-';
+    try { sync = String(require('../services/syncStatus').getSyncStatus()?.kind || '-'); } catch {}
+    const r = homeRootLayoutRef.current;
+    return `root=${r.w}x${r.h} tbh=${st.tabBarH || 0} nt=${st.NATIVE_TABS ? 1 : 0} ntf=${st.nativeTabsFailed ? 1 : 0} api=${nativeTabsApi()} tab=${st.activeTab || '-'} sync=${sync}`;
+  }, []);
+  const jsTabBarRef = useRef(null);
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    let timer = null;
+    const probe = (why) => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        if (AppState.currentState !== 'active' || tabProbeStateRef.current?.NATIVE_TABS) return; // nativa: NativeHomeTabBar mede
+        const v = jsTabBarRef.current;
+        if (!v || typeof v.measureInWindow !== 'function') { sendTabbarProbe('jsbar_' + why, 'noref ' + tabbarProbeExtra()); return; }
+        try {
+          v.measureInWindow((x, y, w, h) => {
+            const sh = Math.round(Dimensions.get('window')?.height || 0);
+            sendTabbarProbe('jsbar_' + why, `m=${Math.round(x)},${Math.round(y)},${Math.round(w)},${Math.round(h)} sh=${sh} ${tabbarProbeExtra()}`);
+          });
+        } catch {}
+      }, why === 'boot' ? 2000 : 1500);
+    };
+    probe('boot');
+    const sub = AppState.addEventListener('change', (st) => { if (st === 'active') probe('fg'); });
+    return () => { if (timer) clearTimeout(timer); try { sub?.remove?.(); } catch {} };
+  }, [tabbarProbeExtra]);
   const nativeTabItems = useMemo(() => {
     if (!NATIVE_TABS) return null;
     return [
@@ -1599,7 +1653,7 @@ function ChatHub() {
   // [2026-10-19 home-clean] pílulas foram p/ o Apps → linha desligada (código mantido p/ voltar).
   const showDiscoverRow = false && !LIST_LARGE_TITLE && !isKids && activeTab === 'chats' && !searchOpen && !reelsImmersive;
   return (
-    <View style={[styles.container, {
+    <View onLayout={onHomeRootLayout} style={[styles.container, {
       backgroundColor: reelsImmersive ? '#000' : (isDark ? SHELL_DARK : '#ffffff'),
       // [2026-10-13 reels-visual] Aba Reels = vídeo de borda a borda (TikTok/Instagram):
       // começa atrás da status bar; o ReelsViewer aplica o inset no cabeçalho + gradiente.
@@ -1825,10 +1879,12 @@ function ChatHub() {
           onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined}
           onNativeFail={onNativeTabsFail}
           onNativeReady={onNativeTabsReady}
+          onAvatarState={NATIVE_YOU_AVATAR ? onYouAvatarState : undefined}
+          probeExtra={tabbarProbeExtra}
           style={GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : null}
         />
       ) : (
-      <View accessibilityRole={Platform.OS === 'ios' ? 'tabbar' : 'tablist'} onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined} style={FLOAT_TAB_BAR ? [styles.tabBarFloatOuter, {
+      <View ref={jsTabBarRef} accessibilityRole={Platform.OS === 'ios' ? 'tabbar' : 'tablist'} onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined} style={FLOAT_TAB_BAR ? [styles.tabBarFloatOuter, {
         ...(GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : {}),
         // iOS 26: a cápsula fica ~insets-10 acima da borda (home indicator por baixo).
         paddingBottom: insets.bottom > 0 ? Math.max(insets.bottom - 10, 8) : 10,

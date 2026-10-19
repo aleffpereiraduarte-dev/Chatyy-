@@ -34,13 +34,17 @@ final class NTBAvatarLoader {
     return memory.object(forKey: url as NSString)
   }
 
-  /// `done` sempre na main thread; nil = erro (quem chama mantém o ícone).
-  func load(_ url: String, headers: [String: String]?, done: @escaping (UIImage?) -> Void) {
-    if let img = cached(url) { done(img); return }
+  /// `done` sempre na main thread; nil = erro (quem chama mantém o ícone) e
+  /// `reason` diz o porquê (telemetria onAvatarState): http_<código>, net,
+  /// decode, file_missing, file_read, bad_url, backoff.
+  /// [2026-10-19 tabbar-avatar] back-off 60 → 20 s (a 1ª falha no boot — rede
+  /// ainda subindo — prendia a aba no ícone até o JS mudar a URL).
+  func load(_ url: String, headers: [String: String]?, done: @escaping (UIImage?, String?) -> Void) {
+    if let img = cached(url) { done(img, nil); return }
     lock.lock()
-    if let t = failedAt[url], Date().timeIntervalSince(t) < 60 {
+    if let t = failedAt[url], Date().timeIntervalSince(t) < NTBAvatarLoader.backoff {
       lock.unlock()
-      done(nil)
+      done(nil, "backoff")
       return
     }
     if inflight[url] != nil {
@@ -51,41 +55,74 @@ final class NTBAvatarLoader {
     inflight[url] = [done]
     lock.unlock()
 
-    let finish: (Data?) -> Void = { [weak self] data in
+    let finish: (Data?, String?) -> Void = { [weak self] data, why in
       guard let self = self else { return }
       let img = data.flatMap { NTBAvatarLoader.decode($0) }
       if let img = img {
         self.memory.setObject(img, forKey: url as NSString)
       }
+      let reason: String? = img != nil ? nil : (why ?? (data == nil ? "no_data" : "decode"))
       self.lock.lock()
       let cbs = self.inflight.removeValue(forKey: url) ?? []
       if img == nil { self.failedAt[url] = Date() } else { self.failedAt.removeValue(forKey: url) }
       self.lock.unlock()
-      DispatchQueue.main.async { cbs.forEach { $0(img) } }
+      DispatchQueue.main.async { cbs.forEach { $0(img, reason) } }
     }
 
     if let fileURL = NTBAvatarLoader.localFileURL(url) {
-      queue.async { finish(try? Data(contentsOf: fileURL)) }
+      queue.async {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { finish(nil, "file_missing"); return }
+        let data = try? Data(contentsOf: fileURL)
+        finish(data, data == nil ? "file_read" : nil)
+      }
       return
     }
     guard let remote = URL(string: url), let scheme = remote.scheme?.lowercased(),
           scheme == "https" || scheme == "http" else {
-      finish(nil)
+      finish(nil, "bad_url")
       return
     }
     var req = URLRequest(url: remote)
     headers?.forEach { req.setValue($0.value, forHTTPHeaderField: $0.key) }
-    session.dataTask(with: req) { [weak self] data, resp, _ in
+    session.dataTask(with: req) { [weak self] data, resp, err in
       let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
       let ok = code >= 200 && code < 300 && (data?.isEmpty == false)
-      self?.queue.async { finish(ok ? data : nil) }
+      let why: String? = ok ? nil : (err != nil && code == 0 ? "net" : "http_\(code)")
+      self?.queue.async { finish(ok ? data : nil, why) }
     }.resume()
   }
 
+  static let backoff: TimeInterval = 20
+
+  /// Esquece a falha recente (volta ao 1º plano / nova janela → tenta de novo).
+  func clearFailure(_ url: String) {
+    lock.lock()
+    failedAt.removeValue(forKey: url)
+    lock.unlock()
+  }
+
+  /// file:// ou caminho absoluto. [2026-10-19 tabbar-avatar] Depois de instalar
+  /// um build novo o iOS troca o UUID do container (…/Data/Application/<UUID>/):
+  /// caminho antigo que não existe mais é remapeado p/ o container ATUAL.
   static func localFileURL(_ s: String) -> URL? {
-    if s.hasPrefix("file://") { return URL(string: s) }
-    if s.hasPrefix("/") { return URL(fileURLWithPath: s) }
-    return nil
+    var u: URL? = nil
+    if s.hasPrefix("file://") {
+      u = URL(string: s) ?? URL(fileURLWithPath: String(s.dropFirst(7)).removingPercentEncoding ?? String(s.dropFirst(7)))
+    } else if s.hasPrefix("/") {
+      u = URL(fileURLWithPath: s)
+    }
+    guard let url = u else { return nil }
+    if FileManager.default.fileExists(atPath: url.path) { return url }
+    let path = url.path
+    if let r = path.range(of: "/Data/Application/") {
+      let rest = path[r.upperBound...]
+      if let slash = rest.firstIndex(of: "/") {
+        let tail = String(rest[slash...]) // "/Documents/…" ou "/Library/…"
+        let remapped = URL(fileURLWithPath: NSHomeDirectory() + tail)
+        if FileManager.default.fileExists(atPath: remapped.path) { return remapped }
+      }
+    }
+    return url
   }
 
   /// Decodifica e reduz (lado menor 96 px, recorte quadrado central) — o
