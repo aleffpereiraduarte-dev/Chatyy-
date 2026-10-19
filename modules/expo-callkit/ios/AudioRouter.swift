@@ -260,7 +260,28 @@ import LiveKitClient
     /// route, but don't blank the screen via the proximity sensor.
     @objc public func setProximitySuspended(_ suspended: Bool) {
         lockQueue.sync { self.proximitySuspended = suspended }
-        onMain { self.applyPolicy(reason: "proximity_suspended_\(suspended)") }
+        // [2026-10-19 minimizar-sem-corte] Minimizar/voltar só muda o sensor de
+        // proximidade. Antes rodava a política inteira → overrideOutputAudioPort
+        // mesmo sem mudança → iOS reconfigura a rota/VPIO (routeChange .override)
+        // = o "piscar" de som ao minimizar (founder 19/10). Flag route_light (OFF = antigo).
+        if CallResilience.flags().routeLight {
+            onMain { self.applyProximityOnly() }
+        } else {
+            onMain { self.applyPolicy(reason: "proximity_suspended_\(suspended)") }
+        }
+    }
+
+    /// Só o sensor de proximidade (mesma regra do fim do applyPolicy). Main.
+    private func applyProximityOnly() {
+        let (isEngaged, isVideoCall, camOn, proxSuspended) = lockQueue.sync {
+            (engaged, hasVideo, localVideoActive, proximitySuspended)
+        }
+        guard isEngaged else { return }
+        let session = AVAudioSession.sharedInstance()
+        let external = currentRouteIsExternal()
+        let (wantSpeaker, _) = target()
+        let onReceiver = session.currentRoute.outputs.contains { $0.portType == .builtInReceiver }
+        setProximity(!proxSuspended && !camOn && !isVideoCall && !wantSpeaker && (onReceiver || !external))
     }
 
     /// True when the loudspeaker is the real current output.
@@ -407,8 +428,14 @@ import LiveKitClient
         // Port override. External device (BT / wired / AirPods) wins unless
         // the user explicitly asked for the loudspeaker (see target()).
         let port: AVAudioSession.PortOverride = wantSpeaker ? .speaker : .none
+        // [2026-10-19 minimizar-sem-corte] Override só quando a saída real
+        // difere do desejado: re-aplicar o MESMO override reconfigura a rota
+        // (corte curto de áudio). Rota vazia (sessão ainda inativa) → aplica.
+        let outsNow = session.currentRoute.outputs
+        let onSpeakerNow = outsNow.contains { $0.portType == .builtInSpeaker }
+        let overrideNeeded = !CallResilience.flags().routeLight || outsNow.isEmpty || onSpeakerNow != wantSpeaker
         do {
-            try session.overrideOutputAudioPort(port)
+            if overrideNeeded { try session.overrideOutputAudioPort(port) }
         } catch {
             print("[AudioRouter] overrideOutputAudioPort(\(wantSpeaker ? "speaker" : "none")) failed (\(reason)): \(error)")
         }
@@ -540,6 +567,11 @@ import LiveKitClient
                 || session.categoryOptions.contains(.defaultToSpeaker)
                 || (!wantSpeaker && !currentRouteIsExternal()
                     && session.currentRoute.outputs.contains { $0.portType == .builtInSpeaker })
+                // [2026-10-19 minimizar-sem-corte] override agora é condicional →
+                // alto-falante pedido mas a saída não é o alto-falante = drift.
+                || (wantSpeaker && CallResilience.flags().routeLight
+                    && !session.currentRoute.outputs.isEmpty
+                    && !session.currentRoute.outputs.contains { $0.portType == .builtInSpeaker })
             if drift && allowSelfHeal() {
                 print("[AudioRouter] drift detected (cat=\(session.category.rawValue) mode=\(session.mode.rawValue)) — re-applying")
                 applyPolicy(reason: "self_heal")

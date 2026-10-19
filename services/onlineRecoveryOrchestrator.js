@@ -352,9 +352,20 @@ export function startOnlineRecovery(apiCall, opts) {
   //    enough that the WS dropped silently.
   try {
     let lastState = AppState.currentState;
+    // [2026-10-19 em-ligacao] iOS passa por 'inactive' sem ir p/ 2º plano
+    // (CallKit, pílula da ligação, Central de Controle, alertas, Face ID): o
+    // app NÃO foi suspenso e o socket seguiu vivo → não é retomada. Antes cada
+    // inactive→active refazia o catch-up de TODAS as conversas ("Atualizando…"
+    // em loop durante ligação). Só conta a volta de 'background'.
+    // Kill switch: globalThis.__chatyy_recovery_on_inactive = true (antigo).
+    let wentBackground = AppState.currentState === 'background';
     _appStateSub = AppState.addEventListener('change', (next) => {
+      if (next === 'background') wentBackground = true;
       if (lastState !== 'active' && next === 'active') {
-        _schedule('appstate_active');
+        if (wentBackground || globalThis.__chatyy_recovery_on_inactive === true) {
+          _schedule('appstate_active');
+        }
+        wentBackground = false;
       }
       lastState = next;
     });

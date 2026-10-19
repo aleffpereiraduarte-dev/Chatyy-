@@ -46,6 +46,8 @@
 //    "stall_full_s":12,         ICE restart; stall_full_s → FULL reconnect. O
 //                               quick reconnect do SDK 2.0.18 NÃO muda o
 //                               connectionState (tela ficava "Conectado" muda)
+//    "route_light":true,        minimizar sem corte de som (só proximidade; override
+//                               de rota só quando a saída real muda)
 //    "path_restart":true        NWPathMonitor: troca de rede (Wi-Fi↔celular,
 //                               volta da rede) → ICE restart/resume na hora
 //
@@ -87,6 +89,9 @@ final class CallResilience {
         var stallS: Double = 5
         var stallFullS: Double = 12
         var pathRestart: Bool = true
+        // [2026-10-19 minimizar-sem-corte] AudioRouter: minimizar só mexe no
+        // sensor de proximidade; overrideOutputAudioPort só quando a saída muda.
+        var routeLight: Bool = true
     }
 
     private static func num(_ v: Any?) -> Double? {
@@ -130,6 +135,7 @@ final class CallResilience {
         if let v = num(obj["stall_s"]) { f.stallS = min(20, max(3, v)) }
         if let v = num(obj["stall_full_s"]) { f.stallFullS = min(60, max(6, v)) }
         if let v = bool(obj["path_restart"]) { f.pathRestart = v }
+        if let v = bool(obj["route_light"]) { f.routeLight = v }
         if f.stallFullS < f.stallS + 3 { f.stallFullS = f.stallS + 3 }
         if !f.enabled {
             // Master OFF = exactly the pre-2026-10-18 behaviour.
@@ -147,6 +153,7 @@ final class CallResilience {
             f.lkFastReconnect = false
             f.stallWatch = false
             f.pathRestart = false
+            f.routeLight = false
         }
         return f
     }

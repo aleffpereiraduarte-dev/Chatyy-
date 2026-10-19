@@ -119,8 +119,27 @@ function _rawState() {
     return { kind: 'bootstrap', progress: pct };
   }
   const initialLive = _initialRunning && (_now() - _initialAt) < INITIAL_SYNC_STALE_MS;
-  if (_recovering || initialLive || _tracked > 0) return { kind: 'updating', progress: null };
+  if (_recovering || initialLive || _tracked > 0) {
+    // [2026-10-19 em-ligacao] Durante uma ligação o catch-up roda disputando a
+    // rede com o áudio/vídeo (lento) e cada volta inactive→active do iOS
+    // (CallKit, pílula, alerta) refazia o recovery → título "Atualizando…" quase
+    // o tempo todo (founder 19/10, print com "Toque para voltar à ligação").
+    // O socket está VIVO (chat ao vivo): o delta é trabalho de fundo, não estado
+    // a exibir. Kill switch: globalThis.__chatyy_sync_title_in_call = true.
+    if (globalThis.__chatyy_sync_title_in_call !== true && _inCall()) return { kind: 'idle', progress: null };
+    return { kind: 'updating', progress: null };
+  }
   return { kind: 'idle', progress: null };
+}
+
+let _inCallAt = 0;
+let _inCallVal = false;
+function _inCall() {
+  const t = _now();
+  if (t - _inCallAt < 1000) return _inCallVal; // leitura síncrona do nativo no máx. 1×/s
+  _inCallAt = t;
+  try { _inCallVal = !!require('./ongoingCall').isCallOngoing(); } catch { _inCallVal = false; }
+  return _inCallVal;
 }
 
 function _emit() {
