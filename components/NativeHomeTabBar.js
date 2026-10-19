@@ -31,7 +31,7 @@ export function nativeTabsAvailable() {
   // cima do ícone, sem trocar imagem de UITabBarItem; checagem de visibilidade real).
   try {
     if (Platform.OS === 'ios' && globalThis.__chatyy_native_tabs !== true
-      && m && m.apiVersion && (Number(m.apiVersion()) === 3 || Number(m.apiVersion()) === 4)) return false;
+      && m && m.apiVersion && (Number(m.apiVersion()) >= 3 && Number(m.apiVersion()) <= 5)) return false;
   } catch {}
   try { return !!(m && m.isAvailable && m.isAvailable()); } catch { return false; }
 }
@@ -232,7 +232,14 @@ function NativeHomeTabBarInner({
     hairline: color(hairlineColor),
     // Badge P&B invertido (igual ao PulseBadge JS).
     badgeBackground: color(activeColor),
-    badgeText: color(isDark ? '#0b0b0b' : '#ffffff'),
+    // [2026-10-19 accent-real] badge na cor de destaque → tinta legível por cima.
+    badgeText: color((() => {
+      try {
+        const T = require('../context/ThemeContext');
+        if (T.getAccentSnapshot().on && /^#[0-9a-f]{6}$/i.test(String(activeColor || ''))) return T.onAccentFor(activeColor);
+      } catch {}
+      return isDark ? '#0b0b0b' : '#ffffff';
+    })()),
     pill: color(isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.07)'),
     ripple: color(isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'),
   }), [isDark, activeColor, inactiveColor, backgroundColor, hairlineColor]);
