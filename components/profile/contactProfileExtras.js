@@ -44,6 +44,16 @@ function _postItem(p, name) {
   return { uri: main, thumbUri: th ? _abs(th) : null, type: video ? 'video' : 'image', caption: String(p?.caption || '').slice(0, 300), senderName: String(name || ''), createdAt: p?.created_at || null };
 }
 
+// Item i do carrossel do post (i=0 → mesmo de _postItem, com pôster).
+function _postMediaItem(p, i, name) {
+  if (!i) return _postItem(p, name);
+  const mu = Array.isArray(p?.media_urls) ? p.media_urls : [];
+  const u = _abs(mu[i] || '');
+  if (!u || /\/api\//.test(u)) return null;
+  const video = /\.(mp4|mov|webm|m4v|3gp)(\?|$)/i.test(u);
+  return { uri: u, thumbUri: null, type: video ? 'video' : 'image', caption: String(p?.caption || '').slice(0, 300), senderName: String(name || ''), createdAt: p?.created_at || null };
+}
+
 /** Fotos da galeria + publicações do contato (só busca com `enabled`). */
 export function useContactProfileExtras(email, enabled) {
   const em = String(email || '').trim().toLowerCase();
@@ -168,7 +178,17 @@ export function decorateContactChatInfo(info, extras, ctx = {}) {
       let nmo = null;
       try { nmo = require('../../services/nativeMediaOpen'); } catch { nmo = null; }
       if (!nmo || !nmo.nativeMediaAlways?.() || !_postItem(list[idx], name)) { openProfile(); return; }
-      Promise.resolve(nmo.openNativeMediaList({ list, index: idx, toItem: (p) => _postItem(p, name), t, allowShare: true, allowSave: true }))
+      // [perfil-publicar 2026-10-19] carrossel: cada mídia do post vira um item do
+      // visualizador (deslizar passa pelas fotos/vídeos do post e segue p/ o próximo).
+      const flat = [];
+      let start = 0;
+      list.forEach((p, pi) => {
+        const mu = Array.isArray(p.media_urls) ? p.media_urls.filter(Boolean) : [];
+        if (pi === idx) start = flat.length;
+        if (mu.length <= 1) { flat.push({ p, i: 0 }); return; }
+        mu.forEach((_, i) => flat.push({ p, i }));
+      });
+      Promise.resolve(nmo.openNativeMediaList({ list: flat, index: start, toItem: (e) => _postMediaItem(e.p, e.i, name), t, allowShare: true, allowSave: true }))
         .then((sid) => { if (!sid) openProfile(); }, openProfile);
     };
   }

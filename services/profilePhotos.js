@@ -206,41 +206,14 @@ export async function pickAndAddProfilePhoto({ t, email = '', onBusy } = {}) {
 }
 
 /**
- * "Publicar no perfil": mesmo fluxo do + de Fotos (seleção múltipla → /photo-new
- * para editar/legenda → feed_create_post). As publicações aparecem na grade do perfil.
+ * "Publicar no perfil" → compositor /photo-new (carrossel até 10, formato, legenda,
+ * quem pode ver, progresso). [perfil-publicar 2026-10-19] O seletor agora abre DE
+ * DENTRO do compositor (antes abria aqui e o push do modal logo após o PHPicker
+ * fechar era recusado pelo iOS → "não faz nada"). `from` = para onde voltar.
  */
-export async function startProfilePost(router, t) {
+export async function startProfilePost(router, t, { from = '', pick = 'library' } = {}) {
   try {
-    const ImagePicker = require('expo-image-picker');
-    if (Platform.OS !== 'web') {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync?.();
-      if (perm && !perm.granted) {
-        try { require('./alerts').safeAlert(ppT(t, 'permTitle'), ppT(t, 'permMsg')); } catch {}
-        return false;
-      }
-      if (Platform.OS === 'ios') await new Promise((r) => setTimeout(r, 350));
-    }
-    const pick = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'], allowsMultipleSelection: true, selectionLimit: 10, quality: 0.9, orderedSelection: true,
-    });
-    if (!pick || pick.canceled || !pick.assets || !pick.assets.length) return false;
-    const items = pick.assets.map((a, idx) => {
-      const isVid = a.type === 'video' || String(a.mimeType || '').startsWith('video');
-      return {
-        id: `${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 7)}`,
-        uri: a.uri,
-        type: isVid ? 'video' : 'image',
-        width: a.width,
-        height: a.height,
-        duration: a.duration,
-        fileName: a.fileName || `media_${Date.now()}_${idx}.${isVid ? 'mp4' : 'jpg'}`,
-        mimeType: a.mimeType || (isVid ? 'video/mp4' : 'image/jpeg'),
-      };
-    });
-    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-    await AsyncStorage.setItem('photoNew.pending', JSON.stringify(items));
-    router?.push?.('/photo-new');
-    return true;
+    return require('./profilePostComposer').openPostComposer(router, { pick, from });
   } catch (e) {
     try { require('./alerts').safeAlert(ppT(t, 'failed'), (e && e.message) || ''); } catch {}
     return false;

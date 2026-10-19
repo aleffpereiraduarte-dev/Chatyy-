@@ -1258,6 +1258,23 @@ export default function Profile({
   // route when bearer/cookie went stale (incidente 2026-05-04 prints).
   const [errStatus, setErrStatus] = useState(0);
   const [retryCounter, setRetryCounter] = useState(0);
+  // [perfil-publicar 2026-10-19] publicou / editou / excluiu um post (compositor ou
+  // visualizador) → o MEU perfil aberto recarrega a grade (antes só no próximo abrir).
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('chatyy:profilePostsChanged', () => {
+      try {
+        const me = String(currentUser?.email || '').toLowerCase();
+        const fk = String(fetchKey || '').toLowerCase();
+        const idEm = String(data?.identity?.email || '').toLowerCase();
+        if (!me || (fk !== me && idEm !== me && fk !== 'me')) return;
+        invalidateProfileCache(fetchKey);
+        morePostsRef.current = { key: fetchKey, page: 0, hasMore: true, loading: false };
+        setMorePosts([]);
+        setRetryCounter((c) => c + 1);
+      } catch {}
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [currentUser?.email, fetchKey, data?.identity?.email]); // eslint-disable-line react-hooks/exhaustive-deps
   const [activeTab, setActiveTab] = useState(() => (['posts', 'reels', 'lives', 'media', 'email'].includes(initialTab) ? initialTab : 'posts'));
   const [viewer, setViewer] = useState({ open: false, startIdx: 0, list: 'posts' });
   // ─── Lives tab state (2026-05-18) ───
@@ -4454,7 +4471,7 @@ export default function Profile({
     const r = await ProfilePhotos.pickAndAddProfilePhoto({ t, email: identity?.email || '' });
     _ppAfterAvatarChange(r);
   };
-  const _ppPublish = () => { ProfilePhotos.startProfilePost(router, t); };
+  const _ppPublish = () => { ProfilePhotos.startProfilePost(router, t, { from: 'profile' }); };
   const _ppPostsOn = ProfilePhotos.isProfilePostsCiEnabled();
   const _npAvatar = (index, uri) => {
     if (_ppHasGallery() && (index > 0 || (stories.length === 0 && !actions?.is_self))) {

@@ -1,185 +1,257 @@
 // =============================================================================
-// /photo-new — Instagram-style preview/edit/publish screen
+// /photo-new — compositor "Publicar no perfil" (nível Instagram)
 //
-// Entered via the FAB on /photos after multi-selecting 1..10 assets from the
-// device library (expo-image-picker, allowsMultipleSelection). Reads the
-// staged list from AsyncStorage key `photoNew.pending` so we don't have to
-// serialize file URIs through router params.
-//
-// UX flow:
-//   1. Read items on mount.
-//   2. Show horizontal carousel of selected media (snap-to-page).
-//   3. Dot indicators bottom.
-//   4. Per-item: Edit (opens PhotoEditor for crop/filter), Remove (X).
-//   5. Thumbnails strip below — tap to jump, "+" tile re-opens picker.
-//   6. Reorder via long-press swap (tap a thumb then tap target = swap).
-//   7. Caption TextInput.
-//   8. "Publicar" → feed_create_post via api.feedCreatePost (same path the
-//      feed CreatePostModal uses).
-//
-// Edge cases:
-//   - User opens /photo-new directly with no pending items → router.back().
-//   - Picker permission denied on "add more" → safeAlert.
-//   - Empty caption → still publishes (Instagram parity).
-//   - Publishing in flight → button disabled, spinner.
+// [perfil-publicar 2026-10-19] Reescrito. Antes: o seletor abria ANTES desta tela
+// e o push do modal logo depois da saída do PHPicker era recusado pelo UIKit → a
+// tela montava e sumia em ~2 s ("Publicar no perfil não funciona"). Agora:
+//   • Entrada: /photo-new?pick=library|camera&from=profile|photos|settings
+//     → a tela abre primeiro e chama o seletor quando a transição acabou.
+//     Compat: itens entregues em memória (profilePostComposer.openPostComposer)
+//     ou na chave antiga AsyncStorage `photoNew.pending` (nunca mais router.back
+//     só porque a chave sumiu — mostra o estado vazio com "Adicionar").
+//   • Carrossel até 10 (foto + vídeo misturados), formato Quadrado 1:1 /
+//     Retrato 4:5 / Original (fotos recortadas no centro no envio; prévia = recorte),
+//     editar foto (PhotoEditor), remover, reordenar (segurar miniatura → tocar outra).
+//   • Legenda (2200) + quem pode ver: Todos / Meus contatos (servidor audience=contacts).
+//   • Publicar com barra de progresso real (XHR), client_post_id (re-tentar não
+//     duplica) e "Tentar de novo" sem perder nada.
+//   • Fim: invalida cache do perfil, avisa (toast) e volta ao perfil — o post entra
+//     na grade (/u e Dados do contato, com a regra de audiência do servidor).
 // =============================================================================
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, FlatList, TextInput,
-  ActivityIndicator, Platform, Animated, KeyboardAvoidingView, ScrollView,
+  View, Text, TouchableOpacity, StyleSheet, FlatList, TextInput, Image as RNImage,
+  ActivityIndicator, Platform, KeyboardAvoidingView, ScrollView, InteractionManager,
+  Alert, DeviceEventEmitter,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image as ExpoImage } from 'expo-image';
 
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 import { Spacing, FontSize, BorderRadius, Shadow } from '../constants/theme';
 import * as api from '../services/api';
-import { safeAlert } from '../services/alerts';
 import { setCache, getCached } from '../services/cache';
 import {
-  IconArrowLeft, IconX, IconEdit, IconPlus, IconPlay, IconImage,
+  IconX, IconEdit, IconPlus, IconPlay, IconImage, IconUsers, IconGlobe, IconCheck,
 } from '../components/Icons';
 import PhotoEditor from '../components/PhotoEditor';
-import PressableScale from '../components/PressableScale'; // [2026-10-16 polish-r2]
-import Svg, { Path } from 'react-native-svg';
+import PressableScale from '../components/PressableScale';
+import {
+  pcT, pickPostMedia, takePendingPostItems, showActionMenu, POST_MAX_ITEMS, POSTS_CHANGED_EVENT,
+} from '../services/profilePostComposer';
 
-const MAX_ITEMS = 10;
 const MAX_CAPTION = 2200;
+const ASPECTS = [
+  { key: '1:1', ratio: 1, label: 'square' },
+  { key: '4:5', ratio: 0.8, label: 'portrait' },
+  { key: 'orig', ratio: 1, label: 'original' },
+];
 
-function IconCheckBig({ size = 22, color = '#fff' }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="M20 6L9 17l-5-5" />
-    </Svg>
-  );
+// Vídeo da prévia (só o slide ativo monta player). expo-video ausente → pôster.
+let _ExpoVideo = null;
+function _loadExpoVideo() {
+  if (_ExpoVideo !== null) return _ExpoVideo;
+  if (Platform.OS === 'web') { _ExpoVideo = false; return false; }
+  try { _ExpoVideo = require('expo-video'); } catch { _ExpoVideo = false; }
+  return _ExpoVideo;
 }
+function VideoPreview({ uri, fit }) {
+  const mod = _loadExpoVideo();
+  if (!mod || !mod.useVideoPlayer || !mod.VideoView) return null;
+  return <VideoPreviewInner mod={mod} uri={uri} fit={fit} />;
+}
+function VideoPreviewInner({ mod, uri, fit }) {
+  const player = mod.useVideoPlayer(uri, (p) => { try { p.loop = true; p.muted = true; p.play(); } catch {} });
+  return <mod.VideoView player={player} style={StyleSheet.absoluteFill} contentFit={fit} nativeControls={false} />;
+}
+
+function getSize(uri) {
+  return new Promise((resolve) => {
+    try { RNImage.getSize(uri, (w, h) => resolve({ w, h }), () => resolve(null)); } catch { resolve(null); }
+  });
+}
+
+/** Recorta (centro) no formato escolhido e limita a 2160 px de largura. */
+async function prepareImage(it, aspectKey) {
+  let IM = null;
+  try { IM = require('expo-image-manipulator'); } catch { IM = null; }
+  if (!IM || typeof IM.manipulateAsync !== 'function' || Platform.OS === 'web') return it;
+  const sz = await getSize(it.uri);
+  const w = sz?.w || it.width || 0;
+  const h = sz?.h || it.height || 0;
+  if (!w || !h) return it;
+  const actions = [];
+  let cw = w; let ch = h;
+  const asp = ASPECTS.find((a) => a.key === aspectKey);
+  if (asp && aspectKey !== 'orig') {
+    const target = asp.ratio; // largura / altura
+    if (w / h > target) { cw = Math.round(h * target); ch = h; } else { cw = w; ch = Math.round(w / target); }
+    cw = Math.min(cw, w); ch = Math.min(ch, h);
+    actions.push({ crop: { originX: Math.max(0, Math.floor((w - cw) / 2)), originY: Math.max(0, Math.floor((h - ch) / 2)), width: cw, height: ch } });
+  }
+  if (cw > 2160) actions.push({ resize: { width: 2160 } });
+  if (!actions.length && /jpe?g/i.test(it.mimeType || '')) return it;
+  try {
+    const out = await IM.manipulateAsync(it.uri, actions, { compress: 0.88, format: IM.SaveFormat?.JPEG || 'jpeg' });
+    if (out?.uri) {
+      const base = String(it.fileName || 'photo').replace(/\.[a-z0-9]{2,5}$/i, '');
+      return { ...it, uri: out.uri, width: out.width, height: out.height, mimeType: 'image/jpeg', fileName: `${base}.jpg` };
+    }
+  } catch {}
+  return it;
+}
+
+function uploadWithProgress(formData, onProgress) {
+  return new Promise((resolve) => {
+    const token = api.getAuthToken?.() || '';
+    const base = (api.getApiUrl?.() || '').split('?')[0];
+    if (!base || !token || typeof XMLHttpRequest === 'undefined') {
+      api.feedCreatePost(formData).then(resolve, (e) => resolve({ success: false, message: e?.message || '' }));
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    let done = false;
+    const finish = (r) => { if (!done) { done = true; resolve(r); } };
+    try {
+      xhr.open('POST', `${base}?action=feed_create_post`);
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      try {
+        const h = api.getAuthHeaders?.() || {};
+        Object.keys(h).forEach((k) => { if (/^x-/i.test(k)) { try { xhr.setRequestHeader(k, h[k]); } catch {} } });
+      } catch {}
+      xhr.timeout = 15 * 60 * 1000;
+      if (xhr.upload) {
+        xhr.upload.onprogress = (e) => {
+          if (e && e.lengthComputable && e.total > 0) { try { onProgress(Math.min(1, e.loaded / e.total)); } catch {} }
+        };
+      }
+      xhr.onload = () => {
+        let j = null;
+        try { j = JSON.parse(xhr.responseText || ''); } catch { j = null; }
+        if (j && typeof j === 'object') { finish(j); return; }
+        finish({ success: false, message: xhr.status === 413 ? 'Arquivo muito grande' : `HTTP ${xhr.status}` });
+      };
+      xhr.onerror = () => finish({ success: false, message: 'Sem conexão' });
+      xhr.ontimeout = () => finish({ success: false, message: 'Tempo limite excedido' });
+      xhr.send(formData);
+    } catch (e) {
+      finish({ success: false, message: e?.message || '' });
+    }
+  });
+}
+
+const newClientId = () => `pp${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 
 export default function PhotoNew() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const pickParam = String(params?.pick || '');
+  const fromParam = String(params?.from || '');
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
   const [items, setItems] = useState([]);
+  const [hydrated, setHydrated] = useState(false);
+  const [picking, setPicking] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [caption, setCaption] = useState('');
-  const [publishing, setPublishing] = useState(false);
+  const [aspect, setAspect] = useState('1:1');
+  const [audience, setAudience] = useState('everyone');
+  const [phase, setPhase] = useState('idle'); // idle | preparing | uploading | finishing | error
+  const [progress, setProgress] = useState(0);
+  const [errorMsg, setErrorMsg] = useState('');
   const [editorOpenForIdx, setEditorOpenForIdx] = useState(-1);
   const [reorderFromIdx, setReorderFromIdx] = useState(-1);
-
   const carouselRef = useRef(null);
   const [carouselWidth, setCarouselWidth] = useState(0);
+  const clientIdRef = useRef(newClientId());
+  const busy = phase === 'preparing' || phase === 'uploading' || phase === 'finishing';
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
-  // ----- Hydrate pending list -----
+  // Conteúdo mudou → nova chave de idempotência (re-tentar o MESMO conteúdo reaproveita).
+  useEffect(() => { clientIdRef.current = newClientId(); }, [items, aspect, audience, caption]);
+
+  const runPicker = useCallback(async (mode, { closeIfEmpty = false } = {}) => {
+    const remaining = POST_MAX_ITEMS - items.length;
+    if (remaining <= 0) { Alert.alert(pcT('maxReached')); return; }
+    setPicking(true);
+    let got = null;
+    try { got = await pickPostMedia({ mode, limit: remaining }); } catch (e) {
+      got = null;
+      try { Alert.alert(pcT('failed'), e?.message || ''); } catch {}
+    }
+    if (!mountedRef.current) return;
+    setPicking(false);
+    if (got && got.length) {
+      setItems((prev) => prev.concat(got).slice(0, POST_MAX_ITEMS));
+    } else if (closeIfEmpty) {
+      router.back();
+    }
+  }, [items.length, router]);
+
+  // ----- Itens iniciais / seletor automático -----
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const raw = await AsyncStorage.getItem('photoNew.pending');
-        if (!raw) {
-          if (!cancelled) router.back();
-          return;
-        }
-        const list = JSON.parse(raw);
-        if (!Array.isArray(list) || list.length === 0) {
-          if (!cancelled) router.back();
-          return;
-        }
-        if (!cancelled) setItems(list);
-        // Clear the staging key so a back-navigation + re-pick doesn't replay.
-        // We keep a copy in state.
+      let list = takePendingPostItems();
+      if (!list) {
+        try {
+          const raw = await AsyncStorage.getItem('photoNew.pending');
+          if (raw) { const j = JSON.parse(raw); if (Array.isArray(j) && j.length) list = j; }
+        } catch {}
         AsyncStorage.removeItem('photoNew.pending').catch(() => {});
-      } catch {
-        if (!cancelled) router.back();
+      }
+      if (cancelled) return;
+      if (list && list.length) {
+        setItems(list.slice(0, POST_MAX_ITEMS));
+        setHydrated(true);
+        return;
+      }
+      setHydrated(true);
+      if (pickParam === 'library' || pickParam === 'camera') {
+        // Espera a apresentação desta tela terminar: o UIKit ignora (em silêncio)
+        // apresentar o PHPicker sobre um modal ainda animando.
+        await new Promise((r) => { try { if (InteractionManager?.runAfterInteractions) { InteractionManager.runAfterInteractions(() => r()); return; } } catch {} r(); });
+        await new Promise((r) => setTimeout(r, Platform.OS === 'ios' ? 420 : 120));
+        if (cancelled || !mountedRef.current) return;
+        runPicker(pickParam, { closeIfEmpty: true });
       }
     })();
     return () => { cancelled = true; };
-  }, [router]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ----- Carousel scroll -----
+  // ----- Carrossel -----
   const handleScrollEnd = useCallback((e) => {
     const w = e.nativeEvent.layoutMeasurement.width || carouselWidth || 1;
-    const idx = Math.round(e.nativeEvent.contentOffset.x / w);
-    setActiveIndex(idx);
+    setActiveIndex(Math.max(0, Math.round(e.nativeEvent.contentOffset.x / w)));
   }, [carouselWidth]);
 
   const jumpTo = useCallback((idx) => {
     if (!carouselRef.current || carouselWidth === 0) return;
-    carouselRef.current.scrollToOffset({ offset: idx * carouselWidth, animated: true });
+    try { carouselRef.current.scrollToOffset({ offset: idx * carouselWidth, animated: true }); } catch {}
     setActiveIndex(idx);
   }, [carouselWidth]);
 
-  // ----- Remove / add / reorder -----
   const removeAt = useCallback((idx) => {
-    setItems(prev => {
+    setItems((prev) => {
       const next = prev.filter((_, i) => i !== idx);
-      if (next.length === 0) {
-        // No items left → bounce back to photos.
-        setTimeout(() => router.back(), 0);
-        return next;
-      }
-      // Keep activeIndex in range.
-      setActiveIndex(curr => Math.min(curr, next.length - 1));
+      setActiveIndex((curr) => Math.max(0, Math.min(curr, next.length - 1)));
       return next;
     });
-  }, [router]);
+  }, []);
 
-  const addMore = useCallback(async () => {
-    if (items.length >= MAX_ITEMS) {
-      safeAlert(
-        t('photoNew.maxReached') || 'Limite atingido',
-        (t('photoNew.maxReachedDesc') || 'Máximo {max} itens.').replace('{max}', MAX_ITEMS),
-      );
-      return;
-    }
-    try {
-      const ImagePicker = await import('expo-image-picker');
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) return;
-      const remaining = MAX_ITEMS - items.length;
-      const pick = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images', 'videos'],
-        allowsMultipleSelection: true,
-        selectionLimit: remaining,
-        quality: 0.9,
-        orderedSelection: true,
-      });
-      if (pick.canceled || !pick.assets?.length) return;
-      const newOnes = pick.assets.slice(0, remaining).map((a, idx) => {
-        const isVid = (a.type === 'video') || (a.mimeType || '').startsWith('video');
-        return {
-          id: `${Date.now()}_add_${idx}_${Math.random().toString(36).slice(2, 7)}`,
-          uri: a.uri,
-          type: isVid ? 'video' : 'image',
-          width: a.width,
-          height: a.height,
-          duration: a.duration,
-          fileName: a.fileName || `media_${Date.now()}_${idx}.${isVid ? 'mp4' : 'jpg'}`,
-          mimeType: a.mimeType || (isVid ? 'video/mp4' : 'image/jpeg'),
-        };
-      });
-      setItems(prev => [...prev, ...newOnes]);
-    } catch (e) {
-      safeAlert(t('common.error') || 'Erro', e?.message || '');
-    }
-  }, [items.length, t]);
-
-  // Tap-to-swap reorder: first tap on thumb = source, second = target.
-  // Simpler than drag, works without extra gesture deps.
   const onThumbPress = useCallback((idx) => {
-    if (reorderFromIdx === -1) {
-      jumpTo(idx);
-      return;
-    }
-    if (reorderFromIdx === idx) {
-      setReorderFromIdx(-1);
-      return;
-    }
-    setItems(prev => {
+    if (reorderFromIdx === -1) { jumpTo(idx); return; }
+    if (reorderFromIdx === idx) { setReorderFromIdx(-1); return; }
+    setItems((prev) => {
       const next = [...prev];
       const tmp = next[reorderFromIdx];
       next[reorderFromIdx] = next[idx];
@@ -190,250 +262,277 @@ export default function PhotoNew() {
     setActiveIndex(idx);
   }, [reorderFromIdx, jumpTo]);
 
-  const onThumbLongPress = useCallback((idx) => {
-    setReorderFromIdx(idx);
-  }, []);
-
-  // ----- Edit handler -----
   const openEditor = useCallback((idx) => {
-    if (items[idx]?.type === 'video') {
-      safeAlert(t('photoNew.editVideoNote') || 'Edição', t('photoNew.editVideoNoteDesc') || 'Edição de vídeo não suportada.');
-      return;
-    }
+    if (items[idx]?.type === 'video') return;
     setEditorOpenForIdx(idx);
-  }, [items, t]);
+  }, [items]);
 
   const handleEditorSave = useCallback((newUri) => {
-    if (editorOpenForIdx < 0) { setEditorOpenForIdx(-1); return; }
-    setItems(prev => {
+    const idx = editorOpenForIdx;
+    setEditorOpenForIdx(-1);
+    if (idx < 0 || !newUri) return;
+    setItems((prev) => {
       const next = [...prev];
-      if (next[editorOpenForIdx]) {
-        next[editorOpenForIdx] = { ...next[editorOpenForIdx], uri: newUri };
-      }
+      if (next[idx]) next[idx] = { ...next[idx], uri: newUri, width: 0, height: 0, mimeType: 'image/jpeg' };
       return next;
     });
-    setEditorOpenForIdx(-1);
   }, [editorOpenForIdx]);
 
-  // ----- Publish -----
+  const addMenu = useCallback(() => {
+    if (busy) return;
+    if (Platform.OS === 'web') { runPicker('library'); return; }
+    showActionMenu({
+      options: [
+        { label: pcT('fromLibrary'), onPress: () => setTimeout(() => runPicker('library'), Platform.OS === 'ios' ? 380 : 0) },
+        { label: pcT('camera'), onPress: () => setTimeout(() => runPicker('camera'), Platform.OS === 'ios' ? 380 : 0) },
+      ],
+    });
+  }, [busy, runPicker]);
+
+  const close = useCallback(() => {
+    if (busy) return;
+    if (!items.length && !caption.trim()) { router.back(); return; }
+    Alert.alert(pcT('discardTitle'), pcT('discardMsg'), [
+      { text: pcT('keep'), style: 'cancel' },
+      { text: pcT('discard'), style: 'destructive', onPress: () => router.back() },
+    ]);
+  }, [busy, items.length, caption, router]);
+
+  // ----- Publicar -----
   const publish = useCallback(async () => {
-    if (publishing || items.length === 0) return;
-    setPublishing(true);
+    if (busy || items.length === 0) return;
+    setErrorMsg('');
+    setProgress(0);
+    setPhase('preparing');
     try {
+      const prepared = [];
+      for (const it of items) {
+        prepared.push(it.type === 'image' ? await prepareImage(it, aspect) : it);
+      }
+      if (!mountedRef.current) return;
       const formData = new FormData();
       formData.append('caption', caption.trim());
-      const hasVideo = items.some(it => it.type === 'video');
-      formData.append('media_type', hasVideo ? 'video' : 'image');
-      for (let i = 0; i < items.length; i++) {
-        const it = items[i];
+      formData.append('media_type', prepared[0]?.type === 'video' ? 'video' : 'image');
+      formData.append('audience', audience);
+      formData.append('client_post_id', clientIdRef.current);
+      formData.append('post_aspect', aspect);
+      for (const it of prepared) {
         if (Platform.OS === 'web') {
-          // Native picker on web returns blob URIs; need to fetch into Blob.
           try {
             const res = await fetch(it.uri);
             const blob = await res.blob();
             formData.append('media[]', blob, it.fileName);
-          } catch {
-            // Skip if fetch fails; better to publish remaining than abort all.
-          }
+          } catch {}
         } else {
-          formData.append('media[]', {
-            uri: it.uri,
-            name: it.fileName,
-            type: it.mimeType,
-          });
+          formData.append('media[]', { uri: it.uri, name: it.fileName, type: it.mimeType });
         }
       }
-      const r = await api.feedCreatePost(formData);
-      if (r?.success) {
-        // [bug-fix #photo-new-disappears] User reported "novo eu adiciono
-        // foto e ele some" — they published a post, navigated back to feed/
-        // photos, and couldn't find it. Two root causes:
-        //   1. Backend was NOT broadcasting `feed_new_post` via WS, so the
-        //      ChatFeedTab listener never prepended the post and the next
-        //      poll cycle was up to 60s away (now fixed in email.php).
-        //   2. The local `feed_posts` IndexedDB cache (90-day TTL) holds the
-        //      pre-publish snapshot. Even after focusing the feed tab,
-        //      ChatFeedTab hydrates from that stale cache before the API
-        //      delta lands. Invalidate it here so the next visit forces a
-        //      fresh fetch.
-        const postId = r?.data?.post?.id;
-        const newPost = r?.data?.post;
-        try {
-          if (newPost) {
-            const cached = (await getCached('feed_posts').catch(() => null)) || [];
-            const dedup = Array.isArray(cached) ? cached.filter(p => p?.id !== newPost.id) : [];
-            // Prepend optimistically so the timeline shows it the moment the
-            // user navigates back, even if the WS event hasn't arrived yet.
-            const merged = [{ ...newPost, created_at: new Date().toISOString() }, ...dedup].slice(0, 200);
-            await setCache('feed_posts', merged, 7776000000);
-          } else {
-            // No post returned — just drop the cache so the feed re-fetches.
-            await setCache('feed_posts', [], 0).catch(() => {});
-          }
-        } catch {}
-
-        // After publish: navigate to /feed/[id] (Instagram-style standalone
-        // viewer). The route is auth-aware — logged-in viewers see counts +
-        // actions, anonymous viewers see a Sign-in CTA. We replace() instead
-        // of push() so the back-button takes them out of /photo-new (the
-        // staging key is already cleared on mount).
-        if (postId) {
-          router.replace(`/feed/${postId}`);
-        } else {
-          // Fallback: backend didn't return an id (shouldn't happen with the
-          // post-create handler, but defensive). Keep the legacy behaviour
-          // so we never leave the user stuck on a spinner — surface a clear
-          // success message so they don't think it failed.
-          safeAlert(
-            t('photoNew.published') || 'Publicado',
-            t('photoNew.publishedDesc') || 'Sua publicação foi enviada.',
-          );
-          router.back();
-        }
-      } else {
-        setPublishing(false);
-        safeAlert(
-          t('common.error') || 'Erro',
-          r?.error || r?.message || (t('photoNew.publishError') || 'Falha ao publicar.'),
-        );
+      setPhase('uploading');
+      const r = Platform.OS === 'web'
+        ? await api.feedCreatePost(formData)
+        : await uploadWithProgress(formData, (p) => { if (mountedRef.current) { setProgress(p); if (p >= 0.999) setPhase('finishing'); } });
+      if (!mountedRef.current) return;
+      if (!r || !r.success) {
+        setPhase('error');
+        setErrorMsg(String((r && (r.message || r.error)) || ''));
+        return;
       }
+      const newPost = r?.data?.post || null;
+      // Caches: perfil (memória/disco) + feed.
+      try { require('../components/Profile').invalidateProfileCache?.(); } catch {}
+      try {
+        if (newPost) {
+          const cached = (await getCached('feed_posts').catch(() => null)) || [];
+          const dedup = Array.isArray(cached) ? cached.filter((p) => p?.id !== newPost.id) : [];
+          await setCache('feed_posts', [{ ...newPost, created_at: new Date().toISOString() }, ...dedup].slice(0, 200), 7776000000);
+        }
+      } catch {}
+      try { DeviceEventEmitter.emit(POSTS_CHANGED_EVENT, { created: newPost }); } catch {}
+      try { require('../services/haptics').hapticEvent?.('success'); } catch {}
+      try { require('../components/ui/Toast').showToast({ message: pcT('published'), kind: 'success' }); } catch {}
+      setPhase('idle');
+      const me = String(user?.email || '').trim();
+      if (fromParam === 'profile' || !me) router.back();
+      else router.replace(`/u/${encodeURIComponent(me)}`);
     } catch (e) {
-      setPublishing(false);
-      safeAlert(t('common.error') || 'Erro', e?.message || '');
+      if (!mountedRef.current) return;
+      setPhase('error');
+      setErrorMsg(e?.message || '');
     }
-  }, [publishing, items, caption, router, t]);
+  }, [busy, items, aspect, caption, audience, router, fromParam, user?.email]);
 
-  // ----- Styles -----
+  // ----- Estilos -----
+  const ratio = (ASPECTS.find((a) => a.key === aspect) || ASPECTS[0]).ratio;
+  const fit = aspect === 'orig' ? 'contain' : 'cover';
+  const chipBg = isDark ? 'rgba(255,255,255,0.08)' : '#F1F3F5';
+  const chipOnBg = isDark ? '#FFFFFF' : '#111111';
+  const chipOnFg = isDark ? '#000000' : '#FFFFFF';
   const s = useMemo(() => StyleSheet.create({
     root: { flex: 1, backgroundColor: colors.background },
     header: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingHorizontal: Spacing.md, paddingVertical: 12,
+      paddingHorizontal: Spacing.md, paddingVertical: 10,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
     },
     headerBtn: { padding: 8, minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center' },
-    headerTitle: { fontSize: FontSize.lg, fontWeight: '600', color: colors.text },
+    headerTitle: { fontSize: FontSize.lg, fontWeight: '700', color: colors.text },
     publishBtn: {
-      paddingHorizontal: 14, paddingVertical: 8, borderRadius: BorderRadius.lg,
-      backgroundColor: colors.primary, minWidth: 90, alignItems: 'center',
+      paddingHorizontal: 16, height: 36, borderRadius: 18, justifyContent: 'center',
+      backgroundColor: chipOnBg, minWidth: 92, alignItems: 'center',
     },
-    publishBtnDisabled: { opacity: 0.5 },
-    publishText: { color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: FontSize.sm },
-    carouselWrap: { width: '100%', aspectRatio: 1, backgroundColor: '#000' },
-    slide: { width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' },
-    slideMedia: { width: '100%', height: '100%' },
-    perItemBtns: {
-      // Anchor inside the slide with a safe-margin so the X never sits under the
-      // notch / header divider. Each button is 44pt (WCAG hit-target min) which
-      // visually nudges the row down naturally without breaking the carousel.
-      position: 'absolute', top: 16, right: 16, flexDirection: 'row', gap: 10,
-      zIndex: 50, elevation: 50,
+    publishBtnDisabled: { opacity: 0.4 },
+    publishText: { color: chipOnFg, fontWeight: '700', fontSize: FontSize.sm },
+    progressTrack: { height: 3, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' },
+    progressFill: { height: 3, backgroundColor: colors.text },
+    statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: Spacing.md, paddingVertical: 8 },
+    statusText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600', flex: 1 },
+    errorBox: {
+      flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: Spacing.md, marginTop: 10,
+      padding: 12, borderRadius: 14, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#F6F6F7',
     },
-    iconBtn: {
-      width: 44, height: 44, borderRadius: 22,
-      backgroundColor: 'rgba(0,0,0,0.6)',
-      justifyContent: 'center', alignItems: 'center',
-      ...Shadow.sm,
-    },
+    errorTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
+    errorSub: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
+    retryBtn: { paddingHorizontal: 14, height: 34, borderRadius: 17, backgroundColor: chipOnBg, justifyContent: 'center' },
+    retryText: { color: chipOnFg, fontSize: 13, fontWeight: '700' },
+    carouselWrap: { width: '100%', backgroundColor: isDark ? '#000' : '#0b0b0c', overflow: 'hidden' },
+    slide: { height: '100%', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+    perItemBtns: { position: 'absolute', top: 12, right: 12, flexDirection: 'row', gap: 10, zIndex: 50, elevation: 50 },
+    iconBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', alignItems: 'center', ...Shadow.sm },
     videoBadge: {
-      position: 'absolute', bottom: 12, left: 12,
-      backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 10, paddingVertical: 4,
+      position: 'absolute', bottom: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 10, paddingVertical: 4,
       borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 4,
     },
-    videoBadgeText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-    dotsRow: {
-      flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-      paddingVertical: 10, gap: 6,
-    },
+    counterBadge: { position: 'absolute', top: 14, left: 12, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 11 },
+    badgeText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+    dotsRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', paddingTop: 10, gap: 5 },
     dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: isDark ? '#3f3f46' : '#d4d4d8' },
-    dotActive: { backgroundColor: colors.primary, width: 16 },
-    thumbsStrip: {
-      paddingHorizontal: Spacing.md, paddingVertical: 10, gap: 8,
-    },
-    thumb: {
-      width: 60, height: 60, borderRadius: 8, backgroundColor: '#222',
-      borderWidth: 2, borderColor: 'transparent',
-      overflow: 'hidden',
-    },
-    thumbActive: { borderColor: colors.primary },
-    thumbReorder: { borderColor: isDark ? '#FFFFFF' : '#111111', borderWidth: 3 },
+    dotActive: { backgroundColor: colors.text },
+    sectionLabel: { color: colors.textSecondary, fontSize: 12, fontWeight: '700', letterSpacing: 0.3, paddingHorizontal: Spacing.md, paddingTop: 14, paddingBottom: 8, textTransform: 'uppercase' },
+    chipsRow: { flexDirection: 'row', gap: 8, paddingHorizontal: Spacing.md },
+    chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, height: 34, borderRadius: 17, backgroundColor: chipBg },
+    chipOn: { backgroundColor: chipOnBg },
+    chipText: { fontSize: 13, fontWeight: '600', color: colors.text },
+    chipTextOn: { color: chipOnFg },
+    hint: { color: colors.textTertiary || colors.textSecondary, fontSize: 12, paddingHorizontal: Spacing.md, paddingTop: 6 },
+    thumbsStrip: { paddingHorizontal: Spacing.md, paddingVertical: 12, gap: 8 },
+    thumb: { width: 58, height: 58, borderRadius: 10, backgroundColor: '#222', borderWidth: 2, borderColor: 'transparent', overflow: 'hidden' },
+    thumbActive: { borderColor: colors.text },
+    thumbReorder: { borderColor: isDark ? '#FFFFFF' : '#111111', borderWidth: 3, opacity: 0.7 },
     thumbImg: { width: '100%', height: '100%' },
+    thumbVid: { position: 'absolute', right: 3, bottom: 3 },
     addMoreTile: {
-      width: 60, height: 60, borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth * 3, borderStyle: 'dashed',
-      borderColor: isDark ? '#52525b' : '#a1a1aa',
-      justifyContent: 'center', alignItems: 'center',
-      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+      width: 58, height: 58, borderRadius: 10, borderWidth: 1.5, borderStyle: 'dashed',
+      borderColor: isDark ? '#52525b' : '#a1a1aa', justifyContent: 'center', alignItems: 'center',
     },
     captionWrap: {
-      flexDirection: 'row', alignItems: 'flex-start',
-      paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+      paddingHorizontal: Spacing.md, paddingVertical: 12, marginTop: 6,
+      borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
     },
-    captionInput: {
-      flex: 1, color: colors.text, fontSize: FontSize.md,
-      minHeight: 60, maxHeight: 160, paddingTop: 0,
-    },
-    counter: {
-      fontSize: 11, color: colors.textTertiary, marginTop: 2, textAlign: 'right',
-    },
-    reorderHint: {
-      paddingHorizontal: Spacing.md, paddingBottom: 4,
-      fontSize: 12, color: colors.textSecondary, fontWeight: '600',
-    },
-  }), [colors, isDark]);
+    captionInput: { color: colors.text, fontSize: FontSize.md, minHeight: 64, maxHeight: 180, paddingTop: 0, textAlignVertical: 'top' },
+    counter: { fontSize: 11, color: colors.textTertiary || colors.textSecondary, textAlign: 'right', paddingHorizontal: Spacing.md },
+    reorderHint: { paddingHorizontal: Spacing.md, fontSize: 12, color: colors.textSecondary, fontWeight: '600' },
+  }), [colors, isDark, chipBg, chipOnBg, chipOnFg]);
 
-  const captionRemaining = MAX_CAPTION - caption.length;
+  const statusLabel = phase === 'preparing' ? pcT('preparing')
+    : phase === 'uploading' ? pcT('sending', { p: Math.round(progress * 100) })
+    : phase === 'finishing' ? pcT('finishing') : '';
+
+  const renderSlide = ({ item, index }) => (
+    <View style={[s.slide, { width: carouselWidth }]}>
+      {item.type === 'video' ? (
+        index === activeIndex ? <VideoPreview uri={item.uri} fit={fit} /> : (
+          <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+            <IconPlay size={34} color="#fff" />
+          </View>
+        )
+      ) : (
+        <ExpoImage source={{ uri: item.uri }} style={StyleSheet.absoluteFill} contentFit={fit} />
+      )}
+      {item.type === 'video' && (
+        <View style={s.videoBadge}>
+          <IconPlay size={12} color="#fff" />
+          <Text style={s.badgeText}>{pcT('video')}</Text>
+        </View>
+      )}
+      {!busy && (
+        <View style={s.perItemBtns}>
+          {item.type !== 'video' && (
+            <TouchableOpacity style={s.iconBtn} onPress={() => openEditor(index)} accessibilityLabel={pcT('editPhoto')}>
+              <IconEdit size={17} color="#fff" />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity style={s.iconBtn} onPress={() => removeAt(index)} accessibilityLabel={pcT('removeItem')}>
+            <IconX size={19} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
 
   return (
     <View style={[s.root, { paddingTop: insets.top + 4 }]}>
-      {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()} style={s.headerBtn} accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-          <IconX size={26} color={colors.text} />
+        <TouchableOpacity onPress={close} disabled={busy} style={s.headerBtn} accessibilityLabel={pcT('cancel')} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <IconX size={26} color={busy ? colors.textTertiary || colors.textSecondary : colors.text} />
         </TouchableOpacity>
-        <Text style={s.headerTitle}>{t('photoNew.title') || 'Nova publicação'}</Text>
+        <Text style={s.headerTitle}>{pcT('newPost')}</Text>
         <TouchableOpacity
           onPress={publish}
-          disabled={publishing || items.length === 0}
-          style={[s.publishBtn, (publishing || items.length === 0) && s.publishBtnDisabled]}
-          accessibilityLabel={t('photoNew.publish') || 'Publicar'}
+          disabled={busy || items.length === 0}
+          style={[s.publishBtn, (busy || items.length === 0) && s.publishBtnDisabled]}
+          accessibilityLabel={pcT('publish')}
         >
-          {publishing ? (
-            <ActivityIndicator size="small" color={colors.onPrimary} />
-          ) : (
-            <Text style={s.publishText}>{t('photoNew.publish') || 'Publicar'}</Text>
-          )}
+          {busy ? <ActivityIndicator size="small" color={chipOnFg} /> : <Text style={s.publishText}>{pcT('publish')}</Text>}
         </TouchableOpacity>
       </View>
+      {busy && (
+        <>
+          <View style={s.progressTrack}>
+            <View style={[s.progressFill, { width: `${Math.max(4, Math.round((phase === 'uploading' ? progress : phase === 'finishing' ? 1 : 0.03) * 100))}%` }]} />
+          </View>
+          <View style={s.statusRow}>
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+            <Text style={s.statusText}>{statusLabel}</Text>
+          </View>
+        </>
+      )}
+      {phase === 'error' && (
+        <View style={s.errorBox}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.errorTitle}>{pcT('failed')}</Text>
+            {!!errorMsg && <Text style={s.errorSub} numberOfLines={2}>{errorMsg}</Text>}
+          </View>
+          <TouchableOpacity style={s.retryBtn} onPress={publish} accessibilityRole="button">
+            <Text style={s.retryText}>{pcT('retry')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={insets.top + 50}
-      >
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 + insets.bottom }}>
-          {/* Carousel */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={insets.top + 50}>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 + insets.bottom }} pointerEvents={busy ? 'none' : 'auto'}>
           <View
-            style={[s.carouselWrap, items.length === 0 && { backgroundColor: isDark ? '#0d0d0f' : '#F2F2F7' }]}
-            onLayout={e => setCarouselWidth(e.nativeEvent.layout.width)}
+            style={[s.carouselWrap, { aspectRatio: items.length ? ratio : 1 }, !items.length && { backgroundColor: isDark ? '#0d0d0f' : '#F2F2F7' }]}
+            onLayout={(e) => setCarouselWidth(e.nativeEvent.layout.width)}
           >
-            {/* [2026-10-16 polish-r2] Sem itens: área vazia virava um quadrado
-                preto mudo. Agora um alvo grande de "Adicionar" (mesma ação do +). */}
             {items.length === 0 && (
-              <PressableScale onPress={addMore} haptic="light" accessibilityRole="button"
-                accessibilityLabel={t('photoNew.addMore') || 'Adicionar'}
-                style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14 }}>
-                <View style={{ width: 84, height: 84, borderRadius: 42, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#1c1c1e' : '#FFFFFF', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? '#2c2c2e' : '#E5E5EA' }}>
-                  <IconImage size={34} color={colors.text} />
+              hydrated && !picking ? (
+                <PressableScale onPress={addMenu} haptic="light" accessibilityRole="button" accessibilityLabel={pcT('add')}
+                  style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14, paddingHorizontal: 32 }}>
+                  <View style={{ width: 84, height: 84, borderRadius: 42, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#1c1c1e' : '#FFFFFF', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? '#2c2c2e' : '#E5E5EA' }}>
+                    <IconImage size={34} color={colors.text} />
+                  </View>
+                  <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: 'center' }}>{pcT('empty')}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 18, height: 40, borderRadius: 20, backgroundColor: chipOnBg }}>
+                    <IconPlus size={16} color={chipOnFg} />
+                    <Text style={{ color: chipOnFg, fontSize: 15, fontWeight: '700' }}>{pcT('add')}</Text>
+                  </View>
+                </PressableScale>
+              ) : (
+                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                  <ActivityIndicator color={colors.textSecondary} />
                 </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 18, height: 40, borderRadius: 20, backgroundColor: isDark ? '#FFFFFF' : '#111111' }}>
-                  <IconPlus size={16} color={isDark ? '#000' : '#fff'} />
-                  <Text style={{ color: isDark ? '#000' : '#fff', fontSize: 15, fontWeight: '700' }}>{t('photoNew.addMore') || 'Adicionar'}</Text>
-                </View>
-              </PressableScale>
+              )
             )}
             {carouselWidth > 0 && items.length > 0 && (
               <FlatList
@@ -444,107 +543,99 @@ export default function PhotoNew() {
                 showsHorizontalScrollIndicator={false}
                 keyExtractor={(item) => item.id}
                 onMomentumScrollEnd={handleScrollEnd}
-                renderItem={({ item, index }) => (
-                  <View style={[s.slide, { width: carouselWidth }]}>
-                    <ExpoImage
-                      source={{ uri: item.uri }}
-                      style={s.slideMedia}
-                      contentFit="contain"
-                    />
-                    {item.type === 'video' && (
-                      <View style={s.videoBadge}>
-                        <IconPlay size={12} color="#fff" />
-                        <Text style={s.videoBadgeText}>{t('chat.video') || 'Vídeo'}</Text>
-                      </View>
-                    )}
-                    <View style={s.perItemBtns}>
-                      <TouchableOpacity
-                        style={s.iconBtn}
-                        onPress={() => openEditor(index)}
-                        accessibilityLabel={t('photoNew.edit') || 'Editar'}
-                      >
-                        <IconEdit size={18} color="#fff" />
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={s.iconBtn}
-                        onPress={() => removeAt(index)}
-                        accessibilityLabel={t('photoNew.remove') || 'Remover'}
-                      >
-                        <IconX size={20} color="#fff" />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
+                renderItem={renderSlide}
+                extraData={`${activeIndex}|${fit}|${busy}`}
+                getItemLayout={(_, i) => ({ length: carouselWidth, offset: carouselWidth * i, index: i })}
               />
+            )}
+            {items.length > 1 && (
+              <View style={s.counterBadge} pointerEvents="none">
+                <Text style={s.badgeText}>{`${activeIndex + 1}/${items.length}`}</Text>
+              </View>
             )}
           </View>
 
-          {/* Dots */}
           {items.length > 1 && (
             <View style={s.dotsRow}>
-              {items.map((it, i) => (
-                <View key={it.id} style={[s.dot, i === activeIndex && s.dotActive]} />
-              ))}
+              {items.map((it, i) => <View key={it.id} style={[s.dot, i === activeIndex && s.dotActive]} />)}
             </View>
           )}
 
-          {/* Thumbs strip (tap to jump, long-press to reorder, + to add more) */}
-          {reorderFromIdx >= 0 && (
-            <Text style={s.reorderHint}>
-              {t('photoNew.reorderHint') || 'Toque em outra foto para trocar de posição'}
-            </Text>
-          )}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={s.thumbsStrip}
-          >
-            {items.map((it, i) => (
-              <TouchableOpacity
-                key={it.id}
-                style={[
-                  s.thumb,
-                  i === activeIndex && s.thumbActive,
-                  i === reorderFromIdx && s.thumbReorder,
-                ]}
-                onPress={() => onThumbPress(i)}
-                onLongPress={() => onThumbLongPress(i)}
-                accessibilityLabel={`Item ${i + 1}`}
-              >
-                <ExpoImage source={{ uri: it.uri }} style={s.thumbImg} contentFit="cover" />
-              </TouchableOpacity>
-            ))}
-            {items.length < MAX_ITEMS && (
-              <TouchableOpacity
-                style={s.addMoreTile}
-                onPress={addMore}
-                accessibilityLabel={t('photoNew.addMore') || 'Adicionar mais'}
-              >
-                <IconPlus size={22} color={colors.textSecondary} />
-              </TouchableOpacity>
-            )}
-          </ScrollView>
+          {items.length > 0 && (
+            <>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.thumbsStrip}>
+                {items.map((it, i) => (
+                  <TouchableOpacity
+                    key={it.id}
+                    style={[s.thumb, i === activeIndex && s.thumbActive, i === reorderFromIdx && s.thumbReorder]}
+                    onPress={() => onThumbPress(i)}
+                    onLongPress={() => setReorderFromIdx(i)}
+                    accessibilityLabel={`${i + 1}`}
+                  >
+                    {it.type === 'video' ? (
+                      <View style={[s.thumbImg, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#1b1b1d' }]}>
+                        <IconPlay size={18} color="#fff" />
+                      </View>
+                    ) : (
+                      <ExpoImage source={{ uri: it.uri }} style={s.thumbImg} contentFit="cover" />
+                    )}
+                  </TouchableOpacity>
+                ))}
+                {items.length < POST_MAX_ITEMS && (
+                  <TouchableOpacity style={s.addMoreTile} onPress={addMenu} accessibilityLabel={pcT('add')}>
+                    <IconPlus size={22} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
+              <Text style={s.reorderHint}>{reorderFromIdx >= 0 ? pcT('reorderHint') : (items.length > 1 ? pcT('editHint') : '')}</Text>
 
-          {/* Caption */}
+              <Text style={s.sectionLabel}>{pcT('aspect')}</Text>
+              <View style={s.chipsRow}>
+                {ASPECTS.map((a) => {
+                  const on = aspect === a.key;
+                  return (
+                    <TouchableOpacity key={a.key} style={[s.chip, on && s.chipOn]} onPress={() => setAspect(a.key)} accessibilityRole="button" accessibilityState={{ selected: on }}>
+                      <View style={{ width: a.key === '4:5' ? 10 : 12, height: a.key === 'orig' ? 9 : 12, borderRadius: 2, borderWidth: 1.5, borderColor: on ? chipOnFg : colors.text }} />
+                      <Text style={[s.chipText, on && s.chipTextOn]}>{pcT(a.label)}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </>
+          )}
+
+          <Text style={s.sectionLabel}>{pcT('audience')}</Text>
+          <View style={s.chipsRow}>
+            {[
+              { key: 'everyone', Icon: IconGlobe },
+              { key: 'contacts', Icon: IconUsers },
+            ].map((a) => {
+              const on = audience === a.key;
+              return (
+                <TouchableOpacity key={a.key} style={[s.chip, on && s.chipOn]} onPress={() => setAudience(a.key)} accessibilityRole="button" accessibilityState={{ selected: on }}>
+                  {on ? <IconCheck size={14} color={chipOnFg} /> : <a.Icon size={14} color={colors.text} />}
+                  <Text style={[s.chipText, on && s.chipTextOn]}>{pcT(a.key)}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <Text style={s.hint}>{pcT(audience === 'contacts' ? 'contactsHint' : 'everyoneHint')}</Text>
+
           <View style={s.captionWrap}>
             <TextInput
               value={caption}
-              onChangeText={(v) => v.length <= MAX_CAPTION && setCaption(v)}
-              placeholder={t('photoNew.captionPlaceholder') || 'Escreva uma legenda...'}
-              placeholderTextColor={colors.textTertiary}
+              onChangeText={(v) => setCaption(v.slice(0, MAX_CAPTION))}
+              placeholder={pcT('captionPh')}
+              placeholderTextColor={colors.textTertiary || colors.textSecondary}
               multiline
+              editable={!busy}
               style={s.captionInput}
             />
           </View>
-          {caption.length > 0 && (
-            <Text style={[s.counter, { paddingHorizontal: Spacing.md }]}>
-              {captionRemaining}
-            </Text>
-          )}
+          {caption.length > MAX_CAPTION - 200 && <Text style={s.counter}>{MAX_CAPTION - caption.length}</Text>}
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Editor (per-item) */}
       <PhotoEditor
         visible={editorOpenForIdx >= 0}
         imageUri={editorOpenForIdx >= 0 ? items[editorOpenForIdx]?.uri : null}

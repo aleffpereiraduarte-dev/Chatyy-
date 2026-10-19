@@ -51,6 +51,52 @@ function NativePostVideo({ uri }) {
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
+// [perfil-publicar 2026-10-19] Carrossel (até 10 fotos/vídeos): deslizar + pontos +
+// 1/N; só o vídeo visível monta player.
+function PostCarousel({ urls, postIsVideo }) {
+  const [idx, setIdx] = useState(0);
+  const [w, setW] = useState(SCREEN_W);
+  const list = urls.map(resolveMediaUrl).filter(Boolean);
+  const isVid = (u, i) => /\.(mp4|mov|webm|m4v)(\?|$)/i.test(u) || (postIsVideo && i === 0 && !/\.(jpe?g|png|webp|gif|heic)(\?|$)/i.test(u));
+  return (
+    <View style={{ width: '100%', backgroundColor: '#000', aspectRatio: 1 }} onLayout={(e) => setW(e.nativeEvent.layout.width || SCREEN_W)}>
+      <ScrollView
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={(e) => setIdx(Math.max(0, Math.round(e.nativeEvent.contentOffset.x / (w || 1))))}
+        onScroll={Platform.OS === 'web' ? (e) => setIdx(Math.max(0, Math.round(e.nativeEvent.contentOffset.x / (w || 1)))) : undefined}
+        scrollEventThrottle={64}
+      >
+        {list.map((u, i) => (
+          <View key={`${i}:${u}`} style={{ width: w, height: '100%', alignItems: 'center', justifyContent: 'center' }}>
+            {isVid(u, i) ? (
+              Platform.OS === 'web'
+                ? <video src={u} controls playsInline preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }} />
+                : (i === idx && _loadExpoVideo() ? <NativePostVideo uri={u} /> : <IconPlayBig />)
+            ) : (
+              <Image source={{ uri: u }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
+            )}
+          </View>
+        ))}
+      </ScrollView>
+      <View pointerEvents="none" style={{ position: 'absolute', top: 12, right: 12, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 11, paddingHorizontal: 9, paddingVertical: 3 }}>
+        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{`${idx + 1}/${list.length}`}</Text>
+      </View>
+      <View pointerEvents="none" style={{ position: 'absolute', bottom: 10, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 5 }}>
+        {list.map((_, i) => <View key={i} style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: i === idx ? '#fff' : 'rgba(255,255,255,0.4)' }} />)}
+      </View>
+    </View>
+  );
+}
+function IconPlayBig() {
+  return (
+    <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ width: 0, height: 0, marginLeft: 5, borderTopWidth: 12, borderBottomWidth: 12, borderLeftWidth: 20, borderTopColor: 'transparent', borderBottomColor: 'transparent', borderLeftColor: '#fff' }} />
+    </View>
+  );
+}
+
 function resolveMediaUrl(u) {
   if (!u) return '';
   if (/^https?:\/\//i.test(u)) return u;
@@ -248,8 +294,10 @@ export default function FeedPostPublic() {
         </View>
       </View>
 
-      {/* Media */}
-      {media && (
+      {/* Media — [perfil-publicar 2026-10-19] carrossel quando o post tem várias mídias */}
+      {Array.isArray(post.media_urls) && post.media_urls.length > 1 ? (
+        <PostCarousel urls={post.media_urls} postIsVideo={post.media_type === 'video'} />
+      ) : media && (
         <View style={{ width: '100%', backgroundColor: '#000', aspectRatio: 1 }}>
           {isVideo ? (
             Platform.OS === 'web' ? (

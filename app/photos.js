@@ -2104,7 +2104,11 @@ function PhotosScreenInner() {
       // asset id achou pendentes, segue para o envio.
       const _rc = reconInfoRef.current;
       const _reconPending = _rc && _rc.at && (Date.now() - _rc.at) < 24 * 60 * 60 * 1000 ? (_rc.pending || 0) : 0;
-      if (dt > 0 && serverCount >= dt && _reconPending === 0) {
+      // [perfil-publicar 2026-10-19] comparação por asset recente (≤ 30 min) sem
+      // pendentes = nada a enviar, mesmo com contagem do rolo > servidor (iCloud-only,
+      // formatos recusados…) — antes o laço ficava "Enviando… 1" re-tentando a cada 45 s.
+      const _reconFreshDone = !!(_rc && _rc.at && (Date.now() - _rc.at) < 30 * 60 * 1000 && (_rc.pending || 0) === 0 && (_rc.matched || 0) > 0);
+      if ((dt > 0 && serverCount >= dt && _reconPending === 0) || _reconFreshDone) {
         // Tudo já no servidor — marca complete e sai sem rodar o native.
         console.log('[backup] Pre-check: device=' + dt + ' server=' + serverCount + ' — nothing pending, skipping');
         setBackupStatus('complete');
@@ -3516,75 +3520,77 @@ function PhotosScreenInner() {
   // off to /photo-new for reorder/edit/remove + caption + publish. We stash
   // the asset list in AsyncStorage (router params can't carry files) under a
   // short-lived key the next screen reads on mount.
-  const startNewPostFlow = useCallback(async (mode = 'library') => {
+  // [perfil-publicar 2026-10-19] O compositor /photo-new abre PRIMEIRO e chama o
+  // seletor depois da transição. Antes o PHPicker abria aqui e o push do modal logo
+  // após ele fechar era recusado pelo iOS → tela piscava e sumia ("+ não faz nada").
+  const startNewPostFlow = useCallback((mode = 'library') => {
     try {
-      if (Platform.OS === 'web') {
-        // Web: re-use the existing FAB no-op path. Web users post via the
-        // feed CreatePostModal which is mounted elsewhere.
-        const ip = await import('expo-image-picker').catch(() => null);
-        if (!ip) return;
-      }
-      const ImagePicker = await import('expo-image-picker');
-      // Permission gate — silent re-prompt is fine, picker prompts itself.
-      if (mode !== 'camera') {
-        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!perm.granted) {
-          safeAlert(
-            t('photos.permissionDenied') || 'Permissão negada',
-            t('photos.permissionDeniedDesc') || 'Permita acesso às fotos pra criar uma publicação.',
-          );
-          return;
-        }
-      }
-
-      // [#1187 2026-05-19] iOS modal-over-modal race — UIKit silently drops
-      // the 2nd Modal (PHPicker) if a previous modal (FAB sheet, dialog) is
-      // still in its dismiss animation. User report: "clico em + nao aparece
-      // nada". Wait one frame on iOS before launching the picker so any
-      // prior dismiss completes.
-      if (Platform.OS === 'ios') {
-        await new Promise(resolve => setTimeout(resolve, 350));
-      }
-
-      const pick = mode === 'camera'
-        ? await ImagePicker.launchCameraAsync({
-            mediaTypes: ['images', 'videos'],
-            quality: 0.9,
-            videoMaxDuration: 60,
-          })
-        : await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images', 'videos'],
-            allowsMultipleSelection: true,
-            selectionLimit: 10,
-            quality: 0.9,
-            orderedSelection: true,
-          });
-
-      if (pick.canceled || !pick.assets?.length) return;
-
-      const items = pick.assets.map((a, idx) => {
-        const isVid = (a.type === 'video') || (a.mimeType || '').startsWith('video');
-        return {
-          id: `${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 7)}`,
-          uri: a.uri,
-          type: isVid ? 'video' : 'image',
-          width: a.width,
-          height: a.height,
-          duration: a.duration,
-          fileName: a.fileName || `media_${Date.now()}_${idx}.${isVid ? 'mp4' : 'jpg'}`,
-          mimeType: a.mimeType || (isVid ? 'video/mp4' : 'image/jpeg'),
-        };
-      });
-
-      await AsyncStorage.setItem('photoNew.pending', JSON.stringify(items));
-      router.push('/photo-new');
+      require('../services/profilePostComposer').openPostComposer(router, { pick: mode === 'camera' ? 'camera' : 'library', from: 'photos' });
     } catch (e) {
-      safeAlert(
-        t('photos.pickerError') || 'Erro',
-        e?.message || (t('photos.pickerErrorDesc') || 'Não foi possível abrir a galeria.'),
-      );
+      safeAlert(t('photos.pickerError') || 'Erro', e?.message || '');
     }
   }, [router, t]);
+
+  // [perfil-publicar 2026-10-19] "+" → Enviar do aparelho: fotos/vídeos escolhidos
+  // vão para a nuvem do Chatyy (mesmo caminho do Drive: drive_init_upload → R2 →
+  // drive_confirm_upload) e aparecem na grade. Progresso na pílula do topo.
+  const [deviceUpload, setDeviceUpload] = useState(null); // { done, total, failed }
+  const deviceUploadRef = useRef(false);
+  const uploadFromDevice = useCallback(async () => {
+    if (deviceUploadRef.current || Platform.OS === 'web') return;
+    let ImagePicker = null;
+    try { ImagePicker = require('expo-image-picker'); } catch { return; }
+    let pick = null;
+    try {
+      pick = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'], allowsMultipleSelection: true, selectionLimit: 50, orderedSelection: true,
+        quality: 1, preferredAssetRepresentationMode: 'compatible',
+      });
+    } catch (e) {
+      safeAlert(t('photos.pickerError') || 'Erro', e?.message || '');
+      return;
+    }
+    const assets = (pick && !pick.canceled && Array.isArray(pick.assets)) ? pick.assets : [];
+    if (!assets.length) return;
+    deviceUploadRef.current = true;
+    let done = 0; let failed = 0;
+    setDeviceUpload({ done: 0, total: assets.length, failed: 0 });
+    for (let i = 0; i < assets.length; i++) {
+      const a = assets[i];
+      const isVid = a.type === 'video' || String(a.mimeType || '').startsWith('video');
+      let name = a.fileName || '';
+      if (!/\.[a-z0-9]{2,5}$/i.test(name)) name = `${isVid ? 'VID' : 'IMG'}_${Date.now()}_${i}.${isVid ? 'mp4' : 'jpg'}`;
+      try {
+        const r = await api.fileUploadDirect({ uri: a.uri, name, mimeType: a.mimeType || (isVid ? 'video/mp4' : 'image/jpeg'), size: a.fileSize || 0 }, null);
+        if (r?.success) done += 1; else failed += 1;
+      } catch { failed += 1; }
+      setDeviceUpload({ done, total: assets.length, failed });
+    }
+    deviceUploadRef.current = false;
+    setDeviceUpload(null);
+    try { nativeGridRef.current?.reloadCloud?.(); } catch {}
+    try { loadCloudPhotos(1); } catch {}
+    try {
+      const msg = failed
+        ? `${done}/${assets.length} ${t('photos.uploadedShort') && t('photos.uploadedShort') !== 'photos.uploadedShort' ? t('photos.uploadedShort') : 'enviados'}`
+        : (done === 1 ? 'Enviado para o Chatyy' : `${done} itens enviados para o Chatyy`);
+      require('../components/ui/Toast').showToast({ message: msg, kind: failed ? 'error' : 'success' });
+    } catch {}
+  }, [t, loadCloudPhotos]);
+
+  // "+" de Fotos: folha NATIVA (ActionSheetIOS / Alert) — sem Modal sobre Modal.
+  const openFabMenu = useCallback(() => {
+    try { haptic.light(); } catch {}
+    const PC = require('../services/profilePostComposer');
+    const go = (fn) => () => { PC.afterSheet().then(fn); };
+    PC.showActionMenu({
+      options: [
+        { label: 'Enviar fotos e vídeos do aparelho', onPress: go(uploadFromDevice) },
+        { label: PC.pcT('newPost'), onPress: () => startNewPostFlow('library') },
+        { label: (t('photos.createAlbum') !== 'photos.createAlbum' && t('photos.createAlbum')) || 'Criar álbum', onPress: go(() => setCreateAlbumVisible(true)) },
+      ],
+    });
+  }, [uploadFromDevice, startNewPostFlow, t]);
 
   // Thumbnails: 200x200 JPEG cached to disk via thumbnailCache service
   // Grid shows cached file:// thumbUri (instant) or ph:// uri as fallback
@@ -5158,7 +5164,14 @@ function PhotosScreenInner() {
                   ? Math.max(0, Math.max(dc, reconInfo.deviceTotal || 0) - (reconInfo.matched || 0))
                   : Math.max(0, dc - (backedUpTotal || 0));
                 let mode = null;
-                if (backupStatus === 'backing_up') mode = 'uploading';
+                // [perfil-publicar 2026-10-19] "Enviando… 1" travado: status ficava
+                // 'backing_up' com 0 pendentes (comparação por asset já dizia tudo
+                // salvo; o laço legado contava o rolo inteiro × servidor e re-agendava
+                // a cada 45 s). Sem pendente real e sem progresso real → sincronizado.
+                const _bpLeft = backupProgress && backupProgress.total > 0 ? Math.max(0, backupProgress.total - backupProgress.current) : 0;
+                if (deviceUpload) mode = 'uploading';
+                else if (backupStatus === 'backing_up' && (realPending > 0 || _bpLeft > 0)) mode = 'uploading';
+                else if (backupStatus === 'backing_up' && dc > 0) mode = 'synced';
                 else if (backupStatus === 'paused') mode = 'paused';
                 else if (backupEnabled === false) mode = 'off';
                 else if (dc > 0 && realPending === 0) mode = 'synced';
@@ -5171,14 +5184,30 @@ function PhotosScreenInner() {
                   : { bg: isDark ? 'rgba(255,255,255,0.08)' : '#F1F3F5', fg: colors.textSecondary, dot: colors.textSecondary };
                 const label = mode === 'synced'
                   ? (t('photos.allSynced') || 'Sincronizado')
+                  : deviceUpload
+                  ? `${t('photos.uploadingShort') || 'Enviando'} ${Math.min(deviceUpload.total, deviceUpload.done + 1)}/${deviceUpload.total}`
                   : mode === 'uploading'
-                  ? `${t('photos.uploadingShort') || 'Enviando'} ${Math.max(realPending, 1)}`
+                  ? `${t('photos.uploadingShort') || 'Enviando'} ${realPending > 0 ? realPending : Math.max(_bpLeft, 1)}`
                   : mode === 'off'
                   ? tr(t, 'photos.bk.pillOff', 'Backup desligado')
                   : (t('photos.paused') || 'Pausado');
                 return (
                   <Pressable
-                    onPress={() => setActiveTab('backup')}
+                    onPress={() => {
+                      // Enviando → ver / tentar de novo / pausar (recuperável); demais → aba Backup.
+                      if (mode !== 'uploading' || deviceUpload || Platform.OS === 'web') { setActiveTab('backup'); return; }
+                      try {
+                        const PC = require('../services/profilePostComposer');
+                        PC.showActionMenu({
+                          title: label,
+                          options: [
+                            { label: tr(t, 'photos.bk.viewBackup', 'Ver backup'), onPress: () => setActiveTab('backup') },
+                            { label: tr(t, 'photos.bk.retry', 'Tentar de novo'), onPress: () => { try { repairBackup(); } catch {} } },
+                            { label: tr(t, 'photos.bk.pause', 'Pausar envio'), destructive: true, onPress: () => { try { pauseBackup(); } catch {} } },
+                          ],
+                        });
+                      } catch { setActiveTab('backup'); }
+                    }}
                     style={[s.statusPill, { backgroundColor: palette.bg }]}
                   >
                     {mode === 'uploading' ? (
@@ -5511,11 +5540,15 @@ function PhotosScreenInner() {
             size={56}
             color={colors.primary}
             onPress={() => {
-              // Tap-to-open Instagram-style flow direct; long-press cycles options.
-              // For now: single tap opens the multi-select library flow (the
-              // user's #1 ask). Keep the legacy mini-menu accessible via the
-              // spring rotation when they need camera explicitly.
-              startNewPostFlow('library');
+              // [perfil-publicar 2026-10-19] toque → menu (enviar do aparelho /
+              // nova publicação / criar álbum); web mantém o mini-menu JS.
+              if (Platform.OS === 'web') {
+                const newVal = !fabOpen;
+                setFabOpen(newVal);
+                Animated.spring(fabRotateAnim, { toValue: newVal ? 1 : 0, tension: 220, friction: 14, useNativeDriver: true }).start();
+                return;
+              }
+              openFabMenu();
             }}
             onLongPress={() => {
               const newVal = !fabOpen;
