@@ -68,13 +68,14 @@ function _notesListOf(r) {
   if (mine && mine.content && !list.some((n) => String(n.email || '').toLowerCase() === String(mine.email || '').toLowerCase())) list.push(mine);
   return list;
 }
-function _sharedNotes(maxAgeMs) {
+function _sharedNotes(maxAgeMs, fresh = false) {
   let key = '';
   try { key = String(api.getAuthToken?.() || '').slice(-24); } catch {}
   if (_notesNet.key !== key) { _notesNet.key = key; _notesNet.inflight = null; _notesNet.at = 0; _notesNet.res = null; }
-  if (_notesNet.inflight) return _notesNet.inflight;
+  if (_notesNet.inflight && !fresh) return _notesNet.inflight;
   if (_notesNet.res && maxAgeMs > 0 && Date.now() - _notesNet.at < maxAgeMs) return Promise.resolve(_notesNet.res);
-  const p = Promise.resolve().then(() => api.chatGetNotes?.()).then((r) => {
+  // [nota3] fresh = evento WS 'profile_note' → servidor pula o cache (nota aparece em ~1 s)
+  const p = Promise.resolve().then(() => api.chatGetNotes?.(fresh, !_notesNet.res && !fresh)).then((r) => {
     if (_notesNet.key === key && r?.success) {
       _notesNet.at = Date.now(); _notesNet.res = r;
       _notesNet.subs.forEach((fn) => { try { fn(r); } catch {} });
@@ -2533,7 +2534,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
     let tm = null;
     const off = _ws.on('profile_note', () => {
       if (tm) clearTimeout(tm);
-      tm = setTimeout(() => { tm = null; _notesNet.at = 0; loadNotes(0); }, 900);
+      tm = setTimeout(() => { tm = null; _notesNet.at = 0; _sharedNotes(0, true).catch(() => {}); }, 250);
     });
     return () => { if (tm) clearTimeout(tm); try { off?.(); } catch {} };
   }, [loadNotes]);
@@ -4661,13 +4662,21 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       }).catch(() => {});
     };
     loadNotes(30000);
+    // [nota3] app volta ao 1º plano → notas na hora (cache curto de 5 s)
+    let _lastAs = AppState.currentState;
+    const _asSub = AppState.addEventListener('change', (st) => {
+      if (st === 'active' && _lastAs !== 'active') loadNotes(5000);
+      _lastAs = st;
+    });
     // [2026-10-18 battery] ÚNICO poll de notas (o do StatusStoriesRow saiu):
     // 60 s sem WS, 5 min com o WS autenticado.
     const stopNotesPoll = setActiveInterval(() => {
       loadNotes(50000); // [nota2] notas: 60 s em foco mesmo com WS (o evento 'profile_note' adianta)
     }, 60000); // [2026-10-10 perf-battery] fg-only
-    return () => { alive = false; stopNotesPoll(); };
+    return () => { alive = false; stopNotesPoll(); try { _asSub?.remove?.(); } catch {} };
   }, []);
+  // [nota3] voltar para a lista (foco) também busca as notas (reaproveita < 5 s)
+  useFocusEffect(useCallback(() => { _sharedNotes(5000).catch(() => {}); return undefined; }, []));
 
   const handleSetNote = useCallback(async (overrideText) => {
     const text = (overrideText !== undefined ? overrideText : noteInput).trim();
@@ -9069,14 +9078,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     );
   };
 
-  // Build a map of email -> note content for quick lookup
-  const notesMap = useMemo(() => {
-    const map = {};
-    for (const n of notes) {
-      if (n.email && n.content) map[n.email] = n.content;
-    }
-    return map;
-  }, [notes]);
+  // [2026-10-20 nota3] Founder: "o note não deveria aparecer aí na lista, só em
+  // cima". A nota fica SÓ no carrossel do topo — a linha da conversa (JS e
+  // nativa) não desenha mais balão no avatar. Mapa vazio estável (o feed real
+  // de chat_get_notes passou a preencher isto e o balão surgiu nas linhas).
+  const notesMap = useMemo(() => ({}), []);
 
   // Stable row callbacks — the ConversationRow already invokes these with its
   // own `conversation`, so we don't need to mint per-item arrow closures inside

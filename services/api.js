@@ -7805,8 +7805,11 @@ export async function chatSetNote(content) {
     return { success: !!ok };
   } catch { return { success: false }; }
 }
-export async function chatGetNotes() {
-  return apiCall('chat_get_notes', {});
+export async function chatGetNotes(fresh = false, allowStale = false) {
+  // [nota3] "demora para aparecer": o SWR devolvia a cópia velha (reval 15 s) e
+  // o poll de 60 s nunca via a nota nova. Agora só a 1ª carga usa a cópia (pinta
+  // na hora); o resto vai à rede. fresh = servidor também pula o cache.
+  return apiCall('chat_get_notes', fresh ? { fresh: 1 } : {}, 'GET', allowStale ? {} : { swr: false });
 }
 
 // Vanish mode — backend (chat.php case 'chat_set_vanish_mode') reads
