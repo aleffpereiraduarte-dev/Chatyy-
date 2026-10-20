@@ -30,6 +30,8 @@ function _valid(c, lang) {
   const exp = Date.parse(c.expires_at);
   if (!Number.isFinite(exp) || Date.now() >= exp) return false;
   if (c.req_lang && c.req_lang !== _lang2(lang)) return false;
+  // [2026-10-20 curta] frase antiga longa (cortava com "…" no balão) → busca a nova, curta.
+  if (String(c.line).length > 34) return false;
   return true;
 }
 

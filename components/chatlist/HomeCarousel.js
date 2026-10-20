@@ -91,7 +91,7 @@ export const ThoughtBubble = memo(function ThoughtBubble({ text, isDark }) {
   return (
     <Animated.View pointerEvents="none" style={{ alignItems: 'center', opacity: op, transform: [{ translateY: ty }] }}>
       <View style={[hs.bubble, { backgroundColor: bg, borderColor: edge }, shadow]}>
-        <Text maxFontSizeMultiplier={1.15} numberOfLines={2} ellipsizeMode="tail" style={[hs.bubbleText, { color: ink }]}>
+        <Text maxFontSizeMultiplier={1.15} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.8} ellipsizeMode="tail" style={[hs.bubbleText, { color: ink }]}>
           {shortNote(text)}
         </Text>
       </View>
