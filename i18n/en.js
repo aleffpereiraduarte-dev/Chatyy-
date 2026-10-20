@@ -13790,8 +13790,8 @@ export default {
   "homeCarousel.statusNew": "New status",
   "homeCarousel.statusSeen": "Status seen",
   "homeCarousel.pinStoryHint": "Tap to view the status. Touch and hold to open the chat.",
-  "me.publicProfile": "Public profile",
-  "me.publicProfileSub": "Posts, followers and highlights",
+  "me.publicProfile": "Wall",
+  "me.publicProfileSub": "Your text and photo posts",
   "me.lists": "Lists",
   "me.broadcast": "Broadcast messages",
   // [2026-10-18 onb-telegram] boas-vindas com cartões

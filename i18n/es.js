@@ -13789,8 +13789,8 @@ export default {
   "homeCarousel.statusNew": "Estado nuevo",
   "homeCarousel.statusSeen": "Estado visto",
   "homeCarousel.pinStoryHint": "Toca para ver el estado. Mantén pulsado para abrir el chat.",
-  "me.publicProfile": "Perfil público",
-  "me.publicProfileSub": "Publicaciones, seguidores y destacados",
+  "me.publicProfile": "Muro",
+  "me.publicProfileSub": "Tus publicaciones de texto y fotos",
   "me.lists": "Listas",
   "me.broadcast": "Mensajes de difusión",
   // [2026-10-18 onb-telegram] boas-vindas com cartões
