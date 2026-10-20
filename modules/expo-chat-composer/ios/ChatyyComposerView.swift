@@ -1233,6 +1233,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     appObservers.append(nc.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] n in
       self?.noteKeyboardFrame(n)
       self?.dockNeedsCollect = true // [2026-10-20 native-dock] barras/prévias novas entram na próxima
+      self?.dockMoved() // [2026-10-20 dock-fix] teto novo (mesmo contexto de animação do teclado)
     })
     appObservers.append(nc.addObserver(forName: UIResponder.keyboardDidShowNotification, object: nil, queue: .main) { [weak self] n in
       self?.noteKeyboardFrame(n)
@@ -1766,26 +1767,46 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
 
   // MARK: Dock nativo (native-dock)
 
+  // [2026-10-20 dock-fix] build 746: conversa VAZIA (lista e composer fora da
+  // tela). RAIZ: a sonda ficava na UIWindow e o translateY saía direto de
+  // (altura da janela − base da sonda). Sonda sem layout ainda (frame .zero →
+  // base 0) ou o keyboardLayoutGuide da UIWindow degenerado (o próprio
+  // currentKeyboardOverlap já tratava layoutFrame vazio) = "teclado" do tamanho
+  // da tela → barra e lista subiam ~a tela inteira. AGORA: sonda na view da
+  // tela (guia de view comum), leitura só depois de layout real e o valor é
+  // LIMITADO pelo quadro real do teclado das notificações (kbNoteOverlap:
+  // fechado = 0 ⇒ translação 0, por construção); trava de sanidade desliga o
+  // dock na sessão (+ telemetria via onKeyboardSync reason "dock_sanity").
+  private static var dockDisabledSession = false
+
   private func installDock() {
-    guard nativeDock, let win = window, dockProbe == nil else { return }
+    guard nativeDock, !ChatyyComposerView.dockDisabledSession, let win = window, dockProbe == nil else { return }
+    let host: UIView = nearestViewController()?.viewIfLoaded ?? win
+    guard host.window === win else { return }
     let p = NCDockProbe(frame: .zero)
     p.isUserInteractionEnabled = false
     p.isHidden = true
     p.translatesAutoresizingMaskIntoConstraints = false
-    win.addSubview(p)
+    host.addSubview(p)
     NSLayoutConstraint.activate([
-      p.leadingAnchor.constraint(equalTo: win.leadingAnchor),
+      p.leadingAnchor.constraint(equalTo: host.leadingAnchor),
       p.widthAnchor.constraint(equalToConstant: 1),
       p.heightAnchor.constraint(equalToConstant: 1),
-      p.bottomAnchor.constraint(equalTo: win.keyboardLayoutGuide.topAnchor),
+      p.bottomAnchor.constraint(equalTo: host.keyboardLayoutGuide.topAnchor),
     ])
     p.onMove = { [weak self] in self?.dockMoved() }
     dockProbe = p
     dockNeedsCollect = true
     UIView.performWithoutAnimation {
-      win.layoutIfNeeded()
+      host.layoutIfNeeded()
       self.dockMoved()
     }
+  }
+
+  private func disableDock(_ why: String) {
+    ChatyyComposerView.dockDisabledSession = true
+    removeDock()
+    onKeyboardSync(["height": Double(kbNoteOverlap), "visible": kbNoteOverlap > 0, "focused": textView.isFirstResponder, "reason": "dock_sanity:" + why])
   }
 
   private func removeDock() {
@@ -1803,12 +1824,28 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   }
 
   private func dockMoved() {
-    guard nativeDock, let win = window, let p = dockProbe else { return }
-    let overlap = max(0, win.bounds.maxY - p.frame.maxY)
+    guard nativeDock, !ChatyyComposerView.dockDisabledSession, let win = window, let p = dockProbe, let host = p.superview else { return }
     // Tela coberta por outra (push na pilha): o teclado é da tela de cima.
     if !textView.isFirstResponder && dockScreenCovered() { return }
-    dockLift = max(0, overlap - bottomInset)
+    var overlap: CGFloat = 0
+    // Só lê a sonda com layout real (frame .zero = ainda não resolvida).
+    if p.frame.width > 0.5, host.bounds.height > 1 {
+      let pf = host.convert(p.frame, to: win)
+      overlap = max(0, win.bounds.maxY - pf.maxY)
+    }
+    // Teto = quadro REAL do teclado (notificação): fechado ⇒ 0. Abrindo, a
+    // notificação chega antes/junto do bloco de animação; no arraste
+    // interativo a sonda só DIMINUI a partir dele.
+    overlap = min(overlap, kbNoteOverlap)
+    let lift = max(0, overlap - bottomInset)
+    if lift > win.bounds.height * 0.7 { disableDock("lift"); return }
+    dockLift = lift
     applyDock()
+    // Sanidade: barra precisa continuar dentro da janela.
+    for v in dockTargets.allObjects where v.accessibilityIdentifier == "chatyy-dock-bar" && v.bounds.height > 1 {
+      let f = v.convert(v.bounds, to: win)
+      if f.maxY < 0 || f.minY > win.bounds.maxY + 1 { disableDock("offscreen"); return }
+    }
   }
 
   private func dockScreenCovered() -> Bool {

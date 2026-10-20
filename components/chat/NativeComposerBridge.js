@@ -426,7 +426,13 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
   }, []);
   // [2026-10-19 kb-native] quadro REAL do teclado → ThreadKeyboardAvoider.
   const _onKeyboardSync = useCallback((e) => {
-    try { reportKeyboardSync(e?.nativeEvent || null); } catch {}
+    const ne = e?.nativeEvent || null;
+    // [2026-10-20 dock-fix] trava de sanidade do dock nativo desligou-o na sessão → telemetria.
+    if (ne && typeof ne.reason === 'string' && ne.reason.indexOf('dock_sanity') === 0) {
+      try { require('../../services/crashReporter').reportNativeFallback('native_dock', ne.reason); } catch {}
+      return;
+    }
+    try { reportKeyboardSync(ne); } catch {}
   }, []);
 
   // Altura inicial estimada (o nativo corrige no 1º layout via onHeightChange
