@@ -275,7 +275,7 @@ extension ChatyyAttachModule {
     // normal no composer, composer+lista juntos); a folha entra no fim da
     // descida, na MESMA janela do app (sem present = sem troca de input views
     // sem animação), nascendo do "+".
-    if cfg.tgWindow, let win = presenter.view.window ?? presenter.viewIfLoaded?.window {
+    if cfg.tgWindow, let win = presenter.viewIfLoaded?.window, AttachInKeyboardWindowHost.hostViewController(in: win) != nil {
       if let r = (token["plusFrame"] as? NSValue)?.cgRectValue { vc.sourceRect = r }
       let had = (token["hadKeyboard"] as? Bool) ?? false
       let kd = AttachKeyboardTracker.shared.lastHideDuration
@@ -284,9 +284,21 @@ extension ChatyyAttachModule {
       vc.customRemove = { done in host.tearDown(slide: false, done) }
       let show = { [weak self, weak vc, weak win] in
         guard let self = self, let vc = vc, self.sheet === vc else { return }
-        guard let win = win, !win.isHidden else { vc.onFinish?(["action": "cancel"]); return }
-        host.show(vc, in: win, slide: false, asChildOf: win.rootViewController)
-        NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+        // pai recalculado NA HORA (a tela pode ter mudado no atraso da descida)
+        if let win = win, !win.isHidden, let parent = AttachInKeyboardWindowHost.hostViewController(in: win),
+           host.showAsChild(vc, of: parent) {
+          NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+          self.sendEvent("onArmedShown", ["id": id])
+          return
+        }
+        // fallback: present da api 10 (nunca fica preso sem folha)
+        vc.customRemove = nil
+        guard let pres = self.appContext?.utilities?.currentViewController(), pres.presentedViewController == nil || pres.presentedViewController?.isBeingDismissed == true else {
+          vc.onFinish?(["action": "cancel"]); return
+        }
+        vc.modalPresentationStyle = .overFullScreen
+        vc.modalPresentationCapturesStatusBarAppearance = false
+        pres.present(vc, animated: false, completion: nil)
         self.sendEvent("onArmedShown", ["id": id])
       }
       if delay > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: show) } else { show() }
@@ -413,10 +425,47 @@ final class AttachInKeyboardWindowHost {
 
   private weak var parentVC: UIViewController?
 
-  func show(_ vc: UIViewController, in win: UIWindow, slide: Bool, asChildOf parent: UIViewController? = nil) {
-    // [2026-10-20 attach-tgwin] na janela do app: filho do VC raiz (hierarquia
-    // de VCs válida p/ apresentar o seletor de fotos limitado etc.).
-    if let p = parent { p.addChild(vc); parentVC = p }
+  // [2026-10-20 attach-tgwin-fix] CRASH 751: addChild no VC raiz + view na
+  // UIWindow = UIViewControllerHierarchyInconsistency no addSubview (a view do
+  // filho tem que ficar DENTRO da view do pai). Agora: pai = topo dos
+  // presentedViewController a partir da raiz (sem os em dismiss), cobrindo a
+  // janela inteira; addChild → container na view DELE → didMove. Aparência:
+  // o UIKit encaminha sozinho (pai com forwarding automático); senão manual.
+  static func hostViewController(in win: UIWindow) -> UIViewController? {
+    guard var top = win.rootViewController else { return nil }
+    while let p = top.presentedViewController, !p.isBeingDismissed { top = p }
+    guard top.isViewLoaded, top.view.window === win, !top.isBeingDismissed, !top.isMovingFromParent else { return nil }
+    let f = top.view.convert(top.view.bounds, to: win)
+    guard abs(f.minY - win.bounds.minY) < 1, abs(f.height - win.bounds.height) < 1, abs(f.width - win.bounds.width) < 1 else { return nil }
+    return top
+  }
+
+  @discardableResult
+  func showAsChild(_ vc: UIViewController, of parent: UIViewController) -> Bool {
+    guard parent.isViewLoaded, let pw = parent.view.window, container == nil else { return false }
+    // limpeza completa se o VC/view já tinha dono (abrir duas vezes etc.)
+    if vc.parent != nil { vc.willMove(toParent: nil); vc.view.removeFromSuperview(); vc.removeFromParent() }
+    else if vc.isViewLoaded, vc.view.superview != nil { vc.view.removeFromSuperview() }
+    parent.addChild(vc)
+    let c = UIView(frame: parent.view.bounds)
+    c.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    c.backgroundColor = .clear
+    container = c
+    window = pw
+    self.vc = vc
+    parentVC = parent
+    vc.view.frame = c.bounds
+    vc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    c.addSubview(vc.view)
+    let manual = !parent.shouldAutomaticallyForwardAppearanceMethods
+    if manual { vc.beginAppearanceTransition(true, animated: false) }
+    parent.view.addSubview(c)
+    if manual { vc.endAppearanceTransition() }
+    vc.didMove(toParent: parent)
+    return true
+  }
+
+  func show(_ vc: UIViewController, in win: UIWindow, slide: Bool) {
     let c = UIView(frame: win.bounds)
     c.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     c.backgroundColor = .clear
@@ -436,7 +485,6 @@ final class AttachInKeyboardWindowHost {
     } else {
       vc.endAppearanceTransition()
     }
-    if parentVC != nil { vc.didMove(toParent: parentVC) }
   }
 
   /// Legenda editando: folha atrás do host do teclado (teclado visível por cima).
@@ -450,13 +498,23 @@ final class AttachInKeyboardWindowHost {
     guard let c = container else { completion(); return }
     container = nil
     let vc = self.vc
-    let isChild = parentVC != nil
+    let parent = parentVC
+    let isChild = parent != nil
+    parentVC = nil
     let finish = {
-      if isChild { vc?.willMove(toParent: nil) }
-      vc?.beginAppearanceTransition(false, animated: false)
-      c.removeFromSuperview()
-      vc?.endAppearanceTransition()
-      if isChild { vc?.removeFromParent() }
+      if isChild {
+        // [2026-10-20 attach-tgwin-fix] ordem de containment; aparência pelo UIKit.
+        let manual = !(parent?.shouldAutomaticallyForwardAppearanceMethods ?? true)
+        vc?.willMove(toParent: nil)
+        if manual { vc?.beginAppearanceTransition(false, animated: false) }
+        c.removeFromSuperview()
+        if manual { vc?.endAppearanceTransition() }
+        vc?.removeFromParent()
+      } else {
+        vc?.beginAppearanceTransition(false, animated: false)
+        c.removeFromSuperview()
+        vc?.endAppearanceTransition()
+      }
       completion()
     }
     if slide {
