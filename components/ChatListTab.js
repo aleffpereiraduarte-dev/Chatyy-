@@ -4842,6 +4842,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         text: t('chat.delete'), style: 'destructive',
         onPress: async () => {
           for (const id of ids) {
+            try { require('../services/chatPersistence').purgeConversationLocal?.(id); } catch {} // [delconv 2026-10-21]
             try { await api.chatDeleteConversation(id); } catch {}
           }
           LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -7148,6 +7149,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         }
         sm.clearConversation?.(conv.id);
       } catch {}
+      try { require('../services/chatPersistence').purgeConversationLocal?.(conv.id); } catch {} // [delconv 2026-10-21]
       await api.chatDeleteConversation(conv.id);
     } catch {}
   }, [t]);

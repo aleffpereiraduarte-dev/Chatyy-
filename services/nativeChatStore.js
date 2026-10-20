@@ -167,7 +167,7 @@ function _activeAccount() {
 
 function _pending(acct) {
   if (_pend && _pend.acct !== acct) _flushNow(); // conta trocou: lote anterior sai sozinho
-  if (!_pend) _pend = { acct, convs: new Map(), msgs: new Map(), dels: [] };
+  if (!_pend) _pend = { acct, convs: new Map(), msgs: new Map(), dels: [], convDels: [] };
   if (!_flushTm) _flushTm = setTimeout(_flushNow, FLUSH_MS);
   return _pend;
 }
@@ -227,6 +227,27 @@ export function mirrorDeleteMessage(convId, messageId) {
     p.dels.push({ conv: String(convId), id });
     const m = p.msgs.get(String(convId));
     if (m) m.delete(id);
+  } catch {}
+}
+
+/**
+ * [delconv 2026-10-21] "Apagar conversa" (neste ou noutro aparelho): tira a conversa
+ * E todo o histórico dela do store nativo (conv_deletes já existe no applyBatch
+ * Swift/Kotlin — sem build). Sem isso, quando chegava msg nova, a conversa voltava
+ * pintando as mensagens antigas do store nativo. Kill: __chatyy_native_conv_delete = false.
+ */
+export function mirrorDeleteConversation(convId) {
+  if (convId == null || nativeStoreApi() < 2) return;
+  try { if (globalThis.__chatyy_native_conv_delete === false) return; } catch {}
+  const acct = _activeAccount();
+  if (!acct) return;
+  try {
+    const p = _pending(acct);
+    const cid = String(convId);
+    p.convs.delete(cid);
+    p.msgs.delete(cid);
+    p.dels = p.dels.filter(d => d.conv !== cid);
+    if (!p.convDels.includes(cid)) p.convDels.push(cid);
   } catch {}
 }
 
@@ -308,10 +329,11 @@ function _flushNow() {
     }
     if (msgs.length) batch.messages = msgs;
     if (p.dels.length) batch.msg_deletes = p.dels;
+    if (p.convDels && p.convDels.length) batch.conv_deletes = p.convDels;
     if (receipts.length) batch.receipts = receipts;
     if (reactions.length) batch.reactions = reactions;
     if (threads.length) batch.threads = threads;
-    if (!convs.length && !msgs.length && !p.dels.length && !threads.length) return;
+    if (!convs.length && !msgs.length && !p.dels.length && !threads.length && !(p.convDels && p.convDels.length)) return;
     const json = JSON.stringify(batch);
     _batchStats.batches++; _batchStats.msgs += msgs.length; _batchStats.threadOps += threads.length;
     _batchStats.lastMs = Date.now() - t0;

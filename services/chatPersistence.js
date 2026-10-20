@@ -251,12 +251,25 @@ function _onClearedOrDeleted(convId, cleared) {
   _safe(() => { require('./smartChatCache').clearConversation?.(convId); });
   _safe(async () => { try { await require('./localDb').clearConversationMessages?.(convId); } catch {} });
   _safe(async () => { try { await require('./chatCache').clearConversationMessages?.(convId); } catch {} });
+  // [delconv 2026-10-21] apagar conversa: o store NATIVO também (senão msg nova trazia o histórico de volta)
+  if (!cleared) _safe(() => { require('./nativeChatStore').mirrorDeleteConversation?.(convId); });
   if (cleared) {
     _safe(async () => {
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       await AsyncStorage.setItem(`cleared_at_${convId}`, String(Date.now()));
     });
   }
+}
+
+/**
+ * [delconv 2026-10-21] "Apagar conversa" NESTE aparelho: some todo o histórico local
+ * (smartChatCache + chatyy.db + chatCache + store nativo). Antes só o smartChatCache era
+ * limpo (e nada no apagar em lote) → quando o outro lado mandava msg nova, a conversa
+ * voltava com as mensagens antigas. O servidor já esconde o histórico (cleared_at).
+ */
+export function purgeConversationLocal(convId) {
+  if (convId == null) return;
+  _onClearedOrDeleted(convId, false);
 }
 
 // [2026-10-20 tg2] rascunho vindo do OUTRO aparelho com a conversa FECHADA aqui:
