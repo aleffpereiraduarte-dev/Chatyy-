@@ -1601,8 +1601,8 @@ function AppInit({ onNotification, setOtaToast }) {
             const msg = data?.message ? `\n${data.message}` : '';
             // Pulse vibration on native; web silently no-ops.
             try {
-              const { Vibration } = require('react-native');
-              Vibration?.vibrate?.([0, 30, 60, 30]);
+              // [2026-10-20 ux] shim = respeita "Vibração ao tocar" (era Vibration cru, buzz 400 ms no iOS)
+              require('../services/haptics').success();
             } catch {}
             // Visible surface: web → native browser notification (if granted),
             // native → an Alert so the receiver immediately knows the
@@ -2451,7 +2451,7 @@ export default function RootLayout() {
                   <Stack.Screen name="live-replay" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="live-discover" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="notes" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
-                  <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: _PUSH, gestureEnabled: false }} />
+                  <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: _PUSH, gestureEnabled: true, fullScreenGestureEnabled: false /* [2026-10-20 ux] swipe-back só pela BORDA (o canvas de desenho fica livre); antes sem swipe nenhum — o botão voltar já fazia o mesmo router.back() */ }} />
                   <Stack.Screen name="plans" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="wallet" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR, ...(Platform.OS === 'ios' && _nativeListLargeTitleOn() ? _LARGE_TITLE_HDR : {}) }} />{/* [2026-10-14 piscada-nav] header nativo desde o 1º frame (antes caía depois do push) */}
                   <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
