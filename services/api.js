@@ -7791,7 +7791,16 @@ export async function feedAnalytics(postId = 0) {
 
 // Instagram Notes (24h text status)
 export async function chatSetNote(content) {
-  return apiCall('chat_set_note', { content }, 'POST');
+  // [2026-10-20 nota2] chat_set_note é a anotação POR CONVERSA (exige
+  // conversation_id → 400): a nota de 24 h da lista nunca salvava. Agora é a
+  // MESMA nota do perfil (profile_note_set/_delete via services/profileNote,
+  // que atualiza o balão do "Você" e avisa a lista).
+  try {
+    const PN = require('./profileNote');
+    const text = String(content || '').trim();
+    const ok = text ? await PN.setNote(text, 'contacts') : await PN.deleteNote();
+    return { success: !!ok };
+  } catch { return { success: false }; }
 }
 export async function chatGetNotes() {
   return apiCall('chat_get_notes', {});

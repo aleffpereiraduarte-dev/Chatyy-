@@ -433,7 +433,7 @@ export default function TgProfileView(props) {
         {handle ? <Text style={[s.un, { color: th.muted }]}>@{handle}</Text> : null}
         {presence ? <Text style={[s.seen, { color: th.muted }]} numberOfLines={1}>{presence}</Text> : null}
         {note && note.text ? (
-          <Pressable onPress={isSelf ? () => setNoteSheet(true) : undefined} style={[s.note, { backgroundColor: th.card }, shadow]}>
+          <Pressable onPress={() => setNoteSheet(true)} style={[s.note, { backgroundColor: th.card }, shadow]} accessibilityRole="button" testID="tg-profile-note">
             <View style={[s.noteDot, { backgroundColor: th.text }]} />
             <Text style={[s.noteTxt, { color: th.text }]} numberOfLines={2}>{note.text}</Text>
           </Pressable>
@@ -685,6 +685,9 @@ export default function TgProfileView(props) {
   if (viewer) { try { Viewer = require('../../ChatMediaViewer').default; } catch { Viewer = null; } }
   let NoteSheet = null;
   if (isSelf && noteSheet) { try { NoteSheet = require('../../settings/ProfileNoteSheet').default; } catch { NoteSheet = null; } }
+  // [2026-10-20 nota2] nota do CONTATO: toque abre a folha (Responder → mensagem citando a nota).
+  let CNoteSheet = null;
+  if (!isSelf && noteSheet && note && note.text) { try { CNoteSheet = require('../../chatlist/ContactNoteSheet').default; } catch { CNoteSheet = null; } }
 
   return (
     <View style={[s.fill, { backgroundColor: th.bg }]}>
@@ -748,6 +751,16 @@ export default function TgProfileView(props) {
         />
       ) : null}
       {NoteSheet ? <NoteSheet visible={noteSheet} note={myNote} onClose={() => setNoteSheet(false)} t={t} /> : null}
+      {CNoteSheet ? (
+        <CNoteSheet
+          visible
+          note={{ email: em, name, content: note.text, created_at: note.created_at, conversation_id: null /* chatCreate direct (convId pode ser de grupo) */ }}
+          onClose={() => setNoteSheet(false)}
+          t={t}
+          isDark={!!th.isDark}
+          router={router}
+        />
+      ) : null}
     </View>
   );
 }

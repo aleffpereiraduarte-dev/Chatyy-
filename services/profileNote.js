@@ -52,6 +52,10 @@ async function _loadLocal() {
 }
 
 function _api() { return require('./api'); } // eslint-disable-line global-require
+// [nota2] avisa a lista de conversas (mesmo evento que o servidor manda por WS).
+function _notifyList() {
+  try { require('./websocket').default?._emit?.('profile_note', { email: _owner, local: 1, ts: Date.now() }); } catch {} // eslint-disable-line global-require
+}
 
 export async function refreshNote(email) {
   const em = String(email || '').toLowerCase();
@@ -70,10 +74,10 @@ export async function setNote(text, audience) {
   if (!clean) return false;
   const prev = _note;
   const now = Date.now();
-  _emit({ text: clean, audience: audience === 'contacts' ? 'contacts' : 'mutual', created_at: new Date(now).toISOString(), expires_at: new Date(now + 24 * 3600 * 1000).toISOString(), pending: true });
+  _emit({ text: clean, audience: 'contacts', created_at: new Date(now).toISOString(), expires_at: new Date(now + 24 * 3600 * 1000).toISOString(), pending: true });
   try {
-    const r = await _api().apiCall('profile_note_set', { text: clean, audience }, 'POST');
-    if (r && r.success && r.data && r.data.note) { _emit(r.data.note); return true; }
+    const r = await _api().apiCall('profile_note_set', { text: clean, audience: 'contacts' }, 'POST');
+    if (r && r.success && r.data && r.data.note) { _emit(r.data.note); _notifyList(); return true; }
   } catch {}
   _emit(prev);
   return false;
@@ -84,7 +88,7 @@ export async function deleteNote() {
   _emit(null);
   try {
     const r = await _api().apiCall('profile_note_delete', {}, 'POST');
-    if (r && r.success) return true;
+    if (r && r.success) { _notifyList(); return true; }
   } catch {}
   _emit(prev);
   return false;

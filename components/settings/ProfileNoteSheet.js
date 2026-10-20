@@ -27,7 +27,7 @@ export default function ProfileNoteSheet({ visible, note, onClose, t, onError })
   const tr = (k, fb) => { try { const v = t?.(k); return v && v !== k ? v : fb; } catch { return fb; } };
   const [mode, setMode] = useState('edit'); // 'menu' | 'edit'
   const [text, setText] = useState('');
-  const [aud, setAud] = useState('mutual');
+  const [aud, setAud] = useState('contacts');
   const [busy, setBusy] = useState(false);
   const inputRef = useRef(null);
   const drag = useDragToDismiss({ visible, onDismiss: () => { if (typeof onClose === 'function') onClose(); } });
@@ -37,7 +37,7 @@ export default function ProfileNoteSheet({ visible, note, onClose, t, onError })
     setBusy(false);
     setMode(note ? 'menu' : 'edit');
     setText(note?.text || '');
-    setAud(note?.audience === 'contacts' ? 'contacts' : 'mutual');
+    setAud('contacts');
   }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -49,7 +49,7 @@ export default function ProfileNoteSheet({ visible, note, onClose, t, onError })
   if (!visible) return null;
 
   const clean = text.replace(/\s+/g, ' ').trim();
-  const unchanged = !!note && clean === note.text && aud === (note.audience || 'mutual');
+  const unchanged = !!note && clean === note.text;
   const canShare = !!clean && !busy && !unchanged;
 
   const share = () => {
@@ -98,7 +98,7 @@ export default function ProfileNoteSheet({ visible, note, onClose, t, onError })
         <Text style={[st.previewText, { color: g.text }]} maxFontSizeMultiplier={1.4}>{note.text}</Text>
       </View>
       <Text style={[st.meta, { color: g.secondary }]} maxFontSizeMultiplier={1.4}>
-        {(note.audience === 'contacts' ? tr('me.note.audContacts', 'Contatos') : tr('me.note.audMutual', 'Seguidores que você segue de volta'))
+        {tr('me.note.audContacts', 'Contatos')
           + '  ·  ' + tr('me.note.hoursLeft', 'Some em {h} h').replace('{h}', String(hoursLeft(note)))}
       </Text>
       <View style={[st.menuCard, { backgroundColor: g.cardBg, borderColor: g.separator }]}>
@@ -152,10 +152,9 @@ export default function ProfileNoteSheet({ visible, note, onClose, t, onError })
         {`${text.length}/${NOTE_MAX}`}
       </Text>
       <Text style={[st.section, { color: g.header }]} maxFontSizeMultiplier={1.3}>{tr('me.note.audience', 'Compartilhar com')}</Text>
+      {/* [nota2] o perfil novo não tem seguidores/seguindo → público único: contatos com conversa. */}
       <View style={[st.menuCard, { backgroundColor: g.cardBg, borderColor: g.separator }]}>
-        <AudRow value="mutual" label={tr('me.note.audMutual', 'Seguidores que você segue de volta')} />
-        <View style={[st.hair, { backgroundColor: g.separator }]} />
-        <AudRow value="contacts" label={tr('me.note.audContacts', 'Contatos')} />
+        <AudRow value="contacts" label={tr('me.note.audContactsLong', 'Contatos com quem você conversa')} />
       </View>
       <Text style={[st.meta, { color: g.secondary }]} maxFontSizeMultiplier={1.4}>
         {tr('me.note.expires', 'A nota aparece acima da sua foto e some em 24 horas.')}

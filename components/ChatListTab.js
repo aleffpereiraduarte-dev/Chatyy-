@@ -34,6 +34,7 @@ import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
 import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar, IconFileText, IconArrowRight, IconPencil, IconAlertCircle } from './Icons';
 import AvatarCircle from './AvatarCircle';
+import ContactNoteSheet from './chatlist/ContactNoteSheet'; // [2026-10-20 nota2]
 import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
@@ -55,7 +56,18 @@ function _listWsAuthed() {
 // chat_get_notes era buscado 2× por minuto (StatusStoriesRow + ChatListTab).
 // Agora um fetch compartilhado (single-flight + reaproveita dentro de maxAgeMs),
 // por bearer (troca de conta = cache novo).
-const _notesNet = { key: '', inflight: null, at: 0, res: null };
+const _notesNet = { key: '', inflight: null, at: 0, res: null, subs: new Set() };
+// [2026-10-20 nota2] chat_get_notes agora é o feed REAL (api/profile-note.php):
+// quem não dispara o poll (carrossel) recebe cada resposta nova por aqui.
+function _onSharedNotes(fn) { _notesNet.subs.add(fn); return () => { _notesNet.subs.delete(fn); }; }
+/** notes + my_note numa lista só (o carrossel acha "a minha" por e-mail). */
+function _notesListOf(r) {
+  const d = r && r.data;
+  const list = Array.isArray(d) ? d.slice() : ((d && d.notes) || []).slice();
+  const mine = d && !Array.isArray(d) ? d.my_note : null;
+  if (mine && mine.content && !list.some((n) => String(n.email || '').toLowerCase() === String(mine.email || '').toLowerCase())) list.push(mine);
+  return list;
+}
 function _sharedNotes(maxAgeMs) {
   let key = '';
   try { key = String(api.getAuthToken?.() || '').slice(-24); } catch {}
@@ -63,7 +75,10 @@ function _sharedNotes(maxAgeMs) {
   if (_notesNet.inflight) return _notesNet.inflight;
   if (_notesNet.res && maxAgeMs > 0 && Date.now() - _notesNet.at < maxAgeMs) return Promise.resolve(_notesNet.res);
   const p = Promise.resolve().then(() => api.chatGetNotes?.()).then((r) => {
-    if (_notesNet.key === key && r?.success) { _notesNet.at = Date.now(); _notesNet.res = r; }
+    if (_notesNet.key === key && r?.success) {
+      _notesNet.at = Date.now(); _notesNet.res = r;
+      _notesNet.subs.forEach((fn) => { try { fn(r); } catch {} });
+    }
     return r;
   }).finally(() => { if (_notesNet.inflight === p) _notesNet.inflight = null; });
   _notesNet.inflight = p;
@@ -2491,10 +2506,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   // WS event we can extract a `useNotes` hook.
   const loadNotes = useCallback((maxAgeMs = 0) => {
     _sharedNotes(typeof maxAgeMs === 'number' ? maxAgeMs : 0).then(r => {
-      if (r?.success && r.data) {
-        const list = Array.isArray(r.data) ? r.data : (r.data.notes || []);
-        setNotes(list);
-      }
+      if (r?.success && r.data) setNotes(_notesListOf(r));
     }).catch(() => {});
   }, []);
   // `load()` keeps its public contract for the seven call-sites that fire
@@ -2511,6 +2523,21 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   useEffect(() => {
     loadNotes(30000);
   }, [loadNotes]);
+  // [2026-10-20 nota2] respostas do poll (ChatListTab) + evento 'profile_note'
+  // (contato trocou/apagou a nota; WS do servidor ou a minha folha local).
+  useEffect(() => _onSharedNotes((r) => { if (r?.success && r.data) setNotes(_notesListOf(r)); }), []);
+  useEffect(() => {
+    let _ws = null;
+    try { _ws = require('../services/websocket').default; } catch {}
+    if (!_ws || typeof _ws.on !== 'function') return undefined;
+    let tm = null;
+    const off = _ws.on('profile_note', () => {
+      if (tm) clearTimeout(tm);
+      tm = setTimeout(() => { tm = null; _notesNet.at = 0; loadNotes(0); }, 900);
+    });
+    return () => { if (tm) clearTimeout(tm); try { off?.(); } catch {} };
+  }, [loadNotes]);
+  const [noteView, setNoteView] = useState(null); // nota de contato aberta (ContactNoteSheet)
 
   // [WAVE 93 2026-05-21] Pull-to-refresh bus subscription. Parent's onRefresh
   // emits 'refresh' here; we drive refetchStatuses + loadNotes together so
@@ -2783,7 +2810,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
 
   const myStatusGroup = statuses.find(s => s.email === user?.email);
   const myStatus = myStatusGroup?.items?.length > 0 ? myStatusGroup : null;
-  const myNote = notes.find(n => n.email === user?.email);
+  const _meL = String(user?.email || '').toLowerCase();
+  const myNote = notes.find(n => String(n.email || '').toLowerCase() === _meL);
   // Instagram/WhatsApp pattern: after viewing all of someone's statuses, they
   // disappear from the main-page story row. They're still accessible via the
   // user's profile page (Recentes highlight). A group is "fully viewed" when
@@ -2800,9 +2828,12 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   })();
 
   // Merge: for each contact, if they have a status → status; else if they have a note → note
-  const notesByEmail = new Map(notes.filter(n => n.email !== user?.email).map(n => [n.email, n]));
-  const statusEmails = new Set(otherStatuses.map(s => s.email));
-  const notesOnly = Array.from(notesByEmail.values()).filter(n => !statusEmails.has(n.email));
+  const notesByEmail = new Map(notes.filter(n => n && n.content && String(n.email || '').toLowerCase() !== _meL).map(n => [String(n.email || '').toLowerCase(), n]));
+  const statusEmails = new Set(otherStatuses.map(s => String(s.email || '').toLowerCase()));
+  // [nota2] mais recente primeiro (Instagram: notas no topo das DMs)
+  const notesOnly = Array.from(notesByEmail.values()).filter(n => !statusEmails.has(String(n.email || '').toLowerCase()))
+    .sort((a, b) => (Date.parse(b.created_at || '') || 0) - (Date.parse(a.created_at || '') || 0));
+  const _noteOf = (email) => (email ? notesByEmail.get(String(email).toLowerCase()) || null : null);
 
   // Live-only entries: hosts streaming right now who don't already appear in
   // the strip via a status. Rendered as a prepended live ring in the strip
@@ -3150,6 +3181,18 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
     const _editNote = () => { try { (_A().onEditNote || (() => setShowNoteModal(true)))(); } catch {} };
     const _ownLabel = pubProgress != null ? t('status.ring.uploading') : t('status.yourStory');
     const _pins = Array.isArray(pinnedItems) ? pinnedItems : [];
+    // [2026-10-20 nota2] Nota do contato no carrossel: balão (texto inteiro, 2
+    // linhas, fonte encolhe) acima da bolinha; toque no BALÃO = folha da nota.
+    const _noteBubble = (n) => (n && n.content ? {
+      bubble: <ThoughtBubble text={n.content} isDark={isDark} full />,
+      onBubblePress: () => setNoteView(n),
+      bubbleLabel: `${_hcT(t, 'notes.noteOf', 'Nota de')} ${n.name || String(n.email || '').split('@')[0]}: ${n.content}`,
+    } : null);
+    const _pinPeerOf = (item) => {
+      const g = item && (item.type === 'group' || item.type === 'channel');
+      return g ? '' : String(item?.other_email || item?.contact_email || item?.email || '').toLowerCase();
+    };
+    const _pinnedPeers = new Set(_pins.map(_pinPeerOf).filter(Boolean));
     const _firstName = (s) => { const n = String(s || '').trim(); return n.split(/\s+/)[0] || n; };
     const _showSkel = statusLoading && otherStatuses.length === 0 && liveOnlyEntries.length === 0;
     // [2026-10-20 pin-story] Story do contato fixado (WhatsApp): mesmo cálculo de
@@ -3185,7 +3228,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
           key="own"
           // [2026-10-19 audit] minha nota (Instagram Notes) volta no balão — o carrossel
           // escondeu a faixa de notas e a nota sumia da home.
-          bubble={myNote?.content ? <ThoughtBubble text={myNote.content} isDark={isDark} /> : null}
+          bubble={myNote?.content ? <ThoughtBubble text={myNote.content} isDark={isDark} full /> : null}
           label={_ownLabel}
           labelColor={_sub}
           onPress={_onOwnStatusPress}
@@ -3236,6 +3279,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
           return (
             <CarouselSlot
               key={`st-${s.email}`}
+              {...(_noteBubble(_noteOf(s.email)) || {})}
               label={_firstName(full)}
               labelColor={allViewed ? _sub : _lc}
               onPress={() => isLive ? openLiveViewer(s.email, liveInfo.id) : openStatus(s.email)}
@@ -3292,21 +3336,6 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
           );
         })}
 
-        {/* [2026-10-19 audit] Notas de contatos sem status: a faixa de notas some
-            no modo carrossel, então elas entram aqui (balão = a nota). */}
-        {notesOnly.map((n) => (
-          <CarouselSlot
-            key={`note-${n.email}`}
-            bubble={n.content ? <ThoughtBubble text={n.content} isDark={isDark} /> : null}
-            label={_firstName(n.name || n.email?.split('@')[0])}
-            labelColor={_lc}
-            onPress={() => { try { router.push(`/chat?newChat=${encodeURIComponent(n.email)}`); } catch {} }}
-            accessibilityLabel={`${n.name || n.email?.split('@')[0] || ''}. ${n.content || ''}`}
-          >
-            <AvatarCircle name={n.name || n.email} email={n.email} size={HC.avatar} />
-          </CarouselSlot>
-        ))}
-
         {/* Primeira carga sem cache: círculos de esqueleto com brilho. */}
         {_showSkel ? [0, 1, 2].map(i => <SkeletonSlot key={`sk-${i}`} isDark={isDark} />) : null}
 
@@ -3332,6 +3361,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
           return (
             <CarouselSlot
               key={`pin-${item.id}`}
+              {...(_noteBubble(peerEmail ? _noteOf(peerEmail) : null) || {})}
               width={HC.pinW}
               labelSize={11}
               label={isGroup ? nm : _firstName(nm)}
@@ -3382,12 +3412,39 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
             </CarouselSlot>
           );
         })}
+
+        {/* [2026-10-20 nota2] Notas de contatos que não estão fixados nem têm status:
+            DEPOIS das fixadas, mais recente primeiro (Instagram: notas no topo das DMs).
+            Toque na bolinha = conversa (como antes); toque no balão = folha da nota. */}
+        {notesOnly.filter((n) => !_pinnedPeers.has(String(n.email || '').toLowerCase())).map((n) => {
+          const nm = emailToDisplayName(n.name || String(n.email || '').split('@')[0]);
+          return (
+            <CarouselSlot
+              key={`note-${n.email}`}
+              {...(_noteBubble(n) || {})}
+              label={_firstName(nm)}
+              labelColor={_lc}
+              onPress={() => {
+                try {
+                  if (n.conversation_id) {
+                    require('../services/openConversation').openConversation(`/chat-conversation?id=${n.conversation_id}&name=${encodeURIComponent(nm)}&type=direct&email=${encodeURIComponent(n.email)}`, { router });
+                  } else router.push(`/chat?newChat=${encodeURIComponent(n.email)}`);
+                } catch {}
+              }}
+              accessibilityLabel={`${nm}. ${n.content || ''}`}
+              testID={`home-carousel-note-${n.email}`}
+            >
+              <AvatarCircle name={nm} email={n.email} size={HC.avatar} />
+            </CarouselSlot>
+          );
+        })}
       </ScrollView>
     );
   }
 
   return (
     <View style={carousel ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' } : { paddingTop: stripHasContent ? _LMs.storyPadTop : 0, paddingBottom: stripHasContent ? _LMs.storyPadBottom : 0, borderBottomWidth: stripHasContent ? StyleSheet.hairlineWidth : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
+      {noteView ? <ContactNoteSheet visible note={noteView} onClose={() => setNoteView(null)} t={t} isDark={isDark} router={router} /> : null}
       {/* Dedicated live bar — prepended above the story strip so contacts
           who are streaming RIGHT NOW are the very first thing the user
           sees on the chat list. Renders only when at least one host is
@@ -4602,7 +4659,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // [2026-10-18 battery] ÚNICO poll de notas (o do StatusStoriesRow saiu):
     // 60 s sem WS, 5 min com o WS autenticado.
     const stopNotesPoll = setActiveInterval(() => {
-      loadNotes(_listWsAuthed() ? _LIST_SAFETY_MS : 50000);
+      loadNotes(50000); // [nota2] notas: 60 s em foco mesmo com WS (o evento 'profile_note' adianta)
     }, 60000); // [2026-10-10 perf-battery] fg-only
     return () => { alive = false; stopNotesPoll(); };
   }, []);

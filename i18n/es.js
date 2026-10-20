@@ -14673,4 +14673,13 @@ export default {
   "me.note.expires": "Tu nota aparece encima de tu foto y desaparece a las 24 horas.",
   "me.note.saveError": "No se pudo compartir la nota. Inténtalo de nuevo.",
   "me.note.deleteError": "No se pudo eliminar la nota. Inténtalo de nuevo.",
+  // [2026-10-20 nota2] Notas de contatos na lista de conversas
+  "me.note.audContactsLong": "Contactos con los que chateas",
+  "notes.minutesAgo": "hace {n} min",
+  "notes.hoursAgo": "hace {n} h",
+  "notes.replyPrefix": "Respondió a tu nota",
+  "notes.replyTo": "Responder a {name}...",
+  "notes.replySent": "Respuesta enviada",
+  "notes.replyError": "No se pudo enviar. Inténtalo de nuevo.",
+  "notes.noteOf": "Nota de",
 };

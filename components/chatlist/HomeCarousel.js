@@ -65,7 +65,9 @@ function _haptic(kind = 'light') {
 }
 
 /** Balão de pensamento (Instagram Notes): pílula + 2 bolinhas de cauda. Entra com fade. */
-export const ThoughtBubble = memo(function ThoughtBubble({ text, isDark }) {
+// [2026-10-20 nota2] full = nota de contato: texto INTEIRO (até 60) em até 2
+// linhas, a fonte encolhe em vez de cortar (balão um pouco mais largo).
+export const ThoughtBubble = memo(function ThoughtBubble({ text, isDark, full = false }) {
   const rm = useReducedMotion();
   const op = useRef(new Animated.Value(rm ? 1 : 0)).current;
   const ty = useRef(new Animated.Value(rm ? 0 : 4)).current;
@@ -90,9 +92,9 @@ export const ThoughtBubble = memo(function ThoughtBubble({ text, isDark }) {
   });
   return (
     <Animated.View pointerEvents="none" style={{ alignItems: 'center', opacity: op, transform: [{ translateY: ty }] }}>
-      <View style={[hs.bubble, { backgroundColor: bg, borderColor: edge }, shadow]}>
-        <Text maxFontSizeMultiplier={1.15} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.8} ellipsizeMode="tail" style={[hs.bubbleText, { color: ink }]}>
-          {shortNote(text)}
+      <View style={[hs.bubble, full ? hs.bubbleFull : null, { backgroundColor: bg, borderColor: edge }, shadow]}>
+        <Text maxFontSizeMultiplier={1.15} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={full ? 0.6 : 0.8} ellipsizeMode="tail" style={[hs.bubbleText, { color: ink }]}>
+          {full ? String(text || '').replace(/\s+/g, ' ').trim() : shortNote(text)}
         </Text>
       </View>
       <View style={[hs.tail1, { backgroundColor: bg }]} />
@@ -105,7 +107,7 @@ export const ThoughtBubble = memo(function ThoughtBubble({ text, isDark }) {
  * Casca de um item: área do anel (74, mesmo eixo p/ todos) + rótulo (+ balão).
  * Toque com mola 0,94 (sem mola com Reduzir movimento) + háptico leve.
  */
-export function CarouselSlot({ bubble, children, label, labelColor, labelWeight = '500', labelSize = 12, width = HC.itemW, onPress, onPressIn, onLongPress, accessibilityLabel, accessibilityHint, accessibilityActions, onAccessibilityAction, testID }) {
+export function CarouselSlot({ bubble, onBubblePress, bubbleLabel, children, label, labelColor, labelWeight = '500', labelSize = 12, width = HC.itemW, onPress, onPressIn, onLongPress, accessibilityLabel, accessibilityHint, accessibilityActions, onAccessibilityAction, testID }) {
   const sc = useRef(new Animated.Value(1)).current;
   const go = (to) => {
     if (isReduceMotionEnabled()) return;
@@ -134,7 +136,20 @@ export function CarouselSlot({ bubble, children, label, labelColor, labelWeight 
           </Text>
         </Animated.View>
       </Pressable>
-      {bubble ? <View pointerEvents="none" style={hs.bubbleAnchor}>{bubble}</View> : null}
+      {bubble ? (onBubblePress ? (
+        // [nota2] balão tocável (nota do contato) — o toque no avatar segue o de sempre.
+        <View pointerEvents="box-none" style={hs.bubbleAnchor}>
+          <Pressable
+            onPress={() => { _haptic('light'); onBubblePress(); }}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={bubbleLabel}
+            style={Platform.OS === 'web' ? { cursor: 'pointer' } : null}
+          >
+            {bubble}
+          </Pressable>
+        </View>
+      ) : <View pointerEvents="none" style={hs.bubbleAnchor}>{bubble}</View>) : null}
     </View>
   );
 }
@@ -303,6 +318,7 @@ const hs = StyleSheet.create({
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
   },
+  bubbleFull: { maxWidth: 118, paddingHorizontal: 8 },
   bubbleText: { fontSize: 11.5, lineHeight: 14, textAlign: 'center', fontWeight: '500', letterSpacing: -0.1 },
   tail1: { position: 'absolute', bottom: -5, left: '50%', marginLeft: -7, width: 8, height: 8, borderRadius: 4 },
   tail2: { position: 'absolute', bottom: -10, left: '50%', marginLeft: -10, width: 4, height: 4, borderRadius: 2 },

@@ -13540,4 +13540,13 @@ export default {
   "me.note.expires": "A nota aparece por cima da sua fotografia e desaparece ao fim de 24 horas.",
   "me.note.saveError": "Não foi possível partilhar a nota. Tente novamente.",
   "me.note.deleteError": "Não foi possível eliminar a nota. Tente novamente.",
+  // [2026-10-20 nota2] Notas de contatos na lista de conversas
+  "me.note.audContactsLong": "Contactos com quem conversa",
+  "notes.minutesAgo": "há {n} min",
+  "notes.hoursAgo": "há {n} h",
+  "notes.replyPrefix": "Respondeu à sua nota",
+  "notes.replyTo": "Responder a {name}...",
+  "notes.replySent": "Resposta enviada",
+  "notes.replyError": "Não foi possível enviar. Tente novamente.",
+  "notes.noteOf": "Nota de",
 };
