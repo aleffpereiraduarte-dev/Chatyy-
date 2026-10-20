@@ -216,11 +216,17 @@ final class AttachOverKeyboardHost {
     return true
   }
 
+  // [2026-10-20 attach-panel-fotos] build 744: a janela ficou ABAIXO do
+  // painel (inputView) — agora o maior level de TODAS as janelas de todas as
+  // cenas (inclui as de teclado) + 1, nunca abaixo de 10_000_001.
   static func levelAboveKeyboard(_ scene: UIWindowScene) -> UIWindow.Level {
     var top: CGFloat = 10_000_000
-    for w in scene.windows {
-      let n = NSStringFromClass(type(of: w))
-      if n.contains("Keyboard") || n.contains("TextEffects") { top = max(top, w.windowLevel.rawValue) }
+    var all: [UIWindow] = scene.windows
+    for sc in UIApplication.shared.connectedScenes {
+      if let ws = sc as? UIWindowScene { all.append(contentsOf: ws.windows) }
+    }
+    for w in all where w.windowLevel.rawValue < 1_000_000_000 {
+      top = max(top, w.windowLevel.rawValue)
     }
     return UIWindow.Level(rawValue: top + 1)
   }

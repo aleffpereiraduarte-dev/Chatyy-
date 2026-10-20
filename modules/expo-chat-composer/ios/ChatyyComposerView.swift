@@ -606,6 +606,9 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   private var panelActive = false
   private var panelView: NCAttachPanel?
   private var lastSystemKbHeight: CGFloat = 0
+  // [2026-10-20 attach-panel-fotos] Fotos com o painel: o painel desce junto
+  // com a folha subindo (folha modal cobre a área); cancelar → painel volta.
+  private var panelReturnPending = false
   private static var panelHeightFix: CGFloat = 0
   private var kbNoteOverlap: CGFloat = 0
   private var kbSyncGen = 0
@@ -986,6 +989,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   }
 
   private func showAttachPanel() {
+    panelReturnPending = false
     let panel = panelView ?? NCAttachPanel(height: panelTargetHeight())
     if panelView == nil {
       panel.onPick = { [weak self] key in self?.attachPanelPicked(key) }
@@ -1041,6 +1045,13 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
         self.releaseForAttach()
       }
       return
+    }
+    // [2026-10-20 attach-panel-fotos] Fotos sem a janela acima do teclado
+    // (build 744: a janela ficava ABAIXO do painel/teclado): o painel sai com a
+    // apresentação (WhatsApp) e volta se a folha for cancelada.
+    if key == "gallery" || key == "photos" {
+      panelReturnPending = true
+      attachRestorePending = false
     }
     // Demais ações (tela/modal próprio): o painel desce como o teclado e a
     // ação abre em seguida (sem modal "guardando" o responder no meio).
@@ -1248,6 +1259,20 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     let info: [AnyHashable: Any] = n.userInfo ?? [:]
     let action: String = (info["action"] as? String) ?? ""
     let byUser: Bool = (info["user"] as? Bool) ?? false
+    // [2026-10-20 attach-panel-fotos] folha aberta pelo "Fotos" do painel:
+    // cancelou → o painel volta (1 volta do runloop depois do dismiss, como o
+    // 'did': antes disso o dismiss do UIKit derrubaria o foco devolvido).
+    if panelReturnPending {
+      if !final { return }
+      panelReturnPending = false
+      if action == "cancel" && byUser && attachPanel && attachInstant {
+        DispatchQueue.main.async { [weak self] in
+          guard let self = self, self.window != nil, !self.panelActive, !self.voice.isActive, !self.disabled else { return }
+          self.showAttachPanel()
+        }
+      }
+      return
+    }
     // [2026-10-19 attach-over-kb] o teclado ficou aberto sob a folha: a folha
     // começou a descer → solta agora (ANIMADO, desce junto com ela; a barra
     // acompanha o teclado, sem buraco). Cancelar com 'did'/'will' = fica.

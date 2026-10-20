@@ -95,8 +95,13 @@ export function nativeAttachApi() {
 // ACIMA do teclado (que fica aberto por baixo) e ele só desce quando a folha
 // fecha — sem quadro de buraco/wallpaper, conversa parada, sem hold/clamp JS.
 // Kill switch OTA: globalThis.__chatyy_attach_over_kb = false (= api 8 hold).
+// [2026-10-20 attach-panel-fotos] Build 744 no aparelho: a janela da folha
+// ficou ABAIXO do painel/teclado (folha só até o meio, painel translúcido por
+// cima). Agora DESLIGADO por padrão (opt-in globalThis.__chatyy_attach_over_kb
+// = true): "Fotos" do painel faz o painel descer junto com a folha subindo
+// (WhatsApp) e cancelar devolve o painel (composer api 10, build novo).
 export function attachOverKeyboardOn() {
-  try { if (globalThis.__chatyy_attach_over_kb === false) return false; } catch {}
+  try { if (globalThis.__chatyy_attach_over_kb !== true) return false; } catch { return false; }
   if (!attachInstantOn()) return false;
   return nativeComposerApi() >= 9 && nativeAttachApi() >= 6;
 }

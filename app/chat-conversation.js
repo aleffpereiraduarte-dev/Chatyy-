@@ -13279,6 +13279,18 @@ function ChatConversationInnerBody() {
         _attachInstantRef.current = false;
         try { inputRef.current?.releaseForAttach?.(); } catch {}
       }
+      // [2026-10-20 attach-panel-fotos] o nativo já desceu o painel: folha JÁ
+      // (sem esperar o render), sobe enquanto o painel desce.
+      {
+        const open = _attachInstantOpenRef.current;
+        let ok = false;
+        if (Platform.OS === 'ios' && typeof open === 'function' && mountedRef.current && !_kbLeavingRef.current) {
+          _attachInstantRef.current = true;
+          _attachKbRef.current = { had: false, at: 0 };
+          try { ok = !!open(); } catch { ok = false; }
+          if (!ok) _attachInstantRef.current = false;
+        }
+      }
       setShowAttachMenu(true);
       return;
     }
