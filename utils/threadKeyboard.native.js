@@ -132,7 +132,8 @@ const _useKbHandlerAndroid = (_IS_ANDROID && KC && typeof KC.useGenericKeyboardH
 // repouso da lista. Kill switch OTA: globalThis.__chatyy_composer_native_dock = false.
 export function composerNativeDockOn() {
   if (Platform.OS !== 'ios') return false;
-  try { if (globalThis.__chatyy_composer_native_dock === false) return false; } catch {}
+  // [2026-10-20 dock-off] build 746: conversa abriu VAZIA (sem lista e sem composer) → opt-in até corrigir.
+  try { if (globalThis.__chatyy_composer_native_dock !== true) return false; } catch { return false; }
   try {
     // eslint-disable-next-line global-require
     const m = require('./kbNativeTransitions');
