@@ -3156,6 +3156,18 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
     // "não visto" da faixa/aba Status (useStatuses → item.viewed). Atualiza ao vivo
     // porque otherStatuses vem do hook (status novo chega / markViewed ao terminar).
     const _pinStoryBy = new Map();
+    // [2026-10-20 pin-story] Fixado com status aparece SÓ como fixado (o anel já
+    // indica o story); fora da faixa de status. Ao vivo continua na faixa.
+    const _pinEmails = new Set();
+    for (const it of _pins) {
+      if (it && (it.type === 'group' || it.type === 'channel')) continue;
+      const e = String((it && (it.other_email || it.contact_email || it.email)) || '').toLowerCase();
+      if (e) _pinEmails.add(e);
+    }
+    const _stripStatuses = otherStatuses.filter(g => {
+      const k = String(g.email || '').toLowerCase();
+      return !_pinEmails.has(k) || !!livesByEmail[k];
+    });
     for (const g of otherStatuses) {
       const k = String(g.email || '').toLowerCase();
       if (k && (g.items || []).length > 0) _pinStoryBy.set(k, (g.items || []).some(it => it && !it.viewed) ? 'new' : 'seen');
@@ -3216,7 +3228,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
 
         {/* 3. Status dos contatos: não vistos primeiro (anel tinta), vistos com
             anel cinza claro — muda ao vivo depois de ver (useStatuses). */}
-        {otherStatuses.map((s) => {
+        {_stripStatuses.map((s) => {
           const allViewed = (s.items || []).every(it => it.viewed);
           const liveInfo = livesByEmail[(s.email || '').toLowerCase()];
           const isLive = !!liveInfo;

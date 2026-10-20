@@ -253,6 +253,16 @@ import { WebView } from 'react-native-webview';
 import ChatMediaViewer from '../components/ChatMediaViewer';
 import ChatMedia from '../components/ChatMedia';
 import AvatarCircle from '../components/AvatarCircle';
+import AvatarStatusRing from '../components/status/AvatarStatusRing';
+import { useStatusRing, getStatusRing, openStatusFor, primeStatusRings } from '../components/status/statusRingStore';
+// [2026-10-20 header-story] Anel de status na foto do cabeçalho (WhatsApp): não
+// visto = traço grosso em destaque, visto e ainda ativo = cinza fino. Componente
+// próprio para o hook não entrar na ordem de hooks do corpo da conversa.
+function HeaderStatusRing({ email, isDark }) {
+  const ring = useStatusRing(email || '');
+  useEffect(() => { if (email) { try { primeStatusRings(); } catch {} } }, [email]);
+  return <AvatarStatusRing size={38} ring={ring} isDark={isDark} gap={2} testID="conv-header-status-ring" />;
+}
 import ConvStatsBody from '../components/chat/ConvStatsBody';
 import AvatarLightbox from '../components/AvatarLightbox';
 import WallpaperPicker, { WallpaperBackground } from '../components/WallpaperPicker';
@@ -36813,7 +36823,61 @@ function ChatConversationInnerBody() {
             setProfileViewer({ name: conversationName, email: params.email || '' });
           }
         }} activeOpacity={0.7}>
-          <View style={{ position: 'relative', width: 38, height: 38 }}>
+          {/* [2026-10-20 header-story] Foto: com status ativo (não visto OU já visto) abre o
+              visualizador; sem status, a foto em tela cheia (como antes). Segurar = infos. */}
+          <TouchableOpacity
+            activeOpacity={0.7}
+            delayLongPress={350}
+            accessibilityRole="button"
+            testID="conv-header-avatar"
+            onLongPress={() => {
+              try { Haptics.selectionAsync?.(); } catch {}
+              if (conversationType === 'group') { setEditGroupName(conversationName); loadGroupMembers(); setShowGroupInfo(true); }
+              else if (conversationType === 'direct' && getContactPeerEmail()) setShowContactInfo(true);
+              else setProfileViewer({ name: conversationName, email: params.email || '' });
+            }}
+            onPress={() => {
+              if (conversationType === 'direct') {
+                const _pe = getContactPeerEmail();
+                const _ring = _pe ? getStatusRing(_pe) : null;
+                if (_ring && _ring.count > 0) {
+                  try { Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                  if (!openStatusFor(_pe)) { try { router.push(`/u/${encodeURIComponent(_pe)}?openStatus=1`); } catch {} }
+                  return;
+                }
+              }
+              // WAVE 95: tap the header avatar → fullscreen lightbox of the
+              // friend's profile photo (WhatsApp parity). The outer
+              // TouchableOpacity below still wraps the name area and opens
+              // the profile peek when tapped — nested touchables route to
+              // the innermost responder so this avatar tap doesn't double-
+              // fire the peek sheet.
+              if (conversationType === 'group') {
+                // Groups have no single "friend" photo. Use the conversation
+                // avatar (uri) if set; otherwise just open group info — same
+                // as the rest of the header.
+                if (conversationAvatar) {
+                  setAvatarLightbox({ name: conversationName, email: null, uri: conversationAvatar });
+                } else {
+                  setEditGroupName(conversationName);
+                  loadGroupMembers();
+                  setShowGroupInfo(true);
+                }
+                return;
+              }
+              const _meLc = (currentEmail || '').toLowerCase();
+              const fromMembers = (membersRef.current || []).find(m => (m?.email || '').toLowerCase() !== _meLc && (m?.email || ''))?.email;
+              const friendEmail = fromMembers || params.email || '';
+              if (!friendEmail || friendEmail.toLowerCase() === _meLc) {
+                // Defensive: fall back to peek if we can't resolve a friend.
+                setProfileViewer({ name: conversationName, email: params.email || '' });
+                return;
+              }
+              setAvatarLightbox({ name: conversationName, email: friendEmail, uri: null });
+            }}
+            style={{ position: 'relative', width: 38, height: 38 }}
+          >
+            {conversationType === 'direct' ? <HeaderStatusRing email={getContactPeerEmail()} isDark={isDark} /> : null}
             {/* Halo violeta respirando ao redor do avatar quando online —
                 "presence as ambient glow" (iOS Messages active-now feel). */}
             {/* [2026-10-13 conv-pb] halo pulsante em loop infinito DESLIGADO:
@@ -36834,42 +36898,12 @@ function ChatConversationInnerBody() {
               // [2026-10-14 avatar-instant] pré-carrega a foto GRANDE (size=1024) ao abrir a
               // conversa → o toque abaixo abre o visualizador já nítido.
               prefetchFull
-              onPress={() => {
-                // WAVE 95: tap the header avatar → fullscreen lightbox of the
-                // friend's profile photo (WhatsApp parity). The outer
-                // TouchableOpacity below still wraps the name area and opens
-                // the profile peek when tapped — nested touchables route to
-                // the innermost responder so this avatar tap doesn't double-
-                // fire the peek sheet.
-                if (conversationType === 'group') {
-                  // Groups have no single "friend" photo. Use the conversation
-                  // avatar (uri) if set; otherwise just open group info — same
-                  // as the rest of the header.
-                  if (conversationAvatar) {
-                    setAvatarLightbox({ name: conversationName, email: null, uri: conversationAvatar });
-                  } else {
-                    setEditGroupName(conversationName);
-                    loadGroupMembers();
-                    setShowGroupInfo(true);
-                  }
-                  return;
-                }
-                const _meLc = (currentEmail || '').toLowerCase();
-                const fromMembers = (membersRef.current || []).find(m => (m?.email || '').toLowerCase() !== _meLc && (m?.email || ''))?.email;
-                const friendEmail = fromMembers || params.email || '';
-                if (!friendEmail || friendEmail.toLowerCase() === _meLc) {
-                  // Defensive: fall back to peek if we can't resolve a friend.
-                  setProfileViewer({ name: conversationName, email: params.email || '' });
-                  return;
-                }
-                setAvatarLightbox({ name: conversationName, email: friendEmail, uri: null });
-              }}
             />
             {/* [2026-10-08 chat-fix-composer-location] bolinha verde do avatar
                 REMOVIDA: o header mostrava 2 bolinhas verdes (avatar + antes de
                 "online"). Igual ao WhatsApp, o status é só o TEXTO "online"
                 (P&B). PresencePulse segue definido p/ outros usos. */}
-          </View>
+          </TouchableOpacity>
           {/* [2026-10-14 motion] linha de presença que chega depois desliza (sem salto do nome) */}
           <ConvHeaderTitleStack
             typingStore={typingStore} conversationType={conversationType} presenceStore={presenceStore} members={members}
