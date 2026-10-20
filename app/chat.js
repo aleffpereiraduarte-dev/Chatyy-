@@ -1352,7 +1352,13 @@ function ChatHub() {
   // PERF: tabProps was a fresh object every render and is spread into ALL
   // mounted tabs. Memoizing it means a tab only re-renders when a value it
   // actually consumes changes, not on every parent re-render.
-  const tabProps = useMemo(() => ({ colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed, onFeedModeChange, tabActive: activeTab }), [colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, pendingReels, onFeedModeConsumed, onFeedModeChange, activeTab]);
+  // [2026-10-20 perf-js] searchQuery/tabActive saíram do objeto comum: cada troca
+  // de aba (tabActive) e cada tecla da busca re-renderizava TODAS as abas montadas
+  // (ChatListTab inteira incluída — o React.memo dela caía no tabActive que ela nem
+  // lê). Agora: searchQuery só p/ a lista, tabActive só p/ Feed/Reels (pausam mídia).
+  const tabProps = useMemo(() => ({ colors, isDark, t, user, router, setActiveTab, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed, onFeedModeChange }), [colors, isDark, t, user, router, setActiveTab, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, pendingReels, onFeedModeConsumed, onFeedModeChange]);
+  const listTabProps = useMemo(() => ({ ...tabProps, searchQuery }), [tabProps, searchQuery]);
+  const mediaTabProps = useMemo(() => ({ ...tabProps, tabActive: activeTab }), [tabProps, activeTab]);
 
   const titles = {
     feed: t('feed.title') || 'Feed',
@@ -1600,7 +1606,7 @@ function ChatHub() {
                 // dividida (lista + conversa) — ver ChatConversationScreen.
                 <View style={{ flex: 1, flexDirection: 'row' }}>
                   <View style={{ width: 400, maxWidth: '42%', minWidth: 300, borderRightWidth: 1, borderRightColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }}>
-                    <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...tabProps} /></ChatErrorBoundary>
+                    <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...listTabProps} /></ChatErrorBoundary>
                   </View>
                   <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, backgroundColor: isDark ? '#000000' : '#f7f7f7' }}>
                     <Svg width={56} height={56} viewBox="0 0 24 24" fill="none">
@@ -1611,17 +1617,17 @@ function ChatHub() {
                   </View>
                 </View>
               ) : (
-                <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...tabProps} /></ChatErrorBoundary>
+                <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...listTabProps} /></ChatErrorBoundary>
               )}
             </View>
             {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
               <ChatErrorBoundary><Suspense fallback={<CallListSkeleton />}><ChatCallsTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
             {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
-              <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...tabProps} /></Suspense></ChatErrorBoundary>
+              <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...mediaTabProps} /></Suspense></ChatErrorBoundary>
             </View>}
             {mountedTabs.has('reels') && <View style={{ display: activeTab === 'reels' ? 'flex' : 'none', flex: activeTab === 'reels' ? 1 : undefined, backgroundColor: '#000' }}>
-              <ChatErrorBoundary name="reels"><Suspense fallback={null}><ReelsHomeTab {...tabProps} /></Suspense></ChatErrorBoundary>
+              <ChatErrorBoundary name="reels"><Suspense fallback={null}><ReelsHomeTab {...mediaTabProps} /></Suspense></ChatErrorBoundary>
             </View>}
             {mountedTabs.has('status') && <View style={_statusSurfaceStyle(activeTab === 'status')} pointerEvents={activeTab === 'status' ? 'auto' : 'box-none'}>
               <ChatErrorBoundary name="status" resetKey={`${newStatusNonce}|${openStatusEmail || ''}`}><Suspense fallback={null}><ChatStatusTab {...tabProps} /></Suspense></ChatErrorBoundary>
@@ -1853,7 +1859,7 @@ function ChatHub() {
         <View style={{ display: activeTab === 'chats' ? 'flex' : 'none', flex: activeTab === 'chats' ? 1 : undefined }}>
           <ChatErrorBoundary><ChatListTab
             key={'cl_' + (user?.email || 'anon')}
-            {...tabProps}
+            {...listTabProps}
             largeTitle={LIST_LARGE_TITLE ? titles.chats : undefined}
             onLargeTitleCollapsedChange={LIST_LARGE_TITLE ? onChatTitleCollapseHome : undefined}
             bottomInset={GLASS_TAB_BAR ? tabBarH : 0}
@@ -1865,10 +1871,10 @@ function ChatHub() {
           <ChatErrorBoundary><Suspense fallback={<CallListSkeleton />}><ChatCallsTab {...tabProps} largeTitle={LIST_LARGE_TITLE && !isKids ? titles.calls : undefined} onLargeTitleCollapsedChange={LIST_LARGE_TITLE && !isKids ? onCallsTitleCollapse : undefined} /></Suspense></ChatErrorBoundary>
         </View>}
         {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
-          <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...tabProps} /></Suspense></ChatErrorBoundary>
+          <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...mediaTabProps} /></Suspense></ChatErrorBoundary>
         </View>}
         {mountedTabs.has('reels') && <View style={{ display: activeTab === 'reels' ? 'flex' : 'none', flex: activeTab === 'reels' ? 1 : undefined, backgroundColor: '#000' }}>
-          <ChatErrorBoundary name="reels"><Suspense fallback={null}><ReelsHomeTab {...tabProps} /></Suspense></ChatErrorBoundary>
+          <ChatErrorBoundary name="reels"><Suspense fallback={null}><ReelsHomeTab {...mediaTabProps} /></Suspense></ChatErrorBoundary>
         </View>}
         {mountedTabs.has('status') && <View style={_statusSurfaceStyle(activeTab === 'status')} pointerEvents={activeTab === 'status' ? 'auto' : 'box-none'}>
           <ChatErrorBoundary name="status" resetKey={`${newStatusNonce}|${openStatusEmail || ''}`}><Suspense fallback={null}><ChatStatusTab {...tabProps} largeTitle={LIST_LARGE_TITLE && !isKids ? titles.status : undefined} onLargeTitleCollapsedChange={LIST_LARGE_TITLE && !isKids ? onStatusTitleCollapse : undefined} /></Suspense></ChatErrorBoundary>
