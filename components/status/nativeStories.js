@@ -24,6 +24,8 @@ import { resolveTextGradient } from './textGradients';
 import { takeStoryOrigin } from '../../services/storyOrigin'; // [2026-10-16 motion]
 import { storyReactionDefs, storyReactionKind, storyReactionsEnabled, isStoryReactionEmoji } from './storyReactions'; // [2026-10-17 status-reacoes]
 import { nativeEmojiPayload } from '../chat/nativeEmojiData';
+import { getCachedStatusViewers, fetchStatusViewers } from '../../services/statusViewersCache'; // [viewers 2026-10-20]
+import { blurhashToDataUri } from '../../utils/blurhashDataUri'; // [viewers 2026-10-20]
 
 let _NS; // undefined = não resolvido; null = indisponível
 function _mod() {
@@ -306,6 +308,13 @@ function _pathsFor(it) {
   return [];
 }
 
+function _blurThumb(it) {
+  try {
+    const h = it?.meta?.blurhash || it?.blurhash;
+    return h ? blurhashToDataUri(String(h)) : '';
+  } catch { return ''; }
+}
+
 function _toNativeItem(it, t, isSelf) {
   const v2 = _api() >= 2;
   const voiceUrl = v2 ? _voiceUrl(it) : '';
@@ -331,7 +340,8 @@ function _toNativeItem(it, t, isSelf) {
     type,
     uri,
     localUri: uri ? _local(uri) : '',
-    thumb: it.thumbnail_url ? _resolveUrl(it.thumbnail_url) : '',
+    // [viewers 2026-10-20] sem miniatura no servidor → blurhash (meta) vira data: URI 32×32.
+    thumb: it.thumbnail_url ? _resolveUrl(it.thumbnail_url) : (uri ? _blurThumb(it) : ''),
     text,
     caption,
     bg: (type === 'text' || type === 'voice') ? textStatusSolid(bgRaw) : '#000000',
@@ -637,31 +647,50 @@ export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, has
   const on = (name, fn) => sess.subs.push(m.addListener(name, (e) => { if (same(e)) { try { fn(e); } catch {} } }));
 
   // Lista "Visualizações" (+ contagem real: pelo perfil os itens vêm sem views).
+  // [viewers 2026-10-20] nível WhatsApp: cache por status (services/statusViewersCache)
+  // pinta NA HORA e atualiza por trás; sem cache = esqueleto (linhas vazias com o
+  // círculo cinza do avatar, na quantidade do contador) em vez do spinner; prazo
+  // 8 s + 1 nova tentativa e, em QUALQUER desfecho, a folha sai do "carregando"
+  // (antes uma busca silenciosa que falhava deixava o spinner girando p/ sempre).
+  const _rowsOf = (viewers) => viewers.map(v => {
+    const email = String(v.email || v.viewer_email || '');
+    return {
+      email,
+      name: String(v.name || email.split('@')[0] || ''),
+      avatar: _avatarFor(email, v.avatar_url || v.avatar),
+      time: _viewedAt(v.viewed_at),
+      reaction: _reactionKind(v.reaction_emoji),
+      emoji: String(v.reaction_emoji || ''), // [2026-10-17 status-reacoes] apiVersion >= 4 desenha o emoji real
+    };
+  });
+  const _skeleton = (id) => {
+    let n = 0;
+    try { const it = raw.get(String(id)); n = Math.max(Number(it?.views) || 0, Number(it?.view_count) || 0, Number(it?.views_count) || 0); } catch {}
+    n = Math.max(1, Math.min(8, n || 3));
+    return Array.from({ length: n }, () => ({ email: '', name: '', avatar: '', time: '', reaction: '', emoji: '' }));
+  };
+  const _apply = (id, e) => {
+    if (_session !== sess || !e) return;
+    m.setViewers(id, _rowsOf(e.viewers), false);
+    const n = Number(e.count ?? e.viewers.length);
+    if (Number.isFinite(n) && n > 0) m.updateItem(id, { viewsCount: n });
+  };
   const viewersLoaded = new Set();
-  const loadViewers = async (id, showLoading) => {
-    if (showLoading) m.setViewers(id, [], true);
-    try {
-      const r = await api.statusViewers(id);
-      if (_session !== sess) return;
-      const d = r?.data || {};
-      const viewers = Array.isArray(d.viewers) ? d.viewers : (Array.isArray(d) ? d : []);
-      const rows = viewers.map(v => {
-        const email = String(v.email || '');
-        return {
-          email,
-          name: String(v.name || email.split('@')[0] || ''),
-          avatar: _avatarFor(email, v.avatar_url || v.avatar),
-          time: _viewedAt(v.viewed_at),
-          reaction: _reactionKind(v.reaction_emoji),
-          emoji: String(v.reaction_emoji || ''), // [2026-10-17 status-reacoes] apiVersion >= 4 desenha o emoji real
-        };
-      });
+  const loadViewers = async (id, opening) => {
+    const cached = getCachedStatusViewers(id);
+    if (cached) {
+      // Cache na hora (também alimenta os rostos da pílula do próprio status).
+      if (opening || !viewersLoaded.has(id)) _apply(id, cached);
+    } else if (opening) {
+      m.setViewers(id, _skeleton(id), true);
+    }
+    const e = await fetchStatusViewers(id);
+    if (_session !== sess) return;
+    if (e) {
       viewersLoaded.add(id);
-      m.setViewers(id, rows, false);
-      const n = Number(d.count ?? d.total ?? rows.length);
-      if (Number.isFinite(n) && n > 0) m.updateItem(id, { viewsCount: n });
-    } catch {
-      if (showLoading && _session === sess) m.setViewers(id, [], false);
+      _apply(id, e);
+    } else if (opening && !cached) {
+      m.setViewers(id, [], false); // falhou 2× → estado vazio, nunca spinner eterno
     }
   };
 
@@ -669,6 +698,7 @@ export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, has
     const it = raw.get(String(e.id));
     if (it) it.viewed = true;
     if (e.isSelf) {
+      // [viewers 2026-10-20] pré-busca ao exibir o próprio status (cache pinta já).
       if (!viewersLoaded.has(String(e.id))) loadViewers(String(e.id), false);
       return;
     }
@@ -717,12 +747,11 @@ export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, has
     }
   });
   on('onOpenViewers', (e) => {
-    const id = String(e.id);
-    // Já carregada ao exibir o item → o nativo mostra do cache; recarrega quieto.
-    loadViewers(id, !viewersLoaded.has(id));
+    // [viewers 2026-10-20] toque no contador: cache/esqueleto na hora + atualiza por trás.
+    loadViewers(String(e.id), true);
   });
   on('onViewerPress', (e) => {
-    if (!cb.onViewerPress) return;
+    if (!cb.onViewerPress || !e?.email) return; // [viewers 2026-10-20] linha-esqueleto não navega
     m.close();
     setTimeout(() => { try { cb.onViewerPress(e.email); } catch {} }, 250);
   });

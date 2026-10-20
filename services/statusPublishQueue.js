@@ -256,6 +256,12 @@ async function _process(job) {
         job.uploadedUrls = urls;
         _persist();
       }
+      // [viewers 2026-10-20] blurhash da mídia (expo-image nativo, ≤2,5 s, 1×) →
+      // meta.blurhash: o visualizador pinta a miniatura enquanto a mídia baixa.
+      if (job.blurhash === undefined && Platform.OS !== 'web') {
+        job.blurhash = await _blurhashOf(job.kind === 'video' ? job.thumbUri : job.fileUri);
+        _persist();
+      }
       job.status = 'publishing';
       job.progress = 0.92;
       _emit();
@@ -263,7 +269,7 @@ async function _process(job) {
       const urls = job.uploadedUrls;
       const startAt = job.publishedCount || 0;
       for (let i = startAt; i < urls.length; i++) {
-        const meta = i === 0 ? job.meta : { privacy: job.meta?.privacy, except_emails: job.meta?.except_emails };
+        const meta = i === 0 ? (job.blurhash ? { ...job.meta, blurhash: job.blurhash } : job.meta) : { privacy: job.meta?.privacy, except_emails: job.meta?.except_emails };
         const r = await api.statusPublish(urls[i], type, '#000000', i === 0 ? job.music : null, meta);
         if (!r?.success) throw Object.assign(new Error(r?.message || 'publish failed'), { fatal: _isFatal(r) });
         job.publishedCount = i + 1;
@@ -274,6 +280,20 @@ async function _process(job) {
     job.progress = 1;
     _emit();
     for (const fn of Array.from(_doneSubs)) { try { fn(_snap(job)); } catch {} }
+    // [viewers 2026-10-20] o arquivo que EU publiquei vira o cache local da URL
+    // enviada → abrir o próprio status é instantâneo (sem baixar de novo). Foto
+    // ou vídeo de 1 parte (o fatiado tem N URLs ≠ arquivo local).
+    if (Platform.OS !== 'web' && job.kind !== 'text' && Array.isArray(job.uploadedUrls) && job.uploadedUrls.length === 1 && job.fileUri) {
+      try {
+        const FS = _FS();
+        if (FS?.cacheDirectory) {
+          const ext = (String(job.fileName || '').split('.').pop() || (job.kind === 'video' ? 'mp4' : 'jpg')).replace(/[^a-z0-9]/gi, '').slice(0, 5) || 'jpg';
+          const dest = `${FS.cacheDirectory}chatyy_status_own_${String(job.id).replace(/[^a-z0-9_-]/gi, '')}.${ext}`;
+          await FS.copyAsync({ from: job.fileUri, to: dest });
+          await require('./mediaCache').finishExternalDownload(job.uploadedUrls[0], dest, { noStore: true });
+        }
+      } catch {}
+    }
     try { const bus = require('../components/statusRefreshBus'); (bus?.default || bus)?.emit?.('refresh'); } catch {}
     await _unstage(job);
     // Some da fila depois que o anel fechar (o strip anima até 100%).
@@ -291,6 +311,20 @@ async function _process(job) {
     _emit();
     _persist();
   }
+}
+
+async function _blurhashOf(uri) {
+  if (!uri) return null;
+  try {
+    const EI = require('expo-image');
+    const Img = EI?.Image || EI?.default?.Image;
+    if (!Img || typeof Img.generateBlurhashAsync !== 'function') return null;
+    const h = await Promise.race([
+      Img.generateBlurhashAsync(String(uri), [4, 3]),
+      new Promise(res => setTimeout(() => res(null), 2500)),
+    ]);
+    return (typeof h === 'string' && h.length >= 6 && h.length <= 100) ? h : null;
+  } catch { return null; }
 }
 
 function _isFatal(r) {

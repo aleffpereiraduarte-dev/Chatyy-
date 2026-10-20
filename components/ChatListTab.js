@@ -2883,14 +2883,19 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   // Fetch the viewers whenever the sheet target changes.
   useEffect(() => {
     if (!statusViewersFor?.id) { setStatusViewersList([]); return; }
-    setStatusViewersLoading(true);
-    (async () => {
-      try {
-        const r = await api.apiCall('status_viewers', { status_id: statusViewersFor.id });
-        const list = r?.data?.viewers || r?.data || [];
-        setStatusViewersList(Array.isArray(list) ? list : []);
-      } catch {} finally { setStatusViewersLoading(false); }
-    })();
+    // [viewers 2026-10-20] cache por status na hora + atualiza por trás (sem spinner se já viu antes).
+    const _svc = require('../services/statusViewersCache');
+    const sid = statusViewersFor.id;
+    const cached = _svc.getCachedStatusViewers(sid);
+    setStatusViewersList(cached ? cached.viewers : []);
+    setStatusViewersLoading(!cached);
+    let alive = true;
+    _svc.fetchStatusViewers(sid).then((e) => {
+      if (!alive) return;
+      if (e) setStatusViewersList(e.viewers);
+      setStatusViewersLoading(false);
+    });
+    return () => { alive = false; };
   }, [statusViewersFor?.id]);
   const [statusViewIdx, setStatusViewIdx] = useState(0);
   const _viewedIds = useRef(new Set());

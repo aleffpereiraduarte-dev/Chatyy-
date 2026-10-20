@@ -1254,14 +1254,18 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   // every time a new view lands).
   const refreshViewersList = useCallback(async (statusId, { silent = false } = {}) => {
     if (!statusId) return;
+    // [viewers 2026-10-20] cache por status: pinta na hora, atualiza por trás.
+    const _svc = require('../services/statusViewersCache');
+    const _c = _svc.getCachedStatusViewers(statusId);
+    if (_c && String(viewersModalStatusIdRef.current) === String(statusId)) { setViewersList(_c.viewers); silent = true; }
     if (!silent) setViewersLoading(true);
     try {
-      const r = await statusViewers(statusId);
-      if (r.success && r.data?.viewers) {
+      const e = await _svc.fetchStatusViewers(statusId);
+      if (e && Array.isArray(e.viewers)) {
         // Guard against a stale response landing after the user switched to a
         // different status's sheet (race between two fetches).
         if (String(viewersModalStatusIdRef.current) === String(statusId)) {
-          setViewersList(r.data.viewers);
+          setViewersList(e.viewers);
         }
       }
     } catch (err) {
@@ -3374,12 +3378,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       const items = [];
       if (last?.id && myViewCount > 0) {
         items.push({ key: 'viewers', label: _viewCountLabel(t, myViewCount), onPress: async () => {
-          viewersModalStatusIdRef.current = last.id;
-          try {
-            const r = await statusViewers(last.id);
-            setViewersList(r?.data?.viewers || r?.viewers || []);
-            setViewersModal(true);
-          } catch {}
+          // [viewers 2026-10-20] abre JÁ (cache/esqueleto) e atualiza por trás — antes esperava a rede p/ abrir.
+          try { handleShowViewers(last.id); } catch {}
         } });
       }
       items.push({ key: 'archiveOpen', label: t?.('status.openArchive') || 'Abrir arquivo', onPress: openArchiveSheet });
@@ -3397,12 +3397,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     const buttons = [];
     if (last?.id && myViewCount > 0) {
       buttons.push({ text: _viewCountLabel(t, myViewCount), onPress: async () => {
-        viewersModalStatusIdRef.current = last.id;
-        try {
-          const r = await statusViewers(last.id);
-          setViewersList(r?.data?.viewers || r?.viewers || []);
-          setViewersModal(true);
-        } catch {}
+        // [viewers 2026-10-20] abre JÁ (cache/esqueleto) e atualiza por trás — antes esperava a rede p/ abrir.
+        try { handleShowViewers(last.id); } catch {}
       } });
     }
     buttons.push({ text: t?.('status.openArchive') || 'Abrir arquivo', onPress: openArchiveSheet });
@@ -3725,7 +3721,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             </View>
           </View>
 
-          {viewersLoading ? skeleton : sorted.length === 0 ? empty : (
+          {viewersLoading && sorted.length === 0 ? skeleton : sorted.length === 0 ? empty : (
             <FlatList
               data={sorted}
               keyExtractor={(v, i) => String(v?.viewer_email || v?.email || i)}

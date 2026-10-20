@@ -2038,6 +2038,7 @@ const POST_READ_DEDUP = new Set([
   'chat_scheduled_list', 'chat_blocked_list', 'chat_bot_list',
   'chat_check_blocked', 'common_contacts',
   'chat_search_advanced', // [2026-10-14 busca-global] leitura pura: não invalida chat_list nem entra na fila offline
+  'status_viewers', // [viewers 2026-10-20] leitura pura: dedupe em voo + failover edge→irmã/US; não derruba status_list
 ]);
 function _isReadablePost(action) {
   return POST_READ_SWR.has(action) || POST_READ_DEDUP.has(action);
@@ -2595,6 +2596,7 @@ const _IDEMPOTENT_RETRY_POST = new Set([
   'check_auth', 'chat_read_receipt', 'chat_typing_set', 'chat_delivery_ack',
   'chat_unread_count', 'chat_starred_list', 'chat_pinned_list',
   'chat_user_privacy', 'get_settings', 'profile_get', 'get_profile',
+  'status_viewers', // [viewers 2026-10-20]
 ]);
 
 // ─── [perf 2026-10-17 retry-storm] Breaker de leituras com backoff exponencial ───
@@ -5075,6 +5077,7 @@ const _AVATAR_INGEST_ACTIONS = new Set([
   'search_users', 'follow_suggestions', 'mutual_followers', 'status_list', 'feed_list',
   'feed_following', 'get_contacts', 'contacts_list', 'chat_contacts', 'chat_users',
   'chat_search_users', 'chat_discover_contacts', 'chat_call_history',
+  'status_viewers', // [viewers 2026-10-20] avatar_version por quem viu
 ]);
 function _ingestAvatarFrom(action, r) {
   if (!r || typeof r !== 'object' || r.success === false || !_AVATAR_INGEST_ACTIONS.has(action)) return;
@@ -7917,7 +7920,7 @@ export async function statusPublish(content, type = 'text', bgColor = '#A582F7',
   // separated above) so the backend persists them. Skip ones already
   // sent above or that don't belong in status_create.
   if (extraMeta && typeof extraMeta === 'object') {
-    for (const k of ['caption_locale', 'caption_translations', 'privacy', 'filter', 'stickers', 'text_overlays', 'draw_paths', 'font_style', 'text_align', 'is_boomerang', 'mentions']) {
+    for (const k of ['caption_locale', 'caption_translations', 'privacy', 'filter', 'stickers', 'text_overlays', 'draw_paths', 'font_style', 'text_align', 'is_boomerang', 'mentions', 'blurhash']) { // [viewers 2026-10-20] blurhash
       if (extraMeta[k] !== undefined && params[k] === undefined) params[k] = extraMeta[k];
     }
     // cross_post_feed — server creates a feed_posts row with same media when true.

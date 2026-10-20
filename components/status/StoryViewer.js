@@ -759,6 +759,7 @@ const StoryMedia = React.memo(function StoryMedia({
             <_ExpoImage
               key={_imgKey}
               source={{ uri: mediaUrl }}
+              placeholder={(cur?.meta?.blurhash || cur?.blurhash) ? { blurhash: String(cur?.meta?.blurhash || cur?.blurhash) } : undefined /* [viewers 2026-10-20] */}
               style={{ width: '100%', height: '100%' }}
               contentFit="contain"
               cachePolicy={_imgCachePolicy}
@@ -1963,10 +1964,10 @@ function StoryViewerJS({
     let alive = true;
     (async () => {
       try {
-        const r = await api.statusViewers(sid);
-        const d = r && (r.data || r);
-        const list = Array.isArray(d) ? d : (d?.viewers || d?.items || []);
-        const n = Number(d?.count ?? d?.total ?? d?.views ?? (Array.isArray(list) ? list.length : NaN));
+        // [viewers 2026-10-20] mesma busca/cache da folha "Visualizações" (pré-busca ao exibir).
+        const d = await require('../../services/statusViewersCache').fetchStatusViewers(sid);
+        const list = d?.viewers || [];
+        const n = Number(d ? (d.count ?? list.length) : NaN);
         if (alive && Number.isFinite(n)) setViewsById((m) => ({ ...m, [sid]: n }));
       } catch {}
     })();
@@ -3394,15 +3395,24 @@ function StoryViewerJS({
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <IconEye size={18} color={isDark ? '#fff' : '#111'} />
                 <Text style={{ fontSize: 18, fontWeight: '800', color: isDark ? '#fff' : '#111', flex: 1 }}>
-                  {t?.('status.seenBy') || 'Visualizações'} · {viewersList.length}
+                  {t?.('status.seenBy') || 'Visualizações'} · {viewersLoading && viewersList.length === 0 ? Math.max(0, Number(cur.views) || 0) : viewersList.length}
                 </Text>
                 <TouchableOpacity onPress={() => onCloseViewers?.()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                   <IconX size={20} color={isDark ? '#999' : '#666'} />
                 </TouchableOpacity>
               </View>
-              {viewersLoading ? (
-                <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color={isDark ? '#fff' : '#111111'} />
+              {viewersLoading && viewersList.length === 0 ? (
+                // [viewers 2026-10-20] esqueleto (avatar + 2 barras) no lugar do spinner
+                <View style={{ paddingVertical: 4 }}>
+                  {Array.from({ length: Math.max(1, Math.min(6, Number(cur.views) || 3)) }).map((_, i) => (
+                    <View key={`sk${i}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 12 }}>
+                      <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: isDark ? '#262626' : '#ececec' }} />
+                      <View style={{ flex: 1, gap: 6 }}>
+                        <View style={{ width: '46%', height: 12, borderRadius: 6, backgroundColor: isDark ? '#262626' : '#ececec' }} />
+                        <View style={{ width: '28%', height: 10, borderRadius: 5, backgroundColor: isDark ? '#1f1f1f' : '#f2f2f2' }} />
+                      </View>
+                    </View>
+                  ))}
                 </View>
               ) : viewersList.length === 0 ? (
                 <View style={{ paddingVertical: 32, alignItems: 'center' }}>
