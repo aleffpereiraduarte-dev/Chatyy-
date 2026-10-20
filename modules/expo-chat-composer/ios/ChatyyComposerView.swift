@@ -1331,7 +1331,17 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       if !final { return }
       panelReturnPending = false
       if action == "cancel" && byUser && attachPanel && attachInstant {
-        DispatchQueue.main.async { [weak self] in self?.showAttachPanelInstant() }
+        // [2026-10-20 kb-glued] sem retrato (padrão): painel volta com a animação
+        // do teclado e o composer sobe grudado; com retrato (freeze opt-in) = sem animação.
+        DispatchQueue.main.async { [weak self] in
+          guard let self = self else { return }
+          if self.panelSnapshot == nil {
+            guard self.window != nil, !self.panelActive, !self.voice.isActive, !self.disabled, self.attachPanel else { return }
+            self.showAttachPanel()
+          } else {
+            self.showAttachPanelInstant()
+          }
+        }
       } else {
         removePanelSnapshot(animated: true)
       }

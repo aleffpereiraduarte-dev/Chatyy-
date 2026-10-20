@@ -193,13 +193,18 @@ export function threadKbNoteComposerBlur() {
 // adiar o resign) · globalThis.__chatyy_attach_clamp = false (sem trava).
 const _attachFns = new Set();
 let _composerFocused = false;
+// [2026-10-20 kb-glued] Founder: "no WhatsApp a barrinha fica grudada no
+// teclado — sobe e desce junto, nunca fica parada no alto esperando". Hold,
+// clamp e freeze faziam exatamente o oposto → agora DESLIGADOS (opt-in === true).
+// O composer segue o teclado/inputView quadro a quadro pelo KC (o valor muda
+// dentro do bloco de animação do teclado do UIKit = mesma curva/duração).
 function _attachHoldOn() {
-  try { if (globalThis.__chatyy_attach_hold === false) return false; } catch {}
-  return Platform.OS === 'ios';
+  try { if (globalThis.__chatyy_attach_hold === true) return Platform.OS === 'ios'; } catch {}
+  return false;
 }
 function _attachClampOn() {
-  try { if (globalThis.__chatyy_attach_clamp === false) return false; } catch {}
-  return Platform.OS === 'ios';
+  try { if (globalThis.__chatyy_attach_clamp === true) return Platform.OS === 'ios'; } catch {}
+  return false;
 }
 /** "+" do composer (folha nativa abrindo agora). hadKeyboard = teclado do composer estava aberto. */
 export function threadKbAttachBegin(hadKeyboard) {
@@ -218,8 +223,9 @@ export function threadKbAttachEnd(immediate) {
 // sem pulo; senão desce animado junto com a folha saindo.
 // Kill switch OTA: globalThis.__chatyy_attach_freeze = false.
 export function threadKbAttachFreezeOn() {
-  try { if (globalThis.__chatyy_attach_freeze === false) return false; } catch {}
-  return Platform.OS === 'ios';
+  // [2026-10-20 kb-glued] opt-in (=== true): composer grudado no teclado é o padrão.
+  try { if (globalThis.__chatyy_attach_freeze === true) return Platform.OS === 'ios'; } catch {}
+  return false;
 }
 /** Congela a conversa na altura atual do teclado/painel (color = painel falso). */
 export function threadKbAttachFreeze(color) {

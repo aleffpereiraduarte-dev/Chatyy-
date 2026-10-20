@@ -23,7 +23,7 @@ import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo
 import { Platform, processColor } from 'react-native';
 import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
 import { threadKbNoteComposerBlur, threadKbNoteComposerFocus, threadKbAttachFreezeOn } from '../../utils/threadKeyboard'; // [2026-10-19 kb-heal] · [2026-10-19 attach-hold]
-import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi, androidAttachInstantOn, attachLegacyNoneActive, attachHoldOn, attachOverKeyboardOn, attachInputPanelOn, androidAttachPanelOn } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
+import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi, androidAttachInstantOn, attachLegacyNoneActive, attachHoldOn, attachOverKeyboardOn, attachInputPanelOn, androidAttachPanelOn, attachInWindowOn } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
 
 let _failed = false;
 
@@ -73,7 +73,10 @@ function _attachInstantProps() {
     // [2026-10-19 attach-over-kb] api 9 + folha api 6: teclado fica sob a folha.
     // [2026-10-20 attach-freeze] api >= 9 também segura o teclado/painel até a
     // folha ser apresentada (o JS congela a conversa antes) — vale no 744.
-    if (attachOverKeyboardOn() || (api >= 9 && threadKbAttachFreezeOn())) o.attachKeepKeyboard = true;
+    // [2026-10-20 kb-glued] só segura o painel quando a folha entra NA janela
+    // dele (api 12/8, nada se mexe) ou por opt-in; senão o painel/teclado desce
+    // animado e o composer desce grudado (sem stash instantâneo do present).
+    if (attachOverKeyboardOn() || attachInWindowOn() || (api >= 9 && threadKbAttachFreezeOn())) o.attachKeepKeyboard = true;
     // [2026-10-20 attach-inputview] api 10: painel no lugar do teclado.
     if (attachInputPanelOn()) o.attachPanel = true;
   }

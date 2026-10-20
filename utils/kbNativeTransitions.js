@@ -75,8 +75,9 @@ export function attachLegacyNoneActive() {
 // NÃO solta o teclado sozinho; o JS arma o hold da conversa e chama
 // releaseForAttach() (rede nativa 350 ms). Kill: __chatyy_attach_hold = false.
 export function attachHoldOn() {
-  try { if (globalThis.__chatyy_attach_hold === false) return false; } catch {}
-  return true;
+  // [2026-10-20 kb-glued] opt-in: o teclado desce na hora e o composer desce grudado.
+  try { if (globalThis.__chatyy_attach_hold === true) return true; } catch {}
+  return false;
 }
 
 /** apiVersion da folha nativa expo-chat-attach (0 = sem módulo). */
