@@ -3332,9 +3332,60 @@ async function _probeCheckAuthOrigin(token, timeoutMs = 8000) {
     let j = null;
     try { j = await res.json(); } catch {}
     const e = (j && (j.error || (j.data && j.data.error) || j.message)) || '';
-    return { status: res.status, explicit: e === 'logged_out' || e === 'revoked' };
+    // [conectando 2026-10-20] token_unknown = a ORIGEM (US: PG primário + arquivo)
+    // respondeu e o bearer não existe em lugar nenhum → tão definitivo quanto revogado.
+    return { status: res.status, explicit: e === 'logged_out' || e === 'revoked' || e === 'token_unknown', unknown: e === 'token_unknown' };
   } catch { return { status: 0, explicit: false }; } finally { clearTimeout(to); }
 }
+// [conectando 2026-10-20] Bearer DESCONHECIDO pelo servidor, visto pelo WS.
+// Caso real (Carlos, Europa, 20/10 21:57Z): app reinstalado, o Keychain devolveu
+// um bearer que não existe no PG nem em arquivo em host nenhum → todo HTTP 401
+// (TOKEN_REJECT) e o hub respondia auth_error genérico. O WS só fazia backoff
+// (30 s→300 s, para sempre) e o caminho HTTP de "bearer morto" não disparava →
+// "Conectando…" eterno até ele tocar em Sair. Agora o auth_error do WS, depois
+// do refresh falhar, confirma na ORIGEM: só 401 COM marcador (logged_out/revoked/
+// token_unknown — este último novo no check_auth do US) = morto. Só sem caminho
+// silencioso (sem refresh_token, sem senha guardada) e fora de ligação. Morto →
+// motivo 'dead_bearer' → AuthContext vai direto ao login (sem apagar dados).
+// Kill: o mesmo do caminho HTTP (dead_bearer_logout=false).
+export async function confirmDeadBearer(src = 'ws') {
+  try {
+    if (_deadBearerLogoutDisabled()) return false;
+    if (!authToken || refreshToken || (savedCredentials && savedCredentials.password)) return false;
+    if (_authFailureSignaled) return false;
+    try { if (globalThis.__chatyyCallActive || globalThis.__chatyyNativeCallActive) return false; } catch {}
+    const fp = _tokenFingerprint();
+    if (!fp) return false;
+    if (_deadProbe.fp !== fp) _deadProbe = { fp, hits: 0, lastAt: 0, firstAt: 0 };
+    const now = Date.now();
+    if (now - _deadProbe.lastAt < 15000) return false;
+    _deadProbe.lastAt = now;
+    const pr = await _probeCheckAuthOrigin(authToken);
+    if (_tokenFingerprint() !== fp) return false; // login/refresh no meio
+    if (pr.status >= 200 && pr.status < 300) {
+      _deadProbe = { fp: '', hits: 0, lastAt: 0, firstAt: 0 };
+      _deadRefreshFp = '';
+      try { _noteAuthOk(); } catch {}
+      return false;
+    }
+    if (pr.status !== 401) return false; // 0/5xx/timeout = inconclusivo
+    // Só com MARCADOR da origem (logged_out/revoked/token_unknown). 401 genérico
+    // (ex.: PG do US fora → PHP cai no 401 sem marcador) NUNCA desloga por aqui.
+    _deadProbe.hits += 1;
+    if (!pr.explicit) return false;
+    if (_authFailureSignaled) return false;
+    _authFailureSignaled = true;
+    try { recordLogoutAttempt('dead_bearer_no_recovery', { source: src + (pr.unknown ? '_unknown' : '') }); } catch {}
+    try { require('./crashReporter').reportStep('dead_bearer_logout', `src=${src} probes=${_deadProbe.hits} unk=${pr.unknown ? 1 : 0}`); } catch {}
+    try {
+      globalThis.__chatyy_authFailure = Date.now();
+      globalThis.__chatyy_authFailureReason = 'dead_bearer';
+      if (globalThis.dispatchEvent) globalThis.dispatchEvent(new Event('chatyy:authFailure'));
+    } catch {}
+    return true;
+  } catch { return false; }
+}
+
 function _tokenFingerprint() {
   const t = typeof authToken === 'string' ? authToken : '';
   if (!t) return '';

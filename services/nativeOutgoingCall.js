@@ -231,6 +231,8 @@ function _finish(s, reason) {
   s.unsubs = [];
   _sessions.delete(s.callId);
   _setCallActiveFlags(false, s.callId);
+  // [conectando 2026-10-20] fim da ligação → WS sondado/reaberto + filas acordadas
+  try { require('./sendWorker').onCallEnded?.('call_end_native'); } catch {}
 
   // [2026-10-10 call-states] duration from first media (fallback: answer).
   const _t0 = s.mediaAt || s.connectedAt;

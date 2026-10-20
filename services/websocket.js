@@ -2175,6 +2175,32 @@ class MailWebSocket {
   // storming. The stop is only cleared by an explicit re-auth path:
   // reset(), resurrect(), or manualReconnect() — i.e. on the next foreground
   // with a fresh login or a manual reconnect call.
+  // [conectando 2026-10-20] auth_error + refresh sem saída → sonda a origem já e
+  // de novo em ~16 s (a origem precisa responder 401 COM marcador). Morto
+  // → para o socket (needs_relogin) e o AuthContext leva ao login.
+  _confirmDeadBearerSoon(src) {
+    try { if (globalThis.__chatyy_ws_dead_bearer === false) return; } catch {}
+    if (this._deadConfirmTimer) return;
+    const apiMod = require('./api');
+    if (typeof apiMod.confirmDeadBearer !== 'function') return;
+    const attempt = (n) => {
+      apiMod.confirmDeadBearer(src).then((dead) => {
+        if (dead) {
+          this._deadConfirmTimer = null;
+          try { this._cleanup(); } catch {}
+          this._authReloginStopped = true;
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+          this._emit('connection', { status: 'needs_relogin', reason: 'dead_bearer' });
+          return;
+        }
+        if (n >= 2 || this.authenticated || this.destroyed) { this._deadConfirmTimer = null; return; }
+        this._deadConfirmTimer = setTimeout(() => attempt(n + 1), 16000);
+      }).catch(() => { this._deadConfirmTimer = null; });
+    };
+    this._deadConfirmTimer = setTimeout(() => attempt(1), 0);
+  }
+
   _enterReloginStopped(reason) {
     this._authReloginStopped = true;
     clearTimeout(this.reconnectTimer);
@@ -2564,6 +2590,9 @@ class MailWebSocket {
                       // Mint falhou / refresh_token revogado → mantém o backoff lento.
                       this._authErrorBackoff = Math.min((this._authErrorBackoff || 30000) * 1.5, 300000);
                       setTimeout(() => { if (!this.destroyed) this.connect(this.token); }, this._authErrorBackoff);
+                      // [conectando 2026-10-20] sem caminho silencioso: confirma na origem
+                      // se o bearer existe; morto → login (não "Conectando…" eterno).
+                      this._confirmDeadBearerSoon('ws_auth_error');
                     }).catch(() => {
                       if (this.destroyed) return;
                       this._authErrorBackoff = Math.min((this._authErrorBackoff || 30000) * 1.5, 300000);
@@ -2574,6 +2603,7 @@ class MailWebSocket {
                   try { console.warn('[WS] refreshAuthToken returned false — bearer revoked, slowing reconnect'); } catch {}
                   this._authErrorBackoff = Math.min((this._authErrorBackoff || 30000) * 1.5, 300000);
                   setTimeout(() => { if (!this.destroyed) this.connect(this.token); }, this._authErrorBackoff);
+                  this._confirmDeadBearerSoon('ws_auth_error'); // [conectando 2026-10-20]
                   return;
                 }
                 // Refresh "succeeded" (handed us a token). But landing in this

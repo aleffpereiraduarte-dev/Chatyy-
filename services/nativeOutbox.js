@@ -25,7 +25,7 @@
 //
 // Kill switch (OTA): globalThis.__chatyy_native_outbox = false → tudo volta à
 // fila JS (os itens já entregues ao nativo continuam sendo enviados por ele).
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 
 const DEFAULT_ON = true;
 const ORIGIN = 'https://chatyy.com.br';
@@ -115,6 +115,7 @@ function _isE2E(p) {
 export function canTakeText(p) {
   if (!p || !nativeOutboxEnabled()) return false;
   if (!p.client_message_id || p.conversation_id == null) return false;
+  if (isNativeRescued(p.client_message_id)) return false; // [conectando 2026-10-20] o JS assumiu
   if ((p.type || 'text') !== 'text') return false;
   if (typeof p.content !== 'string' || !p.content.trim()) return false;
   if (_isE2E(p) || p.topic_id || p.file_url) return false;
@@ -200,8 +201,25 @@ async function _submit(item) {
   const cmi = String(item.cmi);
   _owned.set(cmi, { conv: String(item.conv), at: Date.now() });
   let st = '';
-  try { st = String(await m.outboxSubmit(a, JSON.stringify(item)) || ''); } catch { st = ''; }
+  // [conectando 2026-10-20] outboxSubmit é AsyncFunction (fila do módulo): se a
+  // fila nativa travar, o await nunca voltava e o envio ficava pendurado sem
+  // timer nenhum (o _wait só começa a valer depois do submit). Teto de 3 s →
+  // '' = "não entrou" → o chamador segue o caminho JS (mesmo cmi; o servidor
+  // deduplica se o nativo acordar depois e mandar também).
+  try {
+    const _subP = Promise.resolve(m.outboxSubmit(a, JSON.stringify(item)));
+    const _to = new Promise((r) => setTimeout(() => r('__submit_timeout'), SUBMIT_TIMEOUT_MS));
+    st = String((await Promise.race([_subP, _to])) || '');
+    if (st === '__submit_timeout') {
+      st = '';
+      _stallBeacon('submit_timeout', cmi, { age: SUBMIT_TIMEOUT_MS });
+      _markRescued(cmi);
+      // se o nativo aceitar depois, tira de lá (o JS já é o dono)
+      _subP.then((late) => { if (late) { try { m.outboxCancel(a, cmi); } catch {} } }).catch(() => {});
+    }
+  } catch { st = ''; }
   if (!st) { _owned.delete(cmi); return ''; }
+  if (item.kind === 'text' && st !== 'sent') _watchAdd(cmi, item.conv, a);
   if (st === 'new') _stats.submitted++;
   // já existia: 'failed' → o usuário pediu de novo (requeue) → volta à fila nativa
   if (st === 'failed') { try { m.outboxRetry(a, cmi); } catch {} }
@@ -219,7 +237,7 @@ function _wait(cmi, ms) {
     let tm = null;
     const fn = (ev) => {
       if (done) return;
-      if (ev.state !== 'sent' && ev.state !== 'failed') return;
+      if (ev.state !== 'sent' && ev.state !== 'failed' && ev.state !== 'rescued') return;
       done = true;
       if (tm) clearTimeout(tm);
       const set = _waiters.get(cmi); if (set) { set.delete(fn); if (!set.size) _waiters.delete(cmi); }
@@ -240,7 +258,7 @@ function _wait(cmi, ms) {
 }
 
 function _resultFromEvent(ev) {
-  if (!ev) return null;
+  if (!ev || ev.state === 'rescued') return null;
   if (ev.state === 'sent') {
     let row = null;
     try { row = JSON.parse(ev.server || '{}'); } catch { row = null; }
@@ -292,6 +310,7 @@ export async function sendTextNow(payload, waitMs = 8000) {
   const st = await _submit({ cmi, conv: String(body.conversation_id), kind: 'text', body, frame: JSON.stringify(_textFrame(body)) });
   if (!st) { _cancelWait(cmi); _stats.fallbacks++; return undefined; }
   const ev = await waiting;
+  if (ev && ev.state === 'rescued') return undefined; // vigia: nativo parado → caminho JS
   const r = _resultFromEvent(ev);
   if (r) {
     if (r.success) _ackLater(cmi); else _owned.delete(cmi);
@@ -308,6 +327,7 @@ export async function sendRowAndWait(row, metaFields = null) {
   const p = (row && row.payload) || {};
   const cmi = String(row.client_message_id || p.client_message_id || '');
   if (!cmi) return null;
+  if (isNativeRescued(cmi)) return null; // [conectando 2026-10-20] o JS assumiu este cmi
   const pp = { ...p, client_message_id: cmi, conversation_id: p.conversation_id ?? row.conversation_id };
   let item;
   if ((pp.type || 'text') === 'text') {
@@ -323,6 +343,7 @@ export async function sendRowAndWait(row, metaFields = null) {
   const st = await _submit(item);
   if (!st) { _cancelWait(cmi); _stats.fallbacks++; return null; }
   const ev = await waiting;
+  if (ev && ev.state === 'rescued') return null; // vigia: nativo parado → caminho JS (mesmo cmi)
   if (!ev) return { success: false, _native_timeout: true, message: 'native_timeout', error: 'native_timeout' };
   const r = _resultFromEvent(ev);
   if (r && r.success) _ackLater(cmi); else _owned.delete(cmi);
@@ -382,6 +403,146 @@ function _ackLater(cmi) {
   setTimeout(() => { try { m.outboxAck(a, String(cmi)); } catch {} }, 0);
 }
 
+// ─── [conectando 2026-10-20] vigia de texto parado no nativo ────────────────
+// Caso real (founder, iPhone b752, 20/10 22:06:56Z, logo após a ligação com o
+// Carlos): a mensagem entrou na fila nativa e o nativo NÃO mandou nada (nem
+// frame no WS — o socket nativo estava autenticado no hub — nem HTTP) por 56 s;
+// a fila JS esperava o resultado por até 10 min (ROW_WAIT_MS) segurando a
+// conversa. Só saiu quando o app foi fechado e aberto (processo novo → 36 ms).
+// Agora, com o app em 1º plano: nativo calado por STALL_KICK_MS → outboxKick;
+// calado por STALL_RESCUE_MS (ou item com ≥ STALL_MAX_AGE_MS e o WS JS
+// autenticado) → o JS assume: tira o item do nativo (outboxCancel), libera quem
+// espera (estado 'rescued') e a linha volta à fila JS (mesmo client_message_id —
+// hub/PHP deduplicam se o nativo ainda mandar). Beacon 'outbox_native_stall' com
+// o retrato do nativo (outboxStats/estado do item/rede) p/ achar a causa nativa.
+// Kill: globalThis.__chatyy_native_stall_rescue = false.
+const SUBMIT_TIMEOUT_MS = 3000;
+const STALL_KICK_MS = 6000;
+const STALL_RESCUE_MS = 12000;
+const STALL_MAX_AGE_MS = 25000;
+const RESCUED_TTL_MS = 10 * 60 * 1000;
+const _watch = new Map(); // cmi → { at, last, kicked, conv, acct, st }
+const _rescued = new Map(); // cmi → ts
+let _watchTimer = null;
+let _watchAppSub = null;
+let _stallBeacons = 0;
+
+function _stallOff() {
+  try { return globalThis.__chatyy_native_stall_rescue === false; } catch { return false; }
+}
+export function isNativeRescued(cmi) {
+  if (cmi == null) return false;
+  const k = String(cmi);
+  const t = _rescued.get(k);
+  if (!t) return false;
+  if (Date.now() - t > RESCUED_TTL_MS) { _rescued.delete(k); return false; }
+  return true;
+}
+function _markRescued(cmi) {
+  _rescued.set(String(cmi), Date.now());
+  if (_rescued.size > 200) _rescued.delete(_rescued.keys().next().value);
+}
+function _watchAdd(cmi, conv, acct) {
+  if (_stallOff()) return;
+  const now = Date.now();
+  _watch.set(String(cmi), { at: now, last: now, kicked: false, conv: String(conv), acct, st: 'queued' });
+  _armWatch();
+}
+function _watchTouch(cmi, st) {
+  const w = _watch.get(String(cmi));
+  if (w) { w.last = Date.now(); if (st) w.st = st; }
+}
+function _watchDone(cmi) { _watch.delete(String(cmi)); }
+function _armWatch() {
+  if (!_watchAppSub) {
+    try {
+      // Volta ao 1º plano: o nativo merece uma chance limpa (ele também acorda
+      // no foreground) — o relógio do vigia recomeça a contar daqui.
+      _watchAppSub = AppState.addEventListener?.('change', (s) => {
+        if (s !== 'active') return;
+        const now = Date.now();
+        for (const w of _watch.values()) { w.last = now; w.at = Math.max(w.at, now - STALL_MAX_AGE_MS + STALL_RESCUE_MS); w.kicked = false; }
+      }) || null;
+    } catch { _watchAppSub = null; }
+  }
+  if (_watchTimer || !_watch.size) return;
+  _watchTimer = setInterval(() => { _watchTick().catch(() => {}); }, 2000);
+}
+function _wsAuthed() {
+  try { const ws = require('./websocket').default; return !!(ws && ws.authenticated && !ws.destroyed); } catch { return false; }
+}
+async function _watchTick() {
+  if (!_watch.size || _stallOff()) {
+    if (_watchTimer) { clearInterval(_watchTimer); _watchTimer = null; }
+    return;
+  }
+  try { if (AppState.currentState && AppState.currentState !== 'active') return; } catch {} // 2º plano: o nativo é o dono (BGTask)
+  const m = _resolve();
+  const now = Date.now();
+  for (const [cmi, w] of Array.from(_watch.entries())) {
+    const idle = now - w.last;
+    const age = now - w.at;
+    if (!w.kicked && idle >= STALL_KICK_MS) {
+      w.kicked = true;
+      try { m?.outboxKick?.('js_stall'); } catch {}
+      continue;
+    }
+    if (w.kicked && (idle >= STALL_RESCUE_MS || (age >= STALL_MAX_AGE_MS && _wsAuthed()))) {
+      await _rescue(cmi, w, idle, age);
+    }
+  }
+}
+async function _rescue(cmi, w, idle, age) {
+  const m = _resolve();
+  // O nativo pode ter terminado e o evento se perdeu: confere a lista primeiro.
+  let it = null;
+  try {
+    const list = JSON.parse(String((await Promise.race([
+      Promise.resolve(m?.outboxList?.(w.acct)),
+      new Promise((r) => setTimeout(() => r('[]'), 1500)),
+    ])) || '[]'));
+    it = (list || []).find((x) => String(x.cmi) === cmi) || null;
+  } catch { it = null; }
+  if (!_watch.has(cmi)) return; // concluiu enquanto lia
+  if (it && (it.state === 'sent' || it.state === 'failed')) {
+    _watchDone(cmi);
+    _onEvent({ cmi: it.cmi, conv: it.conv, state: it.state, server: it.server, err: it.err, via: 'stall_reconcile' });
+    return;
+  }
+  _watchDone(cmi);
+  _markRescued(cmi);
+  _owned.delete(cmi);
+  _stallBeacon('rescue', cmi, { idle, age, it, st: w.st });
+  try { m?.outboxCancel?.(w.acct, cmi); } catch {}
+  const set = _waiters.get(cmi);
+  if (set && set.size) {
+    // sendRowAndWait (sendWorker) → null → caminho JS do próprio worker
+    for (const fn of Array.from(set)) { try { fn({ cmi, conv: w.conv, state: 'rescued' }); } catch {} }
+  } else {
+    // envio de 1º plano já devolveu "_deferred" (relógio): a linha JS está
+    // 'sending' possuída pelo nativo → volta à fila JS e o worker manda já.
+    try { await require('./messageOutbox').markFailed?.(cmi, 'native_stall', { kind: 'transient' }); } catch {}
+  }
+  try { require('./sendWorker').kick?.('native_stall'); } catch {}
+}
+function _stallBeacon(kind, cmi, x = {}) {
+  try {
+    if (_stallBeacons >= 6) return;
+    _stallBeacons++;
+    const m = _resolve();
+    let ns = null; let ts = null;
+    try { ns = m?.outboxStats?.() || null; } catch {}
+    try { ts = m?.getStats?.() || null; } catch {}
+    const pick = (o, ks) => (o ? ks.map((k) => `${k}=${o[k] != null ? o[k] : '-'}`).join(',') : '-');
+    const it = x.it || null;
+    const info = `k=${kind} idle=${Math.round(x.idle || 0)} age=${Math.round(x.age || 0)} st=${x.st || '-'}`
+      + ` nst=${it ? it.state : '-'} tries=${it ? (it.tries ?? '-') : '-'} err=${it && it.err ? String(it.err).slice(0, 40) : '-'}`
+      + ` ws=${_wsAuthed() ? 1 : 0} ns=[${pick(ns, ['busy', 'inflight', 'attempts', 'wsSends', 'wsTimeouts', 'httpSends', 'transient', 'offlineRetries', 'kicks'])}]`
+      + ` ts=[${pick(ts, ['netUp', 'netLost', 'netChanges'])}]`;
+    require('./crashReporter').reportStep('outbox_native_stall', info);
+  } catch {}
+}
+
 // ─── eventos do nativo ──────────────────────────────────────────────────────
 
 function _ensureSub() {
@@ -409,6 +570,7 @@ function _onEvent(ev) {
   const cmi = ev.cmi != null ? String(ev.cmi) : '';
   if (!cmi) return;
   const ow = _owned.get(cmi); if (ow) ow.at = Date.now(); // ainda vivo no nativo
+  if (st === 'sent' || st === 'failed') _watchDone(cmi); else _watchTouch(cmi, st);
   if (st === 'uploaded') { _mediaProgress(cmi, 100, 'commit', ev.conv); return; }
   // [2026-10-18 outbox-progress] Binário ≥ 3: bytes REAIS enviados pelo
   // uploader nativo (URLSession didSendBodyData / OkHttp RequestBody). 100% dos
@@ -590,6 +752,13 @@ export async function migratePending() {
   return n;
 }
 
+/** [conectando 2026-10-20] Acorda a fila nativa (fim de ligação, reconexão). */
+export function kickNative(reason = 'js') {
+  const m = _resolve();
+  if (!m) return false;
+  try { configureNativeOutbox(); m.outboxKick(String(reason || 'js')); return true; } catch { return false; }
+}
+
 /** Chamado no boot do sendWorker (depois do login). Idempotente. */
 export function bootNativeOutbox() {
   if (_booted || !nativeOutboxEnabled()) return;
@@ -602,6 +771,7 @@ export function bootNativeOutbox() {
 /** Logout / troca de conta: credenciais fora (a tabela some com o wipe do store). */
 export function forgetNativeOutbox() {
   _owned.clear(); _waiters.clear(); _mediaCtx.clear(); _cfgKey = ''; _booted = false;
+  _watch.clear(); _rescued.clear();
   const m = _resolve();
   try { m?.outboxForget?.(); } catch {}
 }
@@ -609,5 +779,5 @@ export function forgetNativeOutbox() {
 export default {
   nativeOutboxEnabled, nativeOutboxStats, isNativeOwned, configureNativeOutbox,
   canTakeText, canTakeMedia, sendTextNow, sendRowAndWait, handoffUpload,
-  reconcile, migratePending, bootNativeOutbox, forgetNativeOutbox,
+  reconcile, migratePending, bootNativeOutbox, forgetNativeOutbox, isNativeRescued, kickNative,
 };

@@ -139,6 +139,35 @@ export function kick(reason = 'kick') {
     .then(() => { _mediaQueue()?.kick?.()?.catch?.(() => {}); }) // [2026-10-07 send-media]
     .then(() => poke());
 }
+
+// [conectando 2026-10-20] Fim de ligação → reconexão ATIVA + flush da fila.
+// Caso real (founder, 20/10 22:06:48Z): Carlos desligou, o founder digitou em
+// ~8 s e a mensagem ficou no relógio 56 s (só saiu ao fechar e abrir o app). Na
+// ligação o socket nativo de chamada + LiveKit + CallKit mexem na sessão de
+// áudio/rede e a fila só acordava em reconexão/foreground/NetInfo — nenhum
+// desses dispara no fim da chamada com o app já em 1º plano. Agora o fim da
+// ligação: sonda o WS JS (reabre se half-open), acorda a fila nativa e a JS
+// (backoff zerado, órfãos 'sending' reassumidos) — já, +2,5 s e +8 s (o
+// teardown do LiveKit/CallKit leva ~1-5 s). Kill: __chatyy_call_end_flush=false.
+let _callEndTimers = [];
+let _callStateUnsub = null;
+export function onCallEnded(reason = 'call_end') {
+  try { if (globalThis.__chatyy_call_end_flush === false) return; } catch {}
+  const run = (tag, probe) => {
+    try {
+      const ws = require('./websocket').default;
+      ws?.ensureConnected?.(tag, { probe, urgent: true });
+    } catch {}
+    try { require('./nativeOutbox').kickNative?.(tag); } catch {}
+    try { kick(tag).catch?.(() => {}); } catch {}
+  };
+  for (const t of _callEndTimers) { try { clearTimeout(t); } catch {} }
+  _callEndTimers = [];
+  run(reason, false);
+  _callEndTimers.push(setTimeout(() => run(reason + '_2', true), 2500));
+  _callEndTimers.push(setTimeout(() => run(reason + '_3', true), 8000));
+}
+
 let _cleanupTimer = null;
 let _appStateSub = null;
 let _netInfoUnsub = null;
@@ -378,7 +407,8 @@ async function _processRow(row) {
   // pelo _inflight. null = não elegível / módulo ausente → caminho JS abaixo.
   try {
     const no = require('./nativeOutbox');
-    if (no.nativeOutboxEnabled && no.nativeOutboxEnabled()) {
+    // [conectando 2026-10-20] recusada/resgatada há pouco do nativo → caminho JS
+    if (no.nativeOutboxEnabled && no.nativeOutboxEnabled() && !_nativeRecentlyRefused(cmi)) {
       const nr = await no.sendRowAndWait(row, MEDIA_TYPES.has(ptype) ? _mediaMetaFields(payload, ptype) : null);
       if (nr) { await _applyNativeResult(row, nr); return; }
     }
@@ -954,6 +984,17 @@ export function start() {
     _appStateSub = AppState.addEventListener?.('change', (state) => {
       if (state === 'active') kick('foreground');
     });
+  } catch {}
+
+  // [conectando 2026-10-20] Fim de ligação (CallKit/ConnectionService/JS) →
+  // reconexão ativa + flush. A ligação só nativa (nativeOutgoingCall) chama
+  // onCallEnded direto; aqui cobre as demais (callState canônico).
+  try {
+    if (!_callStateUnsub) {
+      _callStateUnsub = require('./callState').subscribeCallState?.(({ state }) => {
+        if (state === 'ended') onCallEnded('call_end');
+      }) || null;
+    }
   } catch {}
 
   // NetInfo — drain on reconnect.
