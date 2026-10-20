@@ -39,6 +39,8 @@ export function threadKbNoteComposerBlur() {}
 export function threadKbAttachBegin() {}
 export function threadKbAttachEnd() {}
 export function threadKbAttachFreezeOn() { return false; } // [2026-10-20 attach-freeze]
+export function composerNativeDockOn() { return false; } // [2026-10-20 native-dock]
+export function ThreadKeyboardFloat({ children }) { return children; }
 export function threadKbAttachFreeze() { return false; }
 export function threadKbAttachThaw() {}
 export function threadKbNoteComposerFocus() {}

@@ -184,8 +184,11 @@ public class ChatyyComposerModule: Module {
     // 12 = [2026-10-20 attach-inwindow] folha/câmera do painel dentro da
     //     janela do painel (WillPresent inWindow): sem resign, sync de teclado
     //     suprimido, legenda devolve o painel, camera fecha via DidClose kind.
+    // 13 = [2026-10-20 native-dock] prop nativeDock: barra/composer e lista
+    //     grudadas no teclado pelo UIKit (keyboardLayoutGuide + transform no
+    //     bloco de animação do teclado), sem padding do JS.
     Function("apiVersion") { () -> Int in
-      return 12
+      return 13
     }
 
     View(ChatyyComposerView.self) {
@@ -228,6 +231,7 @@ public class ChatyyComposerModule: Module {
       Prop("attachDeferResign") { (view: ChatyyComposerView, v: Bool?) in view.attachDeferResign = v ?? false } // [2026-10-19 attach-hold]
       Prop("attachKeepKeyboard") { (view: ChatyyComposerView, v: Bool?) in view.attachKeepKeyboard = v ?? false } // [2026-10-19 attach-over-kb]
       Prop("attachPanel") { (view: ChatyyComposerView, v: Bool?) in view.attachPanel = v ?? false } // [2026-10-20 attach-inputview]
+      Prop("nativeDock") { (view: ChatyyComposerView, v: Bool?) in view.nativeDock = v ?? false } // [2026-10-20 native-dock]
       Prop("attachPanelItems") { (view: ChatyyComposerView, v: [[String: Any]]?) in
         view.attachPanelItems = (v ?? []).compactMap { d in
           guard let k = d["key"] as? String, !k.isEmpty else { return nil }

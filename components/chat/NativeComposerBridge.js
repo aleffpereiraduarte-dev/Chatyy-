@@ -22,7 +22,7 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, processColor } from 'react-native';
 import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
-import { threadKbNoteComposerBlur, threadKbNoteComposerFocus, threadKbAttachFreezeOn } from '../../utils/threadKeyboard'; // [2026-10-19 kb-heal] · [2026-10-19 attach-hold]
+import { threadKbNoteComposerBlur, threadKbNoteComposerFocus, threadKbAttachFreezeOn, composerNativeDockOn } from '../../utils/threadKeyboard'; // [2026-10-19 kb-heal] · [2026-10-19 attach-hold]
 import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi, androidAttachInstantOn, attachLegacyNoneActive, attachHoldOn, attachOverKeyboardOn, attachInputPanelOn, androidAttachPanelOn, attachInWindowOn } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
 
 let _failed = false;
@@ -464,6 +464,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
       motion={_motionOff() ? false : undefined}
       focusGuard={kbResumeGuardOn() ? undefined : false /* [2026-10-18 kb-resume] kill __chatyy_kb_resume_guard */}
       nativeTransitions={kbNativeTransitionsOn() ? undefined : false /* [2026-10-19 kb-native] kill __chatyy_kb_native_transitions */}
+      {...(composerNativeDockOn() ? { nativeDock: true } : null) /* [2026-10-20 native-dock] api 13 */}
       {...(Platform.OS === 'ios' ? _attachInstantProps() : (Platform.OS === 'android' ? _androidAttachProps() : null)) /* [2026-10-19 attach-instant] · [2026-10-19 android-parity] */}
       onChangeText={_onChangeText}
       onSend={_onSend}

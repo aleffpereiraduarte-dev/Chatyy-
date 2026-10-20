@@ -54,7 +54,7 @@ import { wasImageLoaded, seenAwareTransition, markImageLoaded } from '../utils/i
 import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, getCachedLocalPrefs, setCachedLocalPrefs, getCachedPresence, setCachedPresence } from '../utils/chatOpenHandoff'; // [2026-10-08 chat-open-flicker]
 // [2026-10-06 keyboard-controller] Keyboard glued to the composer on the UI
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
-import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, ThreadKeyboardBar, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID, threadKbAttachBegin, threadKbAttachEnd, threadKbAttachFreezeOn, threadKbAttachFreeze, threadKbAttachThaw } from '../utils/threadKeyboard';
+import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, ThreadKeyboardBar, ThreadKeyboardFloat, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID, threadKbAttachBegin, threadKbAttachEnd, threadKbAttachFreezeOn, threadKbAttachFreeze, threadKbAttachThaw } from '../utils/threadKeyboard';
 import { isAppResuming, kbResumeGuardOn } from '../utils/kbResumeGuard'; // [2026-10-18 kb-resume]
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
 import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal, nativeSearchOn, nativeDragSelectOn, nativeOverlayOn, nativeQuickReactOn, tgBubblesOn, nativeTgStyleOn } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
@@ -36370,6 +36370,8 @@ function ChatConversationInnerBody() {
       bottomInset={composerBottomPad}
       // [2026-10-19 kb-translate] iOS: barra + lista nativa andam por transform (UI thread) — com painel aberto, padding de sempre
       translateMode={!!_nl.on && !showStickerPicker && !showGifPicker && !showNativeEmoji}
+      // [2026-10-20 native-dock] lista nativa → composer grudado no teclado pelo UIKit (composer api 13)
+      dockable={!!_nl.on}
       style={[styles.container, { backgroundColor: chatWallBg /* [2026-10-08 chat-beauty-bubbles] */ }]}
     >
       {/* Drag-and-drop overlay (web only) — appears while the user is
@@ -38434,6 +38436,7 @@ function ChatConversationInnerBody() {
 
       {/* [2026-10-14 grupo-rajada] "@" menções não lidas → pula p/ a mais antiga */}
       {unreadMentionIds.length > 0 && !_nlOverlayOn && (
+        <ThreadKeyboardFloat>{/* [2026-10-20 native-dock] FAB sobe grudado no teclado */}
         <MentionJumpFab
           count={unreadMentionIds.length}
           bottom={showScrollDown ? 142 : 90}
@@ -38450,6 +38453,7 @@ function ChatConversationInnerBody() {
             try { safeScrollToMsg({ id }); } catch {}
           }}
         />
+        </ThreadKeyboardFloat>
       )}
 
       <ThreadKeyboardBar>{/* [2026-10-19 kb-translate] ↓ + compositor sobem c/ o teclado por transform (iOS) */}

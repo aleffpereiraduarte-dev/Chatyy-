@@ -602,6 +602,19 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   // painel (expo-chat-attach api 8): nada de resign/present; sync de teclado
   // suprimido enquanto ela está na tela; legenda da folha devolve o painel.
   private var attachInWindow = false
+  // [2026-10-20 native-dock] api 13: composer GRUDADO no teclado pelo UIKit.
+  // Sonda na janela presa ao window.keyboardLayoutGuide.topAnchor; cada vez
+  // que o UIKit a reposiciona (DENTRO do bloco de animação do teclado =
+  // mesma curva/duração; no arraste interativo, quadro a quadro) aplicamos
+  // translateY = −(teclado − bottomInset) nas views testID "chatyy-dock-bar"
+  // (barra/composer/prévias/↓) e "chatyy-dock-list" (lista) da MESMA tela.
+  // O JS não mexe em padding/transform nesse modo. Kill switch: prop
+  // nativeDock=false (JS: globalThis.__chatyy_composer_native_dock = false).
+  var nativeDock = false { didSet { if nativeDock != oldValue { if nativeDock { installDock() } else { removeDock() } } } }
+  private var dockProbe: NCDockProbe?
+  private let dockTargets = NSHashTable<UIView>.weakObjects()
+  private var dockNeedsCollect = true
+  private var dockLift: CGFloat = 0
   // [2026-10-20 attach-inputview] api 10: painel de anexos como inputView
   // (ver NCAttachPanel). Kill switch: prop attachPanel=false
   // (JS: globalThis.__chatyy_attach_inputview = false) → "+" = folha (api 9).
@@ -1219,6 +1232,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     // [2026-10-19 kb-native] quadro real do teclado (fonte de verdade p/ o sync).
     appObservers.append(nc.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] n in
       self?.noteKeyboardFrame(n)
+      self?.dockNeedsCollect = true // [2026-10-20 native-dock] barras/prévias novas entram na próxima
     })
     appObservers.append(nc.addObserver(forName: UIResponder.keyboardDidShowNotification, object: nil, queue: .main) { [weak self] n in
       self?.noteKeyboardFrame(n)
@@ -1746,7 +1760,87 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       flushChange()
       voice.cancel(reason: "unmount")
       teardownKeyboardTracking()
+      removeDock() // [2026-10-20 native-dock]
     }
+  }
+
+  // MARK: Dock nativo (native-dock)
+
+  private func installDock() {
+    guard nativeDock, let win = window, dockProbe == nil else { return }
+    let p = NCDockProbe(frame: .zero)
+    p.isUserInteractionEnabled = false
+    p.isHidden = true
+    p.translatesAutoresizingMaskIntoConstraints = false
+    win.addSubview(p)
+    NSLayoutConstraint.activate([
+      p.leadingAnchor.constraint(equalTo: win.leadingAnchor),
+      p.widthAnchor.constraint(equalToConstant: 1),
+      p.heightAnchor.constraint(equalToConstant: 1),
+      p.bottomAnchor.constraint(equalTo: win.keyboardLayoutGuide.topAnchor),
+    ])
+    p.onMove = { [weak self] in self?.dockMoved() }
+    dockProbe = p
+    dockNeedsCollect = true
+    UIView.performWithoutAnimation {
+      win.layoutIfNeeded()
+      self.dockMoved()
+    }
+  }
+
+  private func removeDock() {
+    if let p = dockProbe {
+      p.onMove = nil
+      p.removeFromSuperview()
+      dockProbe = nil
+    }
+    // views do Fabric podem ser recicladas: nunca deixar transform para trás.
+    UIView.performWithoutAnimation {
+      for v in dockTargets.allObjects { v.transform = .identity }
+    }
+    dockTargets.removeAllObjects()
+    dockLift = 0
+  }
+
+  private func dockMoved() {
+    guard nativeDock, let win = window, let p = dockProbe else { return }
+    let overlap = max(0, win.bounds.maxY - p.frame.maxY)
+    // Tela coberta por outra (push na pilha): o teclado é da tela de cima.
+    if !textView.isFirstResponder && dockScreenCovered() { return }
+    dockLift = max(0, overlap - bottomInset)
+    applyDock()
+  }
+
+  private func dockScreenCovered() -> Bool {
+    guard var vc = nearestViewController() else { return false }
+    while let parent = vc.parent, !(parent is UINavigationController) { vc = parent }
+    if let nav = vc.parent as? UINavigationController, let top = nav.topViewController, top !== vc { return true }
+    return false
+  }
+
+  private func applyDock() {
+    var targets = dockTargets.allObjects
+    if dockNeedsCollect || targets.isEmpty || targets.contains(where: { $0.window == nil }) {
+      collectDockTargets()
+      targets = dockTargets.allObjects
+    }
+    let t: CGAffineTransform = dockLift > 0.5 ? CGAffineTransform(translationX: 0, y: -dockLift) : .identity
+    for v in targets where v.transform != t { v.transform = t }
+  }
+
+  private func collectDockTargets() {
+    dockNeedsCollect = false
+    dockTargets.removeAllObjects()
+    var a: UIView? = superview
+    var depth = 0
+    var root: UIView?
+    while let v = a, depth < 40 {
+      if NCDockProbe.find(in: v, id: "chatyy-dock-list", depth: 0) != nil { root = v; break }
+      a = v.superview
+      depth += 1
+    }
+    guard let r = root else { return }
+    NCDockProbe.collect(in: r, depth: 0, into: dockTargets)
   }
 
   override func didMoveToWindow() {
@@ -1755,6 +1849,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       relayout(animated: false)
       updateKeyboardTracking()
       attachLifecycleProxy()
+      if nativeDock { installDock() } // [2026-10-20 native-dock]
       scheduleKeyboardSync("window", after: 0.05) // [2026-10-19 kb-native]
       if focusBlocked {
         // voltou à janela: libera o foco quando a transição em curso acabar.
@@ -2204,5 +2299,30 @@ final class NCAttachPanel: UIInputView {
     }
     let rows = CGFloat((buttons.count + 3) / 4)
     scroll.contentSize = CGSize(width: bounds.width, height: top + rows * rowH)
+  }
+}
+
+
+// MARK: - Sonda do dock (native-dock)
+
+/// View invisível presa ao window.keyboardLayoutGuide: o UIKit a reposiciona
+/// junto com o teclado (no bloco de animação dele / quadro a quadro no arraste).
+final class NCDockProbe: UIView {
+  var onMove: (() -> Void)?
+  override var center: CGPoint { didSet { if center != oldValue { onMove?() } } }
+  override var bounds: CGRect { didSet { if bounds != oldValue { onMove?() } } }
+  override var frame: CGRect { didSet { if frame != oldValue { onMove?() } } }
+
+  static func find(in v: UIView, id: String, depth: Int) -> UIView? {
+    if v.accessibilityIdentifier == id { return v }
+    if depth > 40 { return nil }
+    for s in v.subviews { if let f = find(in: s, id: id, depth: depth + 1) { return f } }
+    return nil
+  }
+
+  static func collect(in v: UIView, depth: Int, into out: NSHashTable<UIView>) {
+    if let i = v.accessibilityIdentifier, i == "chatyy-dock-bar" || i == "chatyy-dock-list" { out.add(v) }
+    if depth > 40 { return }
+    for s in v.subviews { collect(in: s, depth: depth + 1, into: out) }
   }
 }

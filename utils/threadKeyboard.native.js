@@ -122,6 +122,23 @@ const _useKbHandlerAndroid = (_IS_ANDROID && KC && typeof KC.useGenericKeyboardH
 // alto com o teclado FECHADO (lift não voltou a 0). Opt-in (lido ao montar a
 // conversa): globalThis.__chatyy_kb_translate = true. A auto-cura [kb-heal]
 // (didHide/blur/active/foco/watchdog → lift 0 sem teclado) vale nos DOIS modos.
+// [2026-10-20 native-dock] Composer GRUDADO no teclado pelo próprio UIKit
+// (composer iOS api 13, prop nativeDock): o nativo ancora uma sonda no
+// window.keyboardLayoutGuide e aplica translateY = −(teclado − inset) nas
+// views testID "chatyy-dock-bar" (barra/composer) e "chatyy-dock-list" (lista)
+// DENTRO do bloco de animação do teclado (mesma curva/duração; arraste
+// interativo quadro a quadro). O JS NÃO mexe em padding/transform nessa tela
+// (paddingBottom 0; wrappers sem estilo animado); só publica o inset de
+// repouso da lista. Kill switch OTA: globalThis.__chatyy_composer_native_dock = false.
+export function composerNativeDockOn() {
+  if (Platform.OS !== 'ios') return false;
+  try { if (globalThis.__chatyy_composer_native_dock === false) return false; } catch {}
+  try {
+    // eslint-disable-next-line global-require
+    const m = require('./kbNativeTransitions');
+    return m.nativeComposerApi() >= 13;
+  } catch { return false; }
+}
 function _kbTranslateOn() {
   try { if (globalThis.__chatyy_kb_translate === true) return true; } catch {}
   return false;
@@ -270,7 +287,7 @@ let _enabledRefs = 0;
 //   • qualquer movimento real do teclado (height muda no UI thread) limpa o
 //     `settled` na hora (useAnimatedReaction), então abrir o teclado continua
 //     colado frame-a-frame, sem esperar a thread JS.
-function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }) {
+function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, dockable, children }) {
   const { setEnabled } = KC.useKeyboardController();
   // height: 0 → -keyboardHeight (measured from the screen bottom, so it
   // includes the home indicator / Android nav bar). The composer keeps a
@@ -292,8 +309,10 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
   const nav = _useOptionalNavigation(); // [2026-10-19 kb-native]
   // [2026-10-19 kb-translate] base (wrappers montados) decidida 1x na montagem;
   // tmode (padding ↔ transform) segue a prop ao vivo, no UI thread.
-  const [kbBase] = React.useState(() => Platform.OS === 'ios' && _kbTranslateOn());
-  const tOn = !!(kbBase && translateMode);
+  // [2026-10-20 native-dock] decidido 1x na montagem (lista nativa + api 13).
+  const [dock] = React.useState(() => !!dockable && composerNativeDockOn());
+  const [kbBase] = React.useState(() => Platform.OS === 'ios' && (dock || _kbTranslateOn()));
+  const tOn = !!(dock || (kbBase && translateMode));
   const tmode = Rea.useSharedValue(tOn ? 1 : 0);
   const tOnRef = React.useRef(tOn);
   tOnRef.current = tOn;
@@ -801,7 +820,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
     if (tmode.value === 1) return { paddingBottom: 0 };
     return { paddingBottom: lift.value };
   }, []);
-  const kbCtx = React.useMemo(() => (kbBase ? { base: true, lift, tmode } : null), [kbBase, lift, tmode]);
+  const kbCtx = React.useMemo(() => (kbBase ? { base: true, lift, tmode, dock } : null), [kbBase, lift, tmode, dock]);
 
   // [2026-10-20 attach-freeze] painel falso no vão do lift congelado.
   const fakeStyle = Rea.useAnimatedStyle(() => {
@@ -829,6 +848,18 @@ function _useLiftTransform(ctx) {
   }, []);
 }
 
+// [2026-10-20 native-dock] o nativo move estas views (testID) — sem estilo do JS.
+function ThreadKbBarDock({ children }) {
+  return <View testID="chatyy-dock-bar" pointerEvents="box-none" collapsable={false}>{children}</View>;
+}
+function ThreadKbListDock({ children }) {
+  return (
+    <View style={_clipStyle} collapsable={false}>
+      <View testID="chatyy-dock-list" style={_flex1} collapsable={false}>{children}</View>
+    </View>
+  );
+}
+
 function ThreadKbBarInner({ ctx, children }) {
   const st = _useLiftTransform(ctx);
   const AV = Rea.default.View;
@@ -845,12 +876,23 @@ function ThreadKbListClip({ ctx, children }) {
   );
 }
 
+// [2026-10-20 native-dock] Elemento FLUTUANTE (position absolute, ancorado no
+// rodapé — FAB de menções etc.): no dock nativo vai numa camada de tela cheia
+// "chatyy-dock-bar" para subir grudado no teclado junto com a barra.
+const _floatFill = { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 };
+export function ThreadKeyboardFloat({ children }) {
+  const ctx = React.useContext(ThreadKbCtx);
+  if (!ctx || !ctx.dock) return children;
+  return <View testID="chatyy-dock-bar" style={_floatFill} pointerEvents="box-none" collapsable={false}>{children}</View>;
+}
+
 /** [2026-10-19 kb-translate] Envolve o que fica ABAIXO da lista e precisa subir
  *  com o teclado (prévia de link, resposta, ↓, compositor). Fora do modo
  *  (Android, web, sem KC, kill switch) = os filhos direto (árvore de antes). */
 export function ThreadKeyboardBar({ children }) {
   const ctx = React.useContext(ThreadKbCtx);
   if (!ctx || !ctx.base) return children;
+  if (ctx.dock) return <ThreadKbBarDock>{children}</ThreadKbBarDock>; // [2026-10-20 native-dock]
   return <ThreadKbBarInner ctx={ctx}>{children}</ThreadKbBarInner>;
 }
 
@@ -897,6 +939,7 @@ export function getThreadReanimated() {
 export function ThreadKeyboardGestureArea({ children }) {
   const kbCtx = React.useContext(ThreadKbCtx); // [2026-10-19 kb-translate]
   if (Platform.OS === 'ios' && kbCtx && kbCtx.base) {
+    if (kbCtx.dock) return <ThreadKbListDock>{children}</ThreadKbListDock>; // [2026-10-20 native-dock]
     return <ThreadKbListClip ctx={kbCtx}>{children}</ThreadKbListClip>;
   }
   if (!KEYBOARD_CONTROLLER_ACTIVE || Platform.OS !== 'android' || Platform.Version < 30) {
