@@ -2118,6 +2118,7 @@ const _MUTATION_INVALIDATES = [
   [/notif_pref/, ['chat_user_notif_prefs_get']],
   [/nickname/, ['chat_nickname_list']],
   [/profile|avatar|bio|username|cover|display_name|set_name|follow|status_text|about/, ['profile_get', 'get_profile']],
+  [/^feed_(create|delete|edit|pin|unpin)_post$/, ['profile_get']], // [post-perfil 2026-10-20] grade do perfil
   [/wallet|gift|iap|diamond|payout|purchase|redeem|withdraw|tip|coin/, ['wallet_balance']],
   [/plan|subscri|iap|stripe|purchase|trial|upgrade|downgrade/, ['plan_info']],
 ];
@@ -11039,7 +11040,15 @@ export async function feedCreatePost(formData) {
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    return resp.json();
+    const j = await resp.json();
+    // [post-perfil 2026-10-20] post novo → cópias do PRÓPRIO perfil (SWR do profile_get e cache
+    // de 2 min do Perfil) caem na hora, para QUALQUER compositor (antes só o /photo-new limpava,
+    // e o "Criar publicação" do perfil vazio caía no compositor antigo → grade sem o post).
+    if (j && j.success) {
+      try { swrInvalidate('profile_get'); } catch {}
+      try { require('react-native').DeviceEventEmitter.emit('chatyy:profilePostsChanged', { created: j.data?.post || null }); } catch {}
+    }
+    return j;
   } catch (e) {
     return { success: false, message: e.message };
   }

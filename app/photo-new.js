@@ -44,6 +44,8 @@ import PressableScale from '../components/PressableScale';
 import {
   pcT, pickPostMedia, takePendingPostItems, showActionMenu, POST_MAX_ITEMS, POSTS_CHANGED_EVENT,
 } from '../services/profilePostComposer';
+// [post-perfil 2026-10-20] Publicar = fila durável (fecha na hora; upload em 2º plano).
+import { enqueueProfilePost, isProfilePostQueueEnabled } from '../services/profilePostQueue';
 
 const MAX_CAPTION = 2200;
 const ASPECTS = [
@@ -299,8 +301,29 @@ export default function PhotoNew() {
   }, [busy, items.length, caption, router]);
 
   // ----- Publicar -----
+  const enqueuedRef = useRef(false);
   const publish = useCallback(async () => {
     if (busy || items.length === 0) return;
+    // [post-perfil 2026-10-20] modelo Instagram: a folha fecha JÁ e o post aparece no topo
+    // do perfil com as imagens locais + progresso; preparo (2048 px / JPEG 0,8), upload
+    // paralelo no edge e confirmação seguem na fila durável (services/profilePostQueue).
+    // Antes: preparo + POST multipart das originais com a folha aberta, esperando o servidor.
+    if (isProfilePostQueueEnabled()) {
+      if (enqueuedRef.current) return;
+      const me = String(user?.email || '').trim();
+      try {
+        enqueueProfilePost({ id: clientIdRef.current, email: me, items, caption: caption.trim(), audience, aspect });
+      } catch (e) {
+        setPhase('error');
+        setErrorMsg(e?.message || '');
+        return;
+      }
+      enqueuedRef.current = true;
+      try { require('../services/haptics').hapticEvent?.('send'); } catch {}
+      if (fromParam === 'profile' || !me) router.back();
+      else router.replace(`/u/${encodeURIComponent(me)}`);
+      return;
+    }
     setErrorMsg('');
     setProgress(0);
     setPhase('preparing');

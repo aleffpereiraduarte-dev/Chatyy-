@@ -25,6 +25,7 @@ import LiveIndicator from './LiveIndicator';
 const ReelsViewer = React.lazy(() => import('./ReelsViewer'));
 import LazyMount from './LazyMount';
 import ReelPublishProgress from './ReelPublishProgress'; // [2026-10-08 reels-publish]
+import ProfilePostProgress from './ProfilePostProgress'; // [post-perfil 2026-10-20]
 import UnifiedComposeFab from './UnifiedComposeFab';
 import Profile from './Profile';
 import { IconPlus, IconVideo, IconSearch, IconX, IconBell, IconChevronUp, IconPencil } from './Icons';
@@ -944,6 +945,24 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     }
   }, [loadPosts]);
 
+  // [post-perfil 2026-10-20] publicação do perfil confirmada em 2º plano → topo do feed.
+  useEffect(() => {
+    let unsub = null;
+    try {
+      unsub = require('../services/profilePostQueue').onProfilePostPublished((p) => {
+        if (!p?.id) return;
+        setPosts(prev => {
+          if (prev.some(x => String(x.id) === String(p.id))) return prev;
+          const next = [p, ...prev];
+          lastFeedFpRef.current = _feedFingerprint(next);
+          _saveFeedToMMKV(next);
+          return next;
+        });
+      });
+    } catch {}
+    return () => { try { unsub && unsub(); } catch {} };
+  }, []);
+
   // [2026-10-08 reels-publish] reel publicado em 2º plano → entra no topo do feed.
   useEffect(() => {
     let unsub = null;
@@ -1830,6 +1849,8 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
 
       {/* [2026-10-08 reels-publish] progresso do reel em 2º plano + "Ver" → aba Reels */}
       <ReelPublishProgress email={user?.email} t={t} bottom={96} onView={() => setFeedMode('reels')} />
+      {/* [post-perfil 2026-10-20] publicação do perfil subindo em 2º plano */}
+      <ProfilePostProgress email={user?.email} bottom={96} />
 
       {/* Create post modal */}
       <LazyMount when={createVisible}><CreatePostModal

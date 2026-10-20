@@ -72,6 +72,8 @@ import * as ProfilePhotos from '../services/profilePhotos'; // [perfil-fotos 202
 import { useNativeProfileEdit, isNativeProfileEditEnabled } from './profile/nativeProfileEdit'; // [2026-10-18 profile-edit-native]
 import { PLAN_NAME } from '../services/brandPlan'; // [2026-10-18 profile-native]
 import HighlightShareSheet from './HighlightShareSheet';
+// [post-perfil 2026-10-20] post otimista (fila durável) no topo da grade + cartão de progresso.
+import ProfilePostProgress, { usePendingProfilePosts, mergePendingPosts, openPendingPostMenu } from './ProfilePostProgress';
 import { ProfileHighlightMenuSheet, ProfileMoreMenuSheet, ProfileNicknameDialog, ProfileAvatarActionsSheet, profileNativeSheetsOn } from './profile/ProfileSheets'; // [2026-10-18 profile-sheets]
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
@@ -155,6 +157,19 @@ export function invalidateProfileCache(key) {
   _profileCache.delete(_memKey(k));
   try { _highlightsCache.delete(k); } catch {}
   try { _invalidateCached(cachedKey(profileCacheKey(k))); } catch {}
+}
+
+/**
+ * [post-perfil 2026-10-20] Cópia VENCIDA (não apagada): o Perfil pinta dela na hora e já
+ * revalida em 2º plano. Apagar (invalidateProfileCache) fazia a tela piscar o esqueleto /
+ * semente a cada publicação. key=null → todas as cópias desta sessão.
+ */
+export function markProfileCacheStale(key) {
+  try {
+    if (key == null) { for (const e of _profileCache.values()) { if (e) e.ts = 0; } return; }
+    const e = _cacheGet(key);
+    if (e) e.ts = 0;
+  } catch {}
 }
 
 function _infoCacheOn() {
@@ -278,6 +293,7 @@ function formatCount(n) {
 function resolveMedia(url) {
   if (!url) return '';
   if (url.startsWith('http')) return url;
+  if (/^(file|content|ph|assets-library|data|blob):/i.test(url)) return url; // [post-perfil 2026-10-20] post otimista (arquivo local)
   return api.getMediaUrl(url);
 }
 
@@ -1267,7 +1283,7 @@ export default function Profile({
         const fk = String(fetchKey || '').toLowerCase();
         const idEm = String(data?.identity?.email || '').toLowerCase();
         if (!me || (fk !== me && idEm !== me && fk !== 'me')) return;
-        invalidateProfileCache(fetchKey);
+        markProfileCacheStale(fetchKey); // [post-perfil 2026-10-20] vencida, não apagada (sem piscar)
         morePostsRef.current = { key: fetchKey, page: 0, hasMore: true, loading: false };
         setMorePosts([]);
         setRetryCounter((c) => c + 1);
@@ -1869,7 +1885,14 @@ export default function Profile({
     setStoryViewer({ open: true, startIdx });
   };
   useEffect(() => () => { try { if (_selfHostFallbackRef.current) clearTimeout(_selfHostFallbackRef.current); } catch {} }, []);
-  const posts = data?.posts || [];
+  // [post-perfil 2026-10-20] PRÓPRIO perfil: publicações ainda subindo (fila durável) entram
+  // no topo da grade na hora, com a imagem local; somem quando o profile_get já traz o id.
+  const _ppMeEm = String(currentUser?.email || '').toLowerCase();
+  const _ppSelfEm = (_ppMeEm && (actions?.is_self || String(fetchKey || '').toLowerCase() === _ppMeEm
+    || String(identity?.email || '').toLowerCase() === _ppMeEm)) ? _ppMeEm : null;
+  const _pendingPosts = usePendingProfilePosts(_ppSelfEm);
+  const _serverPosts = data?.posts;
+  const posts = useMemo(() => mergePendingPosts(_pendingPosts, _serverPosts || []), [_pendingPosts, _serverPosts]);
   const reels = data?.reels || [];
   // Lazy-load the saved-lives list when the Lives tab is focused for
   // the first time. Subsequent tab switches reuse the cached array;
@@ -2149,6 +2172,7 @@ export default function Profile({
   // media doesn't live in chat_feed_posts so fall back to the conversation.
   const handleOpenPost = useCallback((item, listName = 'posts') => {
     if (!item) return;
+    if (item.__pending && openPendingPostMenu(item)) return; // [post-perfil 2026-10-20]
     // Shared chat media — open inside the conversation
     if (!item.id && item.conversation_id && router) {
       if (mode === 'peek') onClose?.();
@@ -3365,7 +3389,9 @@ export default function Profile({
               subtitle={actions.is_self
                 ? _ti('profile.empty.postsSelfSub', 'Compartilhe sua primeira foto ou Reel.')
                 : _ti('profile.empty.postsOtherSub', 'Quando publicar, vai aparecer aqui.')}
-              cta={actions.is_self ? { label: _ti('profile.empty.postsCta', 'Criar publicação'), onPress: () => router?.push('/spotlight?createPost=1') } : undefined}
+              cta={actions.is_self ? { label: _ti('profile.empty.postsCta', 'Criar publicação'), onPress: () => { // [post-perfil 2026-10-20] compositor novo (fila durável); kill → antigo
+                if (_ppPostsOn && require('../services/profilePostQueue').isProfilePostQueueEnabled()) _ppPublish(); else router?.push('/spotlight?createPost=1');
+              } } : undefined}
             />
           );
         }
@@ -4432,6 +4458,7 @@ export default function Profile({
     };
   };
   const _npOpenPost = (it) => {
+    if (it && it.__pending && openPendingPostMenu(it)) return; // [post-perfil 2026-10-20]
     const jsOpen = () => { try { onGridItemPress(it, 'posts'); } catch {} };
     let off = false;
     try { off = globalThis.__chatyy_profile_native_viewer !== true; } catch {}
@@ -4591,6 +4618,8 @@ export default function Profile({
   if (mode === 'full') {
     return (
       <>
+        {/* [post-perfil 2026-10-20] progresso das publicações em 2º plano (só o dono) — fica por cima da grade */}
+        {_ppSelfEm ? <ProfilePostProgress email={_ppSelfEm} bottom={(Number(nativeBottomInset) || 0) + 16} /> : null}
         {_npInfo ? (
           <NativeChatInfo
             {..._npInfo}
