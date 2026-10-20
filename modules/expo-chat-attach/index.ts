@@ -184,6 +184,20 @@ export async function openCamera(options: AttachOptions): Promise<CameraResult |
   return (await m.openCamera(options || {})) || null;
 }
 
+/** [apiVersion 10] Arma a folha no nativo: o "+" do composer (api 14) a apresenta no mesmo toque. options null = desarma. */
+export function armSheet(id: string, options: AttachOptions | null): void {
+  const m = mod() as any;
+  if (!m || killed() || typeof m.armSheet !== 'function') return;
+  try { m.armSheet(id, options || null)?.catch?.(() => {}); } catch {}
+}
+
+/** [apiVersion 10] Resultado da folha armada ({ id, result }). */
+export function addArmedListener(fn: (e: { id: string; result: SheetResult | null }) => void): { remove: () => void } | null {
+  const m = mod() as any;
+  if (!m || typeof m.addListener !== 'function') return null;
+  try { return m.addListener('onArmedResult', fn); } catch { return null; }
+}
+
 export async function dismiss(): Promise<boolean> {
   const m = mod();
   if (!m) return false;

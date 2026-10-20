@@ -13198,6 +13198,16 @@ function ChatConversationInnerBody() {
   const _openAttachInstant = (e) => {
     if (Platform.OS === 'android') return _openAttachInstantAndroid(e); // [2026-10-19 android-parity]
     if (Platform.OS !== 'ios' || !e) return false;
+    // [2026-10-20 attach-armed] composer api 14: a folha armada já foi
+    // apresentada pelo nativo no toque (teclado descendo por baixo dela).
+    if (e.nativeOpened === true) {
+      const open0 = _attachInstantOpenRef.current;
+      _attachInstantRef.current = true;
+      _attachKbRef.current = { had: false, at: 0 };
+      try { if (typeof open0 === 'function') open0({ alreadyOpen: true }); } catch {}
+      setShowAttachMenu(true);
+      return true;
+    }
     let kn = null;
     try { kn = require('../utils/kbNativeTransitions'); } catch { return false; }
     if (!kn || !kn.attachInstantOn()) return false;

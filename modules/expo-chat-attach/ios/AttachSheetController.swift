@@ -149,6 +149,10 @@ final class AttachSheetController: UIViewController,
       didInitialLayout = true
       top = collapsedTop
       dismissOffset = view.bounds.height - top
+      // [2026-10-20 attach-armed] teclado aberto/descendo: a folha NASCE com o
+      // topo na altura do teclado (já cobre a área que ele libera) e sobe dali.
+      let cover = (overKeyboardHost == nil && customRemove == nil) ? AttachKeyboardTracker.shared.recentHeight() : 0
+      if cover > 40 { dismissOffset = max(0, view.bounds.height - cover - top) }
     }
     applyGeometry()
     let w = view.bounds.width
@@ -164,7 +168,8 @@ final class AttachSheetController: UIViewController,
     super.viewDidAppear(animated)
     view.layoutIfNeeded()
     caHaptic("select")
-    UIView.animate(withDuration: 0.52, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0.2, options: [.allowUserInteraction, .beginFromCurrentState]) {
+    // [2026-10-20 attach-armed] mola curta (Telegram ~0,3 s) — antes 0,52 s.
+    UIView.animate(withDuration: config.motion ? 0.34 : 0.52, delay: 0, usingSpringWithDamping: config.motion ? 0.92 : 0.86, initialSpringVelocity: 0.2, options: [.allowUserInteraction, .beginFromCurrentState]) {
       self.dismissOffset = 0
       self.dimView.alpha = 1
       self.applyGeometry()

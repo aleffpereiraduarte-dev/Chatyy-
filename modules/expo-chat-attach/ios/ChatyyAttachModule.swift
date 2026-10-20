@@ -25,6 +25,13 @@ public class ChatyyAttachModule: Module {
   private var sheet: AttachSheetController?
   private var camera: ChatCameraController?
   private var videoNote: VideoNoteController?
+  // [2026-10-20 attach-armed] folha "armada" pelo JS: o "+" do composer
+  // (Notification ChatyyComposerPlusTapped) apresenta NO MESMO TOQUE, sem ir
+  // e voltar pelo JS (vídeo 747: ~130 ms de conversa vazia entre o teclado
+  // descer e a folha aparecer). Resultado vai pelo evento onArmedResult.
+  private var armed: [String: Any]?
+  private var armedId: String = ""
+  private var plusObserver: NSObjectProtocol?
 
   public func definition() -> ModuleDefinition {
     Name("ChatyyAttach")
@@ -51,13 +58,38 @@ public class ChatyyAttachModule: Module {
     //     teclado: conversa, composer e lista parados.
     // 9 = [2026-10-20 attach-tg] openSheet({tgHeader}): cabeçalho no estilo
     //     Telegram (X à esquerda, "Recentes ▾" central abre os álbuns).
+    // 10 = [2026-10-20 attach-armed] armSheet(id, options) + evento
+    //     onArmedResult {id, result}: o "+" do composer (api 14) apresenta a
+    //     folha no mesmo toque; folha nasce já cobrindo a área do teclado que
+    //     desce e sobe com mola curta (~0,34 s).
     Function("apiVersion") { () -> Int in
-      return 9
+      return 10
     }
 
     OnCreate {
       AttachKeyboardTracker.shared.start()
+      // [2026-10-20 attach-armed]
+      self.plusObserver = NotificationCenter.default.addObserver(forName: Notification.Name("ChatyyComposerPlusTapped"), object: nil, queue: .main) { [weak self] n in
+        self?.onComposerPlus(n)
+      }
     }
+
+    OnDestroy {
+      if let o = self.plusObserver { NotificationCenter.default.removeObserver(o) }
+    }
+
+    Events("onArmedResult")
+
+    // [2026-10-20 attach-armed] JS deixa as opções prontas (id = dono). null/{} = desarma.
+    AsyncFunction("armSheet") { (id: String, options: [String: Any]?) in
+      if let o = options, !o.isEmpty {
+        self.armed = o
+        self.armedId = id
+      } else if self.armedId == id {
+        self.armed = nil
+        self.armedId = ""
+      }
+    }.runOnQueue(.main)
 
     Function("isVideoNoteSupported") { () -> Bool in
       return AVCaptureDevice.default(for: .video) != nil
@@ -212,6 +244,34 @@ public class ChatyyAttachModule: Module {
       if let v = self.videoNote { v.closeFromJS(); any = true }
       return any
     }.runOnQueue(.main)
+  }
+}
+
+// MARK: - Folha armada (attach-armed)
+
+extension ChatyyAttachModule {
+  fileprivate func onComposerPlus(_ n: Notification) {
+    guard let token = n.object as? NSMutableDictionary else { return }
+    guard let opts = armed, sheet == nil, camera == nil, videoNote == nil else { return }
+    guard let presenter = appContext?.utilities?.currentViewController() else { return }
+    let id = armedId
+    let vc = AttachSheetController(config: AttachConfig(opts))
+    var done = false
+    vc.onFinish = { [weak self] result in
+      if done { return }
+      done = true
+      if self?.sheet === vc { self?.sheet = nil }
+      self?.sendEvent("onArmedResult", ["id": id, "result": result])
+    }
+    sheet = vc
+    token["handled"] = true
+    NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": false, "kind": "sheet"])
+    vc.modalPresentationStyle = .overFullScreen
+    vc.modalPresentationCapturesStatusBarAppearance = false
+    presenter.present(vc, animated: false, completion: {
+      NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+    })
+    NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
   }
 }
 
@@ -380,6 +440,16 @@ final class AttachKeyboardTracker {
   private(set) var endFrame: CGRect = .zero
   private(set) var visible = false
   private var started = false
+  // [2026-10-20 attach-armed] última altura ABERTA e quando começou a descer.
+  private(set) var lastShownHeight: CGFloat = 0
+  private var hideAt: CFTimeInterval = 0
+
+  /// Altura do teclado aberto agora, ou que acabou de começar a descer (< 0,6 s).
+  func recentHeight() -> CGFloat {
+    if visible { return lastShownHeight }
+    if CACurrentMediaTime() - hideAt < 0.6 { return lastShownHeight }
+    return 0
+  }
 
   func start() {
     if started { return }
@@ -389,10 +459,15 @@ final class AttachKeyboardTracker {
       guard let self = self, let end = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
       self.endFrame = end
       let screenH = UIScreen.main.bounds.height
-      self.visible = end.height > 1 && end.minY < screenH - 1
+      let vis = end.height > 1 && end.minY < screenH - 1
+      if vis { self.lastShownHeight = max(0, screenH - end.minY) }
+      else if self.visible { self.hideAt = CACurrentMediaTime() }
+      self.visible = vis
     }
     nc.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] _ in
-      self?.visible = false
+      guard let self = self else { return }
+      if self.visible { self.hideAt = CACurrentMediaTime() }
+      self.visible = false
     }
   }
 }

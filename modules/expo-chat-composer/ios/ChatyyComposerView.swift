@@ -985,7 +985,15 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       return
     }
     if had { withInternalFocus { _ = textView.resignFirstResponder() } }
-    let body: [String: Any] = ["hadKeyboard": had, "instant": attachInstant]
+    // [2026-10-20 attach-armed] api 14: folha nativa "armada" pelo JS abre NO
+    // MESMO TOQUE (logo depois do resign animado: o teclado desce com o
+    // composer grudado e a folha sobe por cima, já cobrindo a área dele).
+    let token = NSMutableDictionary()
+    if attachInstant {
+      NotificationCenter.default.post(name: Notification.Name("ChatyyComposerPlusTapped"), object: token)
+    }
+    var body: [String: Any] = ["hadKeyboard": had, "instant": attachInstant]
+    if (token["handled"] as? Bool) == true { body["nativeOpened"] = true }
     onAttach(body)
   }
 

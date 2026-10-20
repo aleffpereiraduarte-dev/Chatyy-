@@ -171,6 +171,9 @@ export default function NativeAttachSheet({
   const propsRef = useRef(null);
   propsRef.current = { onClose, onPick, onSendMedia, onSendDirect, onFail, colors, items, t };
   const openNowRef = useRef(null);
+  const hdDefaultRef = useRef(false); // [2026-10-20 attach-armed]
+  const handleResultRef = useRef(null);
+  const armIdRef = useRef('arm_' + Math.random().toString(36).slice(2));
 
   // Sessão de câmera pré-configurada: abrir a câmera/tile depois é "quente".
   useEffect(() => {
@@ -188,11 +191,8 @@ export default function NativeAttachSheet({
   // visible logo depois só para manter o estado; o efeito abaixo vê openRef.
   // [2026-10-19 attach-over-kb] opts.overKeyboard = folha numa janela acima do
   // teclado (composer api 9 mantém o teclado aberto por baixo).
-  openNowRef.current = (opts) => {
-    if (openRef.current) return true;
-    const m = getNA();
-    if (!m) return false;
-    openRef.current = true;
+  // [2026-10-20 attach-armed] opções da folha (mesmas p/ abrir pelo JS ou armar no nativo).
+  const buildOptions = (opts) => {
     const p = propsRef.current;
     const th = themeFor(p.colors);
     let actions = (Array.isArray(p.items) ? p.items : [])
@@ -216,79 +216,133 @@ export default function NativeAttachSheet({
     }
     let _hdDefault = false;
     try { _hdDefault = require('../../services/mediaUploadQuality').defaultUploadLevel() !== 'standard'; } catch {}
+    hdDefaultRef.current = _hdDefault;
+    return {
+      actions,
+      labels: nativeAttachLabels(p.t),
+      dark: th.dark,
+      colors: th.colors,
+      maxSelect: 30,
+      // [2026-10-19 media-quality] chip HD começa no nível salvo (Wi-Fi/dados)
+      hdDefault: _hdDefault,
+      allowCamera: true,
+      ...(opts && opts.overKeyboard ? { overKeyboard: true } : null),
+      // [2026-10-20 attach-freeze] "Fotos" do painel = SÓ a galeria: sem
+      // barra de ações e sem tile de câmera (vale no 744 por OTA);
+      // attach api >= 7: galleryMode = cabeçalho X | Fotos/Álbuns | HD,
+      // altura grande e sem a faixa vazia embaixo.
+      ...(opts && opts.gallery ? { actions: [], allowCamera: false, galleryMode: true } : null),
+      ...(opts && opts.inKeyboardWindow ? { inKeyboardWindow: true } : null), // [2026-10-20 attach-inwindow]
+      ...(_tg ? { tgHeader: true } : null), // [2026-10-20 attach-tg] attach api >= 9
+      // [2026-10-16 motion-attach] botões em cascata; kill switch OTA
+      // globalThis.__chatyy_motion_attach = false (chave ausente = ligado).
+      ...((() => { try { return globalThis.__chatyy_motion_attach === false || globalThis.__chatyy_motion === false; } catch { return false; } })() ? { motion: false } : null),
+    };
+  };
+
+  // Resultado da folha (promessa do openSheet OU evento onArmedResult).
+  const handleResult = (r) => {
+    openRef.current = false;
+    const cur = propsRef.current;
+    const _hdDefault = hdDefaultRef.current;
+    if (!r || !r.action) { try { cur.onFail && cur.onFail(); } catch {} return; }
+    // [2026-10-19 attach-close] Cancelar: o setState que fecha o menu
+    // re-renderiza a conversa inteira (JS + mount no main). Adiado 2 quadros
+    // para nunca cair no último quadro do dismiss/esmaecer. Ação/Enviar
+    // seguem na hora (abrem Galeria/Arquivo/envio). Kill switch OTA:
+    // globalThis.__chatyy_attach_close_defer = false.
+    const closeNow = () => {
+      try { cur.onClose && cur.onClose(); } catch {}
+      // [2026-10-18 kb-resume] folha já dispensada (promessa resolve no fim do
+      // dismiss): a conversa devolve o teclado só se cancelou e ele estava aberto.
+      try { DeviceEventEmitter.emit('chatyy:attachSheetClosed', { action: String(r.action) }); } catch {}
+    };
+    let _defer = r.action === 'cancel' && typeof requestAnimationFrame === 'function';
+    try { if (globalThis.__chatyy_attach_close_defer === false) _defer = false; } catch {}
+    if (_defer) {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (openRef.current) return; // outra folha já abriu nesse meio-tempo
+        closeNow();
+      }));
+      return;
+    }
+    closeNow();
+    try {
+      if (r.action === 'action' && r.key) {
+        cur.onPick && cur.onPick(r.key);
+      } else if (r.action === 'send') {
+        // [2026-10-19 media-quality] chip intocado = nível salvo (Padrão/HD/Full HD
+        // por rede); mexeu = _hd explícito (ligado = HD ou o Full HD salvo,
+        // desligado = Padrão). "Como arquivo" = original, sem compressão.
+        const _hdTouched = typeof r.hd === 'boolean' && r.hd !== _hdDefault;
+        const files = toFiles(r.items, { ...(_hdTouched ? { _hd: !!r.hd } : null), ...(r.asFile ? { _asFile: true } : null) });
+        if (typeof cur.onSendDirect === 'function') cur.onSendDirect(files, { caption: r.caption || '', hd: !!r.hd, asFile: !!r.asFile });
+        else if (typeof cur.onSendMedia === 'function') cur.onSendMedia(files);
+      } else if (r.action === 'preview') {
+        const files = toFiles(r.items);
+        if (files.length && typeof cur.onSendMedia === 'function') cur.onSendMedia(files);
+      }
+    } catch (e) {
+      if (__DEV__) console.warn('[native-attach] result handler failed', e?.message || e);
+    }
+  };
+  handleResultRef.current = handleResult;
+
+  // [2026-10-19 attach-instant] Abre a folha nativa JÁ (sem esperar o render da
+  // conversa com visible=true): true = apresentação começou. O pai seta o
+  // visible logo depois só para manter o estado; o efeito abaixo vê openRef.
+  // [2026-10-19 attach-over-kb] opts.overKeyboard = folha numa janela acima do
+  // teclado (composer api 9 mantém o teclado aberto por baixo).
+  // [2026-10-20 attach-armed] opts.alreadyOpen = o nativo já apresentou a folha
+  // armada no toque do "+"; o resultado chega por onArmedResult.
+  openNowRef.current = (opts) => {
+    if (openRef.current) return true;
+    if (opts && opts.alreadyOpen) { openRef.current = true; return true; }
+    const m = getNA();
+    if (!m) return false;
+    openRef.current = true;
+    const options = buildOptions(opts);
     (async () => {
       let r = null;
       try {
-        r = await m.openSheet({
-          actions,
-          labels: nativeAttachLabels(p.t),
-          dark: th.dark,
-          colors: th.colors,
-          maxSelect: 30,
-          // [2026-10-19 media-quality] chip HD começa no nível salvo (Wi-Fi/dados)
-          hdDefault: _hdDefault,
-          allowCamera: true,
-          ...(opts && opts.overKeyboard ? { overKeyboard: true } : null),
-          // [2026-10-20 attach-freeze] "Fotos" do painel = SÓ a galeria: sem
-          // barra de ações e sem tile de câmera (vale no 744 por OTA);
-          // attach api >= 7: galleryMode = cabeçalho X | Fotos/Álbuns | HD,
-          // altura grande e sem a faixa vazia embaixo.
-          ...(opts && opts.gallery ? { actions: [], allowCamera: false, galleryMode: true } : null),
-          ...(opts && opts.inKeyboardWindow ? { inKeyboardWindow: true } : null), // [2026-10-20 attach-inwindow]
-          ...(_tg ? { tgHeader: true } : null), // [2026-10-20 attach-tg] attach api >= 9
-          // [2026-10-16 motion-attach] botões em cascata; kill switch OTA
-          // globalThis.__chatyy_motion_attach = false (chave ausente = ligado).
-          ...((() => { try { return globalThis.__chatyy_motion_attach === false || globalThis.__chatyy_motion === false; } catch { return false; } })() ? { motion: false } : null),
-        });
+        r = await m.openSheet(options);
       } catch (e) {
         if (__DEV__) console.warn('[native-attach] openSheet failed', e?.message || e);
         r = null;
       }
-      openRef.current = false;
-      const cur = propsRef.current;
-      if (!r || !r.action) { try { cur.onFail && cur.onFail(); } catch {} return; }
-      // [2026-10-19 attach-close] Cancelar: o setState que fecha o menu
-      // re-renderiza a conversa inteira (JS + mount no main). Adiado 2 quadros
-      // para nunca cair no último quadro do dismiss/esmaecer. Ação/Enviar
-      // seguem na hora (abrem Galeria/Arquivo/envio). Kill switch OTA:
-      // globalThis.__chatyy_attach_close_defer = false.
-      const closeNow = () => {
-        try { cur.onClose && cur.onClose(); } catch {}
-        // [2026-10-18 kb-resume] folha já dispensada (promessa resolve no fim do
-        // dismiss): a conversa devolve o teclado só se cancelou e ele estava aberto.
-        try { DeviceEventEmitter.emit('chatyy:attachSheetClosed', { action: String(r.action) }); } catch {}
-      };
-      let _defer = r.action === 'cancel' && typeof requestAnimationFrame === 'function';
-      try { if (globalThis.__chatyy_attach_close_defer === false) _defer = false; } catch {}
-      if (_defer) {
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          if (openRef.current) return; // outra folha já abriu nesse meio-tempo
-          closeNow();
-        }));
-        return;
-      }
-      closeNow();
-      try {
-        if (r.action === 'action' && r.key) {
-          cur.onPick && cur.onPick(r.key);
-        } else if (r.action === 'send') {
-          // [2026-10-19 media-quality] chip intocado = nível salvo (Padrão/HD/Full HD
-          // por rede); mexeu = _hd explícito (ligado = HD ou o Full HD salvo,
-          // desligado = Padrão). "Como arquivo" = original, sem compressão.
-          const _hdTouched = typeof r.hd === 'boolean' && r.hd !== _hdDefault;
-          const files = toFiles(r.items, { ...(_hdTouched ? { _hd: !!r.hd } : null), ...(r.asFile ? { _asFile: true } : null) });
-          if (typeof cur.onSendDirect === 'function') cur.onSendDirect(files, { caption: r.caption || '', hd: !!r.hd, asFile: !!r.asFile });
-          else if (typeof cur.onSendMedia === 'function') cur.onSendMedia(files);
-        } else if (r.action === 'preview') {
-          const files = toFiles(r.items);
-          if (files.length && typeof cur.onSendMedia === 'function') cur.onSendMedia(files);
-        }
-      } catch (e) {
-        if (__DEV__) console.warn('[native-attach] result handler failed', e?.message || e);
-      }
+      handleResult(r);
     })();
     return true;
   };
+
+  // [2026-10-20 attach-armed] arma a folha no nativo (composer api 14 + attach
+  // api 10): o "+" a apresenta no mesmo toque. Kill switch OTA:
+  // globalThis.__chatyy_attach_armed = false.
+  const armKey = JSON.stringify([
+    (Array.isArray(items) ? items : []).map((it) => it && it.key),
+    colors && colors.background, colors && colors.text,
+  ]);
+  useEffect(() => {
+    const m = getNA();
+    if (!m || Platform.OS !== 'ios' || typeof m.armSheet !== 'function') return undefined;
+    let on = true;
+    try { if (globalThis.__chatyy_attach_armed === false) on = false; } catch {}
+    try { if (m.apiVersion() < 10) on = false; } catch { on = false; }
+    try { if (require('../../utils/kbNativeTransitions').nativeComposerApi() < 14) on = false; } catch { on = false; }
+    if (!on) return undefined;
+    const id = armIdRef.current;
+    try { m.armSheet(id, buildOptions(null)); } catch {}
+    return () => { try { m.armSheet(id, null); } catch {} };
+  }, [armKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const m = getNA();
+    if (!m || typeof m.addArmedListener !== 'function') return undefined;
+    const sub = m.addArmedListener((e) => {
+      if (!e || e.id !== armIdRef.current) return;
+      try { handleResultRef.current && handleResultRef.current(e.result || null); } catch {}
+    });
+    return () => { try { sub && sub.remove && sub.remove(); } catch {} };
+  }, []);
 
   useEffect(() => {
     if (!instantRef || typeof instantRef !== 'object') return undefined;

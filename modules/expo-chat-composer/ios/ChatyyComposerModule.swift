@@ -187,8 +187,11 @@ public class ChatyyComposerModule: Module {
     // 13 = [2026-10-20 native-dock] prop nativeDock: barra/composer e lista
     //     grudadas no teclado pelo UIKit (keyboardLayoutGuide + transform no
     //     bloco de animação do teclado), sem padding do JS.
+    // 14 = [2026-10-20 attach-armed] "+" posta ChatyyComposerPlusTapped logo
+    //     após o resign; a folha armada (expo-chat-attach api 10) abre no
+    //     mesmo toque e o onAttach leva nativeOpened:true.
     Function("apiVersion") { () -> Int in
-      return 13
+      return 14
     }
 
     View(ChatyyComposerView.self) {
