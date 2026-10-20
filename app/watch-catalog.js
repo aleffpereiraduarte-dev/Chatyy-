@@ -123,7 +123,12 @@ export default function WatchCatalog() {
     flash(WT.tr(t, 'watch.queuedLocal', '{title} na fila', { title: it.title }));
   };
 
-  const items = (data && data.items) || [];
+  // busca instantânea: filtra o que já está na tela a cada letra; o servidor confirma 350 ms depois
+  const allItems = (data && data.items) || [];
+  const qLive = q.trim().toLowerCase();
+  const items = qLive && qLive !== qDeb.toLowerCase()
+    ? allItems.filter((it) => qLive.split(/\s+/).every((w) => [it.title, it.original_title, it.author, it.artist, it.year].filter(Boolean).join(' ').toLowerCase().includes(w)))
+    : allItems;
   const chips = (data && data.chips) || ['tudo'];
   const isMusic = tab === 'musica';
   const title = isMusic ? WT.tr(t, 'watch.listenTitle', 'Ouvir junto') : WT.tr(t, 'watch.title', 'Assistir junto');
@@ -237,13 +242,27 @@ export default function WatchCatalog() {
             </View>
           </View>
         </Pressable>
-        <View style={st.shelfH}>
-          <Text style={[st.shelfT, { color: c.text }]}>{tab === 'animacao' ? WT.tr(t, 'watch.shelf.animation', 'Curtas e desenhos liberados') : WT.tr(t, 'watch.shelf.movies', 'Clássicos e curtas liberados')}</Text>
-          <Text style={[st.shelfS, { color: c.muted }]}>{items.length}</Text>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}>
-          {items.map((it) => card(it))}
-        </ScrollView>
+        {/* prateleiras por categoria (ordem dos chips); "Tudo" com 1 categoria só = 1 prateleira */}
+        {(() => {
+          const groups = [];
+          const order = chips.filter((k) => k !== 'tudo');
+          const by = {};
+          items.forEach((it) => { const k = it.chip || 'outros'; (by[k] = by[k] || []).push(it); });
+          order.forEach((k) => { if (by[k] && by[k].length) groups.push([k, by[k]]); });
+          Object.keys(by).forEach((k) => { if (!order.includes(k)) groups.push([k, by[k]]); });
+          const shelves = groups.length > 1 ? groups : [['all', items]];
+          return shelves.map(([k, list]) => (
+            <View key={k}>
+              <View style={st.shelfH}>
+                <Text style={[st.shelfT, { color: c.text }]}>{k === 'all' ? (tab === 'animacao' ? WT.tr(t, 'watch.shelf.animation', 'Curtas e desenhos liberados') : WT.tr(t, 'watch.shelf.movies', 'Clássicos e curtas liberados')) : WT.tr(t, 'watch.chip.' + k, CHIP_FB[k] || k)}</Text>
+                <Text style={[st.shelfS, { color: c.muted }]}>{list.length}</Text>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} decelerationRate="fast" snapToInterval={158} contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}>
+                {list.map((it) => card(it))}
+              </ScrollView>
+            </View>
+          ));
+        })()}
       </View>
     );
   }

@@ -214,6 +214,8 @@ export default function NativeAttachSheet({
       actions.forEach((a) => { if (!order.includes(a.key) && a.key !== 'gif' && a.key !== 'camera') out.push(a); });
       actions = out;
     }
+    // [assistir-junto 2026-10-20] chaves sem ícone no binário → apelido que ele já desenha (ver watchTogether.attachAliasKey)
+    try { const WTa = require('../../services/watchTogether'); actions = actions.map((x) => ({ ...x, key: WTa.attachAliasKey(x.key) })); } catch {}
     let _hdDefault = false;
     try { _hdDefault = require('../../services/mediaUploadQuality').defaultUploadLevel() !== 'standard'; } catch {}
     hdDefaultRef.current = _hdDefault;

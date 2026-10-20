@@ -3062,6 +3062,7 @@ function CallScreenInner() {
     // soft green ring around their avatar while they're talking. Skipped
     // for the group surface (group-call.js owns its own indicator).
     r.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+      try { require('../services/watchTogether').setCallSpeaking((speakers || []).length > 0); } catch {} // [assistir-junto fase 2] filme abaixa quando alguém fala
       try {
         const remoteSpeakers = (speakers || []).filter(p => p !== r.localParticipant);
         const remoteSpeaking = remoteSpeakers.length > 0;

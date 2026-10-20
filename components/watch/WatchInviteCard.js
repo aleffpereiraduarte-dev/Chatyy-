@@ -4,8 +4,8 @@
 //     Ao vivo (mesmo sid da sessão atual) → "AO VIVO · mm:ss", progresso, quem entrou e o botão Entrar.
 //     Encerrada → "Sessão encerrada".
 //   <WatchMiniBar cid me colors isDark t onOpen/> — barra com capa, título, "Você e Ana · mm:ss", play/pause e X (esconde).
-import React, { useEffect, useState } from 'react';
-import { View, Text, Pressable, Image, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, Image, StyleSheet, Animated } from 'react-native';
 import * as WT from '../../services/watchTogether';
 import { IconPlayFill, IconPauseFill, IconHeadphones, IconTogether, SourceIcon } from './WatchIcons';
 import { IconX } from '../Icons';
@@ -26,6 +26,20 @@ function useSession(cid) {
     return () => clearInterval(id);
   }, [live]);
   return s;
+}
+
+/** Ponto vermelho pulsando (AO VIVO). */
+function LiveDot() {
+  const a = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const l = Animated.loop(Animated.sequence([
+      Animated.timing(a, { toValue: 0.35, duration: 700, useNativeDriver: true }),
+      Animated.timing(a, { toValue: 1, duration: 700, useNativeDriver: true }),
+    ]));
+    l.start();
+    return () => l.stop();
+  }, [a]);
+  return <Animated.View style={[cs.dot, { opacity: a }]} />;
 }
 
 function initials(n) {
@@ -87,7 +101,7 @@ export function WatchInviteCard({ msg, isOwn, me, colors = {}, isDark, t, onOpen
         )}
         {live ? (
           <View style={cs.live}>
-            <View style={cs.dot} />
+            <LiveDot />
             <Text style={cs.liveTx}>{WT.tr(t, 'watch.card.live', 'AO VIVO')}{same ? ' · ' + WT.fmtTime(pos) : ''}</Text>
           </View>
         ) : null}
@@ -152,7 +166,7 @@ export function WatchMiniBar({ cid, me, colors = {}, isDark, t, onOpen }) {
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[cs.miniT, { color: text }]} numberOfLines={1}>{item.title}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-          <View style={cs.dot} />
+          <LiveDot />
           <Text style={[cs.miniS, { color: muted }]} numberOfLines={1}>{who ? who + ' · ' : ''}{WT.fmtTime(pos)}</Text>
         </View>
       </View>
@@ -161,7 +175,7 @@ export function WatchMiniBar({ cid, me, colors = {}, isDark, t, onOpen }) {
           {s.playing ? <IconPauseFill size={16} color={accInk} /> : <IconPlayFill size={16} color={accInk} />}
         </Pressable>
       ) : null}
-      <Pressable onPress={() => setHidden(s.sid)} hitSlop={8} style={cs.x} accessibilityLabel={WT.tr(t, 'common.close', 'Fechar')}>
+      <Pressable onPress={() => { setHidden(s.sid); try { if (WT.getListening() === String(cid)) WT.setListening(null); } catch {} }} hitSlop={8} style={cs.x} accessibilityLabel={WT.tr(t, 'common.close', 'Fechar')}>
         <IconX size={16} color={muted} />
       </Pressable>
     </Pressable>

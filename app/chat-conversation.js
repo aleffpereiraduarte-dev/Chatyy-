@@ -13472,6 +13472,8 @@ function ChatConversationInnerBody() {
       const out = [];
       order.forEach((k) => { if (byKey[k]) out.push({ key: k, label: rename[k] || byKey[k].label, icon: byKey[k].icon }); });
       base.forEach((it) => { if (it && it.key && !order.includes(it.key)) out.push({ key: it.key, label: it.label, icon: it.icon }); });
+      // [assistir-junto 2026-10-20] painel nativo do iOS desenha por chave: apelido c/ ícone (volta no handlePickAttachment)
+      if (Platform.OS === 'ios') { try { const WTa = require('../services/watchTogether'); return out.map((x) => ({ ...x, key: WTa.attachAliasKey(x.key) })); } catch {} }
       return out;
     } catch { return null; }
   };
@@ -22298,6 +22300,7 @@ function ChatConversationInnerBody() {
     // This fixes the iOS bug where Poll/Meetup/Playlist/DocumentPicker never
     // appeared because UIKit silently drops a modal-over-modal presentation.
     setShowAttachMenu(false);
+    try { type = require('../services/watchTogether').attachUnaliasKey(type); } catch {} // [assistir-junto 2026-10-20] apelido de ícone → chave real
     switch (type) {
       case 'camera':       return handleCamera();
       case 'gallery':      return handleGallery();

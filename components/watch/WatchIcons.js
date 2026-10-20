@@ -121,6 +121,22 @@ export function IconWow({ size, color, style }) {
   );
 }
 
+export function IconPip({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Rect x="2.5" y="4.5" width="19" height="15" rx="2.5" /><Rect x="12" y="11.5" width="7" height="5.5" rx="1.2" fill={color} /></I>;
+}
+export function IconGrip({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M5 9h14M5 15h14" /></I>;
+}
+export function IconLyrics({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M4 6h16M4 11h10M4 16h7" /><Path d="M15 16a2 2 0 1 0 4 0v-5.5l2-.8" /></I>;
+}
+export function IconChat({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M20.5 12a8.5 8.5 0 0 1-12.3 7.6L3.5 20.5l1-4.4A8.5 8.5 0 1 1 20.5 12z" /></I>;
+}
+export function IconExpand({ size, color, style }) {
+  return <I size={size} color={color} style={style} strokeWidth={2.2}><Path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" /></I>;
+}
+
 /** Ícone do selo da fonte (domínio público / CC / Jamendo / da conversa). */
 export function SourceIcon({ source, size = 12, color }) {
   if (source === 'pd') return <IconPd size={size} color={color} />;

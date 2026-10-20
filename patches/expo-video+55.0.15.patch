@@ -1,0 +1,71 @@
+diff --git a/node_modules/expo-video/ios/NowPlayingManager.swift b/node_modules/expo-video/ios/NowPlayingManager.swift
+index 650e8b1..133b6c9 100644
+--- a/node_modules/expo-video/ios/NowPlayingManager.swift
++++ b/node_modules/expo-video/ios/NowPlayingManager.swift
+@@ -23,6 +23,10 @@ class NowPlayingManager: VideoPlayerObserverDelegate {
+   private var skipForwardTarget: Any?
+   private var skipBackwardTarget: Any?
+   private var playbackPositionTarget: Any?
++  // [chatyy assistir-junto 2026-10-20] próxima/anterior na tela de bloqueio ("Ouvir junto"):
++  // próxima = pula p/ o fim do item (o JS da sala avança a fila); anterior = volta ao início (seek da sala).
++  private var nextTrackTarget: Any?
++  private var previousTrackTarget: Any?
+   private var updateNowPlayingTask: Task<(), Never>?
+ 
+   init() {
+@@ -214,6 +218,29 @@ class NowPlayingManager: VideoPlayerObserverDelegate {
+         return .success
+       }
+ 
++      commandCenter.skipForwardCommand.isEnabled = false
++      commandCenter.skipBackwardCommand.isEnabled = false
++      commandCenter.nextTrackCommand.isEnabled = true
++      commandCenter.previousTrackCommand.isEnabled = true
++      nextTrackTarget = commandCenter.nextTrackCommand.addTarget { [weak self] _ in
++        guard let self, let player = self.mostRecentInteractionPlayer, let item = player.currentItem else {
++          return .commandFailed
++        }
++        let d = item.duration.seconds
++        guard d.isFinite, d > 1 else {
++          return .commandFailed
++        }
++        player.seek(to: CMTime(seconds: max(0, d - 0.2), preferredTimescale: 600))
++        return .success
++      }
++      previousTrackTarget = commandCenter.previousTrackCommand.addTarget { [weak self] _ in
++        guard let self, let player = self.mostRecentInteractionPlayer else {
++          return .commandFailed
++        }
++        player.seek(to: .zero)
++        return .success
++      }
++
+       playbackPositionTarget = commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
+         guard let self, let player = self.mostRecentInteractionPlayer else {
+           return .commandFailed
+@@ -237,6 +264,8 @@ class NowPlayingManager: VideoPlayerObserverDelegate {
+       commandCenter.skipForwardCommand.removeTarget(self?.skipForwardTarget)
+       commandCenter.skipBackwardCommand.removeTarget(self?.skipBackwardTarget)
+       commandCenter.changePlaybackPositionCommand.removeTarget(self?.playbackPositionTarget)
++      commandCenter.nextTrackCommand.removeTarget(self?.nextTrackTarget)
++      commandCenter.previousTrackCommand.removeTarget(self?.previousTrackTarget)
+     }
+   }
+ 
+diff --git a/node_modules/expo-video/ios/VideoManager.swift b/node_modules/expo-video/ios/VideoManager.swift
+index 0b82a77..8f7968e 100644
+--- a/node_modules/expo-video/ios/VideoManager.swift
++++ b/node_modules/expo-video/ios/VideoManager.swift
+@@ -72,6 +72,12 @@ class VideoManager {
+ 
+   private func setAudioSession() {
+     let audioSession = AVAudioSession.sharedInstance()
++    // [chatyy assistir-junto 2026-10-20] ligação em curso (CallKit/LiveKit: .playAndRecord) → não troca
++    // categoria/modo nem ativa a sessão: o vídeo toca dentro da sessão da chamada (antes o .playback
++    // derrubava o áudio/mic da ligação).
++    if audioSession.category == .playAndRecord && (audioSession.mode == .voiceChat || audioSession.mode == .videoChat) {
++      return
++    }
+     let audioMixingMode = findAudioMixingMode()
+     var audioSessionCategoryOptions: AVAudioSession.CategoryOptions = audioSession.categoryOptions
+ 

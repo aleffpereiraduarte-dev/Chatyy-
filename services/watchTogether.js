@@ -395,3 +395,129 @@ export function viewersOf(s) {
   const now = serverNow();
   return (s && Array.isArray(s.viewers) ? s.viewers : []).filter((v) => v && now - Number(v.at || 0) <= 90000);
 }
+
+// ─── ícones da barra nativa do "+" (OTA, sem build) ─────────────────────────
+// Folha nativa (expo-chat-attach) e painel do composer (iOS) têm mapa FIXO chave→ícone; chaves novas
+// caíam na grade 2x2. Até o build com o mapa novo, as chaves vão "fantasiadas" de chaves que o binário
+// já desenha (filme / nota musical) e voltam ao nome real em handlePickAttachment.
+// 'short_video' e 'music' não existem mais no "+" (attach-enxuto 20/10), então não há colisão.
+// Kill: globalThis.__chatyy_watch_icon_alias = false (manda as chaves reais).
+const _ICON_ALIAS = { watch_together: 'short_video', listen_together: 'music' };
+const _ICON_UNALIAS = { short_video: 'watch_together', music: 'listen_together' };
+function _aliasOn() { try { return globalThis.__chatyy_watch_icon_alias !== false; } catch { return true; } }
+export function attachAliasKey(key) { return _aliasOn() && _ICON_ALIAS[key] ? _ICON_ALIAS[key] : key; }
+export function attachUnaliasKey(key) { return _aliasOn() && _ICON_UNALIAS[key] ? _ICON_UNALIAS[key] : key; }
+
+// ─── fase 2 (20/10): reações, fila arrastável, letra, chamada (PiP + "abaixa o som quando falam") ───
+const _reactSubs = new Map(); // cid → Set(fn)
+let _reactAttached = false;
+function _attachReact() {
+  if (_reactAttached) return;
+  const ws = _ws();
+  if (!ws) return;
+  _reactAttached = true;
+  ws.on('watch_react', (d) => {
+    const data = (d && d.r ? d : (d && d.data)) || {};
+    const set = _reactSubs.get(_k(data.conversation_id));
+    if (set) for (const fn of Array.from(set)) { try { fn(data); } catch {} }
+  });
+}
+/** Reações flutuantes da sala: fn({e, n, r, pos, ts}). */
+export function onReact(cid, fn) {
+  _attachReact();
+  const k = _k(cid);
+  if (!_reactSubs.has(k)) _reactSubs.set(k, new Set());
+  _reactSubs.get(k).add(fn);
+  return () => { const s = _reactSubs.get(k); if (s) { s.delete(fn); if (!s.size) _reactSubs.delete(k); } };
+}
+/** Manda uma reação (heart|laugh|fire|wow). Sempre HTTP (o hub só cuida do estado). */
+export async function react(cid, r, pos) {
+  const s = getSession(cid);
+  if (!isLive(s)) return { ok: false };
+  try {
+    const x = await _api().apiCall('watch_cmd', { conversation_id: cid, sid: s.sid, cmd: 'react', r, pos }, 'POST');
+    return { ok: !!(x && x.success) };
+  } catch { return { ok: false }; }
+}
+/** Reordena a fila (arrastar). HTTP: o PHP grava e publica; o hub adota pelo /broadcast. */
+export async function queueMove(cid, from, to) {
+  const s = getSession(cid);
+  if (!isLive(s) || from === to) return { ok: false };
+  // otimista: a lista já aparece na ordem nova
+  const q = [...(s.queue || [])];
+  const cur = q[s.qi];
+  const [mv] = q.splice(from, 1); q.splice(to, 0, mv);
+  const n = { ...s, queue: q, qi: Math.max(0, q.indexOf(cur)) };
+  _sessions.set(_k(cid), n); _emit(cid, n, { origin: 'local' });
+  try {
+    const r = await _api().apiCall('watch_cmd', { conversation_id: cid, sid: s.sid, cmd: 'queue_move', from, to, base_seq: s.seq || 0 }, 'POST');
+    const ses = r && r.data && r.data.session;
+    if (ses) applyState(cid, ses, { origin: 'http', force: true });
+    return { ok: !!(r && r.success), error: r && r.data && r.data.error };
+  } catch { refresh(cid).catch(() => {}); return { ok: false }; }
+}
+const _lyr = new Map();
+export async function lyrics(itemId) {
+  if (!/^jm-\d+$/.test(String(itemId || ''))) return '';
+  if (_lyr.has(itemId)) return _lyr.get(itemId);
+  try {
+    const r = await _api().apiCall('watch_lyrics', { id: itemId }, 'GET');
+    const v = (r && r.success && r.data && r.data.lyrics) || '';
+    _lyr.set(itemId, v);
+    return v;
+  } catch { return ''; }
+}
+
+// chamada: alguém falando (app/call.js → ActiveSpeakersChanged) e janela flutuante (PiP)
+let _speaking = false;
+const _speakSubs = new Set();
+export function setCallSpeaking(v) {
+  const b = !!v;
+  if (b === _speaking) return;
+  _speaking = b;
+  for (const fn of Array.from(_speakSubs)) { try { fn(b); } catch {} }
+}
+export function isCallSpeaking() { return _speaking; }
+export function onCallSpeaking(fn) { _speakSubs.add(fn); return () => _speakSubs.delete(fn); }
+export function inCall() {
+  try {
+    if (globalThis.__chatyyNativeCallActive) return true;
+    const cs = require('./callState');
+    const st = cs.getCallState && cs.getCallState();
+    return st === 'active' || st === 'answered';
+  } catch { return false; }
+}
+let _pip = null; // {cid, name}
+const _pipSubs = new Set();
+export function setPip(v) {
+  _pip = v && v.cid ? { cid: String(v.cid), name: v.name || '' } : null;
+  for (const fn of Array.from(_pipSubs)) { try { fn(_pip); } catch {} }
+}
+export function getPip() { return _pip; }
+export function onPip(fn) { _pipSubs.add(fn); return () => _pipSubs.delete(fn); }
+/** iOS sem o patch do expo-video: tocar durante ligação derrubaria o áudio da chamada (ver WatchPlayer/README do kit). */
+export function callPlaybackBlocked() {
+  try {
+    const { Platform: P } = require('react-native');
+    if (P.OS === 'android') return globalThis.__chatyy_watch_call_android === false;
+    if (P.OS !== 'ios') return false;
+    return globalThis.__chatyy_watch_call_ios !== true;
+  } catch { return true; }
+}
+
+// "Ouvir junto" fora da sala (2º plano / outras telas): o player vive no WatchAudioHost (raiz do app)
+let _listen = null; // cid ouvindo
+const _listenSubs = new Set();
+export function setListening(cid) {
+  const v = cid ? String(cid) : null;
+  if (v === _listen) return;
+  _listen = v;
+  for (const fn of Array.from(_listenSubs)) { try { fn(v); } catch {} }
+}
+export function getListening() { return _listen; }
+export function onListening(fn) { _listenSubs.add(fn); return () => _listenSubs.delete(fn); }
+const _syncSt = new Map();
+const _syncSubs = new Set();
+export function setSyncStatus(cid, st) { _syncSt.set(_k(cid), st); for (const fn of Array.from(_syncSubs)) { try { fn(_k(cid), st); } catch {} } }
+export function getSyncStatus(cid) { return _syncSt.get(_k(cid)) || null; }
+export function onSyncStatus(fn) { _syncSubs.add(fn); return () => _syncSubs.delete(fn); }

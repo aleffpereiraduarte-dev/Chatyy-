@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- [assistir-junto 2026-10-20] ícone da barra de ações do "+" -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <path
+      android:strokeColor="#FFFFFFFF"
+      android:strokeWidth="1.8"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round"
+      android:fillColor="#00000000"
+      android:pathData="M4,15v-3a8,8 0,0 1,16 0v3M4.8,14h2.7v6.5h-2.7a1.8,1.8 0,0 1,-1.8 -1.8v-2.9a1.8,1.8 0,0 1,1.8 -1.8zM16.5,14h2.7a1.8,1.8 0,0 1,1.8 1.8v2.9a1.8,1.8 0,0 1,-1.8 1.8h-2.7z" />
+
+</vector>

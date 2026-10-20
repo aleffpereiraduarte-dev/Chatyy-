@@ -106,6 +106,9 @@ class CAConfig(o: Map<String, Any?>) {
       "gift" -> R.drawable.ca_ic_gift
       "gif" -> R.drawable.ca_ic_gif
       "short_video" -> R.drawable.ca_ic_film
+      "games" -> R.drawable.ca_ic_games // [assistir-junto 2026-10-20] ícones (antes grade)
+      "watch_together" -> R.drawable.ca_ic_watch
+      "listen_together" -> R.drawable.ca_ic_headphones
       else -> R.drawable.ca_ic_grid
     }
   }

@@ -555,6 +555,8 @@ const _LATE_OVERLAYS = {
   NotificationToast: () => require('../components/NotificationToast').default,
   RemovedAccountNotice: () => require('../components/RemovedAccountNotice').default, // [incidente-sessao 2026-10-14]
   VoiceMiniPlayer: () => require('../components/chat/VoiceMiniPlayer').default, // [2026-10-07 voice-native]
+  WatchAudioHost: () => require('../components/watch/WatchAudioHost').default, // [assistir-junto fase 2 20/10] Ouvir junto em 2º plano
+  WatchPip: () => require('../components/watch/WatchPip').default, // [assistir-junto fase 2 20/10] janela flutuante na ligação
   YouTubeInlineHost: () => require('../components/chat/YouTubeInlinePlayer').default, // [2026-10-15 yt-inline]
   PollVotesHost: () => require('../components/chat/PollVotesSheet').default, // [wave13e 2026-10-16] Ver votos
   ContactCardHost: () => require('../components/chat/ContactCardSheet').default, // [2026-10-17 share-contact] detalhes do cartão de contato
@@ -2515,6 +2517,8 @@ export default function RootLayout() {
                 </Suspense>
                 <CallStatusBar />
                 <Late name="VoiceMiniPlayer" />
+                <Late name="WatchAudioHost" />
+                <Late name="WatchPip" />
                 <Late name="YouTubeInlineHost" />
                 <Late name="PollVotesHost" />
                 <Late name="ContactCardHost" />

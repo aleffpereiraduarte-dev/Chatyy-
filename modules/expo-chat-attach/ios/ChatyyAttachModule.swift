@@ -698,6 +698,9 @@ enum CAFormat {
     case "playlist", "audio", "music": return "music.note"
     case "gift": return "gift"
     case "short_video": return "film"
+    case "games": return "gamecontroller" // [assistir-junto 2026-10-20] ícones da barra (antes grade 2x2)
+    case "watch_together": return "play.rectangle.on.rectangle"
+    case "listen_together": return "headphones"
     case "gif": return nil // desenhado como texto "GIF"
     default: return "square.grid.2x2"
     }
