@@ -32,7 +32,7 @@ import { useAuth } from '../../context/AuthContext';
 import { IconChevronLeft, IconChevronDown, IconX } from '../../components/Icons';
 import AvatarCircle from '../../components/AvatarCircle';
 import { GameTypeIcon, IconTrophy, IconRematch, IconFlagResign, IconDrawOffer, IconMore, IconBan, IconHourglass, IconCrown } from '../../components/games/GameIcons';
-import { gamePalette, hWin, hErr, hTurn, hEnd, hTap, hOk } from '../../components/games/fx';
+import { gamePalette, hWin, hErr, hTurn, hEnd, hTap, hOk, gameAccent } from '../../components/games/fx';
 import Confetti from '../../components/games/Confetti';
 import Podium from '../../components/games/Podium';
 import { useRM, PressScale, useEnter, IS_WEB } from '../../components/games/motion';
@@ -71,6 +71,22 @@ function RulesIcon({ color, size = 20 }) {
 function Dot({ a, k, pal }) {
   const st = useAnimatedStyle(() => ({ opacity: 0.25 + 0.75 * Math.max(0, Math.sin(Math.PI * ((a.value + k / 3) % 1))) }));
   return <Animated.View style={[{ width: 8, height: 8, borderRadius: 4, backgroundColor: pal.ink }, st]} />;
+}
+// [2026-10-20 polish] ponto que pulsa ao lado de "Sua vez" (cabeçalho do painel)
+function PulseDot({ color, on, rm }) {
+  const a = useSharedValue(0);
+  useEffect(() => {
+    if (!on || rm) { cancelAnimation(a); a.value = 0; return undefined; }
+    a.value = withRepeat(withTiming(1, { duration: 1200, easing: Easing.out(Easing.quad) }), -1, false);
+    return () => cancelAnimation(a);
+  }, [on, rm]); // eslint-disable-line react-hooks/exhaustive-deps
+  const halo = useAnimatedStyle(() => ({ opacity: 0.55 * (1 - a.value), transform: [{ scale: 1 + 1.4 * a.value }] }));
+  return (
+    <View style={{ width: 8, height: 8, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View style={[{ position: 'absolute', width: 8, height: 8, borderRadius: 4, backgroundColor: color }, halo]} />
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
+    </View>
+  );
 }
 function WaitingDots({ pal }) {
   const a = useSharedValue(0);
@@ -573,16 +589,24 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
   const myTurn = isMyTurn(view, me);
   // folha: cabeçalho fino = avatar do adversário + nome + vez + regras/mais + fechar
   const opp = view ? ((view.seats && view.seats.length ? view.seats : (view.players || []).map((p) => p.e)).find((e) => lc(e) !== me) || view.by) : null;
+  const acc = view ? gameAccent(view.type) : pal.ink;
   const header = embedded ? (
+    // [2026-10-20 polish] cabeçalho limpo: avatar com anel na cor do jogo quando é a minha vez, nome do jogo,
+    // vez com ponto pulsando, ações discretas (regras/mais/recolher/fechar em círculos pequenos)
     <View style={[st.sHeader, { borderBottomColor: pal.line, backgroundColor: pal.bg }]}>
-      {opp ? <AvatarCircle email={opp} name={nameOf(view, opp, '', t)} size={34} /> : (view ? <GameTypeIcon type={view.type} size={22} color={pal.ink} /> : null)}
+      <View style={[st.sAv, { borderColor: myTurn ? acc : 'transparent' }]}>
+        {opp ? <AvatarCircle email={opp} name={nameOf(view, opp, '', t)} size={34} /> : (
+          <View style={[st.sAvIcon, { backgroundColor: pal.strong }]}>{view ? <GameTypeIcon type={view.type} size={18} color={pal.onStrong} /> : null}</View>
+        )}
+        {view ? <View style={[st.sAvBadge, { backgroundColor: acc, borderColor: pal.bg }]}><GameTypeIcon type={view.type} size={9} color="#FFFFFF" /></View> : null}
+      </View>
       <View style={{ flex: 1, paddingHorizontal: 10 }}>
         <Text style={[st.sTitle, { color: pal.ink }]} numberOfLines={1}>
           {view ? (opp && (view.seats || []).length <= 2 ? `${gameTitle(t, view.type)} · ${nameOf(view, opp, me, t)}` : gameTitle(t, view.type)) : tr(t, 'games.menu', 'Jogos')}
         </Text>
         {view ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 1 }}>
-            {myTurn ? <View style={[st.turnDot, { backgroundColor: pal.accent }]} /> : null}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+            {myTurn ? <PulseDot color={acc} on rm={rm} /> : null}
             <Text style={[st.hSub, { color: myTurn ? pal.ink : pal.sub, fontWeight: myTurn ? '800' : '600' }]} numberOfLines={1}>
               {view.spectator && view.status === 'active' ? `${status} · ${tr(t, 'games.watching', 'assistindo')}` : status}
             </Text>
@@ -590,20 +614,20 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
         ) : null}
       </View>
       {view ? (
-        <Pressable onPress={() => { hTap(); setRulesOpen(true); }} hitSlop={8} style={st.iconBtn} accessibilityRole="button" accessibilityLabel={tr(t, 'games.rules.button', 'Regras')}>
-          <RulesIcon color={pal.ink} />
+        <Pressable onPress={() => { hTap(); setRulesOpen(true); }} hitSlop={6} style={[st.sBtn, { backgroundColor: pal.card }]} accessibilityRole="button" accessibilityLabel={tr(t, 'games.rules.button', 'Regras')}>
+          <RulesIcon color={pal.ink} size={16} />
         </Pressable>
       ) : null}
-      <Pressable onPress={() => { hTap(); setMoreOpen(true); }} hitSlop={8} style={st.iconBtn} accessibilityRole="button" accessibilityLabel={tr(t, 'games.more', 'Mais opções')}>
-        <IconMore size={22} color={pal.ink} />
+      <Pressable onPress={() => { hTap(); setMoreOpen(true); }} hitSlop={6} style={[st.sBtn, { backgroundColor: pal.card }]} accessibilityRole="button" accessibilityLabel={tr(t, 'games.more', 'Mais opções')}>
+        <IconMore size={18} color={pal.ink} />
       </Pressable>
       {onCollapse ? (
-        <Pressable onPress={() => { hTap(); onCollapse(); }} hitSlop={8} style={st.iconBtn} accessibilityRole="button" accessibilityLabel={tr(t, 'games.dock.collapse', 'Recolher')}>
-          <IconChevronDown size={22} color={pal.ink} />
+        <Pressable onPress={() => { hTap(); onCollapse(); }} hitSlop={6} style={[st.sBtn, { backgroundColor: pal.card }]} accessibilityRole="button" accessibilityLabel={tr(t, 'games.dock.collapse', 'Recolher')}>
+          <IconChevronDown size={18} color={pal.ink} />
         </Pressable>
       ) : null}
-      <Pressable onPress={back} hitSlop={10} style={[st.closeBtn, { backgroundColor: pal.card2 }]} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')}>
-        <IconX size={16} color={pal.ink} />
+      <Pressable onPress={back} hitSlop={6} style={[st.sBtn, { backgroundColor: pal.card }]} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')}>
+        <IconX size={14} color={pal.ink} />
       </Pressable>
     </View>
   ) : (
@@ -688,7 +712,7 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
   let board = null;
   if (view.status === 'active' || view.status === 'finished') {
     const sq = view.type === 'damas' || view.type === 'velha';
-    const P = { view, onMove, pal, busy, t, me, offset: offRef.current, onTick, maxW: wide ? (sq ? Math.min(colW, fitH) : colW) : (sq ? Math.min(winW, docked ? fitH : fitH + 40) : (embedded ? winW : undefined)) };
+    const P = { view, onMove, pal, busy, t, me, offset: offRef.current, onTick, maxW: wide ? (sq ? Math.min(colW, fitH) : colW) : (docked ? (sq ? Math.min(winW - 24, fitH - 18) : winW - 24) : (sq ? Math.min(winW, fitH + 40) : (embedded ? winW : undefined))) };
     if (view.type === 'velha') board = <VelhaBoard {...P} />;
     else if (view.type === 'damas') board = <DamasBoard {...P} />;
     else if (view.type === 'cartas') board = <CartasBoard {...P} />;
@@ -705,7 +729,7 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
         {phase === 'waiting' ? <WaitingPanel view={view} me={me} pal={pal} t={t} busy={busy} rm={rm} onAct={onAct} wide={wide} /> : null}
         {phase === 'closed' ? <ClosedPanel view={view} me={me} pal={pal} t={t} busy={busy} rm={rm} onAct={onAct} wide={wide} /> : null}
         {phase === 'active' ? <DrawBanner view={view} me={me} pal={pal} t={t} busy={busy} rm={rm} onDraw={(op) => { hTap(); run('draw_' + op); }} /> : null}
-        {board}
+        {board && docked ? <View style={[st.boardCard, { backgroundColor: pal.card }]}>{board}</View> : board}
         {phase === 'finished' ? (
           <ResultPanel view={view} me={me} pal={pal} t={t} busy={busy} rm={rm} fresh={sawActive.current} onAct={onAct} wide={wide}
             onOpenRematch={() => openGame(view.rematch_id, view.conversation_id)} />
@@ -842,7 +866,13 @@ const st = StyleSheet.create({
   sheetTitle: { fontSize: 18, fontWeight: '800', marginBottom: 6 },
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 15, borderBottomWidth: StyleSheet.hairlineWidth },
   menuTx: { flex: 1, fontSize: 16, fontWeight: '600' },
-  sHeader: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingLeft: 16, paddingRight: 12, paddingTop: 14, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  sHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: 14, paddingRight: 10, paddingTop: 12, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth },
+  sAv: { borderWidth: 2, borderRadius: 22, padding: 1.5 },
+  sAvIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  sAvBadge: { position: 'absolute', right: -3, bottom: -3, width: 17, height: 17, borderRadius: 9, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  sBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  boardCard: { borderRadius: 20, marginHorizontal: 10, marginTop: 10, paddingVertical: 8, overflow: 'visible',
+    shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
   sTitle: { fontSize: 16, fontWeight: '800', letterSpacing: -0.2 },
   closeBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginLeft: 4 },
 });

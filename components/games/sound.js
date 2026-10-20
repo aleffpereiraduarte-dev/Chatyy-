@@ -1,6 +1,13 @@
 // components/games/sound.js — [jogos 2026-10-18] efeitos sonoros dos jogos (sutis, originais, gerados
 // para o Chatyy). Liga/desliga pelo botão de som da tela do jogo (AsyncStorage 'chatyy_games_sound', padrão
 // ligado). Nunca lança; não mexe no modo de áudio do app (não atrapalha chamadas/música).
+//
+// [2026-10-20 call-safe] "Quando começamos a jogar, a ligação cai": o expo-audio (iOS, AudioModule.swift)
+// faz AVAudioSession.setActive(true) no play() e, com keepAudioSessionActive=false (padrão), setActive(false,
+// .notifyOthersOnDeactivation) 0,1 s depois de CADA som terminar — numa ligação isso derruba a sessão do
+// CallKit/LiveKit (I/O parado no meio da chamada). Agora: com ligação ativa (ou tocando/conectando) os jogos
+// ficam MUDOS (nem criam player) e os players existentes são soltos; fora da ligação nada muda.
+// Kill: globalThis.__chatyy_games_sfx_in_call === true volta a tocar durante a ligação (não recomendado).
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const SRC = {
@@ -34,9 +41,22 @@ export function setSoundOn(v) {
   try { AsyncStorage.setItem(KEY, _on ? '1' : '0').catch(() => {}); } catch {}
   for (const fn of Array.from(_subs)) { try { fn(_on); } catch {} }
 }
+/** Ligação viva/tocando/conectando (nativa ou JS) → true. Na dúvida (erro), trata como ligação. */
+export function callBusyForSfx() {
+  try { if (globalThis.__chatyy_games_sfx_in_call === true) return false; } catch {}
+  try {
+    if (globalThis.__chatyyNativeCallActive || globalThis.__chatyyCallActive) return true;
+    if (require('../../services/ongoingCall').isCallOngoing()) return true;
+    const cs = require('../../services/callState');
+    const st = cs && cs.getCallState ? cs.getCallState() : null;
+    if (st === 'active' || st === 'answered' || st === 'ringing' || st === 'connecting' || st === 'calling') return true;
+  } catch { return true; }
+  return false;
+}
 const _lastAt = {};
 export function playSfx(name) {
   if (!_on || !SRC[name]) return;
+  if (callBusyForSfx()) { if (Object.keys(_players).length) releaseSfx(); return; }
   // mesmo som 2x em < 70 ms (ex.: lance + eco do WS) soa como estalo: toca 1 vez só
   const now = Date.now();
   if (_lastAt[name] && now - _lastAt[name] < 70) return;

@@ -10,6 +10,7 @@ import {
 } from '../../services/games';
 import GameInlineBoard, { useInlineView, inlineHasBoard } from './GameInlineBoard';
 import { gamesInlineOn, isInlineType } from '../../services/gamesInline';
+import { gameAccent } from './fx';
 
 const PRIMARY = new Set(['accept', 'join', 'start', 'play', 'rematch']);
 
@@ -48,18 +49,20 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
   const myTurn = isMyTurn(g, currentEmail);
   // [jogos 2026-10-19] estado final sempre visível: Cancelado · Expirado · Recusado · Empate · Venceu · Perdeu · Abandonou
   const badge = gameEndBadge(t, g, currentEmail);
+  const acc = gameAccent(g.type);
   const BADGE_BG = { won: '#16A34A', resigned_other: '#16A34A', lost: 'rgba(255,255,255,0.16)', draw: 'rgba(255,255,255,0.22)', abandoned: '#B45309', expired: 'rgba(255,255,255,0.16)', cancelled: 'rgba(255,255,255,0.16)', declined: 'rgba(255,255,255,0.16)' };
 
   const header = (
-    <View style={[st.head, { backgroundColor: isResult ? '#000' : '#111' }]}>
-      <View style={st.headIcon}>
+    // [2026-10-20 polish] P&B premium: ícone na cor do jogo + filete de acento sob o cabeçalho
+    <View style={[st.head, { backgroundColor: isResult ? '#000' : '#0B0B0C', borderBottomColor: acc }]}>
+      <View style={[st.headIcon, { backgroundColor: isResult ? 'rgba(255,255,255,0.14)' : acc }]}>
         {isResult ? <IconTrophy size={18} color="#fff" /> : <GameTypeIcon type={g.type} size={18} color="#fff" />}
       </View>
       <View style={{ flex: 1 }}>
         <Text style={st.headTitle} numberOfLines={1}>{gameTitle(t, g.type)}</Text>
         <Text style={st.headSub} numberOfLines={1}>{isResult ? tr(t, 'games.resultLabel', 'Resultado') : tr(t, 'games.cardLabel', 'Jogo na conversa')}</Text>
       </View>
-      {myTurn ? <View style={st.turnPill}><Text style={st.turnPillTx}>{tr(t, 'games.status.yourTurn', 'Sua vez')}</Text></View> : null}
+      {myTurn ? <View style={st.turnPill}><View style={[st.turnDot, { backgroundColor: acc }]} /><Text style={st.turnPillTx}>{tr(t, 'games.status.yourTurn', 'Sua vez')}</Text></View> : null}
       {!myTurn && badge ? <View style={[st.endPill, { backgroundColor: BADGE_BG[badge.kind] || 'rgba(255,255,255,0.16)' }]}><Text style={st.endPillTx}>{badge.label}</Text></View> : null}
     </View>
   );
@@ -138,12 +141,13 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
 }
 
 const st = StyleSheet.create({
-  card: { width: 268, borderRadius: 14, overflow: 'hidden', marginVertical: 1 },
-  head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 9, gap: 9 },
-  headIcon: { width: 32, height: 32, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.14)', alignItems: 'center', justifyContent: 'center' },
-  headTitle: { color: '#fff', fontWeight: '700', fontSize: 14.5 },
+  card: { width: 268, borderRadius: 16, overflow: 'hidden', marginVertical: 1, borderWidth: StyleSheet.hairlineWidth },
+  head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 10, borderBottomWidth: 3 },
+  headIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  headTitle: { color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: -0.2 },
   headSub: { color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 1 },
-  turnPill: { backgroundColor: '#fff', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  turnPill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#fff', borderRadius: 11, paddingHorizontal: 8, paddingVertical: 3 },
+  turnDot: { width: 6, height: 6, borderRadius: 3 },
   turnPillTx: { color: '#000', fontSize: 11, fontWeight: '800' },
   endPill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   endPillTx: { color: '#fff', fontSize: 11, fontWeight: '800' },
@@ -152,7 +156,7 @@ const st = StyleSheet.create({
   pl: { alignItems: 'center', width: 54 },
   plName: { fontSize: 11, marginTop: 3, fontWeight: '600', maxWidth: 54 },
   plSt: { fontSize: 9.5, marginTop: 1 },
-  status: { fontSize: 14.5, fontWeight: '700' },
+  status: { fontSize: 14.5, fontWeight: '700', letterSpacing: -0.1 },
   headline: { fontSize: 15, fontWeight: '800', lineHeight: 20, marginBottom: 6 },
   small: { fontSize: 12 },
   rankRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderTopWidth: StyleSheet.hairlineWidth },

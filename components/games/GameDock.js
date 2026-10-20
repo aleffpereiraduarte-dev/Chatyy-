@@ -18,7 +18,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, Pressable, StyleSheet, Keyboard, Platform, BackHandler, useWindowDimensions } from 'react-native';
 import { IconChevronUp, IconX } from '../Icons';
 import { GameTypeIcon, IconGamepad } from './GameIcons';
-import { gamePalette, hTap, hOk } from './fx';
+import { gamePalette, hTap, hOk, gameAccent } from './fx';
 import GamePicker from './GamePicker';
 import GamePlay from './GamePlay';
 import { registerGameSheetHost, registerGamePickerHost, gamesDockOn, SHEET_TYPES } from '../../services/gamesInline';
@@ -35,7 +35,7 @@ function CollapsedBar({ mode, gid, pal, t, me, onExpand, onClose }) {
   return (
     <View style={[st.bar, { borderTopColor: pal.line, backgroundColor: pal.bg }]}>
       <Pressable onPress={onExpand} style={st.barMain} accessibilityRole="button" accessibilityLabel={`${title}. ${sub}. ${tr(t, 'games.dock.expand', 'Abrir o jogo')}`}>
-        <View style={[st.barIcon, { backgroundColor: pal.strong }]}>
+        <View style={[st.barIcon, { backgroundColor: v && mode !== 'pick' ? gameAccent(v.type) : pal.strong }]}>
           {mode === 'pick' || !v ? <IconGamepad size={15} color={pal.onStrong} /> : <GameTypeIcon type={v.type} size={15} color={pal.onStrong} />}
         </View>
         <View style={{ flex: 1 }}>
@@ -219,11 +219,11 @@ export default function GameDock({ conversationId, conversationType, members, cu
 const st = StyleSheet.create({
   dock: {
     width: '100%', overflow: 'hidden', borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
     ...(Platform.OS === 'web' ? { maxWidth: 960, alignSelf: 'center' } : null),
   },
   bar: { flexDirection: 'row', alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, paddingLeft: 12, paddingRight: 10, paddingVertical: 6, gap: 8 },
   barMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 2 },
-  barIcon: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  barIcon: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   barClose: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
 });

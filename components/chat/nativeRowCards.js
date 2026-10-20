@@ -1191,17 +1191,19 @@ function buildGame(m, row, ctx, C, own) {
   const openAct = acts.includes('play') ? 'play' : (acts.includes('watch') ? 'watch' : 'open');
   const myTurn = G.isMyTurn(g, me);
   const badge = G.gameEndBadge ? G.gameEndBadge(tf, g, me) : null; // [jogos 2026-10-19]
+  let acc = '#8E8E93'; try { acc = require('../games/fx').gameAccent(g.type); } catch {}
   const BADGE_BG = { won: '#16A34A', resigned_other: '#16A34A', abandoned: '#B45309', draw: 'rgba(255,255,255,0.22)' };
   const head = hstack([
-    vstack([icon(isRes ? _IconGameTrophy : _gameIconComp(g.type), { s: 18, c: '#FFFFFF' })], { w: 32, h: 32, r: 9, bg: 'rgba(255,255,255,0.14)', al: 'c', jc: 'c' }),
+    vstack([icon(isRes ? _IconGameTrophy : _gameIconComp(g.type), { s: 18, c: '#FFFFFF' })], { w: 34, h: 34, r: 10, bg: isRes ? 'rgba(255,255,255,0.14)' : acc, al: 'c', jc: 'c' }), // [2026-10-20 polish] cor do jogo
     vstack([
-      text(G.gameTitle(tf, g.type), { fs: 14.5, fw: 700, c: '#FFFFFF', ml: 1 }),
+      text(G.gameTitle(tf, g.type), { fs: 15, fw: 800, c: '#FFFFFF', ml: 1 }),
       text(isRes ? G.tr(tf, 'games.resultLabel', 'Resultado') : G.tr(tf, 'games.cardLabel', 'Jogo na conversa'), { fs: 11, c: 'rgba(255,255,255,0.7)', ml: 1 }),
     ], { fl: 1 }),
-    myTurn ? vstack([text(G.tr(tf, 'games.status.yourTurn', 'Sua vez'), { fs: 11, fw: 800, c: '#000000' })], { bg: '#FFFFFF', r: 10, p: [3, 8, 3, 8] }) : null,
+    myTurn ? hstack([vstack([], { w: 6, h: 6, r: 3, bg: acc }), text(G.tr(tf, 'games.status.yourTurn', 'Sua vez'), { fs: 11, fw: 800, c: '#000000' })], { bg: '#FFFFFF', r: 11, p: [3, 8, 3, 8], g: 5, al: 'c' }) : null,
     // [jogos 2026-10-19] estado final: Cancelado · Expirado · Recusado · Empate · Venceu · Perdeu · Abandonou
     (!myTurn && badge) ? vstack([text(badge.label, { fs: 11, fw: 800, c: '#FFFFFF' })], { bg: BADGE_BG[badge.kind] || 'rgba(255,255,255,0.16)', r: 10, p: [3, 8, 3, 8] }) : null,
-  ], { w: -1, bg: isRes ? '#000000' : '#111111', p: [9, 12, 9, 12], g: 9, al: 'c', a: 'game:' + openAct });
+  ], { w: -1, bg: isRes ? '#000000' : '#0B0B0C', p: [10, 12, 10, 12], g: 10, al: 'c', a: 'game:' + openAct });
+  const headBar = vstack([head, vstack([], { w: -1, h: 3, bg: acc })], { w: -1 }); // filete de acento
   const body = [];
   if (isRes) {
     body.push(text(G.resultHeadline(tf, g, me), { fs: 15, fw: 800, c: ink, lh: 20, m: [0, 0, 6, 0] }));
@@ -1234,9 +1236,9 @@ function buildGame(m, row, ctx, C, own) {
   const board = _gameInlineNodes(g, ctx, C, tf, me);
   let kids;
   if (board) {
-    kids = [head, board, vstack([body[body.length - 1]], { w: -1, p: [8, 12, 8, 12], a: 'game:' + openAct })];
+    kids = [headBar, board, vstack([body[body.length - 1]], { w: -1, p: [8, 12, 8, 12], a: 'game:' + openAct })];
     if (require('../../services/gamesInline').isInlineType(g.type)) acts = acts.filter((a) => a !== 'play' && a !== 'watch');
-  } else kids = [head, vstack(body, { w: -1, p: [10, 12, 8, 12], a: 'game:' + openAct })];
+  } else kids = [headBar, vstack(body, { w: -1, p: [10, 12, 8, 12], a: 'game:' + openAct })];
   if (acts.length) {
     const primary = { accept: 1, join: 1, start: 1, play: 1, rematch: 1 };
     kids.push(vstack([], { w: -1, h: 0.5, bg: line }));
@@ -1248,7 +1250,7 @@ function buildGame(m, row, ctx, C, own) {
       });
     }), { w: -1, g: 8, p: [9, 10, 9, 10] }));
   }
-  row.bl = [vstack(kids, { w, r: 14, m: [1, 0, 1, 0] })];
+  row.bl = [vstack(kids, { w, r: 16, m: [1, 0, 1, 0] })];
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
 

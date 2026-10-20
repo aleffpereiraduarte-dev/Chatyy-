@@ -46,3 +46,6 @@ export function gamePalette(colors, isDark) {
   };
 }
 export const CARD_COLORS = { r: '#E5484D', y: '#F0B400', g: '#22A55B', b: '#2F6FEB' };
+// [2026-10-20 polish] cor de acento de cada jogo (só detalhes: ícone do cartão, filete, anel de vez)
+export const GAME_ACCENT = { velha: '#2F6FEB', forca: '#22A55B', quiz: '#8B5CF6', damas: '#E0A800', cartas: '#E5484D' };
+export function gameAccent(type) { return GAME_ACCENT[type] || '#8E8E93'; }
