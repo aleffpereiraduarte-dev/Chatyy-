@@ -3648,8 +3648,16 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
 // once we go over LP_CACHE_MAX. NEGATIVE results (404, fetch fail, no
 // title) are stored as `false` so we don't keep retrying dead links.
 const _linkPreviewCache = new Map();
-const LP_CACHE_MAX = 500;
-function _lpCacheGet(url) { return _linkPreviewCache.get(url); }
+// [2026-10-20 perf-js] LRU de verdade (toque no get) + teto 1500: era FIFO 500 —
+// numa conversa com mais links carregados que o teto, cada rebuild da lista
+// nativa re-buscava os despejados → resultado → bump → rebuild de TODAS as
+// linhas → mais despejo (laço de rebuilds com o JS ocupado).
+const LP_CACHE_MAX = 1500;
+function _lpCacheGet(url) {
+  const v = _linkPreviewCache.get(url);
+  if (v !== undefined && _linkPreviewCache.size > 64) { _linkPreviewCache.delete(url); _linkPreviewCache.set(url, v); }
+  return v;
+}
 function _lpCacheSet(url, val) {
   if (_linkPreviewCache.size >= LP_CACHE_MAX) {
     const first = _linkPreviewCache.keys().next().value;
@@ -17511,7 +17519,7 @@ function ChatConversationInnerBody() {
     // → manda a transcrição como texto direto (chat_translate_message aceita `text`).
     const fire = (mid, directText) => {
       autoTranslateInflightRef.current.add(mid);
-      setTranslatedMessages(prev => ({ ...prev, [mid]: { ...(prev[mid] || {}), loading: true, targetLang: targetShort, _auto: true } }));
+      loadingIds.push(mid);
       const _fail = () => {
         autoTranslateInflightRef.current.delete(mid);
         autoTranslateFailedRef.current.add(mid);
@@ -17528,7 +17536,7 @@ function ChatConversationInnerBody() {
       Promise.resolve(_req).then(r => {
         if (r?.success && r.data?.translated) {
           autoTranslateInflightRef.current.delete(mid);
-          setTranslatedMessages(prev => ({ ...prev, [mid]: { text: r.data.translated, loading: false, targetLang: targetShort, _auto: true } }));
+          _queueResult(mid, r.data.translated);
         } else {
           _fail();
         }
@@ -17598,6 +17606,9 @@ function ChatConversationInnerBody() {
     // Last 50 — newest matter most for the "I just opened the chat" UX.
     const backlog = candidates.slice(-50);
 
+  const autoTranslateResultQRef = useRef(new Map());
+  const autoTranslateFlushRef = useRef(null);
+  useEffect(() => () => { if (autoTranslateFlushRef.current) { clearTimeout(autoTranslateFlushRef.current); autoTranslateFlushRef.current = null; } }, []);
     let cancelled = false;
     (async () => {
       let mc;
@@ -17632,6 +17643,27 @@ function ChatConversationInnerBody() {
   // registers a resolver. When a note ends, the player asks for the NEXT
   // voice/audio message from the SAME sender within 60 s (intervening
   // non-audio bubbles are skipped, a different sender / gap > 60 s breaks the
+    // [2026-10-20 perf-js] marcas "loading" num setState só (era 1 por msg) e os
+    // resultados em lote a cada 250 ms: cada setTranslatedMessages re-roda este
+    // efeito (2 varreduras de messages) e troca o ctx da lista nativa (rebuild de
+    // TODAS as linhas) — traduzir 500 msgs = 1000 rebuilds seguidos.
+    const loadingIds = [];
+    const _queueResult = (mid, text) => {
+      const q = autoTranslateResultQRef.current;
+      q.set(mid, text);
+      if (autoTranslateFlushRef.current) return;
+      autoTranslateFlushRef.current = setTimeout(() => {
+        autoTranslateFlushRef.current = null;
+        const batch = autoTranslateResultQRef.current;
+        if (!batch.size || !mountedRef.current) { batch.clear(); return; }
+        autoTranslateResultQRef.current = new Map();
+        setTranslatedMessages(prev => {
+          const next = { ...prev };
+          for (const [id, txt] of batch) next[id] = { text: txt, loading: false, targetLang: targetShort, _auto: true };
+          return next;
+        });
+      }, 250);
+    };
   // chain) and plays it itself — so the chain works even when the next bubble
   // isn't mounted (virtualised list) and keeps going after leaving the chat
   // (the registration is kept "detached" until the chain ends; mini bar).
@@ -17677,6 +17709,13 @@ function ChatConversationInnerBody() {
           durationMs: (Number(m.duration) || 0) * 1000,
           isOwn: m.sender_email === currentEmail,
           title: voiceTitleRef.current,
+    if (loadingIds.length) {
+      setTranslatedMessages(prev => {
+        const next = { ...prev };
+        for (const mid of loadingIds) next[mid] = { ...(prev[mid] || {}), loading: true, targetLang: targetShort, _auto: true };
+        return next;
+      });
+    }
         };
       }
       return null;
