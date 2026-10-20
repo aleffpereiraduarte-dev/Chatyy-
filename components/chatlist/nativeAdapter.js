@@ -166,6 +166,24 @@ function _isOnlineLabel(isOnline, lastSeen) {
  *        notesMap }
  * Devolve { row, meta } — meta fica só no JS (abrir status/foto pelo avatar).
  */
+/**
+ * E-mail do peer usado p/ presença/nota (null em grupo). Exportado p/ o cache
+ * por linha da lista nativa invalidar SÓ as linhas cuja presença mudou.
+ */
+export function presenceEmailOf(conv, me) {
+  if (!conv || conv.type === 'group') return null;
+  let presenceEmail = null;
+  const members = conv.members;
+  if (members && members.length) {
+    for (let i = 0; i < members.length; i++) {
+      const m = members[i];
+      const e = typeof m === 'string' ? m : (m?.email || '');
+      if (e && e.toLowerCase() !== me) { presenceEmail = e; break; }
+    }
+  }
+  return presenceEmail || conv.other_email || conv.contact_email || null;
+}
+
 export function buildRow(conv, ctx) {
   const t = ctx.t;
   const me = ctx.me || '';
@@ -197,18 +215,7 @@ export function buildRow(conv, ctx) {
     }
   }
   // E-mail do peer para PRESENÇA/NOTA (mesma regra do renderItem: membros primeiro).
-  let presenceEmail = null;
-  if (!isGroup) {
-    const members = conv.members;
-    if (members && members.length) {
-      for (let i = 0; i < members.length; i++) {
-        const m = members[i];
-        const e = typeof m === 'string' ? m : (m?.email || '');
-        if (e && e.toLowerCase() !== me) { presenceEmail = e; break; }
-      }
-    }
-    presenceEmail = presenceEmail || conv.other_email || conv.contact_email || null;
-  }
+  const presenceEmail = presenceEmailOf(conv, me);
   let presenceVal = null;
   if (presenceEmail && ctx.presences instanceof Map) presenceVal = ctx.presences.get(presenceEmail);
   const online = !!ctx.socketUp && !!(presenceVal && (presenceVal.status === 'online' || presenceVal === 'online'));

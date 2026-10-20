@@ -6720,6 +6720,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         // Merge: keep existing entries, update with new ones
         const merged = new Map(presencesRef.current);
         for (const [email, val] of newMap) {
+          // [2026-10-20 perf-js] mantém o MESMO objeto quando nada mudou — a lista
+          // nativa refaz só as linhas cujo valor de presença trocou de identidade.
+          const cur = merged.get(email);
+          if (cur && cur.status === val.status && cur.last_seen === val.last_seen) continue;
           merged.set(email, val);
         }
         presencesRef.current = merged;

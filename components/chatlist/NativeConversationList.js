@@ -14,7 +14,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { useNativeHeaderTouchGuard } from '../native/nativeHeaderTouchGuard'; // [2026-10-17 settings-scroll-tap]
 import { Platform, StyleSheet, View } from 'react-native';
 import { getNativeConversationListView, apiVersion as _clApiVersion } from '../../modules/expo-chat-conversation-list';
-import { buildRow, buildLabels, createPatcher } from './nativeAdapter';
+import { buildRow, buildLabels, createPatcher, presenceEmailOf } from './nativeAdapter';
 import { buildPeekItems, buildPeekBg, peekHeightFraction, PEEK_MAX } from './peekItems';
 import { listMetrics, tgListOn, listAccentHex } from './listDensity';
 import { useTheme } from '../../context/ThemeContext';
@@ -173,9 +173,14 @@ function NativeConversationListInner(props) {
   // GLOBAL muda (idioma, presença, anel, avatar, seleção, cadeados, socket); typing/
   // rascunho invalidam só a linha delas (mesmo objeto da conversa = mesma linha).
   // Kill switch: globalThis.__chatyy_list_row_cache = false (refaz tudo como antes).
+  // [2026-10-20 perf-js] presença saiu da geração: cada evento/poll de presença
+  // refazia buildRow de TODAS as linhas. Agora cada linha guarda o valor de
+  // presença do seu peer (mesmo objeto do Map = sem mudança) e só ela é refeita.
+  // Kill switch: globalThis.__chatyy_list_presence_row = false (volta ao antigo).
+  const _presRow = globalThis.__chatyy_list_presence_row !== false;
   const rowGen = useMemo(() => ({}),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  [me, t, language, helpers, presenceToken, ringToken, avatarToken, socketUp, lockedIds, unlockedIds, selectedIds, selectionMode, notesMap]);
+  [me, t, language, helpers, _presRow ? 0 : presenceToken, ringToken, avatarToken, socketUp, lockedIds, unlockedIds, selectedIds, selectionMode, notesMap]);
   const rowCacheRef = useRef(new Map());
 
   const built = useMemo(() => {
@@ -194,7 +199,13 @@ function NativeConversationListInner(props) {
       const dr = ctx.drafts ? ctx.drafts[k] : undefined;
       const dt = ctx.draftTimes ? ctx.draftTimes[k] : undefined;
       const hit = useCache ? prev.get(k) : null;
-      if (hit && hit.c === c && hit.g === rowGen && hit.typ === typ && hit.dr === dr && hit.dt === dt && hit.mn === minute) {
+      let pv;
+      if (_presRow) {
+        const pe = (hit && hit.c === c) ? hit.pe : presenceEmailOf(c, ctx.me || '');
+        pv = { pe, v: (pe && ctx.presences instanceof Map) ? ctx.presences.get(pe) : undefined };
+      }
+      if (hit && hit.c === c && hit.g === rowGen && hit.typ === typ && hit.dr === dr && hit.dt === dt && hit.mn === minute
+        && (!_presRow || hit.pv === pv.v)) {
         rows.push(hit.row);
         meta.set(hit.row.id, hit.m);
         next.set(k, hit);
@@ -204,11 +215,12 @@ function NativeConversationListInner(props) {
         const { row, meta: m } = buildRow(c, ctx);
         rows.push(row);
         meta.set(row.id, m);
-        next.set(k, { c, g: rowGen, typ, dr, dt, mn: minute, row, m });
+        next.set(k, { c, g: rowGen, typ, dr, dt, mn: minute, row, m, pe: pv ? pv.pe : null, pv: pv ? pv.v : undefined });
       } catch {}
     }
     rowCacheRef.current = next;
     return { rows, meta };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversations, ctx, rowGen, deferBuild]);
 
   const { patch, snapshot } = useMemo(
