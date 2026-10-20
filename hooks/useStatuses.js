@@ -221,6 +221,8 @@ function _fingerprint(mine, others) {
     }
     for (const g of (others || [])) {
       const owner = g.ownerEmail || g.email || '';
+      // [2026-10-20 wa2] silenciado entra no fp: senão "Reativar" nunca grava o muted:false do servidor.
+      if (g.muted || g.is_muted) parts.push(`mu:${owner}`);
       for (const it of (g.items || [])) {
         parts.push(`o:${owner}:${it.id}:${it.viewed ? 1 : 0}:${it.view_count || 0}:${it.created_at || ''}`);
       }
@@ -916,13 +918,15 @@ export default function useStatuses(currentEmail, opts = {}) {
   // backend already persists is_muted and echoes it on the next refetch, so
   // this is purely the instant-feedback mirror. Persist to live store + MMKV +
   // disk so the muted flag survives nav/cold-start before the server catches up.
-  const muteGroup = useCallback((email) => {
+  // [2026-10-20 wa2] muteGroup(email, false) = Reativar (antes não havia caminho de volta).
+  const muteGroup = useCallback((email, muted = true) => {
     const lc = String(email || '').toLowerCase();
     if (!lc) return;
+    const mu = muted !== false;
     const markGroups = (gs) => (gs || []).map(g =>
-      String(g.email || '').toLowerCase() === lc ? { ...g, muted: true } : g);
+      String(g.email || '').toLowerCase() === lc ? { ...g, muted: mu, is_muted: mu } : g);
     const markOthers = (gs) => (gs || []).map(g =>
-      String(g.ownerEmail || g.email || '').toLowerCase() === lc ? { ...g, muted: true } : g);
+      String(g.ownerEmail || g.email || '').toLowerCase() === lc ? { ...g, muted: mu, is_muted: mu } : g);
     setGroups(prev => {
       const next = markGroups(prev);
       if (_liveStore) {

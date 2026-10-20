@@ -1061,6 +1061,7 @@ function StoryViewerJS({
   // double-tap pair that fires the "❤️" reaction. Reset to 0 after each
   // successful pair so a slow third tap can't accidentally chain.
   const lastTapRef = useRef(0);
+  const _edgeHoldRef = useRef(false); // [2026-10-20 wa2] segurar na borda = pausar
   // [status-resposta 2026-10-15] Reação atual por status (o servidor alterna: mesmo emoji de novo =
   // desfaz e apaga a mensagem "Reagiu ao seu status" da conversa). Duplo toque só CURTE, nunca descurte.
   const myReactRef = useRef({});
@@ -2789,6 +2790,11 @@ function StoryViewerJS({
             if (replyFocused) { try { Keyboard.dismiss(); } catch {} return; }
             _haptic('light'); goPrev();
           }}
+          // [2026-10-20 wa2] Segurar perto da borda também pausa (WhatsApp); antes só o
+          // centro pausava e ao soltar a borda pulava de status.
+          delayLongPress={250}
+          onLongPress={() => { if (isFreshMount() || replyFocused) return; _edgeHoldRef.current = true; setPaused(true); }}
+          onPressOut={() => { if (_edgeHoldRef.current) { _edgeHoldRef.current = false; setPaused(false); } }}
           accessibilityLabel={t?.('status.previous') || 'Previous story'}
           accessibilityRole="button"
         />
@@ -2802,6 +2808,11 @@ function StoryViewerJS({
             if (replyFocused) { try { Keyboard.dismiss(); } catch {} return; }
             _haptic('light'); advance();
           }}
+          // [2026-10-20 wa2] Segurar perto da borda também pausa (WhatsApp); antes só o
+          // centro pausava e ao soltar a borda pulava de status.
+          delayLongPress={250}
+          onLongPress={() => { if (isFreshMount() || replyFocused) return; _edgeHoldRef.current = true; setPaused(true); }}
+          onPressOut={() => { if (_edgeHoldRef.current) { _edgeHoldRef.current = false; setPaused(false); } }}
           accessibilityLabel={t?.('status.next') || 'Next story'}
           accessibilityRole="button"
         />

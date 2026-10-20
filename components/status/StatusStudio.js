@@ -393,7 +393,7 @@ function StatusStudioJS({ visible, seed, onClose, onOpenCamera, user, t, router 
     setCapturing(null);
     // Público lembrado
     (async () => {
-      try { const a = await AsyncStorage.getItem(AUDIENCE_KEY); if (a) setAudience(a); } catch {}
+      try { const a = await AsyncStorage.getItem(AUDIENCE_KEY); if (a && ['all', 'contacts', 'close_friends', 'except'].includes(a)) setAudience(a); } catch {}
       try {
         const pv = await api.chatPrivacyGet?.();
         if (pv?.success && Array.isArray(pv.data?.status_except)) setExceptList(pv.data.status_except.map(e => String(e || '').toLowerCase()).filter(Boolean));

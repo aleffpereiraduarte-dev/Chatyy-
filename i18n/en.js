@@ -14506,4 +14506,15 @@ export default {
   "planHub.famErrHasPlan": "This person already has a paid plan. They need to cancel it first.",
   "planHub.famErrLimit": "Your family is already full.",
   "planHub.famErrGeneric": "That didn't work. Try again in a moment.",
+  // [2026-10-20 wa2] auditoria WhatsApp (status/chamadas/contatos/grupos/ajustes)
+  "call.cameraOff": "Turn camera off",
+  "call.cameraOn": "Turn camera on",
+  "call.leave": "Leave",
+  "call.group.raiseHand": "Raise hand",
+  "call.group.lowerHand": "Lower hand",
+  "status.muteFailed": "Couldn't mute right now. Try again.",
+  "status.unmuteFailed": "Couldn't unmute right now. Try again.",
+  "status.replyUnavailable": "This status is no longer available.",
+  "status.replyBlocked": "You can't reply to this status.",
+  "status.replyTooFast": "You're sending too fast. Wait a few seconds.",
 };

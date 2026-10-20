@@ -754,8 +754,10 @@ export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, has
         break;
       }
       case 'mute': {
-        try { await cb.onMute?.(e.ownerEmail); } catch {}
-        m.showToast(t?.('status.muteSuccess') || 'Silenciado');
+        // [2026-10-20 wa2] toast "Silenciado" só quando o servidor aceitou.
+        let _ok = true;
+        try { await cb.onMute?.(e.ownerEmail); } catch { _ok = false; }
+        m.showToast(_ok ? (t?.('status.muteSuccess') || 'Silenciado') : (t?.('status.muteFailed') || 'Não foi possível silenciar agora. Tente de novo.'));
         break;
       }
       case 'forward': {

@@ -1299,6 +1299,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   })).current;
 
   const handleShowViewers = useCallback(async (statusId) => {
+    // [2026-10-20 wa2] limpa a lista do status anterior (piscava "quem viu" errado).
+    if (viewersModalStatusIdRef.current !== statusId) setViewersList([]);
     viewersModalStatusIdRef.current = statusId;
     setViewersLoading(true);
     viewersSheetY.setValue(420);
@@ -1700,6 +1702,20 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           });
         } catch {}
         if (typeof overrideText !== 'string') setViewerReply('');
+      } else if (r && r.success === false && !/unknown action|invalid action/i.test(String(r.message || ''))) {
+        // [2026-10-20 wa2] Erro "de verdade" do servidor (status apagado/expirado 404,
+        // bloqueio 403, rápido demais 429): NÃO cair no envio legado — ele mandava a
+        // resposta como DM comum com link morto e furava bloqueio/limite. Avisa e
+        // mantém o texto no campo.
+        const _m = String(r.message || '');
+        const _msg = /not found/i.test(_m)
+          ? (t?.('status.replyUnavailable') || 'Este status não está mais disponível.')
+          : /blocked/i.test(_m)
+            ? (t?.('status.replyBlocked') || 'Não é possível responder a este status.')
+            : /too fast/i.test(_m)
+              ? (t?.('status.replyTooFast') || 'Você está enviando rápido demais. Aguarde alguns segundos.')
+              : (t?.('status.replyFailed') || 'Não foi possível enviar a resposta. Tente de novo.');
+        try { Alert.alert?.(t?.('common.error') || 'Erro', _msg); } catch {}
       } else {
         // Legacy fallback — sends the reply via regular chatSend so older
         // clients still work. Kept intentionally simple; the server-side
@@ -1731,6 +1747,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       }
     } catch (err) {
       console.warn('[Status] Reply failed:', err);
+      try { Alert.alert?.(t?.('common.error') || 'Erro', t?.('status.replyFailed') || 'Não foi possível enviar a resposta. Tente de novo.'); } catch {}
     } finally {
       setSendingReply(false);
     }
@@ -2017,6 +2034,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     // de segmentos nativo). Só quando o módulo existe, o kill switch
     // __chatyy_native_story !== false e TODOS os itens são suportados; senão
     // (ou se o open nativo falhar → reabre com _noNative) segue o viewer JS.
+    const _firstUnseen = (() => {
+      try {
+        const its = statusGroup?.items || [];
+        const i = its.findIndex(it => it && !it.viewed);
+        return i > 0 ? i : 0;
+      } catch { return 0; }
+    })();
     if (!statusGroup?._noNative && !statusGroup?._forcePlaceholderOpen) {
       const _nIdx = Math.max(0, allGroups.findIndex(g => g.ownerEmail === statusGroup.ownerEmail));
       const _me = String(currentEmail || '').toLowerCase();
@@ -2029,9 +2053,17 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           items: g.items || [],
         })),
         startGroup: _nIdx,
+        // [2026-10-20 wa2] Abre no 1º status NÃO visto (WhatsApp), não sempre no 1º.
+        startItem: _firstUnseen,
         t,
         callbacks: {
           onFallback: () => { try { openViewer({ ...statusGroup, _noNative: true }); } catch {} },
+          // [2026-10-20 wa2] "Silenciar" no menu do visualizador nativo (sem onMute ele nem aparecia).
+          onMute: async (email) => {
+            const r = await api.statusMute(email);
+            if (r?.success === false) throw new Error('mute_failed');
+            try { hookMuteGroup?.(email); } catch {}
+          },
           onMarkViewed: (id) => { try { nativeStoryCbRef.current?.markViewed?.(id); } catch {} },
           onDelete: async (id) => { try { await nativeStoryCbRef.current?.deleteStatus?.(id); } catch {} },
           // [2026-10-15 native-story v2] Menu do status: abre os MESMOS modais do viewer JS (o nativo fecha antes).
@@ -2058,7 +2090,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     setViewerStatuses(statusGroup.items);
     setViewerOwnerName(statusGroup.ownerName);
     setViewerOwnerEmail(statusGroup.ownerEmail);
-    setViewerIndex(0);
+    setViewerIndex(_firstUnseen);
     setViewerReply('');
     setIsPaused(false);
     panY.setValue(0);
@@ -2069,7 +2101,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     // VideoView native peer black — RN won't reconcile transforms and
     // opacity that come from different threads on the same modal layer.
     Animated.timing(viewerOpacity, { toValue: 1, duration: 250, useNativeDriver: false }).start();
-  }, [viewerOpacity, panY, myStatuses, contactStatuses, currentEmail, currentName, t]);
+  }, [viewerOpacity, panY, myStatuses, contactStatuses, currentEmail, currentName, t, hookMuteGroup]);
 
   // [2026-10-15 status-perfil] Host embutido (Perfil) precisa saber se o viewer abriu (fallback) / fechou.
   const _viewerVisCbRef = useRef(onViewerVisibleChange);
@@ -2566,6 +2598,30 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   }, [viewerVisible, viewerKbOffset]);
 
   // ─── Creator Logic ───
+  // [2026-10-20 wa2] Público lembrado (mesma chave do StatusStudio): voz e o criador
+  // antigo sempre publicavam para "Todos", ignorando "Meus contatos"/"Exceto…".
+  const applySavedAudience = useCallback(async () => {
+    try {
+      const AS = require('@react-native-async-storage/async-storage').default;
+      const a = await AS.getItem('status_audience_v1');
+      if (!a || !['all', 'contacts', 'close_friends', 'except'].includes(a)) return;
+      if (a === 'except') {
+        let list = [];
+        try {
+          const pv = await api.chatPrivacyGet?.();
+          if (pv?.success && Array.isArray(pv.data?.status_except)) {
+            list = pv.data.status_except.map(e => String(e || '').toLowerCase()).filter(Boolean);
+          }
+        } catch {}
+        // "Todos, menos…" com lista vazia = Todos.
+        if (list.length) { setExceptEmails(list); setStatusPrivacy('except'); }
+        else setStatusPrivacy('all');
+        return;
+      }
+      setStatusPrivacy(a);
+    } catch {}
+  }, []);
+
   const openCreator = useCallback((mode = 'text') => {
     if (Date.now() < statusPressLockRef.current) return;
     statusPressLockRef.current = Date.now() + 600;
@@ -2596,6 +2652,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     setTextAnimation('none');
     setCrossPostFeed(false);
     setExceptEmails([]);
+    applySavedAudience();
     setDrawMode(false);
     setShowStickerPicker(false);
     setShowAddTextInput(false);
@@ -2674,7 +2731,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     } else {
       setCreatorVisible(true);
     }
-  }, [t]);
+  }, [t, applySavedAudience]);
   // [2026-10-09 status-composer] Entrada única do "+ Seu status": câmera no
   // nativo (captura → estúdio), estúdio direto no web (texto + galeria).
   openNewStatusRef.current = () => {
@@ -2695,8 +2752,9 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     setVoiceUploading(false);
     setVoiceElapsed(0);
     setStatusPrivacy('all');
+    applySavedAudience();
     setVoiceComposerVisible(true);
-  }, []);
+  }, [applySavedAudience]);
 
   const startVoiceRecording = useCallback(async () => {
     if (voiceRecording || voiceUploading) return;
@@ -2762,7 +2820,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       const uploadR = await api.statusUpload(audio);
       const url = uploadR?.data?.url || uploadR?.data?.cdn_url;
       if (uploadR?.success && url) {
-        const extraMeta = { privacy: statusPrivacy !== 'all' ? statusPrivacy : undefined };
+        // [2026-10-20 wa2] "Ocultar de…" mandava só privacy, sem a lista → ninguém era ocultado.
+        const _exc = statusPrivacy === 'except' && exceptEmails.length > 0;
+        const _priv = statusPrivacy === 'except' && !_exc ? 'all' : statusPrivacy;
+        const extraMeta = {
+          privacy: _priv !== 'all' ? _priv : undefined,
+          except_emails: _exc ? exceptEmails : undefined,
+        };
         const r = await api.statusPublish(url, 'voice', '#111111', null, extraMeta);
         if (r?.success) {
           setVoiceComposerVisible(false);
@@ -2779,7 +2843,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     } finally {
       setVoiceUploading(false);
     }
-  }, [voiceRecording, statusPrivacy, loadStatuses, t]);
+  }, [voiceRecording, statusPrivacy, exceptEmails, loadStatuses, t]);
 
   // Handler for when StatusCamera captures a photo/video.
   // Perf: photos are compressed to ~1200px / 0.82 JPEG before upload so a 4 MB
@@ -3735,18 +3799,31 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       return;
     }
     if (!em || em === String(currentEmail || '').toLowerCase()) return;
+    // [2026-10-20 wa2] apiCall no nativo resolve {success:false} em vez de lançar:
+    // falha de silenciar/reativar aparecia como sucesso.
     if (action === 'mute') {
-      try { await api.statusMute(targetEmail); } catch {}
+      let ok = false;
+      try { const r = await api.statusMute(targetEmail); ok = r?.success !== false; } catch {}
+      if (!ok) {
+        try { Alert.alert?.(t?.('common.error') || 'Erro', t?.('status.muteFailed') || 'Não foi possível silenciar agora. Tente de novo.'); } catch {}
+        return;
+      }
       try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
       try { hookMuteGroup?.(targetEmail); } catch {}
       return;
     }
     if (action === 'unmute') {
+      let ok = false;
+      try { const r = await api.statusUnmute?.(targetEmail); ok = !!r && r.success !== false; } catch {}
+      if (!ok) {
+        try { Alert.alert?.(t?.('common.error') || 'Erro', t?.('status.unmuteFailed') || 'Não foi possível reativar agora. Tente de novo.'); } catch {}
+        return;
+      }
       setContactStatuses(prev => (prev || []).map(g => (
         String(g?.ownerEmail || g?.email || '').toLowerCase() === em ? { ...g, muted: false, is_muted: false } : g
       )));
+      try { hookMuteGroup?.(targetEmail, false); } catch {}
       try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
-      try { await api.statusUnmute?.(targetEmail); } catch {}
       try { await loadStatuses?.(); } catch {}
       return;
     }
@@ -4203,7 +4280,12 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   const targetEmail = previewGroup.ownerEmail;
                   const targetName = previewGroup.ownerName;
                   setPreviewGroup(null);
-                  try { await api.statusMute(targetEmail); } catch {}
+                  let _ok = false;
+                  try { const _r = await api.statusMute(targetEmail); _ok = _r?.success !== false; } catch {}
+                  if (!_ok) {
+                    try { Alert.alert?.(t?.('common.error') || 'Erro', t?.('status.muteFailed') || 'Não foi possível silenciar agora. Tente de novo.'); } catch {}
+                    return;
+                  }
                   try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
                   // Route through the hook's MUTE (not remove): flag the
                   // group muted:true so it drops into the collapsed
