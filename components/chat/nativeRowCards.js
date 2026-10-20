@@ -121,12 +121,14 @@ function _ctFor(email, phone, C, chatyy) {
   const key = String(email || '') + '|' + String(phone || '');
   if (!email && !phone) return { loading: false, has: false };
   const hit = _ctMap.get(key);
-  if (hit) return hit;
+  // [2026-10-20 perf-js] LRU (toque no get): FIFO 400 despejava cartões ainda
+  // carregados → nova checagem → bump → rebuild de todas as linhas (laço).
+  if (hit) { if (!hit.loading) { _ctMap.delete(key); _ctMap.set(key, hit); } return hit; }
   // [2026-10-17 share-contact] cartão novo já diz que a pessoa tem Chatyy (e-mail) → "Mensagem" na hora, sem rede.
   // [privacidade] não confia no chatyy:true do remetente (quem desligou 'ser encontrado'); sempre checa no servidor.
   const ent = { loading: true, has: false, email };
   _ctMap.set(key, ent);
-  if (_ctMap.size > 400) { const k0 = _ctMap.keys().next().value; if (k0 !== key) _ctMap.delete(k0); }
+  if (_ctMap.size > 1200) { const k0 = _ctMap.keys().next().value; if (k0 !== key) _ctMap.delete(k0); }
   (async () => {
     let next = { loading: false, has: false, email };
     try {

@@ -1828,12 +1828,15 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       idx.set(k, i);
       let ent = cache.get(it);
       if (!ent || ent.rev !== ctxRev || ent.key !== k) {
+    const _t0 = Date.now(); // [2026-10-20 perf-js] custo do diff → perfTrace 'nl:diff'
+    try { require('../../services/perfTrace').traceAction('nl:diff'); } catch {}
         let row = null;
         try { row = buildRow(it, k, ctx); } catch (e) { row = null; if (__DEV__) console.warn('[native-list] buildRow', e?.message); }
         if (!row) { unsupported = unsupported || ('build:' + (it.type || it._type || '?')); row = { k, kind: 'system', text: '' }; }
         let json = '';
         try { json = JSON.stringify(row); } catch { json = String(Math.random()); }
         ent = { rev: ctxRev, key: k, row, json };
+    let rebuilt = 0;
         cache.set(it, ent);
       }
       nextJson.set(k, ent.json);
@@ -1850,11 +1853,13 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     if (orderChanged) payload.keys = keys;
     // Primeira carga sem animação; depois o nativo anima inserção no fim.
     payload.anim = sent.keys.length > 0 ? 1 : 0;
+        rebuilt++;
     sent.keys = keys;
     sent.json = nextJson;
     try {
       const p = view.applyRows(payload);
       if (p && typeof p.then === 'function') {
+    try { require('../../services/perfTrace').traceSpan(rebuilt > 50 ? 'nl:diff_full' : 'nl:diff', Date.now() - _t0); } catch {}
         p.then(onApplyOk, (e) => onApplyError(e, view, 'apply:'));
       } else onApplyOk();
     } catch (e) {
