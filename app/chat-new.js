@@ -1137,7 +1137,9 @@ export default function ChatNewScreen() {
     setSearchText(text);
     clearTimeout(searchTimeout.current);
     const seq = ++searchSeqRef.current;
-    const raw = String(text || '').trim();
+    // [busca 2026-10-20] número copiado do WhatsApp/iOS vem cercado de marcas invisíveis
+    // (U+202A/U+202C, U+200E…) → viraria busca por nome. Remove antes de classificar.
+    const raw = String(text || '').replace(/[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g, '').trim();
     if (!raw) {
       setSearchResults([]);
       setSearchChannelResults([]);
@@ -2821,7 +2823,7 @@ export default function ChatNewScreen() {
               // Offer to invite via SMS/WhatsApp/share directly from here.
               // [2026-10-09 find-contacts] Unicode dashes/spaces (iOS copy) count
               // as formatting, and the invite carries the formatted number.
-              const rawQ = (searchText || '').trim();
+              const rawQ = (searchText || '').replace(/[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g, '').trim();
               const digits = rawQ.replace(/\D/g, '');
               const isPhoneQuery = digits.length >= 8 && digits.length <= 15 &&
                 digits.length === rawQ.replace(/[\s+()\-./\u2010-\u2015\u2212\u00A0\u2007\u202F\u2060\uFEFF]/g, '').length;
