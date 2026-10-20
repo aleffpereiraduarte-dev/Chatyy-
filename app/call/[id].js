@@ -111,16 +111,21 @@ export default function CallLinkLobbyScreen() {
         setInfo(data);
         if (data.revoked || data.state === 'revoked') { setStatus('revoked'); return; }
         if (data.expired || data.state === 'expired' || data.state === 'exhausted') { setStatus('expired'); return; }
-        setCamOn(!!data.is_video);
-        setStatus('ready');
+        // [2026-10-20 wa2] refetch (novo objeto user/t) não derruba "Entrando…" de volta p/ o lobby.
+        setStatus((s) => {
+          if (s === 'joining') return s;
+          setCamOn(!!data.is_video);
+          return 'ready';
+        });
       } catch (e) {
         if (cancelled) return;
         setErr(String(e?.message || e));
-        setStatus('error');
+        setStatus((s) => (s === 'joining' ? s : 'error'));
       }
     })();
     return () => { cancelled = true; };
-  }, [authLoading, user, linkId, t]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user?.email, linkId]);
 
   // ── Join → mint token → hand off to the existing call screen ──
   const handleJoin = useCallback(async () => {
