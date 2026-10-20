@@ -8493,6 +8493,16 @@ const previewStyles = StyleSheet.create({
 // SAFE ALERT (works on web + native)
 // ============================================================
 function safeAlert(title, message, buttons) {
+  // [2026-10-20 ux] Erro informativo (título "Erro"/"Error"/"Ops", sem escolha) → toast
+  // de erro discreto (Telegram) em vez de Alert que trava a conversa. Kill: __chatyy_err_toast=false.
+  try {
+    const _info = !buttons || !buttons.length || (buttons.length === 1 && !buttons[0]?.onPress);
+    if (_info && message && globalThis.__chatyy_err_toast !== false
+        && /^\s*(erro|error|ops|oops|falha|failed|fehler|errore|erreur)\b/i.test(String(title || ''))) {
+      require('../components/ui/Toast').showErrorToast({ message: String(message) });
+      return;
+    }
+  } catch {}
   if (Platform.OS === 'web') {
     if (buttons && buttons.length > 0) {
       // Find destructive/OK button and cancel button

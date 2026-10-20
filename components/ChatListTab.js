@@ -2129,7 +2129,8 @@ const ConversationRow = React.memo(function ConversationRow({
                     // Spring-pop only when the unread count goes UP (see unreadScale).
                     { transform: [{ scale: unreadScale }] },
                   ]}>
-                    <Text maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: (isMuted && !conversation.unread_mentions) ? P.mutedPillTxt : _accTx(P) }]}>{conversation.unread_count > 99 ? '99+' : conversation.unread_count}</Text>
+                    {/* [2026-10-20 ux] contador odômetro (Telegram) também na lista JS; nativa já rola */}
+                    <RollingNumber maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: (isMuted && !conversation.unread_mentions) ? P.mutedPillTxt : _accTx(P) }]} value={conversation.unread_count > 99 ? '99+' : conversation.unread_count} />
                   </Animated.View>
                 )}
               </View>
@@ -4309,10 +4310,15 @@ async function _clBlockPeer(api, peerEmail, t) {
   try {
     const r = await api.chatBlockUser(peerEmail);
     if (r && r.success === false) throw new Error(r.message || r.error || '');
-    safeAlert(t('chat.userBlocked') || 'Usuário bloqueado');
+    // [2026-10-20 ux] toast (Telegram) em vez de Alert cru; falha = "Tentar novamente".
+    try { require('./ui/Toast').showToast({ message: t('chat.userBlocked') || 'Usuário bloqueado', kind: 'success' }); }
+    catch { safeAlert(t('chat.userBlocked') || 'Usuário bloqueado'); }
     return true;
   } catch (e) {
-    safeAlert(t('common.error') || 'Erro', (e && e.message) || (t('chat.blockFailed') || 'Não foi possível bloquear. Tente de novo.'));
+    const _msg = (e && e.message) || (t('chat.blockFailed') || 'Não foi possível bloquear. Tente de novo.');
+    try {
+      require('./ui/Toast').showErrorToast({ message: _msg, retryLabel: t('common.retry'), onRetry: () => { _clBlockPeer(api, peerEmail, t); } });
+    } catch { safeAlert(t('common.error') || 'Erro', _msg); }
     return false;
   }
 }
@@ -7280,7 +7286,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                   console.warn('[chatListTab] chatClearHistory failed', e?.message || e);
                 }
                 if (!serverOk) {
-                  safeAlert(t('common.error') || 'Erro', t('chat.clearChatFailed') || 'Não foi possível limpar a conversa. Tente de novo.');
+                  try { require('./ui/Toast').showErrorToast({ message: t('chat.clearChatFailed') || 'Não foi possível limpar a conversa. Tente de novo.' }); } catch { safeAlert(t('common.error') || 'Erro', t('chat.clearChatFailed') || 'Não foi possível limpar a conversa. Tente de novo.'); } /* [2026-10-20 ux] toast */
                   return;
                 }
                 // Local wipe: smartChatCache + localDb + chatCache (MMKV
@@ -7506,7 +7512,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           serverOk = !!(r && r.success !== false);
         } catch (e) { console.warn('[chatListTab] chatClearHistory failed', e?.message || e); }
         if (!serverOk) {
-          safeAlert(t('common.error') || 'Erro', t('chat.clearChatFailed') || 'Não foi possível limpar a conversa. Tente de novo.');
+          try { require('./ui/Toast').showErrorToast({ message: t('chat.clearChatFailed') || 'Não foi possível limpar a conversa. Tente de novo.' }); } catch { safeAlert(t('common.error') || 'Erro', t('chat.clearChatFailed') || 'Não foi possível limpar a conversa. Tente de novo.'); } /* [2026-10-20 ux] toast */
           return;
         }
         try { const sm = require('../services/smartChatCache'); await Promise.resolve(sm.clearConversation?.(conv.id)); } catch {}
@@ -9900,10 +9906,15 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         await voipNative.startOutgoingCall({ calleeEmail: email, calleeName: name, isVideo: !!isVideo, conversationId, onWebFallback: jsRoute });
       } catch (e) {
         console.warn('[avatar-card] startOutgoingCall failed:', e?.message || e);
-        safeAlert(t('common.error') || 'Erro', t('chat.callError') || 'Não foi possível iniciar a chamada');
+        // [2026-10-20 ux] toast c/ "Tentar novamente" em vez de Alert cru
+        try {
+          require('./ui/Toast').showErrorToast({ message: t('chat.callError') || 'Não foi possível iniciar a chamada', retryLabel: t('common.retry'), onRetry: () => _lbStartCallRef.current?.(isVideo) });
+        } catch { safeAlert(t('common.error') || 'Erro', t('chat.callError') || 'Não foi possível iniciar a chamada'); }
       }
     })();
   }, [_lbPeer, _lbConv, avatarLightbox?.name, router, t]);
+  const _lbStartCallRef = useRef(null);
+  _lbStartCallRef.current = _lbStartCall;
   const _lbOnCall = useCallback(() => _lbStartCall(false), [_lbStartCall]);
   const _lbOnVideo = useCallback(() => _lbStartCall(true), [_lbStartCall]);
   const _lbOnInfo = useCallback(() => {

@@ -83,7 +83,7 @@ export { default as TopBar } from './TopBar';
 export { default as useSurface } from './useSurface';
 export { default as Sheet, SheetHeader, SheetHandle, sheetContainerStyle, useOverlayColors } from './Sheet';
 export { default as ActionList } from './ActionList';
-export { showToast, hideToast, ToastHost } from './Toast';
+export { showToast, showErrorToast, hideToast, ToastHost } from './Toast';
 export { default as RefreshControl } from './RefreshControl';
 export { Checkbox, Chip } from './Checkbox';
 export { default as PressableScale } from '../PressableScale';

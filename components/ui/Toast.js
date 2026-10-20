@@ -39,6 +39,22 @@ export function showToast(opts) {
   return id;
 }
 
+// [2026-10-20 ux] Erro amigável (Telegram): toast de erro + "Tentar de novo" em vez de Alert cru.
+// Háptico de erro (respeita a preferência de vibração) e o retry abre a sonda do breaker
+// de leituras (utils/userRetry). retryLabel vem do chamador: t('common.retry').
+//   showErrorToast({ message: t('x.failed'), retryLabel: t('common.retry'), onRetry: load });
+export function showErrorToast({ message, onRetry, retryLabel, haptic = true, duration } = {}) {
+  if (!message) return 0;
+  if (haptic) { try { require('../../services/haptics').error(); } catch {} }
+  let action;
+  if (typeof onRetry === 'function') {
+    let press = onRetry;
+    try { press = require('../../utils/userRetry').wrapRetryPress(onRetry, retryLabel || 'retry', true); } catch {}
+    action = { label: retryLabel || 'Tentar novamente', onPress: press };
+  }
+  return showToast({ message, kind: 'error', action, duration });
+}
+
 export function hideToast(id) {
   _listeners.forEach((fn) => { try { fn({ hide: true, id }); } catch {} });
 }
