@@ -25,7 +25,7 @@
 //
 // Ações (`a` dos nós → onRowPress part 'action', url = ação):
 //   loc · loc_stop · jloc · ct_msg · ct_inv · ct_save · ct_call · ct_open · poll:<i> ·
-//   rsvp:<going|maybe|not_going> · pl_edit · pl_song:<i> · call_back:<v|a> ·
+//   rsvp:<going|maybe|not_going> · mt_map · pl_edit · pl_song:<i> · call_back:<v|a> ·
 //   call_join · st_open · vn_open · gift_thank · lp:<url> · lr:<share|decline|cancel>
 import { Platform } from 'react-native';
 import {
@@ -663,6 +663,10 @@ function buildPoll(m, row, ctx, C, own) {
   row.cw = w; row.pad = [9, 12, 7, 12]; row.mp = 'below';
 }
 
+function _meetupLoc(raw) {
+  try { return require('../meetup/meetupLocation').parseMeetupLocation(raw); } catch { return { text: String(raw || ''), lat: null, lng: null }; }
+}
+
 function buildMeetup(m, row, ctx, C, own) {
   const mt = _json(m.content) || {};
   const P = _palette(own, C); const col = P.col; const isDark = P.dark;
@@ -681,7 +685,22 @@ function buildMeetup(m, row, ctx, C, own) {
   const body = [
     hstack([icon(IconClock, { s: 14, c: ic }), text(String(dateStr || ''), { fs: 12.5, fw: 600, c: own ? C.ownText : col.text })], { g: 6, m: [0, 0, 4, 0], al: 'c' }),
   ];
-  if (mt.location) body.push(hstack([icon(IconMapPin, { s: 14, c: ic }), text(String(mt.location), { fs: 12, c: own ? C.ownMeta : col.textSecondary, fl: 1, ml: 2 })], { g: 6, m: [0, 0, 4, 0], al: 'c' }));
+  if (mt.location) {
+    // [encontro 2026-10-19] "Lugar, Endereço|lat,lng" → mapa estático c/ pino + endereço; toque (mt_map)
+    // abre o visualizador nativo (Como chegar: Apple Maps / Google Maps / Waze). Sem coords → busca no Maps.
+    const ML = _meetupLoc(mt.location);
+    const hasC = ML.lat != null && ML.lng != null;
+    let mapNode = null;
+    if (hasC) {
+      let u = '';
+      try { const sm = require('../BoraMap').chatyyStaticMap(ML.lat, ML.lng, { zoom: 15, dark: isDark, pin: true }); u = sm ? sm.api : ''; } catch {}
+      if (u) mapNode = vstack([image(u, { w: -1, h: 112, fit: 'cover', bg: isDark ? '#2C2C2E' : '#E5E5EA' })], { w: -1, h: 112, r: 10, bg: isDark ? '#2C2C2E' : '#E5E5EA', m: [0, 0, 6, 0] });
+    }
+    body.push(vstack([
+      mapNode,
+      hstack([icon(IconMapPin, { s: 14, c: past ? ic : (own ? C.ownText : col.text) }), text(String(ML.text || ''), { fs: 12, c: own ? C.ownMeta : col.textSecondary, fl: 1, ml: 2 })], { g: 6, al: 'c', w: -1 }),
+    ].filter(Boolean), { w: -1, m: [0, 0, 4, 0], a: 'mt_map' }));
+  }
   if (mt.description) body.push(text(String(mt.description), { fs: 12, c: own ? C.ownMeta : col.textSecondary, m: [2, 0, 4, 0], ml: 3 }));
   body.push(hstack([
     hstack([icon(IconCheckCircle, { s: 12, c: own ? C.ownText : col.text }), text(`${going} ${_tr(C, 'chatConv.going', 'vão')}`, { fs: 11, fw: 700, c: own ? C.ownText : col.text })], { g: 4, al: 'c' }),
@@ -1731,6 +1750,16 @@ export function runCardAction(item, action, D) {
             }));
           }
         })().catch(() => {});
+        return;
+      }
+      case 'mt_map': { // [encontro 2026-10-19] mapa/endereço do cartão do encontro
+        const mt = _json(m.content) || m.meetup || {};
+        const ML = _meetupLoc(mt.location);
+        if (ML.lat != null && ML.lng != null) { D.setMapModalData({ lat: ML.lat, lng: ML.lng, label: ML.text || String(mt.title || '') }); return; }
+        if (ML.text) {
+          const q = encodeURIComponent(ML.text);
+          D.Linking.openURL(Platform.OS === 'ios' ? `http://maps.apple.com/?q=${q}` : `https://www.google.com/maps/search/?api=1&query=${q}`).catch?.(() => {});
+        }
         return;
       }
       case 'pl_edit': {
