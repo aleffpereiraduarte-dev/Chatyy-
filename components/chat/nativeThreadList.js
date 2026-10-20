@@ -1828,12 +1828,15 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     }
     const sent = sentRef.current;
     const list = Array.isArray(data) ? data : [];
+    const _t0 = Date.now(); // [2026-10-20 perf-js] custo do diff → perfTrace 'nl:diff'
+    try { require('../../services/perfTrace').traceAction('nl:diff'); } catch {}
     const keys = new Array(list.length);
     const upserts = [];
     const nextJson = new Map();
     const idx = new Map();
     const cache = rowCacheRef.current;
     let unsupported = '';
+    let rebuilt = 0;
     for (let i = 0; i < list.length; i++) {
       const it = list[i];
       if (!it) { keys[i] = 'null-' + i; continue; }
@@ -1843,21 +1846,20 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       idx.set(k, i);
       let ent = cache.get(it);
       if (!ent || ent.rev !== ctxRev || ent.key !== k) {
-    const _t0 = Date.now(); // [2026-10-20 perf-js] custo do diff → perfTrace 'nl:diff'
-    try { require('../../services/perfTrace').traceAction('nl:diff'); } catch {}
         let row = null;
         try { row = buildRow(it, k, ctx); } catch (e) { row = null; if (__DEV__) console.warn('[native-list] buildRow', e?.message); }
         if (!row) { unsupported = unsupported || ('build:' + (it.type || it._type || '?')); row = { k, kind: 'system', text: '' }; }
         let json = '';
         try { json = JSON.stringify(row); } catch { json = String(Math.random()); }
         ent = { rev: ctxRev, key: k, row, json };
-    let rebuilt = 0;
         cache.set(it, ent);
+        rebuilt++;
       }
       nextJson.set(k, ent.json);
       if (sent.json.get(k) !== ent.json) upserts.push(ent.row);
     }
     keyIndexRef.current = idx;
+    try { require('../../services/perfTrace').traceSpan(rebuilt > 50 ? 'nl:diff_full' : 'nl:diff', Date.now() - _t0); } catch {}
     if (unsupported) { fail(unsupported); return; }
     let orderChanged = keys.length !== sent.keys.length;
     if (!orderChanged) {
@@ -1868,13 +1870,11 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     if (orderChanged) payload.keys = keys;
     // Primeira carga sem animação; depois o nativo anima inserção no fim.
     payload.anim = sent.keys.length > 0 ? 1 : 0;
-        rebuilt++;
     sent.keys = keys;
     sent.json = nextJson;
     try {
       const p = view.applyRows(payload);
       if (p && typeof p.then === 'function') {
-    try { require('../../services/perfTrace').traceSpan(rebuilt > 50 ? 'nl:diff_full' : 'nl:diff', Date.now() - _t0); } catch {}
         p.then(onApplyOk, (e) => onApplyError(e, view, 'apply:'));
       } else onApplyOk();
     } catch (e) {
