@@ -46,6 +46,8 @@ function _scopedConvsKey() {
 
 // ─── Active account ──────────────────────────────────────────────────────────
 let _activeAccount = '';
+let _overlayDoneFor = null; // [perf-js] conta cuja sobreposição SQLite já rodou sem novidade
+let _overlayDoneAt = 0;
 
 /**
  * Point the whole chat store at `email`. Call on login and on every account
@@ -202,12 +204,24 @@ export function getConversationsSync() {
     // is empty (MMKV evicted / first boot after an update).
     let acc = null;
     try { acc = smartChatCache.getCachedConversationsSync(); } catch {}
+    // [2026-10-20 perf-js] A sobreposição do SQLite só serve p/ recuperar o flush
+    // do MMKV perdido num kill → basta na 1ª leitura da conta neste processo.
+    // Depois (busca global, remontagem da lista) era um SELECT de 200 linhas +
+    // 200 JSON.parse síncronos à toa no JS. Kill: __chatyy_store_overlay_once = false.
+    const _once = globalThis.__chatyy_store_overlay_once !== false;
+    if (_once && Array.isArray(acc) && acc.length && _overlayDoneFor === _activeAccount && Date.now() - _overlayDoneAt < 60000) return acc;
     let rows = null;
     try { rows = sqliteStore.getConversationsSync(); } catch {}
     if (Array.isArray(acc) && acc.length) {
       if (Array.isArray(rows) && rows.length) {
-        try { return _overlayNewer(acc, rows); } catch {}
+        try {
+          const out = _overlayNewer(acc, rows);
+          // só pula as próximas (60 s) se o SQLite não trouxe nada mais novo
+          if (out.length === acc.length && out.every((c, i) => c === acc[i])) { _overlayDoneFor = _activeAccount; _overlayDoneAt = Date.now(); }
+          return out;
+        } catch {}
       }
+      _overlayDoneFor = _activeAccount; _overlayDoneAt = Date.now();
       return acc;
     }
     return Array.isArray(rows) ? rows : [];
