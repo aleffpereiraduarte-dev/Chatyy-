@@ -462,6 +462,7 @@ export default {
   "chat.noLinksYet": "No links yet",
   "chat.noLinksHint": "Links shared in this chat appear here.",
   "chat.showInChat": "Show in chat",
+  "gallery.openFile": "Open",
   "chat.nprofile.files": "Files",
   "chat.nprofile.seeAll": "See all",
   "chat.nprofile.empty": "Nothing here yet",

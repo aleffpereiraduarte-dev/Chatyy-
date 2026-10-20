@@ -4,7 +4,7 @@ import {
   View, Text, TouchableOpacity, FlatList, Modal, Image, ActivityIndicator,
   Platform, StyleSheet, Alert,
 } from 'react-native';
-import { IconX, IconDownload, IconFileText, IconImage, IconFilm, IconMusic, IconPlay, IconLink, IconMessageSquare } from './Icons';
+import { IconX, IconDownload, IconFileText, IconImage, IconFilm, IconMusic, IconPlay, IconPause, IconLink, IconMessageSquare } from './Icons';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import ChatMediaViewer from './ChatMediaViewer';
@@ -268,7 +268,15 @@ function SectionedMediaGrid({ items, type, colors, onView, onEndReached, loading
   );
 }
 
-function MediaGrid({ items, type, colors, onView, onEndReached, loadingMore, t, onOpenLink, onJump }) {
+// [2026-10-20 media-wa] aba Áudio: toque TOCA ali mesmo (player global da voz —
+// mini player, velocidade, ponto azul) em vez de abrir o visualizador de tela cheia.
+function AudioRowGlyph({ id, color }) {
+  let st = { active: false, playing: false };
+  try { st = require('../services/voiceNotePlayer').useVoiceBubbleState(id); } catch {}
+  return st.active && st.playing ? <IconPause size={20} color={color} /> : <IconPlay size={20} color={color} />;
+}
+
+function MediaGrid({ items, type, colors, onView, onEndReached, loadingMore, t, onOpenLink, onJump, onPlayAudio }) {
   if (items.length === 0) return <EmptyState type={type} colors={colors} t={t} />;
 
   if (type === 'link') {
@@ -326,7 +334,7 @@ function MediaGrid({ items, type, colors, onView, onEndReached, loadingMore, t, 
           : (ext.toUpperCase() || 'FILE');
         return (
           <TouchableOpacity
-            onPress={() => onView(item)}
+            onPress={() => (isAudio && onPlayAudio ? onPlayAudio(item) : onView(item))}
             style={{
               flexDirection: 'row', alignItems: 'center',
               paddingVertical: 13, paddingHorizontal: 13,
@@ -339,7 +347,7 @@ function MediaGrid({ items, type, colors, onView, onEndReached, loadingMore, t, 
               width: 46, height: 46, borderRadius: 14, backgroundColor: accentBg,
               alignItems: 'center', justifyContent: 'center', marginRight: 13,
             }}>
-              {isAudio ? <IconPlay size={20} color={accent} /> : <IconFileText size={20} color={accent} />}
+              {isAudio ? <AudioRowGlyph id={item.id} color={accent} /> : <IconFileText size={20} color={accent} />}
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', letterSpacing: -0.2 }} numberOfLines={1}>
@@ -359,13 +367,29 @@ function MediaGrid({ items, type, colors, onView, onEndReached, loadingMore, t, 
                 </Text>
               </View>
             </View>
-            <View style={{
-              width: 34, height: 34, borderRadius: 17,
-              alignItems: 'center', justifyContent: 'center',
-              backgroundColor: colors.background,
-            }}>
+            {onJump ? (
+              <TouchableOpacity
+                onPress={() => onJump(item)}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={(t && t('chat.showInChat') !== 'chat.showInChat' && t('chat.showInChat')) || 'Mostrar na conversa'}
+                style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, marginRight: 6 }}
+              >
+                <IconMessageSquare size={16} color={colors.textTertiary} />
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity
+              onPress={() => onView(item)}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={(t && t('gallery.openFile') !== 'gallery.openFile' && t('gallery.openFile')) || 'Abrir'}
+              style={{
+                width: 34, height: 34, borderRadius: 17,
+                alignItems: 'center', justifyContent: 'center',
+                backgroundColor: colors.background,
+              }}>
               <IconDownload size={17} color={colors.textTertiary} />
-            </View>
+            </TouchableOpacity>
           </TouchableOpacity>
         );
       }}
@@ -488,6 +512,21 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
     try { require('../services/openLink').openLink(item.url, { colors }); } catch {}
   };
   const jumpFromLink = onJumpToMessage ? (item) => { try { onJumpToMessage(item.id); } catch {} } : null;
+  const playAudioItem = (item) => {
+    if (!item || !item.file_url) return;
+    try {
+      const VN = require('../services/voiceNotePlayer');
+      const st = VN.getVoiceState();
+      if (st.item && String(st.item.messageId) === String(item.id)) { VN.toggleVoiceNote({ messageId: item.id }); return; }
+      let uri = String(item.file_url);
+      if (uri.startsWith('/')) uri = `${BASE_URL}${uri}`;
+      try { uri = require('../services/mediaCache').playableAudioUrl(uri) || uri; } catch {}
+      VN.playVoiceNote({
+        messageId: item.id, url: item.file_url, uri, conversationId,
+        durationMs: Math.max(0, (Number(item.duration) || 0) * 1000),
+      }).catch(() => {});
+    } catch {}
+  };
 
   // [2026-10-18 tg-viewer] Mídia: o viewer recebe TODAS as fotos/vídeos carregados
   // da aba (paginação horizontal + faixa de miniaturas) e abre/fecha voando da/para
@@ -713,7 +752,7 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
         ) : (
           <MediaGrid items={items} type={activeTab} colors={colors} onView={handleView}
             onEndReached={loadMore} loadingMore={loadingMore} t={t}
-            onOpenLink={openLinkItem} onJump={jumpFromLink} />
+            onOpenLink={openLinkItem} onJump={jumpFromLink} onPlayAudio={playAudioItem} />
         )}
       </View>
       <ChatMediaViewer
