@@ -712,6 +712,13 @@ function buildMeetup(m, row, ctx, C, own) {
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
 
+// [2026-10-19 playlist-glyph] Glifos CHEIOS (viewBox 24, sem arcos/traço) — icon(IconMusic/
+// IconPencil/IconPlay) em traço fino saía como quadrado vazio no balão nativo (igual
+// ao cartão de chamada de 18/10).
+const PL_GLYPH_NOTE = 'M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z';
+const PL_GLYPH_PLAY = 'M8 5v14l11-7z';
+const PL_GLYPH_PENCIL = 'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z';
+
 function buildPlaylist(m, row, ctx, C) {
   const pl = _json(m.content) || {};
   const isDark = !!C.isDark;
@@ -719,12 +726,13 @@ function buildPlaylist(m, row, ctx, C) {
   const txt = isDark ? '#f5f5f5' : '#111827';
   const sub = isDark ? 'rgba(255,255,255,0.55)' : '#64748b';
   const ink = isDark ? 'rgba(255,255,255,0.7)' : '#111111';
-  const subLine = `${songs.length} ${songs.length === 1 ? _tr(C, 'chatConv.song', 'música') : _tr(C, 'chatConv.songs', 'músicas')} · ${_tr(C, 'chatConv.by', 'por')} ${pl.created_by_name || ''}`;
+  const byName = String(pl.created_by_name || '').trim();
+  const subLine = `${songs.length} ${songs.length === 1 ? _tr(C, 'chatConv.song', 'música') : _tr(C, 'chatConv.songs', 'músicas')}${byName ? ` · ${_tr(C, 'chatConv.by', 'por')} ${byName}` : ''}`;
   let need = 20 + 38 + Math.max(_estW(pl.playlist_name, 14, true), _estW(subLine, 10));
   for (const s of songs.slice(0, 4)) need = Math.max(need, 20 + 22 + 18 + _estW(s && s.title, 12));
   const w = _clampW(210, 270, need);
   const kids = [hstack([
-    vstack([icon(IconMusic, { s: 16, c: txt })], { w: 30, h: 30, r: 8, bg: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.08)', al: 'c', jc: 'c', m: [0, 8, 0, 0] }), // [2026-10-18 no-emoji] era 🎵
+    vstack([iconPaths([{ d: PL_GLYPH_NOTE, f: txt }], { s: 18 })], { w: 30, h: 30, r: 8, bg: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.08)', al: 'c', jc: 'c', m: [0, 8, 0, 0] }),
     vstack([text(String(pl.playlist_name || ''), { fw: 700, fs: 14, c: txt, ml: 1 }), text(subLine, { fs: 10, c: sub })], { fl: 1 }),
   ], { m: [0, 0, 6, 0], al: 'c' })];
   songs.slice(0, 4).forEach((song, idx) => {
@@ -735,14 +743,14 @@ function buildPlaylist(m, row, ctx, C) {
         text(String((song && song.title) || ''), { fs: 12, c: txt, fw: 500, ml: 1 }),
         song && song.artist ? text(String(song.artist), { fs: 10, c: sub, ml: 1 }) : null,
       ], { fl: 1 }),
-      playable ? vstack([icon(IconPlay, { s: 12, c: isDark ? '#f5f5f5' : '#111111' })], { p: 3, a: `pl_song:${idx}` }) : null,
+      playable ? vstack([iconPaths([{ d: PL_GLYPH_PLAY, f: isDark ? '#f5f5f5' : '#111111' }], { s: 12 })], { p: 3, a: `pl_song:${idx}` }) : null,
     ], { p: [3, 0, 3, 0], g: 6, al: 'c', w: -1 }));
   });
   if (songs.length > 4) kids.push(text(`+${songs.length - 4} ${_tr(C, 'chatConv.moreSongs', 'mais')}`, { fs: 10, c: sub, m: [3, 0, 0, 0], ta: 'c', w: -1 }));
   if (songs.length === 0) kids.push(text(_tr(C, 'chatConv.emptyPlaylist', 'Toque pra adicionar músicas'), { fs: 11, c: sub, it: 1, ta: 'c', p: [6, 0, 6, 0], w: -1 }));
   const foot = m._pending
     ? [loader({ s: 12, c: ink }), text(m._plProgress ? `${_tr(C, 'chatConv.playlistAdding', 'Adicionando')} ${m._plProgress}` : _tr(C, 'chatConv.playlistCreating', 'Criando playlist...'), { fs: 10, c: ink, fw: 600 })]
-    : [icon(IconPencil, { s: 11, c: ink }), text(_tr(C, 'chatConv.tapToEdit', 'Toque pra editar'), { fs: 10, c: ink, fw: 600 })];
+    : [iconPaths([{ d: PL_GLYPH_PENCIL, f: ink }], { s: 11 }), text(_tr(C, 'chatConv.tapToEdit', 'Toque pra editar'), { fs: 10, c: ink, fw: 600 })];
   kids.push(vstack([], { w: -1, h: 0.5, bg: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)', m: [6, 0, 0, 0] }));
   kids.push(hstack(foot, { p: [6, 0, 0, 0], jc: 'c', al: 'c', g: 4, w: -1 }));
   row.bl = [vstack(kids, { w, p: 10, r: 12, bg: isDark ? '#1c1c1e' : '#ffffff', bw: 1, bc: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)', a: 'pl_edit' })];
@@ -756,7 +764,7 @@ function buildJsonPlaylist(j, row, C) {
   const sub = `${n} ${n === 1 ? 'música' : 'músicas'}`;
   const w = _clampW(240, 300, 24 + 44 + 8 + Math.max(_estW(j.playlist_name, 13, true), _estW(sub, 11)));
   row.bl = [vstack([hstack([
-    vstack([icon(IconMusic, { s: 22, c: prim })], { w: 44, h: 44, r: 12, bg: /^#[0-9a-f]{6}$/i.test(prim) ? prim + '20' : 'rgba(17,17,17,0.12)', al: 'c', jc: 'c' }),
+    vstack([iconPaths([{ d: PL_GLYPH_NOTE, f: prim }], { s: 22 })], { w: 44, h: 44, r: 12, bg: /^#[0-9a-f]{6}$/i.test(prim) ? prim + '20' : 'rgba(17,17,17,0.12)', al: 'c', jc: 'c' }),
     vstack([text(String(j.playlist_name || ''), { fs: 13, fw: 600, c: col.text, m: [0, 0, 2, 0] }), text(sub, { fs: 11, c: col.textTertiary })], { fl: 1 }),
   ], { g: 8, al: 'c' })], { w, bg: col.surface, r: 12, p: [10, 12, 10, 12], g: 8 })];
   row.cw = w; row.pad = PAD; row.mp = 'below';
