@@ -724,8 +724,10 @@ function ViewOnceAudioPlayer({ msg, fileUrl, colors, t, onConsumed }) {
         // Same audio session config the regular AudioPlayer uses, so the
         // view-once playback behaves identically — silent-switch safe, no
         // mixing with music, releases focus back to other apps on ended.
+        // [2026-10-20 call-audio-guard] durante ligação: toca mixado SEM mexer na sessão (CallKit/LiveKit)
+        const _G = require('../services/callAudioGuard');
         try {
-          await mod.setAudioModeAsync?.({
+          if (!_G.callAudioGuardActive()) await mod.setAudioModeAsync?.({
             playsInSilentMode: true,
             allowsRecording: false,
             shouldPlayInBackground: true,
@@ -734,7 +736,7 @@ function ViewOnceAudioPlayer({ msg, fileUrl, colors, t, onConsumed }) {
             shouldDuckAndroid: false,
           });
         } catch {}
-        const player = mod.createAudioPlayer(typeof fileUrl === 'string' ? fileUrl : { uri: String(fileUrl) }, { updateInterval: 150, downloadFirst: false });
+        const player = mod.createAudioPlayer(typeof fileUrl === 'string' ? fileUrl : { uri: String(fileUrl) }, _G.callSafePlayerOptions({ updateInterval: 150, downloadFirst: false }));
         const sub = player.addListener?.('playbackStatusUpdate', (status) => {
           if (!isMountedRef.current) return;
           if (status?.error) {
@@ -755,7 +757,7 @@ function ViewOnceAudioPlayer({ msg, fileUrl, colors, t, onConsumed }) {
             setCurrentTime(0);
             // Hand the audio session back to the OS so Spotify/YT can resume.
             try {
-              mod.setAudioModeAsync?.({
+              if (!_G.callAudioGuardActive()) mod.setAudioModeAsync?.({
                 interruptionMode: 'mixWithOthers',
                 interruptionModeAndroid: 'mixWithOthers',
               }).catch(() => {});

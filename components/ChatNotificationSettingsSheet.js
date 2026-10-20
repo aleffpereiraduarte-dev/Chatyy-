@@ -184,13 +184,16 @@ export default function ChatNotificationSettingsSheet({
   const previewRef = useRef(null);
   const stopPreview = useCallback(() => {
     const pl = previewRef.current; previewRef.current = null;
-    if (pl) { try { pl.pause(); } catch {} try { pl.remove(); } catch {} }
+    if (pl) { try { require('../services/callAudioGuard').callSafeStopPlayer(pl, true); } catch { try { pl.pause(); } catch {} try { pl.remove(); } catch {} } }
   }, []);
   const playPreview = useCallback((value) => {
     stopPreview();
     // Só o toque padrão tem áudio empacotado no app (assets/ringtone.m4a); os
     // nomes de sistema são resolvidos pelo push nativo → sem prévia, só haptic.
     if (value !== 'default' || Platform.OS === 'web') { try { require('../constants/motion').feedback.selection(); } catch {} return; }
+    // [2026-10-20 call-audio-guard] prévia de toque = som de UI: muda durante ligação (o fim do
+    // player faria setActive(false) e derrubaria o áudio da chamada).
+    try { if (require('../services/callAudioGuard').sfxMutedForCall()) { require('../constants/motion').feedback.selection(); return; } } catch {}
     try {
       const A = require('expo-audio');
       const pl = A.createAudioPlayer(require('../assets/ringtone.m4a'));

@@ -210,6 +210,13 @@ export class OneRealtimeSession {
     if (this.active) return;
     this._alive();
     if (!isRealtimeSupported()) throw new Error('WebRTC not available');
+    // [2026-10-20 call-audio-guard] Bia voz = 2º WebRTC + activateForCall/teardown da sessão: com ligação
+    // ativa derrubaria o áudio da chamada → bloqueia com aviso (a UI trata o erro como falha de início).
+    try {
+      if (Platform.OS !== 'web' && require('./callAudioGuard').blockIfCall('voice')) {
+        const err = new Error('call_active'); err.code = 'call_active'; throw err;
+      }
+    } catch (e) { if (e && e.code === 'call_active') throw e; }
     this.active = true;
     LIVE_SESSIONS.add(this);
     this._setState('connecting');

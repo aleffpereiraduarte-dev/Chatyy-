@@ -349,6 +349,9 @@ export default function BiaSettings() {
 
   const playPreview = useCallback(async () => {
     if (previewing) { stopPreview(); return; }
+    // [2026-10-20 call-audio-guard] prévia da voz durante ligação: setAudioModeAsync (.playback) + fim do
+    // player (setActive(false)) derrubariam o áudio da chamada → aviso.
+    try { if (Platform.OS !== 'web' && require('../services/callAudioGuard').blockIfCall('play')) return; } catch {}
     const nm = displayName.trim() || firstName(user);
     const text = (nm
       ? t('bia.voice.sampleName', 'Oi, {name}! Eu sou a Bia. É assim que eu falo com você.').split('{name}').join(nm)

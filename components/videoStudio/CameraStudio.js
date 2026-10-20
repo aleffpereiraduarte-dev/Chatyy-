@@ -119,8 +119,11 @@ export default function CameraStudio({ t, draftId, initialMusic, onNext, onClose
     try {
       const A = require('expo-audio');
       // allowsRecording: SEM ele o iOS mata mic+AEC (ver memória call_oneway_audio).
-      A.setAudioModeAsync?.({ playsInSilentMode: true, allowsRecording: true }).catch?.(() => {});
-      player = A.createAudioPlayer({ uri: music.url });
+      // [2026-10-20 call-audio-guard] com ligação ativa não reconfigura a sessão (é do CallKit/LiveKit)
+      // e o player não desativa a sessão ao pausar/terminar.
+      const _G = require('../../services/callAudioGuard');
+      if (!_G.callAudioGuardActive()) A.setAudioModeAsync?.({ playsInSilentMode: true, allowsRecording: true }).catch?.(() => {});
+      player = A.createAudioPlayer({ uri: music.url }, _G.callSafePlayerOptions({}));
       musicPlayerRef.current = player;
     } catch { musicPlayerRef.current = null; }
     return () => {

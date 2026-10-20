@@ -172,6 +172,8 @@ function speakFallback(text, lang, onDone) {
     window.speechSynthesis.speak(utterance);
     return true;
   }
+  // [2026-10-20 call-audio-guard] TTS mudo durante ligação (sessão é do CallKit/LiveKit)
+  try { if (require('../services/callAudioGuard').sfxMutedForCall()) { if (onDone) setTimeout(onDone, 0); return true; } } catch {}
   if (ExpoSpeech) {
     ExpoSpeech.stop();
     ExpoSpeech.speak(text, {
@@ -211,6 +213,9 @@ async function speakElevenLabs(text, lang, onDone) {
       audio.play();
       return true;
     } else {
+      // [2026-10-20 call-audio-guard] resposta falada da Bia muda durante ligação: o fim do player
+      // (keepAudioSessionActive=false) faria setActive(false) e derrubaria o áudio da chamada.
+      try { if (require('../services/callAudioGuard').sfxMutedForCall()) { if (onDone) setTimeout(onDone, 0); return true; } } catch {}
       // Native: use expo-audio createAudioPlayer
       try {
         if (ExpoAV?.createAudioPlayer) {
@@ -1709,6 +1714,8 @@ export default function OneScreen() {
     // [bia-lenta 2026-10-19] tocar no mic = interromper a Bia (barge-in), senão a voz
     // dela entrava na gravação e ela "respondia" a ela mesma
     try { abortVoiceSpeaking(); } catch {}
+    // [2026-10-20 call-audio-guard] gravar com ligação ativa derruba o mic/AEC da chamada
+    try { if (Platform.OS !== 'web' && require('../services/callAudioGuard').blockIfCall('record')) return; } catch {}
     setAutoRead(true); // Enable auto-read when using voice
     if (Platform.OS !== 'web') {
       // Native: record audio and transcribe via server-side Whisper (auto language detect).
@@ -1996,6 +2003,12 @@ export default function OneScreen() {
     if (!voiceModeRef.current || !isMountedRef.current) return;
     // [bia-lenta 2026-10-19] motor realtime ativo é dono do mic: o legado nunca roda junto
     if (realtimeRef.current) return;
+    // [2026-10-20 call-audio-guard] ligação começou no meio do modo voz: não grava de novo
+    try {
+      if (Platform.OS !== 'web' && require('../services/callAudioGuard').blockIfCall('voice', { silent: true })) {
+        voiceModeRef.current = false; setVoiceMode(false); return;
+      }
+    } catch {}
     // Per-session token: blocks the onend / onerror auto-restart and the
     // 8s native auto-stop from spawning overlapping recognition sessions
     // when a result already came in (codex finding: duplicate sends).
@@ -2218,6 +2231,8 @@ export default function OneScreen() {
   }, [locale, sendMessage]);
 
   const enterVoiceMode = useCallback(() => {
+    // [2026-10-20 call-audio-guard] modo voz grava + reconfigura a sessão → bloqueado na ligação
+    try { if (Platform.OS !== 'web' && require('../services/callAudioGuard').blockIfCall('voice')) return; } catch {}
     // [bia-lenta 2026-10-19] UM motor de voz por vez: já em modo voz com sessão
     // viva → ignora o 2º toque; derruba qualquer sessão realtime que tenha sobrado,
     // descarta gravação do mic (e transcrição em voo) e cancela a resposta em

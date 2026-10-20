@@ -49,6 +49,8 @@ export default function AIVoiceCommand() {
   }
 
   async function startRecording() {
+    // [2026-10-20 call-audio-guard] comando de voz grava → bloqueado com ligação ativa
+    try { if (Platform.OS !== 'web' && require('../services/callAudioGuard').blockIfCall('voice')) return; } catch {}
     try {
       const expoAudio = require('expo-audio');
       const perm = await expoAudio.requestRecordingPermissionsAsync();

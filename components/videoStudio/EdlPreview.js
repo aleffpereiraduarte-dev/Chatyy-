@@ -69,7 +69,10 @@ function createAudio(uri) {
   if (!uri) return null;
   try {
     const A = require('expo-audio');
-    const pl = A.createAudioPlayer({ uri }, { updateInterval: 250 });
+    // [2026-10-20 call-audio-guard] durante ligação: sem setActive(false) ao pausar/terminar
+    let _o = { updateInterval: 250 };
+    try { _o = require('../../services/callAudioGuard').callSafePlayerOptions(_o); } catch {}
+    const pl = A.createAudioPlayer({ uri }, _o);
     return pl;
   } catch { return null; }
 }

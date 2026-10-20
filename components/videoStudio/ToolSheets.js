@@ -251,6 +251,8 @@ function RecorderPanel({ t, edl, clock, preview, onRecorded, onBusy }) {
 
   const start = useCallback(async () => {
     if (!recorder || !A) { Alert.alert(t('studio.voice.title'), t('studio.voice.unavailable')); return; }
+    // [2026-10-20 call-audio-guard] narração grava → bloqueada com ligação ativa
+    try { if (require('../../services/callAudioGuard').blockIfCall('record')) return; } catch {}
     try {
       const perm = await A.requestRecordingPermissionsAsync();
       if (!perm?.granted) { Alert.alert(t('studio.voice.title'), t('studio.voice.micDenied')); return; }

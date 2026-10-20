@@ -43,6 +43,8 @@ function loadExpoVideo() {
 // Force playsInSilentMode the moment the user unmutes — same pattern used by
 // voice messages / ViewOnceMessage (expo-audio AudioModule.setAudioMode).
 function enablePlaybackAudioSession() {
+  // [2026-10-20 call-audio-guard] com ligação ativa NÃO reconfigura a sessão (→ .playback = sem mic)
+  try { if (require('../services/callAudioGuard').callAudioGuardActive()) return; } catch {}
   try {
     // expo-audio exposes setAudioModeAsync (NOT setAudioMode — that method does
     // not exist; the old call was a silent no-op). Use the top-level export the

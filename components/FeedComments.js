@@ -168,7 +168,7 @@ const CommentItem = memo(function CommentItem({
     try {
       const { AudioModule } = require('expo-audio');
       if (!voiceRef.current) {
-        voiceRef.current = await AudioModule.createAudioPlayer({ uri: audioUrl });
+        voiceRef.current = await AudioModule.createAudioPlayer({ uri: audioUrl }, require('../services/callAudioGuard').callSafePlayerOptions({}));
         voiceRef.current.addListener?.('playbackStatusUpdate', (s) => {
           if (s?.didJustFinish) setVoicePlaying(false);
         });
@@ -751,6 +751,8 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         recMediaRef.current = { mr, stream, chunks };
         mr.start();
       } else {
+        // [2026-10-20 call-audio-guard] gravar durante ligação mataria o mic/AEC da chamada → aviso
+        try { if (require('../services/callAudioGuard').blockIfCall('record')) return; } catch {}
         const expoAudio = require('expo-audio');
         try { await expoAudio.setAudioModeAsync?.({ allowsRecording: true, playsInSilentMode: true }); } catch {}
         const AudioMod = require('expo-audio/build/AudioModule').default;

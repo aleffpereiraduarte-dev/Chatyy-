@@ -262,6 +262,9 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
     if (trimPlayerRef.current) { try { trimPlayerRef.current.remove(); } catch {} trimPlayerRef.current = null; }
     const url = trimTrack?.previewUrl;
     if (!url || !_expoAudioSC || !_expoAudioSC.createAudioPlayer) return;
+    // [2026-10-20 call-audio-guard] prévia da música com ligação ativa: muda (setAudioModeAsync → .playback
+    // mataria o mic da chamada; o fim/pausa do player faria setActive(false)).
+    try { if (require('../services/callAudioGuard').sfxMutedForCall()) return; } catch {}
     let cancelled = false;
     (async () => {
       try { await _expoAudioSC.setAudioModeAsync?.({ playsInSilentMode: true, shouldPlayInBackground: false }); } catch {}
@@ -914,6 +917,7 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
   // so the voiceover dominates without erasing the scene's audio.
   const startVoiceover = useCallback(async () => {
     if (voiceoverRecording || preview?.type !== 'video') return;
+    try { if (require('../services/callAudioGuard').blockIfCall('record')) return; } catch {} // [call-audio-guard]
     try {
       const Audio = require('expo-audio');
       // Request mic permission. iOS shows the OS prompt the first time;

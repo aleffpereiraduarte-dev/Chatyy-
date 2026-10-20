@@ -876,6 +876,8 @@ function StatusMusicPlayer({ url, active, startMs = 0 }) {
     // Tear down any previous track first (item changed / paused / closed).
     if (playerRef.current) { try { playerRef.current.remove(); } catch {} playerRef.current = null; }
     if (!url || !active || !_expoAudio || !_expoAudio.createAudioPlayer) return;
+    // [2026-10-20 call-audio-guard] música do status durante ligação: muda (ver services/callAudioGuard)
+    try { if (require('../../services/callAudioGuard').sfxMutedForCall()) return; } catch {}
     let cancelled = false;
     (async () => {
       // iOS: must set the audio session BEFORE playing or the ringer switch

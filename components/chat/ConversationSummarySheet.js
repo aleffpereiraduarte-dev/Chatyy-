@@ -754,7 +754,12 @@ function ConversationSummarySheetInner({
     ref.idx = i;
     const my = ++ref.token;
     try {
+      // [2026-10-20 call-audio-guard] com ligação ativa a fala usa a sessão PRÓPRIA do sintetizador
+      // (useApplicationAudioSession=false) → não mexe na AVAudioSession do CallKit/LiveKit.
+      let _ownSession = false;
+      try { _ownSession = require('../../services/callAudioGuard').callAudioGuardActive(); } catch {}
       S.speak(ref.chunks[i], {
+        ...(_ownSession ? { useApplicationAudioSession: false } : null),
         language: locale,
         onDone: () => { if (my === ref.token) speakFrom(i + 1); },
         onError: () => { if (my === ref.token) { ref.idx = 0; setSpeak('idle'); } },

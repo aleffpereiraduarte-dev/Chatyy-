@@ -286,7 +286,8 @@ function _nativeEngine(m, uri, startMs, rate, token) {
   // rosto. Sem ligação ativa, zera o modo (.playback/.default) antes de tocar.
   if (Platform.OS === 'ios' && !(typeof globalThis !== 'undefined' && globalThis.__chatyy_voice_reset_mode === false)) {
     let inCall = false;
-    try { inCall = require('./ongoingCall').isCallOngoing(); } catch {}
+    // [2026-10-20 call-audio-guard] guarda central (CallKit/LiveKit/PSTN/tocando), não só ongoingCall.
+    try { inCall = require('./callAudioGuard').isCallActiveNow(); } catch { inCall = true; }
     if (!inCall) {
       let p = null;
       try {
@@ -324,20 +325,30 @@ function _nativeNowPlaying(m, item) {
 async function _expoEngine(uri, startMs, rate, token) {
   let mod;
   try { mod = require('expo-audio'); } catch { return null; }
-  try {
-    await mod.setAudioModeAsync({
-      playsInSilentMode: true,
-      allowsRecording: false,
-      shouldPlayInBackground: true,
-      interruptionMode: 'doNotMix',
-      interruptionModeAndroid: 'doNotMix',
-      shouldDuckAndroid: false,
-    });
-  } catch {}
+  // [2026-10-20 call-audio-guard] nota de voz DURANTE ligação (permitido, como no WhatsApp): o motor
+  // expo não mexe na sessão (setAudioModeAsync → .playback mataria o mic da chamada) e o player
+  // nasce com keepAudioSessionActive=true (sem setActive(false) ao pausar/terminar). Toca mixado no
+  // .playAndRecord/.voiceChat da chamada.
+  let G = null;
+  try { G = require('./callAudioGuard'); } catch {}
+  const inCallAtStart = !!(G && G.callAudioGuardActive());
+  if (!inCallAtStart) {
+    try {
+      await mod.setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: false,
+        shouldPlayInBackground: true,
+        interruptionMode: 'doNotMix',
+        interruptionModeAndroid: 'doNotMix',
+        shouldDuckAndroid: false,
+      });
+    } catch {}
+  }
   if (token !== _token) return null;
   let player;
   try {
-    player = mod.createAudioPlayer(typeof uri === 'string' ? uri : { uri: String(uri) }, { updateInterval: VOICE_TICK_MS, downloadFirst: false });
+    const _opts = { updateInterval: VOICE_TICK_MS, downloadFirst: false };
+    player = mod.createAudioPlayer(typeof uri === 'string' ? uri : { uri: String(uri) }, G ? G.callSafePlayerOptions(_opts) : _opts);
   } catch { return null; }
   let endedOnce = false;
   let seekedApplied = !(startMs > 0);
@@ -360,19 +371,22 @@ async function _expoEngine(uri, startMs, rate, token) {
     _onEngineStatus({ positionMs: cur, durationMs: dur, playing: !!s.playing, ended });
   });
   const restoreMix = () => {
+    if (G && G.callAudioGuardActive()) return; // ligação: a sessão é do CallKit/LiveKit
     try {
       mod.setAudioModeAsync?.({ interruptionMode: 'mixWithOthers', interruptionModeAndroid: 'mixWithOthers' }).catch(() => {});
     } catch {}
   };
   const eng = {
     kind: 'expo', token, player,
-    pause: () => { try { player.pause(); } catch {} },
+    pause: () => { if (G) G.callSafeStopPlayer(player, false); else { try { player.pause(); } catch {} } },
     resume: () => {
       try {
         const d = Number(player.duration) || 0;
         if (d > 0 && Number(player.currentTime) >= d - 0.06) player.seekTo(0);
       } catch {}
       endedOnce = false;
+      try { player.muted = false; } catch {}
+      try { if (Number(player.playbackRate) === 0) player.setPlaybackRate?.(_state.rate || 1, 'high'); } catch {}
       try { player.play(); } catch {}
     },
     seek: (ms) => { try { player.seekTo(ms / 1000); } catch {} },
@@ -384,8 +398,8 @@ async function _expoEngine(uri, startMs, rate, token) {
     },
     detach: () => {
       try { sub?.remove?.(); } catch {}
-      try { player.pause(); } catch {}
-      try { player.remove?.(); } catch {}
+      if (G) G.callSafeStopPlayer(player, true);
+      else { try { player.pause(); } catch {} try { player.remove?.(); } catch {} }
     },
     stop: () => { eng.detach(); restoreMix(); },
   };
@@ -564,6 +578,9 @@ function _chainTone() {
   try {
     if (globalThis.__chatyy_voice_chain_tone === false) return false;
     if (_state.earpiece) return false;
+    // [2026-10-20 call-audio-guard] bipe = som de UI: mudo na ligação (player keepAudioSessionActive=false
+    // faria setActive(false) 0,1 s após o bipe → derruba o áudio do CallKit/LiveKit).
+    try { if (require('./callAudioGuard').sfxMutedForCall()) return false; } catch { return false; }
     const { AppState } = require('react-native');
     if (AppState.currentState !== 'active') return false;
     if (!_tonePlayer) {

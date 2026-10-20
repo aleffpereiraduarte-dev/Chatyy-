@@ -111,6 +111,9 @@ function ExpoAudioStatusPlayer({ url }) {
     let expoAudio = null;
     try { expoAudio = require('expo-audio'); } catch {}
     if (!expoAudio || !expoAudio.createAudioPlayer) return undefined;
+    // [2026-10-20 call-audio-guard] música do status durante ligação: muda (setAudioModeAsync → .playback
+    // mataria o mic da chamada; pausa/fim do player faria setActive(false) e derrubaria o áudio).
+    try { if (require('../services/callAudioGuard').sfxMutedForCall()) return undefined; } catch {}
     (async () => {
       try {
         // playsInSilentMode is the expo-audio spelling (expo-av used IOS suffix).
@@ -2772,6 +2775,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         voiceMediaRef.current = { mr, stream, chunks };
         mr.start();
       } else {
+        // [2026-10-20 call-audio-guard] gravar durante ligação mataria o mic/AEC da chamada → aviso
+        try { if (require('../services/callAudioGuard').blockIfCall('record')) return; } catch {}
         const expoAudio = require('expo-audio');
         try { await expoAudio.setAudioModeAsync?.({ allowsRecording: true, playsInSilentMode: true }); } catch {}
         const AudioMod = require('expo-audio/build/AudioModule').default;

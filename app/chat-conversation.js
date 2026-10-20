@@ -8510,6 +8510,11 @@ function safeAlert(title, message, buttons) {
 // devolve o modo).
 let _voiceMicGranted = false;
 let _voiceMods = null;
+// [2026-10-20 call-audio-guard] setAudioModeAsync do gravador/prévia: com ligação ativa (iOS) NÃO
+// mexe na AVAudioSession (setCategory .playback/.playAndRecord mode .default mata o mic/AEC da chamada).
+function _callSafeAudioMode(mode) {
+  try { return require('../services/callAudioGuard').callSafeSetAudioMode(mode); } catch { return Promise.resolve(false); }
+}
 function _voiceGetMods() {
   if (_voiceMods) return _voiceMods;
   let expoAudio = null; let NativeAudio = null;
@@ -8673,7 +8678,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           try { _pp.pause?.(); } catch {}
           try { _pp.remove?.(); } catch {}
           try {
-            const { setAudioModeAsync } = require('expo-audio');
+            const setAudioModeAsync = _callSafeAudioMode;
             setAudioModeAsync?.({ interruptionMode: 'mixWithOthers', interruptionModeAndroid: 'mixWithOthers' }).catch(() => {});
           } catch {}
         }
@@ -8698,7 +8703,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         Promise.resolve()
           .then(() => (_rec.__native && _rec.NativeAudio?.cancelRecording) ? _rec.NativeAudio.cancelRecording() : _rec.stop?.())
           .catch(() => {})
-          .then(() => { try { return require('expo-audio').setAudioModeAsync({ allowsRecording: false }); } catch {} })
+          .then(() => { try { return _callSafeAudioMode({ allowsRecording: false }); } catch {} })
           .catch(() => {});
       }
       if (voiceSessionRef.current) { voiceSessionRef.current.alive = false; }
@@ -8856,6 +8861,11 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
   };
 
   const startRecording = async () => {
+    // [2026-10-20 call-audio-guard] rede de segurança: nenhuma entrada grava com ligação ativa
+    // (o gravador faz setCategory(.playAndRecord, mode .default) → mata o AEC/mic da chamada).
+    try {
+      if (Platform.OS !== 'web' && require('../services/callAudioGuard').blockIfCall('record')) { onCancel(); return; }
+    } catch {}
     // [2026-10-07 voice-native] recording always pauses a playing voice note.
     try { VoiceNote.pauseVoiceNote(); } catch {}
     try {
@@ -9008,7 +9018,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       // de setAudioModeAsync antes de começar (era o maior corte do início).
       const _nativeAvail = !!(_voiceGetMods().NativeAudio?.startRecording);
       if (!_nativeAvail) try {
-        await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        await _callSafeAudioMode({ allowsRecording: true, playsInSilentMode: true });
       } catch (modeErr) {
         // Non-fatal on Android — some Android devices reject playsInSilentMode
         // but recording still works. Log and continue.
@@ -9052,7 +9062,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       let recorder = nativeRec;
       if (!recorder && _nativeAvail) {
         // nativo falhou → o caminho expo-audio precisa do modo de gravação.
-        try { await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true }); } catch {}
+        try { await _callSafeAudioMode({ allowsRecording: true, playsInSilentMode: true }); } catch {}
       }
       if (!recorder) {
         try {
@@ -9114,7 +9124,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       if (!mountedRef.current) {
         try { await recorder.stop(); } catch {}
         // [2026-10-06 UX2] also drop the recording audio session (hold released early)
-        try { await expoAudio.setAudioModeAsync({ allowsRecording: false }); } catch {}
+        try { await _callSafeAudioMode({ allowsRecording: false }); } catch {}
         return;
       }
       setRecording(recorder);
@@ -9172,7 +9182,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       pendingDirectSendRef.current = false;
       if (voiceSessionRef.current) voiceSessionRef.current.alive = false;
       if (Platform.OS !== 'web') {
-        try { const { setAudioModeAsync } = require('expo-audio'); await setAudioModeAsync({ allowsRecording: false }); } catch {}
+        try { const setAudioModeAsync = _callSafeAudioMode; await setAudioModeAsync({ allowsRecording: false }); } catch {}
         if (fileUri) {
           try {
             let fs; try { fs = require('expo-file-system/legacy'); } catch { fs = require('expo-file-system'); }
@@ -9285,7 +9295,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           await recording.stop();
           uri = recording.uri;
         }
-        try { const { setAudioModeAsync } = require('expo-audio'); await setAudioModeAsync({ allowsRecording: false }); } catch {}
+        try { const setAudioModeAsync = _callSafeAudioMode; await setAudioModeAsync({ allowsRecording: false }); } catch {}
         // [rec-audit P0-2/P0-3] arquivo vazio/corrompido ou curto demais → descarta.
         if (uri && _recBytes == null) _recBytes = await _voiceFileSize(uri);
         if (!uri || (_recBytes != null && _recBytes < VOICE_MIN_BYTES) || _recMs < VOICE_MIN_MS) { await _rejectVoice('fail', uri || null); return; }
@@ -9331,7 +9341,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       }
     } catch (e) {
       console.warn('Stop recording error:', e);
-      try { const { setAudioModeAsync } = require('expo-audio'); await setAudioModeAsync({ allowsRecording: false }); } catch {}
+      try { const setAudioModeAsync = _callSafeAudioMode; await setAudioModeAsync({ allowsRecording: false }); } catch {}
       onCancel();
     }
     setRecording(null);
@@ -9515,7 +9525,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       try { p.remove?.(); } catch {}
       // Release exclusivity so other apps' audio can resume (mixWithOthers).
       try {
-        const { setAudioModeAsync } = require('expo-audio');
+        const setAudioModeAsync = _callSafeAudioMode;
         setAudioModeAsync?.({
           interruptionMode: 'mixWithOthers',
           interruptionModeAndroid: 'mixWithOthers',
@@ -9552,7 +9562,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
       } else {
         try { await recording.stop(); } catch {}
       }
-      try { const { setAudioModeAsync } = require('expo-audio'); await setAudioModeAsync({ allowsRecording: false }); } catch {}
+      try { const setAudioModeAsync = _callSafeAudioMode; await setAudioModeAsync({ allowsRecording: false }); } catch {}
     }
     setRecording(null);
     onCancel();
@@ -14928,7 +14938,9 @@ function ChatConversationInnerBody() {
   // owns the mic (WhatsApp shows the same notice). Returns true = blocked.
   const blockRecordingDuringCall = (kind) => {
     let busy = false;
-    try { busy = require('../services/ongoingCall').isCallOngoing(); } catch {}
+    // [2026-10-20 call-audio-guard] CallKit/LiveKit/PSTN/tocando (não só a barra de ligação)
+    try { busy = require('../services/callAudioGuard').isCallLiveStrict(); } catch { try { busy = require('../services/ongoingCall').isCallOngoing(); } catch {} }
+    try { if (globalThis.__chatyy_call_audio_guard === false) busy = require('../services/ongoingCall').isCallOngoing(); } catch {}
     if (!busy) return false;
     const msg = kind === 'video'
       ? (t('call.ongoing.videoNoteBlocked') || 'Não é possível gravar vídeo durante uma ligação')
@@ -39949,7 +39961,7 @@ function ChatConversationInnerBody() {
           } catch { return null; }
         })() : null;
         let _ncCallBusy = false;
-        try { _ncCallBusy = !!require('../services/ongoingCall').isCallOngoing(); } catch {}
+        try { _ncCallBusy = !!require('../services/callAudioGuard').isCallLiveStrict(); } catch { try { _ncCallBusy = !!require('../services/ongoingCall').isCallOngoing(); } catch {} }
         const _ncWs = () => { try { return require('../services/websocket').default; } catch { return null; } };
         return (
           <NativeComposerBridge

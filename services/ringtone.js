@@ -237,7 +237,11 @@ export function startRingtone() {
         } catch {}
         if (generation !== ringtoneGeneration) return;
         const ringtoneAsset = require('../assets/ringtone.m4a'); // [2026-10-16 wave13a] AAC 121 KB (era WAV PCM 1.3 MB); o .wav fica só p/ som de notificação (app.json)
-        const player = createAudioPlayer(ringtoneAsset, { isLooping: true });
+        const player = createAudioPlayer(ringtoneAsset, _ringSafeOpts());
+        // [2026-10-20 call-audio-guard] `isLooping` NÃO é opção do createAudioPlayer (era ignorada): o
+        // m4a (30 s) tocava 1x e, ao terminar, o expo-audio fazia setActive(false) ~0,1 s depois → com a
+        // ligação conectando/no ar, derrubava o áudio do CallKit/LiveKit. Agora loop real + sessão mantida.
+        try { player.loop = true; } catch {}
         try { player.volume = 1.0; } catch {}
         if (generation !== ringtoneGeneration) {
           try { player.remove(); } catch {}
@@ -252,6 +256,13 @@ export function startRingtone() {
       }
     })();
   }
+}
+
+// [2026-10-20 call-audio-guard] toque/ringback/tom de fim só existem em volta de uma ligação: o player
+// nunca desativa a AVAudioSession (keepAudioSessionActive=true) — pause()/fim do som com o padrão
+// false fazia setActive(false) 0,1 s depois e matava o I/O do CallKit/LiveKit (ex.: atender no ringback).
+function _ringSafeOpts() {
+  try { return require('./callAudioGuard').callSafePlayerOptions({}, true); } catch { return { keepAudioSessionActive: Platform.OS === 'ios' }; }
 }
 
 // Calling tone (what the CALLER hears) - gentle "tuuummm...tuuummm"
@@ -328,7 +339,11 @@ export function startCallingTone() {
         // Reuse ringtone.wav at lower volume — sounds like a ringback
         // (single tone repeating) without shipping another asset.
         const ringtoneAsset = require('../assets/ringtone.m4a'); // [2026-10-16 wave13a] AAC 121 KB (era WAV PCM 1.3 MB); o .wav fica só p/ som de notificação (app.json)
-        const player = createAudioPlayer(ringtoneAsset, { isLooping: true });
+        const player = createAudioPlayer(ringtoneAsset, _ringSafeOpts());
+        // [2026-10-20 call-audio-guard] `isLooping` NÃO é opção do createAudioPlayer (era ignorada): o
+        // m4a (30 s) tocava 1x e, ao terminar, o expo-audio fazia setActive(false) ~0,1 s depois → com a
+        // ligação conectando/no ar, derrubava o áudio do CallKit/LiveKit. Agora loop real + sessão mantida.
+        try { player.loop = true; } catch {}
         try { player.volume = 0.55; } catch {}
         if (generation !== ringtoneGeneration) {
           try { player.remove(); } catch {}
@@ -439,7 +454,7 @@ export function playEndTone() {
 
       const base64 = arrayBufferToBase64(buffer);
       const dataUri = 'data:audio/wav;base64,' + base64;
-      const player = createAudioPlayer({ uri: dataUri });
+      const player = createAudioPlayer({ uri: dataUri }, _ringSafeOpts()); // [call-audio-guard] sem setActive(false) no fim
       try { player.volume = 1.0; } catch {}
       try { player.play(); } catch {}
       // Auto-cleanup after the tone duration.

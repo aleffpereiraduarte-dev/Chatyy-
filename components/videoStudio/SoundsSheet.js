@@ -122,6 +122,8 @@ export default function SoundsSheet({ visible, onClose, t, edl, videoDur, onAppl
 
   const playFrom = useCallback((track, from = 0) => {
     stopPreview();
+    // [2026-10-20 call-audio-guard] prévia de música = som de UI: muda durante ligação
+    try { if (require('../../services/callAudioGuard').blockIfCall('play')) { setPlayingId(null); return; } } catch {}
     try {
       const A = require('expo-audio');
       const pl = A.createAudioPlayer({ uri: track.url_preview || track.url }, { updateInterval: 500 });
