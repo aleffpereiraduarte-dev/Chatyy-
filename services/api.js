@@ -6481,8 +6481,9 @@ export async function chatTopicList(conversationId) {
 export async function chatTopicDelete(topicId) {
   return apiCall('chat_topic_delete', { topic_id: topicId }, 'POST');
 }
-export async function chatTopicPin(topicId) {
-  return apiCall('chat_topic_pin', { topic_id: topicId }, 'POST');
+export async function chatTopicPin(topicId, pinned = true) {
+  // [2026-10-20 tg1] servidor lê `pinned` (sem ele sempre desafixava)
+  return apiCall('chat_topic_pin', { topic_id: topicId, pinned: pinned ? 1 : 0 }, 'POST');
 }
 // Voice transcription
 // [2026-10-14 transcricao-idioma] `language` = idioma do app de quem pede — o

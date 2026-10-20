@@ -106,8 +106,10 @@ export default function SwipeReplyRow({ children, onReply, onInfo, style, iconRe
         }
         armed.set(nowArmed);
       })
-      .onEnd(() => {
+      .onEnd((_e, success) => {
         'worklet';
+        // [2026-10-20 tg1] gesto cancelado/interrompido (success=false) não responde
+        if (success === false) return;
         if (armed.get() !== 0) runOnJS(fire)(armed.get());
       })
       .onFinalize(() => {

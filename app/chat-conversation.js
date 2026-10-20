@@ -15375,6 +15375,13 @@ function ChatConversationInnerBody() {
     (conversationType === 'channel' && !members.find(m => m.email === currentEmail && m.role === 'admin')) ||
     (conversationType === 'group' && adminOnlyMessages && members.some(m => m.email === currentEmail && m.role !== 'admin'))
   ), [waImported, exMember, conversationType, members, currentEmail, adminOnlyMessages]);
+  // [2026-10-20 tg1] lido pelo "arrastar p/ responder" (sem composer não há onde responder)
+  const _composerBlockedRef = useRef(false);
+  _composerBlockedRef.current = composerBlocked;
+  const _selModeRefTg1 = useRef(false);
+  _selModeRefTg1.current = selectionMode;
+  const currentEmailRefTg1 = useRef('');
+  currentEmailRefTg1.current = currentEmail;
 
   // Rehydrate the live-location dup-session guard on mount / after messages
   // load. `liveLocActive` initializes to null and was NEVER restored, so after
@@ -20077,13 +20084,13 @@ function ChatConversationInnerBody() {
         const mid = data?.message_id;
         if (!mid) return;
         if (data?.pinned === false || data?.unpinned === true || data?.action === 'unpin') {
-          setPinnedMessages(prev => prev.filter(p => p.id !== mid));
+          setPinnedMessages(prev => prev.filter(p => String(p.id) !== String(mid))); // [2026-10-20 tg1] id string×número
         } else {
           setPinnedMessages(prev => {
             // [2026-10-12 srv-audit] pinned_until do evento (servidor novo), se vier.
             const _pu = data?.pinned_until || null;
-            if (prev.find(p => p.id === mid)) return _pu ? prev.map(p => (p.id === mid ? { ...p, pinned_until: _pu } : p)) : prev;
-            const msg = (messagesRef.current || []).find(m => m.id === mid);
+            if (prev.find(p => String(p.id) === String(mid))) return _pu ? prev.map(p => (String(p.id) === String(mid) ? { ...p, pinned_until: _pu } : p)) : prev;
+            const msg = (messagesRef.current || []).find(m => String(m.id) === String(mid));
             return msg ? [{ ...msg, pinned_until: _pu }, ...prev].slice(0, 3) : prev;
           });
         }
@@ -22098,6 +22105,16 @@ function ChatConversationInnerBody() {
     if (!text) return;
     setShowScheduleMenu(false);
     setShowCustomSchedule(false);
+    // [2026-10-20 tg1] agendar = servidor guarda o texto puro e o cron insere depois →
+    // em conversa criptografada furaria a E2EE; editando, "agendar" criava msg nova.
+    try {
+      if (require('../services/e2eeV4').isConversationE2ee(conversationId)) {
+        const _m = t('chat.scheduleE2eeBlocked');
+        safeAlert(t('common.error'), _m && _m !== 'chat.scheduleE2eeBlocked' ? _m : 'Agendar não está disponível em conversa criptografada.');
+        return;
+      }
+    } catch {}
+    if (editingMsg) return;
     try {
       const r = await api.chatScheduleMessage(conversationId, text, scheduledAt);
       if (r.success) {
@@ -22106,8 +22123,14 @@ function ChatConversationInnerBody() {
         const timeStr = d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
         setScheduleToast(t('chat.messageScheduled', { time: timeStr }));
         setTimeout(() => setScheduleToast(''), 3000);
+      } else {
+        setScheduleToast(t('chat.scheduleFailed') || 'Não foi possível agendar');
+        setTimeout(() => setScheduleToast(''), 3000);
       }
-    } catch {}
+    } catch {
+      setScheduleToast(t('chat.scheduleFailed') || 'Não foi possível agendar');
+      setTimeout(() => setScheduleToast(''), 3000);
+    }
   };
 
   const getScheduleOptions = () => {
@@ -22142,9 +22165,11 @@ function ChatConversationInnerBody() {
     try {
       const r = await api.chatScheduleCancel(id);
       if (r.success) {
-        setScheduledMessages(prev => prev.filter(m => m.id !== id));
+        setScheduledMessages(prev => prev.filter(m => String(m.id) !== String(id)));
+      } else {
+        setScheduleToast(t('common.error') || 'Erro'); setTimeout(() => setScheduleToast(''), 3000); // [2026-10-20 tg1]
       }
-    } catch {}
+    } catch { setScheduleToast(t('common.error') || 'Erro'); setTimeout(() => setScheduleToast(''), 3000); }
   };
 
   // ============================================================
@@ -25269,7 +25294,7 @@ function ChatConversationInnerBody() {
     const isSticker = typeof stickerUrl === 'string' && stickerUrl.length > 0;
     if (!isSticker) {
       // Validate emoji length (max 20 chars)
-      if (!emoji || emoji.length > 20) {
+      if (!emoji || emoji.length > 32) { // [2026-10-20 tg1] igual ao servidor (32) — famílias/bandeiras ZWJ
         safeAlert(t('common.error'), t('chat.emojiTooLong') || 'Emoji muito longo (máx 20 chars)');
         return;
       }
@@ -29420,8 +29445,10 @@ function ChatConversationInnerBody() {
           if (f === 'photo' && m.type !== 'image') return false;
           if (f === 'video' && m.type !== 'video') return false;
           if (f === 'audio' && m.type !== 'audio' && m.type !== 'voice') return false;
-          if (f === 'doc' && m.type !== 'file') return false;
+          if (f === 'doc' && !(m.type === 'file' || m.type === 'document')) return false;
           if (f === 'link' && !(m.type === 'text' && /https?:\/\//i.test(String(m.content || '')))) return false;
+          // [2026-10-20 tg1] etiqueta = #hashtag da mensagem salva (Telegram "tags")
+          if (f.charAt(0) === '#' && !_savedTagsOf(m).includes(f.slice(1))) return false;
         }
       }
       // query filter
@@ -29432,6 +29459,17 @@ function ChatConversationInnerBody() {
       return true;
     });
   }, [selectionOverlayMessages, isSavedMode, savedSearch, savedFilter, disappearingTimer, disappearingSetAt, vanishTickNow, activeTopic]); // [2026-10-07 group-admin] +activeTopic
+  // [2026-10-20 tg1] Mensagens Salvas: etiquetas = #hashtags usadas nas mensagens
+  // (mais usadas primeiro, até 12). Tocar filtra; escrever "#ideia" numa nota a etiqueta.
+  const _savedTagChips = useMemo(() => {
+    if (!isSavedMode) return [];
+    const cnt = new Map();
+    for (const m of (selectionOverlayMessages || [])) {
+      if (!m || m._type || m.type === 'system') continue;
+      for (const tg of _savedTagsOf(m)) cnt.set(tg, (cnt.get(tg) || 0) + 1);
+    }
+    return [...cnt.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 12).map(([k]) => k);
+  }, [isSavedMode, selectionOverlayMessages]);
   // [2026-10-12 thread-overlap] UNIQUE keys, always. Founder print (iPhone):
   // bolhas de imagem desenhadas umas POR CIMA das outras + chip "Hoje" no meio
   // de uma foto. FlashList v2 mapeia célula↔item pela key: key repetida (2
@@ -29795,7 +29833,9 @@ function ChatConversationInnerBody() {
       // the audited fix from task #590).
       const r = await api.chatEditHistory(messageId);
       if (r?.success) {
-        setEditHistoryModal(prev => ({ ...prev, loading: false, versions: r.data?.versions || [] }));
+        // [2026-10-20 tg1] servidor manda DESC; a linha do tempo vai da original → ATUAL
+        const _vs = (r.data?.versions || []).slice().sort((a, b) => String(a?.edited_at || '').localeCompare(String(b?.edited_at || '')));
+        setEditHistoryModal(prev => ({ ...prev, loading: false, versions: _vs }));
       } else {
         // Silent-fail audit: previously the modal cleared loading but
         // showed nothing — user tapped "edited" and the sheet just stayed
@@ -35018,7 +35058,7 @@ function ChatConversationInnerBody() {
         // [2026-10-12 reply-wa] Apagada também aceita "arrastar p/ responder"
         // ("por que você apagou?") — o alvo vai SEM conteúdo/mídia (_replyTargetOf).
         disabled={isSystem}
-        onReply={() => { setReplyTo(_replyTargetOf(msg)); inputRef.current?.focus(); }}
+        onReply={() => { if (selectionMode || _composerBlockedRef.current) return; /* [2026-10-20 tg1] */ setReplyTo(_replyTargetOf(msg)); inputRef.current?.focus(); }}
         onInfo={isOwn && !isDeleted ? () => handleMessageInfo(msg) : null}
         colors={colors}
         style={{ marginBottom: wrapMargin }}
@@ -36441,6 +36481,7 @@ function ChatConversationInnerBody() {
     setMessages, mapKeep: _mapKeep, Haptics, setSelectionMode, toggleSelection, setStickerSheet,
     setStickerMakerSrc, router, api, t, mt: _mt, safeAlert, emailToDisplayName, mountedRef, setAudioTranscription,
     conversationId, // [responder-privado 2026-10-15]
+    openEditHistory, // [2026-10-20 tg1] menu nativo → histórico de edições
     // [2026-10-17 voz-wa] "Transcrever" / "Ver|Ocultar transcrição" do menu nativo
     transcribeVoice: (msg) => { if (!msg) return; if (msg.transcript || msg.transcription) toggleTxCollapsed(msg.id); else handleTranscribeAudio(msg); },
     // [reply-v2] "Citar trecho" no seletor nativo (false = usar o modal JS)
@@ -36558,7 +36599,8 @@ function ChatConversationInnerBody() {
     const A = _nlActRef.current;
     const target = item && item._type === 'album' ? (item._items || [])[0] : item;
     if (!target || target.type === 'system') return;
-    if (dir === 'info') { A.handleMessageInfo(target); return; }
+    if (dir === 'info') { if (target.sender_email && String(target.sender_email).toLowerCase() !== String(currentEmailRefTg1.current || '').toLowerCase()) return; A.handleMessageInfo(target); return; }
+    if (_selModeRefTg1.current || _composerBlockedRef.current) return; // [2026-10-20 tg1] seleção / sem composer
     setReplyTo(_replyTargetOf(target));
     try { inputRef.current?.focus(); } catch {}
   }, []);
@@ -38130,12 +38172,14 @@ function ChatConversationInnerBody() {
                   <IconSearch size={14} color={colors.textSecondary} />
                 </TouchableOpacity>
                 {[
-                  { k: 'all',   label: 'Tudo' },
-                  { k: 'photo', label: 'Fotos' },
-                  { k: 'video', label: 'Vídeos' },
-                  { k: 'doc',   label: 'Documentos' },
-                  { k: 'audio', label: 'Áudio' },
-                  { k: 'link',  label: 'Links' },
+                  { k: 'all',   label: _mt('savedTg.all', 'Tudo') },
+                  { k: 'photo', label: _mt('savedTg.photos', 'Fotos') },
+                  { k: 'video', label: _mt('savedTg.videos', 'Vídeos') },
+                  { k: 'doc',   label: _mt('savedTg.docs', 'Documentos') },
+                  { k: 'audio', label: _mt('savedTg.audio', 'Áudio') },
+                  { k: 'link',  label: _mt('savedTg.links', 'Links') },
+                  // [2026-10-20 tg1] etiquetas (#hashtags) depois dos tipos
+                  ..._savedTagChips.map(tg => ({ k: `#${tg}`, label: `#${tg}` })),
                 ].map(tab => {
                   const sel = savedFilter === tab.k;
                   return (
@@ -38678,7 +38722,7 @@ function ChatConversationInnerBody() {
                         </View>
                         <View style={{ flex: 1, paddingVertical: 8, paddingLeft: 10 }}>
                           <Text style={{ fontSize: 11, color: colors.textTertiary, marginBottom: 4 }}>
-                            {v.edited_at ? (_d=>isNaN(_d.getTime())?'':_d.toLocaleString())(new Date(v.edited_at.endsWith?.('Z') ? v.edited_at : v.edited_at + 'Z')) : ''}
+                            {v.edited_at ? (_d=>isNaN(_d.getTime())?'':_d.toLocaleString())(new Date((() => { /* [2026-10-20 tg1] PG now()::text "2026-10-20 10:11:12.3-04" */ let _s = String(v.edited_at).trim().replace(' ', 'T'); if (/[+-]\d{2}$/.test(_s)) _s += ':00'; else if (!/(Z|[+-]\d{2}:?\d{2})$/.test(_s)) _s += 'Z'; return _s; })())) : ''}
                           </Text>
                           <Text style={{ fontSize: 14, color: colors.text, lineHeight: 20 }}>{v.content}</Text>
                         </View>
@@ -41797,7 +41841,7 @@ function ChatConversationInnerBody() {
               <>
               <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiSmileys') || 'Smileys'}</Text>
               <View style={styles.emojiGrid}>
-                {'😀😃😄😁😅😂🤣😊😇🥰😍🤩😘😗😋😛😜🤪😝🤑🤗🤭🤫🤔🤐🤨😐😑😶😏😒🙄😬🤥😌😔😪🤤😴😷🤒🤕🤢🤮🤧🥵🥶🥴😵🤯🤠🥳🥸😎🤓🧐😕😟🙁☹️😮😯😲😳🥺😦😧😨😰😥😢😭😱😖😣😞😓😩😫🥱😤😡😠🤬'.match(/./gu).map(em => (
+                {'😀😃😄😁😅😂🤣😊😇🥰😍🤩😘😗😋😛😜🤪😝🤑🤗🤭🤫🤔🤐🤨😐😑😶😏😒🙄😬🤥😌😔😪🤤😴😷🤒🤕🤢🤮🤧🥵🥶🥴😵🤯🤠🥳🥸😎🤓🧐😕😟🙁☹️😮😯😲😳🥺😦😧😨😰😥😢😭😱😖😣😞😓😩😫🥱😤😡😠🤬'.match(/[^\uFE0F]\uFE0F?/gu).map(em => ( /* [2026-10-20 tg1] mantém o FE0F junto do emoji */
                   <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
                     <Text style={styles.emojiBtnText}>{em}</Text>
                   </TouchableOpacity>
@@ -41805,7 +41849,7 @@ function ChatConversationInnerBody() {
               </View>
               <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiGestures') || 'Gestures'}</Text>
               <View style={styles.emojiGrid}>
-                {'👍👎👋🤚✋🖐️👌🤌🤏✌️🤞🤟🤘🤙👈👉👆👇☝️✊👊🤛🤜👏🙌👐🤲🤝🙏💪'.match(/./gu).map(em => (
+                {'👍👎👋🤚✋🖐️👌🤌🤏✌️🤞🤟🤘🤙👈👉👆👇☝️✊👊🤛🤜👏🙌👐🤲🤝🙏💪'.match(/[^\uFE0F]\uFE0F?/gu).map(em => ( /* [2026-10-20 tg1] mantém o FE0F junto do emoji */
                   <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
                     <Text style={styles.emojiBtnText}>{em}</Text>
                   </TouchableOpacity>
@@ -41813,7 +41857,7 @@ function ChatConversationInnerBody() {
               </View>
               <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiHearts') || 'Hearts'}</Text>
               <View style={styles.emojiGrid}>
-                {'❤️🧡💛💚💙💜🖤🤍🤎💔❣️💕💞💓💗💖💝💘💟'.match(/./gu).map(em => (
+                {'❤️🧡💛💚💙💜🖤🤍🤎💔❣️💕💞💓💗💖💝💘💟'.match(/[^\uFE0F]\uFE0F?/gu).map(em => ( /* [2026-10-20 tg1] mantém o FE0F junto do emoji */
                   <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
                     <Text style={styles.emojiBtnText}>{em}</Text>
                   </TouchableOpacity>
@@ -41821,7 +41865,7 @@ function ChatConversationInnerBody() {
               </View>
               <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiObjects') || 'Objects'}</Text>
               <View style={styles.emojiGrid}>
-                {'🎉🎊🎈🎁🎂🍰🥂🍾🎶🎵🔥⭐💯✅❌⚡💡💤🎯🏆🥇🎖️🏅'.match(/./gu).map(em => (
+                {'🎉🎊🎈🎁🎂🍰🥂🍾🎶🎵🔥⭐💯✅❌⚡💡💤🎯🏆🥇🎖️🏅'.match(/[^\uFE0F]\uFE0F?/gu).map(em => ( /* [2026-10-20 tg1] mantém o FE0F junto do emoji */
                   <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
                     <Text style={styles.emojiBtnText}>{em}</Text>
                   </TouchableOpacity>
@@ -44433,7 +44477,8 @@ function ChatConversationInnerBody() {
                     <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.delete', 'Excluir')}
                       onPress={async () => {
                         try {
-                          await api.chatTopicDelete(topic.id);
+                          const _tdr = await api.chatTopicDelete(topic.id);
+                          if (_tdr && _tdr.success === false) { try { setScheduleToast(t('common.error') || 'Erro'); } catch {} return; } // [2026-10-20 tg1] 403/404 não some localmente
                           setTopics(prev => prev.filter(t_ => t_.id !== topic.id));
                           if (activeTopic?.id === topic.id) setActiveTopic(null);
                         } catch {}
@@ -46236,6 +46281,18 @@ function ConvLightShellHost() {
       {shellOn ? <ConvLightShell rec={rec} params={params} acct={acct} colors={colors} isDark={isDark} t={t} insets={insets} onBack={onBack} /> : null}
     </View>
   );
+}
+
+
+// [2026-10-20 tg1] #hashtags de uma mensagem (minúsculas, sem repetição) — etiquetas das Mensagens Salvas.
+function _savedTagsOf(m) {
+  const txt = String((m && (m.content || m.caption)) || '');
+  if (txt.indexOf('#') < 0) return [];
+  const out = [];
+  const re = /(^|[^\w&/\u00C0-\u024F])#([A-Za-z0-9_\u00C0-\u024F]{1,32})/g; // sem \p{L} (Hermes)
+  let x;
+  while ((x = re.exec(txt))) { const k = x[2].toLowerCase(); if (!out.includes(k)) out.push(k); }
+  return out;
 }
 
 export default function ChatConversationScreen() {

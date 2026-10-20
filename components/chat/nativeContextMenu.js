@@ -18,7 +18,7 @@ import { nativeEmojiPayload } from './nativeEmojiData';
 import {
   IconReply, IconCopy, IconStar, IconStarFilled, IconDownload, IconForward, IconMessageSquare,
   IconMail, IconCheck, IconTrash, IconPin, IconStickyNote, IconGlobe, IconSparkles, IconInfo,
-  IconEdit, IconAlertTriangle, IconBookmark, IconFileText, IconEyeOff,
+  IconEdit, IconAlertTriangle, IconBookmark, IconFileText, IconEyeOff, IconClock,
 } from '../Icons';
 
 export function nativeCtxMenuEnabled() {
@@ -101,6 +101,10 @@ export function buildNativeCtxMenu(key, msg, env) {
     if (env.conversationType === 'group' && msg.sender_email && msg.sender_email !== env.currentEmail) {
       add('replyPrivately', _tf(t, 'chatConv.replyPrivately', 'Responder em privado'), 'bubble.left', IconMessageSquare);
     }
+    // [2026-10-20 tg1] Telegram "Responder em outra conversa" (citação cruzada reply_ext_*)
+    if (replyElsewhereOn() && typeof msg.id === 'number' && !env.e2eEnabled) {
+      add('replyElsewhere', _tf(t, 'replyPick.menu', 'Responder em outra conversa'), 'arrowshape.turn.up.left.2', IconReply);
+    }
     const isVoice = msg.type === 'voice' || msg.type === 'audio';
     if ((msg.content && (msg.type === 'text' || (msg.type === 'image' && msg.content !== msg.file_name))) || (isVoice && msg.file_url)) {
       add('translate', env.translated ? _tf(t, 'chatConv.hideTranslation', 'Ocultar tradução') : _tf(t, 'chatConv.translate', 'Traduzir'), 'globe', IconGlobe);
@@ -114,6 +118,9 @@ export function buildNativeCtxMenu(key, msg, env) {
     }
     if (isVoice && msg.file_url) add('transcribe', _tf(t, 'chatConv.transcribeSummarize', 'Transcrever + resumir'), 'sparkles', IconSparkles);
     if (ownStrict && typeof msg.id === 'number') add('info', _tf(t, 'chatConv.menuInfo', _tf(t, 'chatConv.messageInfo', 'Informações')), 'info.circle', IconInfo);
+    // [2026-10-20 tg1] "Histórico de edições" (= Telegram): a lista nativa desenha "editada" no
+    // horário sem alvo de toque — sem esta linha o histórico só abria na bolha JS.
+    if (msg.edited_at && typeof msg.id === 'number' && !env.e2eEnabled) add('editHistory', _tf(t, 'chatConv.editHistory', 'Histórico de edições'), 'clock.arrow.circlepath', IconClock);
     add('star', msg.starred ? _tf(t, 'chat.unstar', 'Desfavoritar') : _tf(t, 'chat.star', 'Favoritar'), msg.starred ? 'star.slash' : 'star', msg.starred ? IconStarFilled : IconStar);
   }
   if (!deleted && env.disappearingTimer > 0 && msg.id && typeof msg.id === 'number') {
@@ -230,10 +237,12 @@ export function runNativeCtxAction(action, msg, H) {
     case 'pin': case 'unpin': H.handlePinMessage(msg); return;
     case 'forward': H.handleForward(msg); return;
     case 'replyPrivately': _replyPrivately(msg, H); return;
+    case 'replyElsewhere': openReplyElsewhere(msg, H); return; // [2026-10-20 tg1]
     case 'translate': H.handleTranslate(msg); return;
     case 'transcribe': _transcribe(msg, H); return;
     case 'voiceTx': if (H.transcribeVoice) H.transcribeVoice(msg); return; // [voz-wa]
     case 'info': H.handleMessageInfo(msg); return;
+    case 'editHistory': if (H.openEditHistory) H.openEditHistory(msg.id); return; // [2026-10-20 tg1]
     case 'star': H.handleStarMessage(msg); return;
     case 'keep': {
       const msgId = msg.id;
@@ -278,6 +287,45 @@ export function runNativeCtxAction(action, msg, H) {
 }
 
 // = onPress inline "Responder em privado" do menu JS (chat-conversation.js).
+// [2026-10-20 tg1] "Responder em outra conversa": escolhe o destino em /reply-pick e abre
+// a conversa com a barra de resposta (citação cruzada; o servidor monta do banco).
+// Kill: globalThis.__chatyy_reply_elsewhere = false.
+export function replyElsewhereOn() {
+  try { return globalThis.__chatyy_reply_elsewhere !== false && globalThis.__chatyy_reply_ext !== false; } catch { return true; }
+}
+function _previewOf(srcMsg, t) {
+  const c = String(srcMsg.content || '').trim();
+  if (c) return c.slice(0, 240);
+  const m = {
+    image: ['chatConv.photo', 'Foto'], video: ['chatConv.video', 'Vídeo'], audio: ['chatConv.audio', 'Áudio'],
+    voice: ['chatConv.audio', 'Áudio'], gif: ['chatConv.gif', 'GIF'], sticker: ['chatConv.sticker', 'Figurinha'],
+    location: ['chatConv.location', 'Localização'], contact: ['chatConv.contact', 'Contato'],
+  }[srcMsg.type];
+  if (srcMsg.type === 'file') return srcMsg.file_name || _tf(t, 'chatConv.file', 'Arquivo');
+  return m ? _tf(t, m[0], m[1]) : '';
+}
+export function openReplyElsewhere(srcMsg, H) {
+  if (!srcMsg || !H) return;
+  const { t } = H;
+  try {
+    const ext = require('../../utils/privateReplyQuote').extSourceOf(srcMsg, H.conversationId);
+    if (!ext.ext_cid || !ext.ext_mid) return;
+    const pv = _previewOf(srcMsg, t);
+    const payload = {
+      sender_email: srcMsg.sender_email,
+      sender_name: srcMsg.sender_name || (H.emailToDisplayName ? H.emailToDisplayName(srcMsg.sender_email) : srcMsg.sender_email),
+      content: pv,
+      quoteText: pv,
+      type: srcMsg.type || 'text',
+      ...ext,
+    };
+    const q = `p=${encodeURIComponent(encodeURIComponent(JSON.stringify(payload)))}&src=${encodeURIComponent(String(H.conversationId || ''))}`;
+    H.router.push(`/reply-pick?${q}`);
+  } catch (e) {
+    try { H.safeAlert(_tf(t, 'common.error', 'Erro'), String(e?.message || e)); } catch {}
+  }
+}
+
 async function _replyPrivately(srcMsg, H) {
   const { t, api, safeAlert } = H;
   try {
