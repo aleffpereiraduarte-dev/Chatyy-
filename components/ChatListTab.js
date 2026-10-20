@@ -7213,10 +7213,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       if (markRead) { _noteSelfRead(conv.id, conv); require('../services/unreadBadge').markConversationReadLocal(conv.id, { emitList: false }); }
       else { _clearSelfRead(conv.id); require('../services/unreadBadge').noteIncomingUnread(conv.id); }
     } catch {}
+    // [2026-10-20 tg1] a aba Arquivadas também reflete na hora (antes só a lista principal)
+    const _muPatch = (prev) => (prev || []).map(c => c.id === conv.id
+      ? { ...c, unread_count: markRead ? 0 : Math.max(c.unread_count || 0, 1) }
+      : c);
     try {
-      setConversations(prev => prev.map(c => c.id === conv.id
-        ? { ...c, unread_count: markRead ? 0 : Math.max(c.unread_count || 0, 1) }
-        : c));
+      setConversations(_muPatch);
+      setArchivedConversations(_muPatch);
       if (markRead) {
         // [2026-10-18 read-id] id REAL da prévia exibida (tmp_… não serve).
         const lastId = _rowLmId(conv) || 0;
@@ -7225,7 +7228,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         await api.chatMarkUnread(conv.id);
       }
     } catch {
-      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: prevUnread } : c));
+      const _muBack = (prev) => (prev || []).map(c => c.id === conv.id ? { ...c, unread_count: prevUnread } : c);
+      setConversations(_muBack);
+      setArchivedConversations(_muBack);
     }
   }, []);
 
@@ -7405,8 +7410,21 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               const r = await api.chatFoldersCreate(trimmed, '', 'manual', null);
               if (r?.success && r?.data?.id) {
                 const newId = r.data.id;
-                // [2026-10-16 wave12-B pastas] nova lista vai pro FIM da ordem (posição gravada)
                 const _cur = Array.isArray(chatFoldersRef.current) ? chatFoldersRef.current : [];
+                // [2026-10-20 tg1] nome repetido: o servidor devolve a lista EXISTENTE
+                // (existing:true) — antes o update trocava todos os membros dela por esta 1.
+                if (r?.data?.existing || _cur.some(x => Number(x?.id) === Number(newId))) {
+                  let ex = _cur.find(x => Number(x?.id) === Number(newId));
+                  if (!ex) { try { const _l = await api.chatFoldersList(); ex = (_l?.data?.items || []).find(x => Number(x?.id) === Number(newId)); } catch {} }
+                  if (!ex) return; // sem a lista atual não arrisca sobrescrever os membros
+                  if (typeof ex.conversation_ids === 'string') { try { ex = { ...ex, conversation_ids: JSON.parse(ex.conversation_ids) || [] }; } catch { return; } }
+                  const _ids = Array.from(new Set([...((ex && ex.conversation_ids) || []).map(Number), Number(conv.id)]));
+                  const _ur = await api.chatFoldersUpdate(newId, { conversation_ids: _ids });
+                  if (_ur && _ur.success === false) return;
+                  setChatFolders(prev => prev.map(x => (Number(x.id) === Number(newId) ? { ...x, conversation_ids: _ids } : x)));
+                  return;
+                }
+                // [2026-10-16 wave12-B pastas] nova lista vai pro FIM da ordem (posição gravada)
                 const _pos = _cur.reduce((m, x) => Math.max(m, Number(x?.position) || 0), -1) + 1;
                 await api.chatFoldersUpdate(newId, { conversation_ids: [Number(conv.id)], position: _pos });
                 setChatFolders(prev => [
@@ -7757,6 +7775,61 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     }
     return out;
   }, [chatFolders, conversations, archivedConversations, lockedIds]);
+  // [2026-10-20 tg1] Telegram "Marcar como lidas" por aba: segurar a pílula (Todas,
+  // Não lidas, Pessoais, Grupos, Canais, Favoritas, Arquivadas ou uma lista) lê de
+  // uma vez as conversas COM NÃO LIDAS daquela aba (mesma guarda do swipe "lida").
+  const _markTabRead = useCallback((value, folder) => {
+    try {
+      const archIds = new Set(archivedConversations.map(c => c.id));
+      const ok = (c) => c && (c.unread_count || 0) > 0 && !c.locked && !lockedIds.has(c.id);
+      let pool;
+      if (value === 'archived') pool = archivedConversations.filter(ok);
+      else if (folder) {
+        const m = folderMatcher(folder);
+        pool = [...conversations.filter(c => !archIds.has(c.id)), ...archivedConversations].filter(c => ok(c) && m(c, archIds.has(c.id)));
+      } else {
+        pool = conversations.filter(c => ok(c) && !archIds.has(c.id) && (
+          value === 'personal' ? (c.type !== 'group' && c.type !== 'channel')
+            : value === 'groups' ? c.type === 'group'
+            : value === 'channels' ? c.type === 'channel'
+            : value === 'favorites' ? !!c.pinned
+            : true));
+      }
+      if (!pool.length) return;
+      haptic.medium();
+      const n = pool.length;
+      const _msg = (t('chat.markTabReadMsg', { count: n }) || '');
+      require('../services/alerts').safeAlert(
+        t('chat.markAllRead') || 'Marcar como lidas',
+        _msg && _msg !== 'chat.markTabReadMsg' ? _msg.replace('{count}', String(n)) : `${n} conversas com mensagens não lidas.`,
+        [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          {
+            text: t('chat.markAllRead') || 'Marcar como lidas',
+            onPress: async () => {
+              const ids = new Set(pool.map(c => c.id));
+              try {
+                for (const c of pool) { _noteSelfRead(c.id, c); require('../services/unreadBadge').markConversationReadLocal(c.id, { emitList: false }); }
+              } catch {}
+              const _p = (prev) => (prev || []).map(c => (ids.has(c.id) ? { ...c, unread_count: 0 } : c));
+              setConversations(_p);
+              setArchivedConversations(_p);
+              try { haptic.success(); } catch {}
+              // 4 em paralelo (lista grande não enfileira 1 a 1)
+              const q = pool.slice();
+              const worker = async () => {
+                while (q.length) {
+                  const c = q.shift();
+                  try { await api.chatRead(c.id, _rowLmId(c) || 0); } catch {}
+                }
+              };
+              await Promise.all([worker(), worker(), worker(), worker()]);
+            },
+          },
+        ]
+      );
+    } catch {}
+  }, [conversations, archivedConversations, lockedIds, t]);
   // Foto das conversas p/ o seletor da tela /chat-folders (abre sem refetch).
   useEffect(() => {
     publishConversations(conversations.filter(c => !c.locked && !lockedIds.has(c.id)), archivedConversations);
@@ -7960,12 +8033,42 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     return () => { alive = false; };
   }, [conversations]);
 
+  // [2026-10-20 tg1] rascunho de OUTRO aparelho (chat_draft do servidor) aparece na
+  // lista como "Rascunho:" sem precisar abrir a conversa (antes só a tela aberta ouvia).
+  // Conversa aberta aqui → a própria tela trata. Eco do próprio autosave (até 4 s depois
+  // da mudança local) é ignorado p/ não ressuscitar rascunho já enviado/limpo.
+  const _localDraftAtRef = useRef(new Map());
+  useEffect(() => {
+    if (globalThis.__chatyy_list_remote_draft === false) return undefined;
+    let mailWs = null;
+    try { mailWs = require('../services/websocket').default; } catch {}
+    if (!mailWs?.on) return undefined;
+    const unsub = mailWs.on('chat_draft', (data) => {
+      try {
+        const cid = data?.conversation_id != null ? String(data.conversation_id) : '';
+        if (!cid) return;
+        try { const a = require('../services/pushNotifications').getActiveConversation?.(); if (a != null && String(a) === cid) return; } catch {}
+        const at = _localDraftAtRef.current.get(cid) || 0;
+        if (Date.now() - at < 4000) return;
+        const text = String(data?.text || '');
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const k = userScopedKey(`chat_draft_${cid}`);
+        if (text.trim()) AsyncStorage.setItem(k, text).catch(() => {});
+        else AsyncStorage.removeItem(k).catch(() => {});
+        const { DeviceEventEmitter } = require('react-native');
+        DeviceEventEmitter.emit('chatyy:draft', { conversationId: cid, text, _remote: true });
+      } catch {}
+    });
+    return () => { try { unsub?.(); } catch {} };
+  }, []);
+
   useEffect(() => {
     try {
       const { DeviceEventEmitter } = require('react-native');
       const sub = DeviceEventEmitter.addListener('chatyy:draft', (p) => {
         if (!p?.conversationId) return;
         const cid = String(p.conversationId);
+        if (!p._remote) { try { _localDraftAtRef.current.set(cid, Date.now()); if (_localDraftAtRef.current.size > 200) _localDraftAtRef.current.delete(_localDraftAtRef.current.keys().next().value); } catch {} }
         const _dt = (p.text || '').trim();
         setDrafts(prev => {
           // [2026-10-14 piscada-voltar] sem mudança → mesmo objeto (sem re-render da lista).
@@ -8466,6 +8569,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       t('chat.listOptionsMsg') || 'Renomear ou excluir esta lista?',
       [
         { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        // [2026-10-20 tg1] lista com não lidas → "Marcar como lidas" (Telegram)
+        ...((folderUnreadCounts[folder.id] || 0) > 0 ? [{ text: t('chat.markAllRead') || 'Marcar como lidas', onPress: () => setTimeout(() => _markTabRead(`folder_${folder.id}`, folder), 250) }] : []),
         // [2026-10-16 wave12-B pastas] editar (nome, ícone, regras, conversas) na tela própria
         {
           text: t('folders12b.edit') || 'Editar lista',
@@ -8497,7 +8602,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         },
       ]
     );
-  }, [t, askListName, router]);
+  }, [t, askListName, router, folderUnreadCounts, _markTabRead]);
 
   const FilterChip = useCallback(({ label, value, count, folder }) => {
     const active = filter === value;
@@ -8513,7 +8618,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           isWeb && { transition: 'background-color 0.18s cubic-bezier(0.4,0,0.2,1)', cursor: 'pointer' },
         ]}
         onPress={() => setFilter(filter === value ? 'all' : value)}
-        onLongPress={folder ? () => handleDeleteFolderChip(folder) : undefined}
+        onLongPress={folder ? () => handleDeleteFolderChip(folder) : (count > 0 || value === 'all' ? () => _markTabRead(value) : undefined)} // [2026-10-20 tg1]
         delayLongPress={350}
         activeOpacity={0.7}
         accessibilityRole="button"
@@ -8537,7 +8642,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         ) : null}
       </TouchableOpacity>
     );
-  }, [filter, isDark, P, handleDeleteFolderChip]);
+  }, [filter, isDark, P, handleDeleteFolderChip, _markTabRead]);
 
   // [2026-10-16 motion-nav] Filtros estilo Telegram: UMA pílula desliza com
   // mola (UI thread) até o chip tocado e o texto inverte conforme ela cobre
@@ -8589,7 +8694,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         activeBg={_accBg(P)}
         renderContent={content}
         onPress={() => setFilter(filter === value ? 'all' : value)}
-        onLongPress={folder ? () => handleDeleteFolderChip(folder) : undefined}
+        onLongPress={folder ? () => handleDeleteFolderChip(folder) : (count > 0 || value === 'all' ? () => _markTabRead(value) : undefined)} // [2026-10-20 tg1]
         delayLongPress={350}
         accessibilityLabel={count > 0 ? `${label}, ${count}` : label}
       />
@@ -9742,7 +9847,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       </ScrollView>
     </>
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [notes, myNote, isDark, colors, P, t, FilterChip, filter, _chipRailOn, handleDeleteFolderChip, unreadCount, favoritesCount, groupCount, channelCount, personalCount, archivedCount, chatFolders, folderUnreadCounts, router, _lmCompact, _carouselOn]);
+  ), [notes, myNote, isDark, colors, P, t, FilterChip, filter, _chipRailOn, handleDeleteFolderChip, _markTabRead, unreadCount, favoritesCount, groupCount, channelCount, personalCount, archivedCount, chatFolders, folderUnreadCounts, router, _lmCompact, _carouselOn]);
 
   // Large title "Conversas" (iOS UINavigationBar large title / M3 large top
   // app bar): rola 1:1 com a lista; o chat.js faz o título compacto aparecer

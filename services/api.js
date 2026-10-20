@@ -7211,7 +7211,8 @@ export async function chatFriendSuggestions({ phoneHashes = [], limit = 20 } = {
 }
 
 export async function chatArchive(conversationId, archive = true) {
-  return apiCall('chat_archive', { conversation_id: conversationId, archive: archive ? 1 : 0 }, 'POST');
+  // [2026-10-20 tg1] o servidor lê `archived` (antes só ia `archive` → sempre gravava 0)
+  return apiCall('chat_archive', { conversation_id: conversationId, archived: archive ? 1 : 0, archive: archive ? 1 : 0 }, 'POST');
 }
 
 export async function chatMute(conversationId, muteUntil = null) {
