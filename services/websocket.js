@@ -162,6 +162,20 @@ const CONNECT_TIMEOUT_MS = 10000;
 // (fantasmas cujo close nunca chegou porque o rádio já tinha morrido) assim que
 // o novo autentica, em vez de esperar 90s de PongWait. Por instância, não por
 // aparelho: duas abas / app + native CallSignalWs NÃO se derrubam.
+// [2026-10-20 presença-fg] 'active' | 'background' | null (web / estado
+// desconhecido / kill switch → hub decide pelo padrão antigo). 'inactive'
+// (central de controle, troca de app) conta como 1º plano, igual ao WhatsApp.
+function _presenceAppState() {
+  try {
+    if (Platform.OS === 'web') return null;
+    if (globalThis.__chatyy_presence_fg === false) return null;
+    const st = AppState.currentState;
+    if (st === 'active' || st === 'inactive') return 'active';
+    if (st === 'background') return 'background';
+  } catch {}
+  return null;
+}
+
 const WS_INSTANCE_ID = (() => {
   try {
     const r = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -590,6 +604,10 @@ class MailWebSocket {
       device_id: _devId,
       client: 'js',
       platform: Platform.OS,
+      // [2026-10-20 presença-fg] hub só marca "online" com o app em 1º plano.
+      // Hub antigo ignora. Fio nativo reaproveita este frame nas reconexões
+      // internas → _onAuthenticated reafirma o estado atual logo após o auth.
+      ...(_presenceAppState() ? { app_state: _presenceAppState() } : {}),
     };
   }
 
@@ -3479,6 +3497,15 @@ class MailWebSocket {
     }
     this._resurrectAttempt = 0;
     this._consecutiveAckFails = 0;
+
+    // [2026-10-20 presença-fg] Estado de 1º plano ANTES do resume/subscribe:
+    // socket que reconecta com o app em 2º plano (fio nativo, áudio, VoIP)
+    // não pode aparecer "online" pros contatos. Kill switch (OTA/console):
+    // globalThis.__chatyy_presence_fg = false.
+    try {
+      const _as = _presenceAppState();
+      if (_as) this._send({ type: 'presence', status: _as === 'active' ? 'online' : 'offline' });
+    } catch {}
 
     // Re-subscribe to all tracked channels
     for (const channel of this._subscribedChannels) {
