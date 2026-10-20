@@ -142,6 +142,13 @@ function _axT(key, fb) {
   } catch { return fb; }
 }
 import FadeSlideIn from './FadeSlideIn';
+// [2026-10-20 tg-list-anim] lista JS no iOS: reordenação via Reanimated Layout Animations (sem LayoutAnimation)
+import { ListReorderCell, listReorderAnimOn, armListReorderAnim, disarmListReorderAnim, listReorderAnimArmed } from './chat/ListReorderCell';
+// LayoutAnimation global só quando as células Reanimated NÃO estão animando (senão as duas brigam e pisca).
+function _jsListLA(cfg) {
+  if (listReorderAnimArmed()) return;
+  try { LayoutAnimation.configureNext(cfg); } catch {}
+}
 // [2026-10-14 native-home] Lista de conversas NATIVA (UICollectionView / RecyclerView).
 // Binário sem o módulo → isAvailable() false → FlashList abaixo (idêntico ao antigo).
 import NativeConversationList from './chatlist/NativeConversationList';
@@ -4387,6 +4394,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const _onListLoad = useCallback(() => {
     try { require('../services/bootTrace').markFirstListPaint(_paintedFromCacheRef.current ? 'cache_rows' : 'rows'); } catch {}
   }, []);
+  // [2026-10-20 tg-list-anim] FlashList JS no iOS (iPad / reserva): células Reanimated
+  // c/ LinearTransition, sem reciclagem; arma depois do 1º layout. Decide 1× por montagem.
+  const _jsReorderAnimRef = useRef(null);
+  if (_jsReorderAnimRef.current === null) _jsReorderAnimRef.current = Platform.OS === 'ios' && listReorderAnimOn();
+  const _jsReorderAnim = _jsReorderAnimRef.current;
+  const _onJsListLoad = useCallback(() => { _onListLoad(); armListReorderAnim(); }, [_onListLoad]);
+  useEffect(() => () => { if (_jsReorderAnim) disarmListReorderAnim(); }, [_jsReorderAnim]);
   const _onListWrapLayout = useCallback(() => {
     try {
       const bt = require('../services/bootTrace');
@@ -4845,7 +4859,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             try { require('../services/chatPersistence').purgeConversationLocal?.(id); } catch {} // [delconv 2026-10-21]
             try { await api.chatDeleteConversation(id); } catch {}
           }
-          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          _jsListLA(LayoutAnimation.Presets.easeInEaseOut); // [2026-10-20 tg-list-anim]
           setConversations(prev => prev.filter(c => !selectedIds.has(c.id)));
           setArchivedConversations(prev => prev.filter(c => !selectedIds.has(c.id)));
           exitSelectionMode();
@@ -4866,7 +4880,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     if (!ids.length) return;
     const sel = new Set(ids);
     const unarchive = filter === 'archived';
-    try { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); } catch {}
+    _jsListLA(LayoutAnimation.Presets.easeInEaseOut); // [2026-10-20 tg-list-anim]
     if (unarchive) {
       setArchivedConversations(prev => {
         const moved = prev.filter(c => sel.has(c.id));
@@ -7134,7 +7148,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       if (!ok) return;
     } catch {}
     try {
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      _jsListLA(LayoutAnimation.Presets.easeInEaseOut); // [2026-10-20 tg-list-anim]
       setConversations(prev => prev.filter(c => c.id !== conv.id));
       setArchivedConversations(prev => prev.filter(c => c.id !== conv.id));
       // WhatsApp-parity: also wipe local media + cached messages for this
@@ -7160,7 +7174,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     // on swipe) — was waiting the round-trip, so the swiped row snapped back
     // and sat there ~300 ms. Reverts if the server refuses.
     const move = (toArchive) => {
-      try { LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); } catch {}
+      _jsListLA(LayoutAnimation.Presets.easeInEaseOut); // [2026-10-20 tg-list-anim]
       if (toArchive) {
         setConversations(prev => prev.filter(c => c.id !== conv.id));
         setArchivedConversations(prev => [...prev.filter(c => c.id !== conv.id), { ...conv, archived: 1 }]);
@@ -7223,7 +7237,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
 
     // [2026-10-14 feel] A linha SOBE/DESCE deslizando até o lugar novo (como o
     // arquivar), em vez de teleportar pro topo; + toque leve de confirmação.
-    try { LayoutAnimation.configureNext(LayoutAnimation.create(260, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity)); } catch {}
+    _jsListLA(LayoutAnimation.create(260, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity)); // [2026-10-20 tg-list-anim]
     try { if (!(pinOpts && pinOpts.noHaptic)) haptic.select(); } catch {}
     // Optimistic toggle (plus displacement) so swipe feels instant.
     setConversations(prev => prev.map(c => {
@@ -10249,7 +10263,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         />
         ) : (
         <ListComponent
-          onLoad={_onListLoad}
+          onLoad={_jsReorderAnim ? _onJsListLoad : _onListLoad}
+          {...(_jsReorderAnim ? { CellRendererComponent: ListReorderCell, maxItemsInRecyclePool: 0 } : null)}
           data={visibleConversations}
           keyExtractor={keyExtractor}
           estimatedItemSize={_rowEstimate()}
