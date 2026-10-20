@@ -408,6 +408,20 @@ function _indexedLocalUri(m) {
   } catch {}
   return null;
 }
+// [2026-10-20 tg2] Telegram: a foto/vídeo que EU mandei continua do arquivo local
+// quando a linha do servidor substitui a otimista (antes o swap {...msg} perdia
+// _localUri/thumb_b64 → a bolha baixava de novo a própria mídia). Só nativo e só
+// arquivo local; kill: __chatyy_keep_own_local=false.
+function _keepOwnLocal(prevRow, msg) {
+  try {
+    if (!prevRow || Platform.OS === 'web' || globalThis.__chatyy_keep_own_local === false) return null;
+    const lu = prevRow._localUri;
+    const o = {};
+    if (typeof lu === 'string' && /^(file|content|ph|assets-library):/.test(lu) && !(msg && msg._localUri)) o._localUri = lu;
+    if (prevRow.thumb_b64 && !(msg && msg.thumb_b64)) o.thumb_b64 = prevRow.thumb_b64;
+    return (o._localUri || o.thumb_b64) ? o : null;
+  } catch { return null; }
+}
 // In-place hydrate of rows read from any local store / the server: index wins,
 // stale container paths are rebased. Never touches in-flight uploads.
 function _hydrateLocalMediaRows(rows) {
@@ -16354,6 +16368,11 @@ function ChatConversationInnerBody() {
           }
         } catch {}
       }
+      // [2026-10-20 tg2] modo avião + conversa sem nada local: não espera o timeout
+      // da requisição com o esqueleto na tela → cai já no caminho offline (cache/aviso).
+      if (!r && !beforeId && Platform.OS !== 'web' && _messagesCountRef.current === 0) {
+        try { if (globalThis.__chatyy_offline_fastfail !== false && require('../services/networkInfo').getNetworkState?.()?.isConnected === false) r = { success: false, message: 'offline', __offline: true }; } catch {}
+      }
       if (!r) r = await api.chatMessages(conversationId, PAGE_SIZE, beforeId, sinceId, activeTopic?.id);
       // Drop stale responses: a newer loadMessages() call started while this
       // one was in flight. WITHOUT this, an older response can overwrite
@@ -16980,13 +16999,18 @@ function ChatConversationInnerBody() {
             const recentImgs = newMsgs
               .filter(m => m && m.type === 'image' && m.file_url && !m._uploading && !_isViewOnceMsg(m))
               .slice(-10);
-            if (recentImgs.length) {
+            // [2026-10-20 tg2] dados: respeita o "baixar fotos automaticamente" e aquece a
+            // versão de TELA (≤1280, a que a bolha pinta) em vez do original.
+            let _imgAuto = true;
+            try { _imgAuto = !!require('../services/mediaCache').shouldAutoDownload('image'); } catch {}
+            if (recentImgs.length && _imgAuto) {
               let ExpoImg = null;
               try { ExpoImg = require('expo-image').Image; } catch {}
               const { getLocalUriIfCached } = require('../services/mediaCache');
               for (const m of recentImgs) {
                 try {
-                  const remote = api.getMediaUrl(m.file_url);
+                  const _ivd = m.image_variants && typeof m.image_variants === 'object' && typeof m.image_variants.display === 'string' ? m.image_variants.display : '';
+                  const remote = api.getMediaUrl(_ivd || m.file_url);
                   if (!remote || getLocalUriIfCached(remote)) continue;
                   ExpoImg?.prefetch?.(remote, 'memory-disk');
                 } catch {}
@@ -18319,7 +18343,7 @@ function ChatConversationInnerBody() {
                   } catch {}
                 }
                 const next = [...prev];
-                next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
+                next[existingIdx] = { ...msg, ..._keepOwnLocal(existing, msg), _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
                 // [2026-10-14 caos] Relays chegam fora de ordem quando o remetente reconecta
                 // (fila do WS + retry de 3 s disparam juntos) → a linha real herdava a posição
                 // errada do relay e ficava fora de ordem até reabrir. Reposiciona pelo id.
@@ -18382,7 +18406,7 @@ function ChatConversationInnerBody() {
                   if (preservedClientId) removeChatSendFromQueueByClientMsgId(preservedClientId).catch(() => {});
                 } catch {}
               }
-              next[tempIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
+              next[tempIdx] = { ...msg, ..._keepOwnLocal(optimistic, msg), _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
               return next;
             }
             // Out-of-order arrival guard: if msg.id is numeric AND smaller
@@ -18890,6 +18914,23 @@ function ChatConversationInnerBody() {
         try { setRoundVideoViewer(v => (v && v.visible && v.messageId != null && String(v.messageId) === String(m.id)) ? { visible: false, uri: null } : v); } catch {}
       };
       wsUnsubs.push(_wsOnB('delete', onWsDelete));
+      // [2026-10-20 tg2] apagar p/ mim / limpar / apagar conversa no OUTRO aparelho/web da conta
+      const _selfEv = (raw) => (raw && raw.data && raw.data.conversation_id != null ? raw.data : raw);
+      wsUnsubs.push(mailWs.on('message_hidden', (raw) => {
+        const d = _selfEv(raw);
+        if (!mountedRef.current || !d || String(d.conversation_id) !== String(conversationId) || d.message_id == null) return;
+        setMessages(prev => { const n = prev.filter(m => String(m && m.id) !== String(d.message_id)); return n.length === prev.length ? prev : n; });
+      }));
+      wsUnsubs.push(mailWs.on('chat_cleared', (raw) => {
+        const d = _selfEv(raw);
+        if (!mountedRef.current || !d || String(d.conversation_id) !== String(conversationId)) return;
+        setMessages(prev => (prev.length ? [] : prev));
+      }));
+      wsUnsubs.push(mailWs.on('conversation_deleted', (raw) => {
+        const d = _selfEv(raw);
+        if (!mountedRef.current || !d || String(d.conversation_id) !== String(conversationId)) return;
+        try { router.back(); } catch {}
+      }));
 
       // WS queue overflow — fired by the WS client when the offline message
       // queue hits its 100-entry cap. Without listener, the message was
@@ -19855,7 +19896,7 @@ function ChatConversationInnerBody() {
               const existingTempId = (existing && typeof existing.id === 'string' && existing.id.startsWith('tmp_')) ? existing.id : null;
               if (existingTempId) _tcpCleanupPending(existingTempId, preservedClientId); // [2026-10-06 thread-tech] deferred, once
               const next = [...prev];
-              next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
+              next[existingIdx] = { ...msg, ..._keepOwnLocal(existing, msg), _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
               return next;
             }
           }
@@ -19881,7 +19922,7 @@ function ChatConversationInnerBody() {
             if (typeof optimistic?.id === 'string' && optimistic.id.startsWith('tmp_')) {
               _tcpCleanupPending(optimistic.id, preservedClientId); // [2026-10-06 thread-tech] deferred, once
             }
-            next[tempIdx] = { ...msg, _pending: false, sender_email: preservedSenderEmail, _client_id: preservedClientId };
+            next[tempIdx] = { ...msg, ..._keepOwnLocal(optimistic, msg), _pending: false, sender_email: preservedSenderEmail, _client_id: preservedClientId };
             return next;
           }
           // [2026-10-06 thread-tech] genuinely new row → schedule the effect
@@ -20278,11 +20319,22 @@ function ChatConversationInnerBody() {
   useEffect(() => {
     let unsub = null;
     let webOn = null, webOff = null;
+    // [2026-10-20 tg2] "Aguardando rede" discreto (Telegram): a volta da rede é na
+    // hora; a queda só aparece se durar 2,5 s (antes: qualquer piscada do NetInfo /
+    // isInternetReachable piscava o cabeçalho). Kill: __chatyy_net_header_debounce=false.
+    let _netDownT = null;
+    const _rawSetNet = setNetReachable;
+    const _setNet = (v) => {
+      let deb = true; try { deb = globalThis.__chatyy_net_header_debounce !== false; } catch {}
+      if (v || !deb) { if (_netDownT) { clearTimeout(_netDownT); _netDownT = null; } _rawSetNet(v); return; }
+      if (_netDownT) return;
+      _netDownT = setTimeout(() => { _netDownT = null; if (mountedRef.current) _rawSetNet(false); }, 2500);
+    };
     if (Platform.OS === 'web') {
-      const apply = () => setNetReachable(typeof navigator !== 'undefined' ? navigator.onLine !== false : true);
+      const apply = () => _setNet(typeof navigator !== 'undefined' ? navigator.onLine !== false : true);
       apply();
-      webOn = () => setNetReachable(true);
-      webOff = () => setNetReachable(false);
+      webOn = () => _setNet(true);
+      webOff = () => _setNet(false);
       try { window.addEventListener('online', webOn); window.addEventListener('offline', webOff); } catch {}
     } else {
       try {
@@ -20291,7 +20343,7 @@ function ChatConversationInnerBody() {
           // `isInternetReachable` can be null right after boot — treat null as
           // "unknown but probably ok" so we don't flash the banner on launch.
           const reachable = state?.isInternetReachable;
-          setNetReachable(state?.isConnected !== false && reachable !== false);
+          _setNet(state?.isConnected !== false && reachable !== false);
           // [instant-send] Keep the module-level cache fresh so the send path
           // never has to await NetInfo.fetch() to pick a timeout budget.
           try { _netStateCache.type = state?.type ?? null; _netStateCache.cellularGeneration = state?.details?.cellularGeneration ?? null; } catch {}
@@ -20300,11 +20352,12 @@ function ChatConversationInnerBody() {
           try { _netStateCache.type = state?.type ?? null; _netStateCache.cellularGeneration = state?.details?.cellularGeneration ?? null; } catch {}
           if (!mountedRef.current) return;
           const reachable = state?.isInternetReachable;
-          setNetReachable(state?.isConnected !== false && reachable !== false);
+          _setNet(state?.isConnected !== false && reachable !== false);
         }).catch(() => {});
       } catch {}
     }
     return () => {
+      if (_netDownT) { clearTimeout(_netDownT); _netDownT = null; }
       try { unsub?.(); } catch {}
       if (Platform.OS === 'web') {
         try { window.removeEventListener('online', webOn); window.removeEventListener('offline', webOff); } catch {}

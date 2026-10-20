@@ -185,14 +185,22 @@ export function startFreezeWatch() {
   try { _appState = AppState.currentState || 'active'; } catch {}
   // Lê JÁ (antes do 1º snapshot); publica depois do boot (rede/identidade prontas).
   _readPrev().then((raw) => { setTimeout(() => { try { _reportPrev(raw); } catch {} }, 6000); }).catch(() => { _prevRead = true; });
+  // [2026-10-20 tg2] bateria: em 2º plano o tick de 250 ms só retornava (o _tick
+  // ignora não-ativo) mas acordava o JS 4×/s (Android e iOS c/ áudio/VoIP/local).
+  // Agora o timer para no background e volta no active. Kill: __chatyy_freeze_bg_timer=true.
+  let _iv = null;
+  const _arm = () => { if (_iv == null) { _lastTick = Date.now(); _lastMono = 0; _iv = setInterval(_tick, _tickMs); } };
+  const _disarm = () => { if (_iv != null) { clearInterval(_iv); _iv = null; } };
   try {
     AppState.addEventListener('change', (s) => {
       _appState = s;
       _lastTick = 0; // 2º plano congela timers → não é stall
       _lastMono = 0;
       _snap(Date.now());
+      let keep = false; try { keep = globalThis.__chatyy_freeze_bg_timer === true; } catch {}
+      if (s === 'background' && !keep) _disarm();
+      else if (s === 'active') _arm();
     });
   } catch {}
-  _lastTick = Date.now();
-  setInterval(_tick, _tickMs);
+  _arm();
 }

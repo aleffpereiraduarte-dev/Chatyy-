@@ -239,6 +239,50 @@ function _onDelete(data) {
   });
 }
 
+// [2026-10-20 tg2] "apagar p/ mim" noutro aparelho: some do cache local (sem lápide).
+function _onHidden(convId, mid) {
+  _safe(() => { require('./smartChatCache').deleteCachedMessage?.(convId, mid); });
+  _safe(async () => { try { await require('./chatCache').deleteCachedMessage?.(convId, mid); } catch {} });
+  _safe(async () => { try { await require('./db').dbDeleteMessage?.(convId, mid); } catch {} });
+}
+
+// [2026-10-20 tg2] limpar conversa / apagar conversa noutro aparelho.
+function _onClearedOrDeleted(convId, cleared) {
+  _safe(() => { require('./smartChatCache').clearConversation?.(convId); });
+  _safe(async () => { try { await require('./localDb').clearConversationMessages?.(convId); } catch {} });
+  _safe(async () => { try { await require('./chatCache').clearConversationMessages?.(convId); } catch {} });
+  if (cleared) {
+    _safe(async () => {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      await AsyncStorage.setItem(`cleared_at_${convId}`, String(Date.now()));
+    });
+  }
+}
+
+// [2026-10-20 tg2] rascunho vindo do OUTRO aparelho com a conversa FECHADA aqui:
+// grava o rascunho local e avisa a lista (prévia "Rascunho:"). Conversa aberta =
+// a tela trata (guarda de eco/digitação lá).
+function _onDraftGlobal(raw) {
+  const d = raw && raw.data && raw.data.conversation_id != null ? raw.data : raw;
+  if (!d || d.conversation_id == null) return;
+  try { if (globalThis.__chatyy_draft_sync_global === false) return; } catch {}
+  const cid = String(d.conversation_id);
+  try {
+    const pn = require('./pushNotifications');
+    const open = typeof pn.getActiveConversation === 'function' ? pn.getActiveConversation() : null;
+    if (open != null && String(open) === cid) return;
+  } catch {}
+  const text = String(d.text || '');
+  _safe(async () => {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    const { userScopedKey } = require('./cache');
+    const k = userScopedKey(`chat_draft_${cid}`);
+    if (text.trim()) await AsyncStorage.setItem(k, text);
+    else await AsyncStorage.removeItem(k);
+    try { require('react-native').DeviceEventEmitter.emit('chatyy:draft', { conversationId: cid, text: text.trim() }); } catch {}
+  });
+}
+
 function _onRead(data) {
   // Mark unread→0 in cached conversation row when peer reads, so a cold open
   // doesn't show a stale unread badge. Conversation cache, not message cache.
@@ -299,6 +343,24 @@ export function startChatPersistence() {
       _onDelete({ conversation_id: m.conversation_id, message_id: m.id, deleted_by: m.deleted_by || '', file_url: m.file_url, thumbnail_url: m.thumbnail_url });
     }));
     _unsubs.push(mailWs.on('chat_read', _onRead));
+    // [2026-10-20 tg2] multi-aparelho: ações feitas no OUTRO aparelho/web da conta
+    // (canal próprio) refletem no cache local mesmo com a conversa fechada.
+    _unsubs.push(mailWs.on('message_hidden', (raw) => {
+      const d = raw && raw.data && raw.data.conversation_id != null ? raw.data : raw;
+      if (!d || d.conversation_id == null || d.message_id == null) return;
+      _onHidden(d.conversation_id, d.message_id);
+    }));
+    _unsubs.push(mailWs.on('chat_cleared', (raw) => {
+      const d = raw && raw.data && raw.data.conversation_id != null ? raw.data : raw;
+      if (!d || d.conversation_id == null) return;
+      _onClearedOrDeleted(d.conversation_id, true);
+    }));
+    _unsubs.push(mailWs.on('conversation_deleted', (raw) => {
+      const d = raw && raw.data && raw.data.conversation_id != null ? raw.data : raw;
+      if (!d || d.conversation_id == null) return;
+      _onClearedOrDeleted(d.conversation_id, false);
+    }));
+    _unsubs.push(mailWs.on('chat_draft', _onDraftGlobal));
 
     // [#1188 Agent A 2026-05-19] ENVELOPE-MODE LIST WAKE
     // ──────────────────────────────────────────────────────────────────

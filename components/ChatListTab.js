@@ -2980,15 +2980,22 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
       pushItem(items[1]);
     }
     if (urls.length === 0) return;
-    try {
-      const { Image: ExpoImg } = require('expo-image');
-      const imgUrls = urls.filter(u => !u.isVideo).map(u => u.url);
-      if (imgUrls.length && ExpoImg?.prefetch) ExpoImg.prefetch(imgUrls).catch(() => {});
-    } catch {}
+    // [2026-10-20 tg2] dados: pré-download ESPECULATIVO respeita o "baixar
+    // automaticamente" (vídeo no 4G só se o usuário deixou) e cada foto baixa 1x
+    // (antes expo-image prefetch + cacheMedia force = 2 downloads). Toque/segurar
+    // no anel continua forçando. Kill: __chatyy_strip_prefetch_force=true.
+    let _force = false; try { _force = globalThis.__chatyy_strip_prefetch_force === true; } catch {}
+    if (Platform.OS === 'web' || _force) {
+      try {
+        const { Image: ExpoImg } = require('expo-image');
+        const imgUrls = urls.filter(u => !u.isVideo).map(u => u.url);
+        if (imgUrls.length && ExpoImg?.prefetch) ExpoImg.prefetch(imgUrls).catch(() => {});
+      } catch {}
+    }
     if (Platform.OS !== 'web') {
       try {
         const { cacheMedia } = require('../services/mediaCache');
-        urls.forEach(({ url }) => { cacheMedia(url, { force: true }).catch(() => {}); });
+        urls.forEach(({ url }) => { cacheMedia(url, { force: _force }).catch(() => {}); });
       } catch {}
     }
   }, [statuses]);
@@ -6288,6 +6295,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           const patchRow = (c) => {
             const n = { ...c };
             if (has('archived')) n.archived = _bool(d.archived) ? 1 : 0;
+            if (has('pinned')) n.pinned = _bool(d.pinned) ? 1 : 0; // [2026-10-20 tg2] fixar noutro aparelho/web
             if (has('muted_until') || has('mute_until') || has('muted')) {
               const mu = has('muted_until') ? d.muted_until : (has('mute_until') ? d.mute_until : undefined);
               let muted;
@@ -6349,11 +6357,46 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               if (hit) cacheConversations(next).catch?.(() => {});
             }).catch(() => {});
           } catch {}
-          // linha fora das duas listas (paginada) / ordem após (des)arquivar → chat_list.
-          if (wantArch != null) _scheduleUnreadRecompute();
+          // linha fora das duas listas (paginada) / ordem após (des)arquivar/fixar → chat_list.
+          if (wantArch != null || has('pinned')) _scheduleUnreadRecompute();
         } catch {}
       };
       unsubs.push(mailWs.on('conv_state', _onConvState));
+      // [2026-10-20 tg2] multi-aparelho (canal próprio): apagar p/ mim / limpar / apagar conversa
+      // feitos no OUTRO aparelho/web aparecem aqui na hora (Telegram).
+      const _matchCid = (cid) => (c) => !!c && (String(c.id) === cid || String(c.conversation_id) === cid);
+      unsubs.push(mailWs.on('message_hidden', (raw) => {
+        try {
+          const d = raw && raw.data && raw.data.conversation_id != null ? raw.data : raw;
+          if (!d || d.conversation_id == null || d.message_id == null) return;
+          const row = (conversationsRef.current || []).find(_matchCid(String(d.conversation_id)));
+          const lm = row && row.last_message;
+          // a prévia era a mensagem escondida → a anterior vem do servidor
+          if (lm && typeof lm === 'object' && String(lm.id) === String(d.message_id)) _scheduleUnreadRecompute();
+        } catch {}
+      }));
+      unsubs.push(mailWs.on('chat_cleared', (raw) => {
+        try {
+          const d = raw && raw.data && raw.data.conversation_id != null ? raw.data : raw;
+          if (!d || d.conversation_id == null) return;
+          const m = _matchCid(String(d.conversation_id));
+          const at = d.cleared_at || new Date().toISOString();
+          const patch = (c) => (m(c) ? { ...c, last_message: null, unread_count: 0, marked_unread: 0, cleared_message_at: at } : c);
+          setConversations(prev => (prev.some(m) ? prev.map(patch) : prev));
+          setArchivedConversations(prev => (Array.isArray(prev) && prev.some(m) ? prev.map(patch) : prev));
+          _scheduleUnreadRecompute();
+        } catch {}
+      }));
+      unsubs.push(mailWs.on('conversation_deleted', (raw) => {
+        try {
+          const d = raw && raw.data && raw.data.conversation_id != null ? raw.data : raw;
+          if (!d || d.conversation_id == null) return;
+          const m = _matchCid(String(d.conversation_id));
+          setConversations(prev => (prev.some(m) ? prev.filter(c => !m(c)) : prev));
+          setArchivedConversations(prev => (Array.isArray(prev) && prev.some(m) ? prev.filter(c => !m(c)) : prev));
+          _scheduleUnreadRecompute();
+        } catch {}
+      }));
       unsubs.push(mailWs.on('conversation_state', _onConvState));
       unsubs.push(mailWs.on('chat_conv_state', _onConvState));
 
@@ -6670,10 +6713,21 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             wasConnected = true;
             setWsDownBanner(false);
           } else if (!wasConnected && mailWs?.ensureHealthy) {
+            // [2026-10-20 tg2] bateria (modo avião): sem rede não cutuca a cada 1,5 s
+            // (ensureHealthy re-sondava a cada 100 ms); o websocket já reconecta
+            // sozinho quando a rede volta (NetInfo). Recuo 1,5 s → 30 s enquanto cai.
+            let _off = false;
+            try { _off = require('../services/networkInfo').getNetworkState?.()?.isConnected === false; } catch {}
+            const _now = Date.now();
+            if (_off || _now < _healNextAt) return;
+            _healGap = Math.min(30000, _healGap ? _healGap * 2 : 1500);
+            _healNextAt = _now + _healGap;
             mailWs.ensureHealthy(1000).catch(() => {});
           }
+          if (mailWs?.isConnected) { _healGap = 0; _healNextAt = 0; }
         } catch {}
       }, 1500);
+      let _healGap = 0; let _healNextAt = 0;
       unsubs.push(() => clearInterval(healWatchdog));
 
       // Real-time reaction toast — peer reacted to MY status. Suppress on

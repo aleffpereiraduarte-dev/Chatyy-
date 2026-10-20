@@ -45,7 +45,9 @@ export default function DeclineWithMessageSheet() {
   if (Platform.OS !== 'ios') return null;
 
   useEffect(() => {
-    pollRef.current = setInterval(() => {
+    // [2026-10-20 tg2] bateria: só olha com o app em 1º plano (a folha só abre
+    // na frente; ao voltar p/ active o setActiveInterval checa na hora).
+    pollRef.current = require('../utils/activeInterval').setActiveInterval(() => {
       try {
         const p = (typeof globalThis !== 'undefined' && globalThis.__chatyyPendingDeclineWithMessage) || null;
         if (!p || !p.callId) return;
@@ -65,7 +67,7 @@ export default function DeclineWithMessageSheet() {
     }, 800);
     return () => {
       if (pollRef.current) {
-        clearInterval(pollRef.current);
+        try { pollRef.current(); } catch {}
         pollRef.current = null;
       }
     };

@@ -3232,6 +3232,10 @@ export async function saveConversationMedia(messages, convIdHint) {
     // Skip if SQLite already says we have it. The bubble's getCachedUri will
     // still re-validate file existence at render time, so this is safe.
     if (m.local_path && typeof m.local_path === 'string' && m.local_path.startsWith('file://')) return false;
+    // [2026-10-20 tg2] varredura ao abrir a conversa é ESPECULATIVA → respeita o
+    // "baixar automaticamente" por tipo/rede (antes baixava tudo no 4G, inclusive
+    // vídeo/documento). O toque na bolha continua forçando. Kill: __chatyy_conv_sweep_gate=false.
+    try { if (globalThis.__chatyy_conv_sweep_gate !== false && !shouldAutoDownload(m.type)) return false; } catch {}
     return true;
   });
   const BATCH_SIZE = 20;

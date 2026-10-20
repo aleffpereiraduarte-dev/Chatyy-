@@ -182,6 +182,46 @@ const CONV_OFF_LONG_MS = 15 * 60 * 1000;
 const CONV_OFF_MAX = 200;
 const _convOff = new Map();
 let _storeBeacons = 0; // [native-store] amostras de beacon por sessão
+// [2026-10-20 tg-scroll] Telegram: reabrir a conversa volta EXATAMENTE onde o
+// usuário parou de ler (se saiu longe do fim). conv → { k (linha mais baixa
+// visível), latest (chave da mais nova ao sair), at }. Só restaura se nada
+// novo chegou (mesma `latest`) e sem divisor de não lidas (aí vale o WhatsApp:
+// abre no divisor/fim). Persistido no MMKV (sobrevive ao cold start), 7 dias.
+// Kill switch (OTA): globalThis.__chatyy_scroll_restore = false.
+const SCROLL_MEM_KEY = 'chatyy_scroll_mem_v1';
+const SCROLL_MEM_MAX = 80;
+const SCROLL_MEM_TTL_MS = 7 * 24 * 3600 * 1000;
+const SCROLL_RESTORE_WINDOW_MS = 2500;
+let _scrollMem = null;
+function _scrollRestoreOn() { try { return globalThis.__chatyy_scroll_restore !== false; } catch { return true; } }
+function _scrollMemMap() {
+  if (_scrollMem) return _scrollMem;
+  const fresh = new Map();
+  try {
+    const kv = require('../../services/mmkv');
+    // cache do KV ainda hidratando → não memoriza o vazio (lê de novo depois)
+    if (typeof kv.isCacheReady === 'function' && !kv.isCacheReady()) return fresh;
+    _scrollMem = fresh;
+    const o = kv.getJSON(SCROLL_MEM_KEY);
+    const now = Date.now();
+    if (o && typeof o === 'object') {
+      for (const c of Object.keys(o)) {
+        const e = o[c];
+        if (e && typeof e.k === 'string' && typeof e.latest === 'string' && now - (Number(e.at) || 0) < SCROLL_MEM_TTL_MS) _scrollMem.set(c, e);
+      }
+    }
+  } catch {}
+  return _scrollMem;
+}
+function _scrollMemSave() {
+  try {
+    const m = _scrollMemMap();
+    while (m.size > SCROLL_MEM_MAX) m.delete(m.keys().next().value);
+    const o = {};
+    for (const [c, e] of m) o[c] = e;
+    require('../../services/mmkv').setJSON(SCROLL_MEM_KEY, o);
+  } catch {}
+}
 let _api = 0; // apiVersion do binário (1 = fase 1; 2 = blocos/lift/seleção/fixa)
 /** [native-ctxmenu] kill switch OTA do menu de contexto nativo. */
 function _ctxMenuSwitchOn() { try { return globalThis.__chatyy_native_ctxmenu !== false; } catch { return true; } }
@@ -1765,6 +1805,58 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   }, []);
   const convIdRef = useRef(null);
   convIdRef.current = props.conversationId != null ? props.conversationId : (storeConv && storeConv.c != null ? storeConv.c : null);
+  // [2026-10-20 tg-scroll] posição de leitura (ver SCROLL_MEM_KEY)
+  const scrollMemRef = useRef(null);
+  if (!scrollMemRef.current) scrollMemRef.current = { dist: 0, vh: 0, vis: null, dragged: false, done: !!shell, t0: Date.now(), pending: false };
+  useEffect(() => () => {
+    if (shell || !_scrollRestoreOn()) return;
+    const c = convIdRef.current;
+    const keys = sentRef.current.keys || [];
+    if (c == null || !keys.length) return;
+    const m = scrollMemRef.current;
+    const map = _scrollMemMap();
+    const cid = String(c);
+    let bk = null;
+    if (m.vh > 0 && m.dist > m.vh * 0.5 && Array.isArray(m.vis)) {
+      let best = -1;
+      for (const k of m.vis) {
+        const i = keyIndexRef.current.get(k);
+        if (i != null && i > best && !/^(null|err)-/.test(k)) { best = i; bk = k; }
+      }
+    }
+    if (bk) { map.delete(cid); map.set(cid, { k: bk, latest: String(keys[keys.length - 1]), at: Date.now() }); _scrollMemSave(); }
+    else if (map.has(cid)) { map.delete(cid); _scrollMemSave(); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const tryScrollRestore = useCallback((keys, list) => {
+    const m = scrollMemRef.current;
+    if (m.done || m.pending) return;
+    if (!_scrollRestoreOn() || m.dragged || Date.now() - m.t0 > SCROLL_RESTORE_WINDOW_MS) { m.done = true; return; }
+    const c = convIdRef.current;
+    if (c == null) return;
+    const ent = _scrollMemMap().get(String(c));
+    if (!ent) { m.done = true; return; }
+    if (!keys.includes(ent.k)) return; // linha ainda não chegou (store/rede) → próxima carga
+    m.done = true;
+    // chegou mensagem nova desde que saiu, ou há não lidas → abre no fim/divisor (fluxo normal)
+    if (String(keys[keys.length - 1]) !== ent.latest) return;
+    for (let i = list.length - 1; i >= 0 && i >= list.length - 400; i--) { const it = list[i]; if (it && it._type === 'unread_separator') return; }
+    m.pending = true;
+    setTimeout(() => {
+      m.pending = false;
+      const v = nativeRef.current;
+      if (!aliveRef.current || !v || typeof v.scrollToKey !== 'function' || m.dragged) return;
+      // Como um gesto do usuário p/ a tela solta o "grudado no fim" (senão o
+      // pinSettle da conversa puxaria de volta) — mesmo caminho do arraste.
+      try { cbRef.current.onScrollBeginDrag && cbRef.current.onScrollBeginDrag(); } catch {}
+      try {
+        const p = v.scrollToKey(ent.k, 0, false);
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch {}
+      setTimeout(() => { try { cbRef.current.onScrollEndDrag && cbRef.current.onScrollEndDrag(); } catch {} }, 60);
+      try { if (_storeBeacons < 6) _beacon('scroll_restore', `ms=${Date.now() - m.t0}`); } catch {}
+    }, 0);
+  }, []);
 
   const fail = useCallback((reason) => {
     if (failRef.current) return;
@@ -1875,12 +1967,12 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     try {
       const p = view.applyRows(payload);
       if (p && typeof p.then === 'function') {
-        p.then(onApplyOk, (e) => onApplyError(e, view, 'apply:'));
-      } else onApplyOk();
+        p.then(() => { onApplyOk(); tryScrollRestore(keys, list); }, (e) => onApplyError(e, view, 'apply:'));
+      } else { onApplyOk(); tryScrollRestore(keys, list); }
     } catch (e) {
       onApplyError(e, view, 'apply-throw:');
     }
-  }, [data, ctx, ctxRev, keyOf, Native, fail, onApplyError, onApplyOk, scheduleRetry, applyRetry, gateOpen, vfTick]);
+  }, [data, ctx, ctxRev, keyOf, Native, fail, onApplyError, onApplyOk, scheduleRetry, applyRetry, gateOpen, vfTick, tryScrollRestore]);
 
   // [native-media-dl] política atualizada + view registrada p/ setTransfers +
   // progresso dos downloads do JS (mediaCache) pintando o MESMO anel nativo.
@@ -2090,11 +2182,13 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       const dist = Math.max(0, Number(ne.dist) || 0);
       const ch = Math.max(0, Number(ne.ch) || 0);
       const vh = Math.max(0, Number(ne.vh) || 0);
+      { const sm = scrollMemRef.current; sm.dist = dist; sm.vh = vh; } // [tg-scroll]
       const synthetic = { nativeEvent: { contentOffset: { x: 0, y: Math.max(0, ch - vh - dist) }, contentSize: { width: 0, height: ch }, layoutMeasurement: { width: 0, height: vh } } };
       try { cbRef.current.onScroll && cbRef.current.onScroll(synthetic); } catch {}
     },
     onDragState: (e) => {
       const d = !!(e?.nativeEvent?.dragging);
+      if (d) scrollMemRef.current.dragged = true; // [tg-scroll] o dedo manda
       try {
         if (d) cbRef.current.onScrollBeginDrag && cbRef.current.onScrollBeginDrag();
         else cbRef.current.onScrollEndDrag && cbRef.current.onScrollEndDrag();
@@ -2102,6 +2196,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     },
     onVisible: (e) => {
       const keys = (e?.nativeEvent?.keys) || [];
+      if (keys.length) scrollMemRef.current.vis = keys; // [tg-scroll]
       if (!keys.length || !cbRef.current.onViewableItemsChanged) return;
       const viewableItems = [];
       for (const k of keys) {

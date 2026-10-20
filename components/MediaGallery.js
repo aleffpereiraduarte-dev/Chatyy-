@@ -252,7 +252,7 @@ function SectionedMediaGrid({ items, type, colors, onView, onEndReached, loading
                 {_isVid(it) ? (
                   <View style={{ flex: 1, backgroundColor: '#000' }} />
                 ) : (
-                  <FastImage source={{ uri: resolveUrl(it.file_url) }} style={{ width: '100%', height: '100%' }}
+                  <FastImage source={{ uri: resolveUrl(it.thumbnail_url || it.file_url) /* [2026-10-20 tg2] grade: versão de tela, não o original */ }} style={{ width: '100%', height: '100%' }}
                     resizeMode="cover" recyclingKey={it.file_url} />
                 )}
                 {_isVid(it) ? (
