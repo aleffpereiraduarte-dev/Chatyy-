@@ -900,6 +900,8 @@ export function voiceRateLabel(rate, dec) {
   const s = Number.isInteger(r) ? String(r) : String(r).replace('.', dec === ',' ? ',' : '.');
   return s + '\u00D7';
 }
+/** [2026-10-20 media-wa] kill switch OTA do microfone azul na nota enviada: globalThis.__chatyy_voice_played_own = false. */
+function _voicePlayedOn() { try { return globalThis.__chatyy_voice_played_own !== false; } catch { return true; } }
 function _voiceExtras(item, row, ctx, own) {
   const N = _N(); const I = _icons();
   if (!N) return;
@@ -947,6 +949,16 @@ function _voiceExtras(item, row, ctx, own) {
   if (_api < 8 && _voiceRateFbOn() && v && v.id && v.id === String(item.id ?? '') && v.label) {
     // 1º da fileira: spacer flexível alargaria o balão até o máximo (mede com a largura toda)
     chips.unshift(N.text(v.label, { fs: 12, fw: 700, c: ink, p: [4, 10, 4, 10], r: -1, bg: chipBg, a: 'au:rate' }));
+  }
+  // [2026-10-20 media-wa] microfone AZUL na MINHA nota de voz quando o outro ouviu
+  // (WhatsApp). O binário só desenha o ponto da nota RECEBIDA; o JS já sabia
+  // (played_at via WS) mas só mostrava em "Dados da mensagem".
+  if (own && _voicePlayedOn() && (item.type === 'voice' || item.type === 'audio') && (item.played_at || item._voice_played)) {
+    const rc = p2.readColor || '#53BDEB';
+    chips.unshift(N.hstack([
+      N.icon(I.IconMic, { s: 12, c: rc }),
+      N.text(L('chatConv.playedAt', 'Reproduzido'), { fs: 11, fw: 600, c: rc }),
+    ], { g: 3, al: 'c', p: [2, 2, 2, 2] }));
   }
   if (chips.length) post.push(N.hstack(chips, { g: 6, al: 'c', m: [6, 0, 0, 0] }));
   if (!post.length) return;
@@ -1306,6 +1318,9 @@ function _mediaFor(m, ctx) {
   }
   if (m._uploading || m._compressing) out.up = typeof m._uploadPct === 'number' ? Math.max(0, Math.min(100, Math.round(m._uploadPct))) : -1;
   else if (m._queued && _isTmpId(m.id) && !m._failed) out.up = -1;
+  // [2026-10-20 media-wa] fase 'commit' (bytes no R2, chat_send em voo): _uploading
+  // já é false e o anel sumia antes do ✓ — WhatsApp mantém o anel até o servidor aceitar.
+  else if (m._pending && _isTmpId(m.id) && !m._failed && typeof m._uploadPct === 'number') out.up = Math.max(0, Math.min(100, Math.round(m._uploadPct)));
   _mdlMedia(m, out, ctx); // [native-media-dl]
   return out;
 }

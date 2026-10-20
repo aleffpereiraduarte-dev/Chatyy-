@@ -23162,7 +23162,9 @@ function ChatConversationInnerBody() {
           if (mountedRef.current) {
             setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
           }
-        }, fileType, abortCtrl.signal, false, msgId, replyId));
+        }, fileType, abortCtrl.signal, false, msgId, replyId,
+          // [2026-10-20 media-wa] duração do vídeo também no caminho PHP (o selo "0:12" na bolha)
+          fileType === 'video' ? (Number(file?.duration) > 1000 ? Math.round(Number(file.duration) / 1000) : (Number(file?.duration) || null)) : null));
       }
 
       if (isAborted()) break;
@@ -26014,7 +26016,8 @@ function ChatConversationInnerBody() {
     }
   };
 
-  const myRole = members.find(m => m.email === user?.email)?.role;
+  // [2026-10-20 wa2] e-mail sem diferenciar maiúsculas (admin perdia a UI de admin).
+  const myRole = members.find(m => String(m?.email || '').toLowerCase() === String(user?.email || '').toLowerCase())?.role;
   const isGroupAdmin = myRole === 'admin';
   // [2026-10-14 adv-privacy] FLAG_SECURE/escudo/aviso de print/bloqueios — components/chat/useConversationPrivacy.js
   const _advPriv = useConversationPrivacy({ conversationId, conversationType, isAdmin: isGroupAdmin, currentEmail, colors, isDark, t, vanishActive: !!_vanish.active });
@@ -26632,16 +26635,23 @@ function ChatConversationInnerBody() {
         { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
         { text: t('common.copy') || 'Copiar', onPress: () => { try { Clipboard.setStringAsync(url); } catch {} } },
         { text: t('chatConv.shareLink') || 'Compartilhar link', onPress: () => { try { Share.share({ message: url, title: t('chatConv.groupLink') || 'Link do grupo' }); } catch {} } },
-        { text: t('chatConv.inviteRotate') || 'Gerar novo', onPress: async () => {
-          const rr = await api.chatGroupInviteLinkV2(conversationId, 'rotate');
-          if (rr?.success) { setInviteLink(rr?.data?.url || null); safeAlert(t('common.success') || 'OK', t('chatConv.inviteRotated') || 'Link anterior invalidado'); }
-          else safeAlert(t('common.error') || 'Erro', rr?.message || 'Falha');
-        } },
-        { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: async () => {
-          const rv = await api.chatGroupInviteLinkV2(conversationId, 'revoke');
-          if (rv?.success) { setInviteLink(null); safeAlert(t('common.success') || 'OK', t('chatConv.inviteRevoked') || 'Link revogado. Ninguém mais entra por ele.'); }
-          else safeAlert(t('common.error') || 'Erro', rv?.message || 'Falha');
-        } },
+        // [2026-10-20 wa2] Redefinir/revogar pedem confirmação (WhatsApp: "Redefinir link?").
+        { text: t('chatConv.inviteRotate') || 'Gerar novo', onPress: () => safeAlert('', t('chatConv.inviteRotateConfirm') || 'Redefinir o link? Quem tiver o link atual não vai mais conseguir entrar.', [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          { text: t('chatConv.inviteRotate') || 'Gerar novo', style: 'destructive', onPress: async () => {
+            const rr = await api.chatGroupInviteLinkV2(conversationId, 'rotate');
+            if (rr?.success) { setInviteLink(rr?.data?.url || null); safeAlert(t('common.success') || 'OK', t('chatConv.inviteRotated') || 'Link anterior invalidado'); }
+            else safeAlert(t('common.error') || 'Erro', rr?.message || 'Falha');
+          } },
+        ]) },
+        { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: () => safeAlert('', t('chatConv.inviteRevokeConfirm') || 'Revogar o link? Ninguém mais vai entrar por ele.', [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: async () => {
+            const rv = await api.chatGroupInviteLinkV2(conversationId, 'revoke');
+            if (rv?.success) { setInviteLink(null); safeAlert(t('common.success') || 'OK', t('chatConv.inviteRevoked') || 'Link revogado. Ninguém mais entra por ele.'); }
+            else safeAlert(t('common.error') || 'Erro', rv?.message || 'Falha');
+          } },
+        ]) },
       ]);
     } catch {}
   };
@@ -28431,7 +28441,16 @@ function ChatConversationInnerBody() {
         //     *batched* item breaks out to start its own album.
         const sameSender = m.sender_email === runSender;
         let join = false;
-        if (sameSender) {
+        // [2026-10-20 media-wa] item com LEGENDA própria depois do 1º não entra no
+        // álbum (antes as legendas viravam um bloco só, sem saber de qual foto era;
+        // WhatsApp mostra a legenda junto da foto dela). Ele abre um grupo novo.
+        let _ownCap = false;
+        try {
+          const c = String(m.content || '').trim();
+          _ownCap = !!c && c !== (m.file_name || '') && !/^https?:\/\//i.test(c) && !/^[{[]/.test(c)
+            && !/^[^\s]+\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp)$/i.test(c);
+        } catch {}
+        if (sameSender && !_ownCap) {
           if (runBatch) {
             join = !!mb && mb === runBatch;
           } else {
@@ -30410,6 +30429,10 @@ function ChatConversationInnerBody() {
               if (typeof url === 'string' && url.startsWith('file://')) return;
               try {
                 const _api = require('../services/api');
+                      // [2026-10-20 media-wa] mídia local: fila durável primeiro (retoma o upload
+                      // persistido, mesmo cmi) — antes subia os bytes de novo pelo offlineCache e
+                      // a linha 'failed' do outbox voltava vermelha ao reabrir.
+                      if (isLocalMedia && !msg._leafRejected) { try { await retryFailedMediaSend(msg); } catch {} return; }
                 const remote = _api?.getMediaUrl
                   ? _api.getMediaUrl(m.file_url)
                   : (m.file_url.startsWith('http') ? m.file_url : `https://chatyy.com.br${m.file_url}`);
@@ -31842,6 +31865,7 @@ function ChatConversationInnerBody() {
                         const v = e.currentTarget;
                         if (!v) return;
                         clearTimeout(v.__previewTimer);
+                isFocused={false /* [2026-10-20 media-wa] igual WhatsApp: vídeo na lista não toca sozinho — só ao abrir */}
                         v.pause(); v.currentTime = 0.5;
                       } catch {}
                     }}
@@ -35885,6 +35909,7 @@ function ChatConversationInnerBody() {
     return false;
   };
   const _nlOpenMedia = useCallback((item, index) => {
+        readColor: _tickReadColor(), // [2026-10-20 media-wa] mic azul da nota ouvida
     const isAlbum = item && item._type === 'album';
     const its = isAlbum ? (item._items || []) : null;
     const m = isAlbum ? its[Math.max(0, Math.min(its.length - 1, index || 0))] : item;
@@ -36197,6 +36222,13 @@ function ChatConversationInnerBody() {
     // abre o MESMO overlay de lift do caminho FlashList (MessageLiftOverlay).
     if (anchor && anchor.uri && LIFT_AVAILABLE && target.type !== 'system' && !liftPendingRef.current) {
       _ctxMenuDropKeyboard(); // [ctxmenu-kb]
+    // [2026-10-20 media-wa] álbum: _failed = "algum item falhou" — reenviar os itens
+    // que FALHARAM (antes reenviava o 1º, quase sempre já enviado).
+    const _albFail = item._type === 'album' ? (item._items || []).filter(m => m && m._failed && !m.deleted_at) : null;
+    if (_albFail && _albFail.length && (part === 'retry' || (part === 'action' && url === 'retry') || !['vnote', 'action', 'media', 'audio', 'file', 'xfer', 'reply', 'reaction', 'link'].includes(part))) {
+      if (_albFail.length === 1) A.promptFailed(_albFail[0]); else _albFail.forEach(m => { try { A.tapRetry(m); } catch {} });
+      return;
+    }
       const isOwnMsg = String(target.sender_email || '').toLowerCase() === String(currentEmail || '').toLowerCase();
       const a = { ...anchor, isOwn: isOwnMsg };
       if (ctxAnchorRef.current) { releaseBubbleAnchor(ctxAnchorRef.current); }
