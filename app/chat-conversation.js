@@ -26762,7 +26762,7 @@ function ChatConversationInnerBody() {
     rows.push({ id: 'reportLeave', sid: 'danger', k: 'a', dest: true, icon: 'logout', title: _ciTr('chatConv.reportAndLeave', 'Reportar e sair'), onPress: () => go(handleReportAndLeave) });
     // [mural 2026-10-20] extras p/ o perfil novo (components/profile/TgContactInfo): mesmo mute de hoje.
     const tg = {
-      email: peerEmail || peer, conversationId, presence: presenceText || '', muted: !!mutedUntil,
+      email: peerEmail || peer, conversationId, presence: (typeof presenceText !== 'undefined' ? presenceText : '') || '', muted /* [mural-fix] presenceText não existe neste escopo */: !!mutedUntil,
       onMuteFor: (d) => handleMuteChat(d), onUnmute: () => handleMuteChat(null),
       bio: ident?.bio || '', phone: ident?.phone || '',
       commonGroups: contactCommonGroups.map((g) => ({ id: g.id, name: g.name || '', avatar_url: g.avatar_url || g.avatar || '', member_count: g.member_count || g.members_count || 0 })),
