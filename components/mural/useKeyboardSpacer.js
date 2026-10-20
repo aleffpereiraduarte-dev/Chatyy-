@@ -1,66 +1,83 @@
-// [mural 2026-10-20 kb-fix] Espaçador de teclado por MEDIDA REAL: mede o fundo do
-// campo (measureInWindow) contra o topo do teclado (screenY) e cresce o espaço
-// abaixo dele até o campo encostar no teclado. Idempotente (pad novo = pad +
-// sobreposição), então vale dentro da folha nativa (formSheet sobe p/ o detent
-// grande e o teclado cobria o campo — print 20/10 build 752), em tela cheia e no
-// Android com ou sem adjustResize. Uso: ref no View que embrulha o campo;
-// <View style={{ height: pad }} /> logo depois dele, dentro do mesmo flex.
+// [mural 2026-10-20 kb-fix v2] Espaço do teclado SEM medir posição na tela.
+// v1 media measureInWindow dentro da folha nativa (formSheet) e errava: o
+// conteúdo da folha tem a altura do detent médio mesmo quando o sistema sobe a
+// folha para o grande → campo sumia atrás do teclado (prints 20/10, build 752).
+// Agora a folha de comentários é um painel JS em tela cheia (fundo colado no
+// fundo da tela) e o espaço = altura do teclado que o sistema informa:
+//   iOS: pad = altura do teclado (keyboardWillChangeFrame/WillShow, mesma curva).
+//   Android: pad = teclado − o quanto a janela já encolheu (adjustResize); com
+//            edge-to-edge sem resize → pad = teclado inteiro.
+// Teclado já aberto ao montar → Keyboard.metrics(). Uso: onLayout no View raiz
+// (que vai até o fundo da tela) + <View style={{ height: pad }} /> após o campo.
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Keyboard, LayoutAnimation, Platform } from 'react-native';
+import { Keyboard, LayoutAnimation, Platform, Dimensions } from 'react-native';
 
-export default function useKeyboardSpacer(targetRef, { enabled = true, gap = 0 } = {}) {
-  const [pad, setPad] = useState(0);
-  const padRef = useRef(0);
-  const kbYRef = useRef(0);
-  const apply = useCallback((v, duration) => {
-    const n = Math.max(0, Math.round(v));
-    if (Math.abs(n - padRef.current) < 2) return;
-    try {
-      if (Platform.OS === 'ios') {
-        LayoutAnimation.configureNext({ duration: Math.max(120, duration || 250), update: { type: LayoutAnimation.Types.keyboard }, create: { type: LayoutAnimation.Types.keyboard, property: LayoutAnimation.Properties.opacity } });
-      } else {
-        LayoutAnimation.configureNext(LayoutAnimation.create(160, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
-      }
-    } catch {}
-    padRef.current = n;
-    setPad(n);
-  }, []);
-  const correct = useCallback((duration) => {
-    const node = targetRef.current;
-    const kbY = kbYRef.current;
-    if (!node || !kbY || typeof node.measureInWindow !== 'function') return;
-    try {
-      node.measureInWindow((x, y, w, h) => {
-        if (!(h > 0) || !kbYRef.current) return;
-        const overlap = y + h + gap - kbYRef.current;
-        if (Math.abs(overlap) >= 2) apply(padRef.current + overlap, duration);
-      });
-    } catch {}
-  }, [targetRef, apply, gap]);
+function _anim(duration) {
+  try {
+    if (Platform.OS === 'ios') {
+      LayoutAnimation.configureNext({ duration: Math.max(120, duration || 250), update: { type: LayoutAnimation.Types.keyboard }, create: { type: LayoutAnimation.Types.keyboard, property: LayoutAnimation.Properties.opacity } });
+    } else {
+      LayoutAnimation.configureNext(LayoutAnimation.create(160, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.opacity));
+    }
+  } catch {}
+}
+
+function _initialKb() {
+  try {
+    if (Keyboard.isVisible && Keyboard.isVisible()) {
+      const m = Keyboard.metrics && Keyboard.metrics();
+      return m && m.height > 0 ? m.height : 0;
+    }
+  } catch {}
+  return 0;
+}
+
+export default function useKeyboardSpacer({ enabled = true } = {}) {
+  const [kb, setKb] = useState(_initialKb);
+  const [rootH, setRootH] = useState(0);
+  const restH = useRef(0); // altura da raiz sem teclado (Android: detectar adjustResize)
+  const kbRef = useRef(kb);
+  kbRef.current = kb;
   useEffect(() => {
     if (!enabled || Platform.OS === 'web') return undefined;
     const subs = [];
-    const timers = [];
-    const later = (ms) => timers.push(setTimeout(() => correct(160), ms));
     const add = (ev, fn) => { try { subs.push(Keyboard.addListener(ev, fn)); } catch {} };
-    const onShow = (e) => {
-      const y = e && e.endCoordinates ? e.endCoordinates.screenY : 0;
-      if (!y) return;
-      kbYRef.current = y;
-      correct(e.duration);
-      // a folha ainda pode estar subindo p/ o detent grande → confere de novo
-      later(320); later(650);
+    const show = (e) => {
+      const h = e && e.endCoordinates ? Math.round(e.endCoordinates.height) : 0;
+      if (!(h > 0) || Math.abs(h - kbRef.current) < 1) return;
+      _anim(e.duration);
+      setKb(h);
     };
-    const onHide = (e) => { kbYRef.current = 0; timers.forEach(clearTimeout); apply(0, e && e.duration); };
+    const hide = (e) => { if (kbRef.current === 0) return; _anim(e && e.duration); setKb(0); };
     if (Platform.OS === 'ios') {
-      add('keyboardWillChangeFrame', (e) => { const y = e?.endCoordinates?.screenY || 0; if (y && e.endCoordinates.height > 0) onShow(e); });
-      add('keyboardDidShow', onShow);
-      add('keyboardWillHide', onHide);
+      add('keyboardWillShow', show);
+      add('keyboardWillChangeFrame', (e) => {
+        // só quadro NA tela (no fechar o quadro final fica abaixo da tela: sy + h > altura)
+        const sy = e?.endCoordinates?.screenY; const h = e?.endCoordinates?.height;
+        let H = 0; try { H = Dimensions.get('screen').height; } catch {}
+        if (h > 0 && sy > 0 && (!H || sy + h <= H + 2)) show(e);
+      });
+      add('keyboardWillHide', hide);
     } else {
-      add('keyboardDidShow', onShow);
-      add('keyboardDidHide', onHide);
+      add('keyboardDidShow', show);
+      add('keyboardDidHide', hide);
     }
-    return () => { subs.forEach((s) => { try { s.remove(); } catch {} }); timers.forEach(clearTimeout); };
-  }, [enabled, correct, apply]);
-  return { pad, recheck: () => correct(120) };
+    return () => subs.forEach((s) => { try { s.remove(); } catch {} });
+  }, [enabled]);
+  const onLayout = useCallback((e) => {
+    const h = Math.round(e?.nativeEvent?.layout?.height || 0);
+    if (!h) return;
+    if (kbRef.current === 0 && h > restH.current) restH.current = h;
+    if (!restH.current) restH.current = h;
+    setRootH(h);
+  }, []);
+  let pad = 0;
+  if (enabled && Platform.OS !== 'web' && kb > 0) {
+    if (Platform.OS === 'ios') pad = kb;
+    else {
+      const shrunk = restH.current && rootH ? Math.max(0, restH.current - rootH) : 0;
+      pad = Math.max(0, kb - shrunk);
+    }
+  }
+  return { pad, kb, onLayout };
 }

@@ -22,9 +22,8 @@ export default function TextPostView({ postId, onBack, onEdit, onReport, onDelet
   const insets = useSafeAreaInsets();
   const post = store.usePost(postId);
   const barRef = useRef(null);
-  const barWrapRef = useRef(null);
-  // [kb-fix 20/10] campo grudado no teclado por medida real (iOS e Android edge-to-edge)
-  const { pad: kbPad } = useKeyboardSpacer(barWrapRef);
+  // [kb-fix v2 20/10] campo grudado no teclado: espaço = altura do teclado (a tela vai até o fundo)
+  const { pad: kbPad, onLayout: kbLayout } = useKeyboardSpacer();
   const scrollRef = useRef(null);
   const { openMenu, mine } = usePostMenu(post, { onEdit, onDeleted, onReport });
   const onReply = useCallback((c) => barRef.current?.replyTo(c), []);
@@ -50,7 +49,7 @@ export default function TextPostView({ postId, onBack, onEdit, onReport, onDelet
   ].filter(Boolean).join(' · ');
   const tact = (on) => ({ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 10, borderRadius: 10, backgroundColor: on ? th.chip : 'transparent' });
   return (
-    <View style={{ flex: 1, backgroundColor: th.bg }}>
+    <View style={{ flex: 1, backgroundColor: th.bg }} onLayout={kbLayout}>
       <StatusBar barStyle={th.isDark ? 'light-content' : 'dark-content'} />
       <View style={{ paddingTop: insets.top, height: insets.top + 50, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', backgroundColor: th.bg, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: th.line, zIndex: 5 }}>
         <Pressable onPress={onBack} hitSlop={8} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }} accessibilityLabel={t('common.back', 'Voltar')}>
@@ -103,14 +102,14 @@ export default function TextPostView({ postId, onBack, onEdit, onReport, onDelet
           <Text style={{ color: th.text, paddingTop: 16, paddingHorizontal: 16, paddingBottom: 4, fontWeight: '700', fontSize: 16 }}>{t('mural.comments', 'Comentários')}</Text>
           <CommentsBody postId={postId} th={th} me={user?.email} isPostOwner={mine} onReply={onReply} onReport={onReportComment} />
         </ScrollView>
-        <View ref={barWrapRef} collapsable={false} style={{ backgroundColor: th.card, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.line }}>
+        <View style={{ backgroundColor: th.card, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.line }}>
           <CommentBar ref={barRef} postId={postId} th={th} disabled={post.allow_comments === false}
             quick={post.allow_comments !== false && !(post.comments > 0) ? quickReplies('text', t) : null}
             placeholder={t('mural.writeComment', 'Escreva um comentário...')}
             bottomPad={kb || kbPad > 0 ? 0 : Math.max(insets.bottom, 8)}
             onSent={() => setTimeout(() => { try { scrollRef.current?.scrollToEnd({ animated: true }); } catch {} }, 150)} />
         </View>
-        {kbPad > 0 ? <View style={{ height: kbPad }} /> : null}
+        {kbPad > 0 ? <View style={{ height: kbPad, backgroundColor: th.card }} /> : null}
       </View>
     </View>
   );

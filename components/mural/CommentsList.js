@@ -220,11 +220,11 @@ export function quickReplies(kind, t) {
 }
 
 /** Abre a denúncia de um comentário/post (ReportSheet nativo). Devolve setter. */
-export function useReport() {
+export function useReport({ native = true } = {}) {
   const [target, setTarget] = useState(null);
   const ReportSheet = useMemo(() => { try { return require('../ReportSheet').default; } catch { return null; } }, []);
   const node = ReportSheet && target ? (
-    <ReportSheet visible={!!target} onClose={() => setTarget(null)} target={target} native fromModal={false} />
+    <ReportSheet visible={!!target} onClose={() => setTarget(null)} target={target} native={native} fromModal={false} />
   ) : null;
   return { report: setTarget, reportNode: node };
 }

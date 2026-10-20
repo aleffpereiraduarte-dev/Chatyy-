@@ -1,6 +1,6 @@
 // [mural 2026-10-20] Tela 6 do mockup: folha de comentários sobre o post.
-// iOS/Android: folha DO SISTEMA (components/NativeSheet → rota formSheet), nunca
-// <Modal> sobre <Modal>. Web: Modal com arrastar para fechar.
+// Painel JS em tela cheia (iOS/Android/web) com arrastar para fechar; a folha do
+// sistema (NativeSheet) fica atrás do kill switch __chatyy_mural_native_comments.
 // Respostas indentadas, curtir comentário, "Responder", chips de resposta rápida
 // e campo fixo acima do teclado; tudo otimista (services/muralStore).
 import React, { useEffect, useRef, useState, useCallback } from 'react';
@@ -18,18 +18,26 @@ import { registerCommentsHost } from '../../services/muralNav';
 import useKeyboardSpacer from './useKeyboardSpacer';
 import useDragToDismiss, { DragSheetRoot, DragPanel } from '../ui/useDragToDismiss';
 
-function SheetBody({ postId, onClose, native, focus }) {
+// [kb-fix v2 20/10] Padrão = painel JS em tela cheia (RN Modal sobre a ROTA — nunca
+// Modal sobre Modal): fundo do painel = fundo da tela, então o espaço do teclado é
+// só a altura que o sistema informa (useKeyboardSpacer) e o campo fica SEMPRE
+// colado no teclado; com teclado o painel cresce até o topo (detent "grande") e a
+// lista encolhe rolável. A folha nativa (formSheet) cortava o conteúdo na altura
+// do detent médio quando o sistema a subia → campo atrás do teclado (build 752).
+// Kill switch: globalThis.__chatyy_mural_native_comments = true → folha nativa antiga.
+function nativeCommentsOn() {
+  try { return USE_NATIVE_SHEETS && globalThis.__chatyy_mural_native_comments === true; } catch { return false; }
+}
+
+function SheetBody({ postId, onClose, native, focus, kbPad = 0 }) {
   const th = useMuralTheme();
   const { t } = useLanguage();
   const { user } = useAuth() || {};
   const insets = useSafeAreaInsets();
   const post = store.usePost(postId);
   const barRef = useRef(null);
-  const barWrapRef = useRef(null);
-  // [kb-fix 20/10] campo sempre grudado no teclado (medida real; antes o teclado cobria o campo na folha grande)
-  const { pad: kbPad } = useKeyboardSpacer(barWrapRef);
   const scrollRef = useRef(null);
-  const { report, reportNode } = useReport();
+  const { report, reportNode } = useReport({ native: !!native });
   const me = user?.email || '';
   const isOwner = !!(post && (post.is_mine || (me && String(post.author_email).toLowerCase() === me.toLowerCase())));
   useEffect(() => {
@@ -55,18 +63,18 @@ function SheetBody({ postId, onClose, native, focus }) {
       <ScrollView ref={scrollRef} style={{ flex: 1 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" contentContainerStyle={{ paddingBottom: 8 }}>
         <CommentsBody postId={postId} th={th} me={me} isPostOwner={isOwner} onReply={onReply} onReport={onReport} />
       </ScrollView>
-      <View ref={barWrapRef} collapsable={false} style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.line, backgroundColor: th.card }}>
+      <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.line, backgroundColor: th.card }}>
         <CommentBar ref={barRef} postId={postId} th={th} quick={post && post.allow_comments !== false ? quickReplies(post?.kind, t) : null}
           disabled={post ? post.allow_comments === false : false}
           bottomPad={kbPad > 0 ? 0 : (native ? nativeSheetBottomPad(insets, 0) : insets.bottom)}
           onSent={() => setTimeout(() => { try { scrollRef.current?.scrollToEnd({ animated: true }); } catch {} }, 120)} />
       </View>
-      {kbPad > 0 ? <View style={{ height: kbPad }} /> : null}
+      {kbPad > 0 ? <View style={{ height: kbPad, backgroundColor: th.card }} /> : null}
       {reportNode}
     </>
   );
   if (native) {
-    return <NativeSheetKeyboardView enabled={false} style={{ flex: 1, backgroundColor: th.card, paddingTop: 8 }}>{body}</NativeSheetKeyboardView>;
+    return <NativeSheetKeyboardView style={{ flex: 1, backgroundColor: th.card, paddingTop: 8 }}>{body}</NativeSheetKeyboardView>;
   }
   return body;
 }
@@ -83,28 +91,36 @@ export default function CommentsSheet({ visible, postId, onClose, focus = false 
     const un = store.watchPost(postId);
     return un;
   }, [visible, postId]);
-  if (USE_NATIVE_SHEETS) {
+  if (nativeCommentsOn()) {
     return (
       <NativeSheet visible={!!visible && !!postId} onClose={onClose} detents={[0.72, 1]} initialDetent={focus ? 1 : 0} backgroundColor={th.card}>
         <SheetBody postId={postId} onClose={onClose} native focus={focus} />
       </NativeSheet>
     );
   }
-  return <WebSheet visible={!!visible && !!postId} onClose={onClose} th={th}><SheetBody postId={postId} onClose={onClose} focus={focus} /></WebSheet>;
+  if (!visible || !postId) return null;
+  return <PanelSheet onClose={onClose} th={th} postId={postId} focus={focus} />;
 }
 
-function WebSheet({ visible, onClose, th, children }) {
+function PanelSheet({ onClose, th, postId, focus }) {
+  const insets = useSafeAreaInsets();
   const drag = useDragToDismiss({ onDismiss: () => { if (typeof onClose === 'function') onClose(); } });
-  if (!visible) return null;
+  const { pad, kb, onLayout } = useKeyboardSpacer();
+  const [rootH, setRootH] = useState(0);
+  const layout = useCallback((e) => { onLayout(e); const h = e?.nativeEvent?.layout?.height || 0; if (h) setRootH(h); }, [onLayout]);
+  // sem teclado: 72% (detent médio); com teclado: até o topo (detent grande)
+  const full = rootH ? Math.max(200, rootH - insets.top - 8) : null;
+  const height = rootH ? (kb > 0 ? full : Math.min(full, Math.round(rootH * 0.72))) : '72%';
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
       <DragSheetRoot style={{ flex: 1 }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={onClose}>
-          <DragPanel drag={drag} onStartShouldSetResponder={() => true} style={{ height: '72%', backgroundColor: th.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, overflow: 'hidden', maxWidth: 640, width: '100%', alignSelf: 'center' }}>
+        <View style={{ flex: 1, justifyContent: 'flex-end' }} onLayout={layout}>
+          <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)' }]} onPress={onClose} accessibilityLabel={'close'} />
+          <DragPanel drag={drag} onStartShouldSetResponder={() => true} style={{ height, backgroundColor: th.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, overflow: 'hidden', maxWidth: 640, width: '100%', alignSelf: 'center' }}>
             <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: th.chip, alignSelf: 'center', marginTop: 8 }} />
-            {children}
+            <SheetBody postId={postId} onClose={onClose} focus={focus} kbPad={pad} />
           </DragPanel>
-        </Pressable>
+        </View>
       </DragSheetRoot>
     </Modal>
   );
