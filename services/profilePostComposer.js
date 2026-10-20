@@ -162,6 +162,8 @@ export async function pickPostMedia({ mode = 'library', limit = POST_MAX_ITEMS }
 // Entrega em memória (AsyncStorage fica de reserva p/ binários/rotas antigas).
 let _pending = null;
 export function takePendingPostItems() { const p = _pending; _pending = null; return p; }
+// [mural 2026-10-20] services/muralNav.openComposer({ items }) entrega os itens já escolhidos.
+export function stashPendingPostItems(items) { if (Array.isArray(items) && items.length) _pending = items.slice(0, POST_MAX_ITEMS); }
 
 /**
  * Abre o compositor. Sem `items` → o próprio compositor abre o seletor depois da
