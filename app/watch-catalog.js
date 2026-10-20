@@ -1,9 +1,11 @@
 // app/watch-catalog.js — [assistir-junto 2026-10-20] Catálogo (tela 2): Filmes | Animação | Música | Da conversa.
 // Só fontes legais e nossas (servidor api/watch.php → watch_catalog): domínio público, curtas abertos CC BY
 // (crédito sempre), Jamendo (CC, crédito + licença) e o que já foi mandado na conversa.
-// Params: cid, name (conversa), tab (filmes|animacao|musica|conv), mode ('add' = veio da sala → só fila).
+// Params: cid, name (conversa), tab (filmes|animacao|conv), mode ('add' = veio da sala → só fila).
+// [separação 20/10] SÓ vídeo, com cara de cinema (fundo escuro, hero grande, pôsteres verticais).
+// Música vive em app/listen-catalog.js (tab=musica aqui redireciona p/ lá).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Image, TextInput, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, Image, TextInput, ActivityIndicator, Platform, StatusBar } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -15,7 +17,6 @@ import { IconArrowLeft, IconSearch, IconPlus, IconCheck, IconFilm, IconMusic } f
 const TABS = [
   { k: 'filmes', icon: IconFilm, label: ['watch.tab.movies', 'Filmes'] },
   { k: 'animacao', icon: IconTv, label: ['watch.tab.animation', 'Animação'] },
-  { k: 'musica', icon: IconMusic, label: ['watch.tab.music', 'Música'] },
   { k: 'conv', icon: IconClip, label: ['watch.tab.conv', 'Da conversa'] },
 ];
 const CHIP_FB = {
@@ -55,12 +56,12 @@ export default function WatchCatalog() {
   const reqN = useRef(0);
   const country = useMemo(deviceCountry, []);
 
+  // cinema: sempre escuro (claro ou escuro no app)
   const c = useMemo(() => ({
-    bg: colors.background || (isDark ? '#000' : '#f2f2f7'), card: colors.surface || (isDark ? '#1c1c1e' : '#fff'),
-    text: colors.text || (isDark ? '#f5f5f7' : '#0b0b0c'), muted: colors.textSecondary || '#8a8a8f',
-    chip: isDark ? '#2c2c2e' : '#ececf1', line: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
-    accent: isDark ? '#f5f5f7' : '#0b0b0c', accentInk: isDark ? '#000' : '#fff',
-  }), [colors, isDark]);
+    bg: '#000', card: '#1c1c1e', text: '#f5f5f7', muted: '#8e8e93', chip: '#1c1c1e', line: 'rgba(255,255,255,0.12)',
+    accent: '#f5f5f7', accentInk: '#000',
+  }), []);
+  useEffect(() => { if (params.tab === 'musica') router.replace({ pathname: '/listen-catalog', params: { cid, name: convName, mode: params.mode || '' } }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { const id = setTimeout(() => setQDeb(q.trim()), 350); return () => clearTimeout(id); }, [q]);
   useEffect(() => {
@@ -78,7 +79,7 @@ export default function WatchCatalog() {
       setData((d) => (cursor && d ? { ...hit.data, items: [...d.items, ...hit.data.items] } : hit.data)); setMore(hit.data.next_cursor || null); return;
     }
     if (!cursor) setLoading(true);
-    const r = await WT.catalog({ tab, chip: chip === 'tudo' ? '' : chip, q: qDeb, cursor: cursor || '', conversation_id: tab === 'conv' ? cid : undefined, country });
+    const r = await WT.catalog({ tab, chip: tab === 'conv' ? 'videos' : (chip === 'tudo' ? '' : chip), q: qDeb, cursor: cursor || '', conversation_id: tab === 'conv' ? cid : undefined, country });
     if (n !== reqN.current) return;
     setLoading(false);
     if (r && !r.error) _cache.set(key, { at: Date.now(), data: r });
@@ -129,7 +130,7 @@ export default function WatchCatalog() {
   const items = qLive && qLive !== qDeb.toLowerCase()
     ? allItems.filter((it) => qLive.split(/\s+/).every((w) => [it.title, it.original_title, it.author, it.artist, it.year].filter(Boolean).join(' ').toLowerCase().includes(w)))
     : allItems;
-  const chips = (data && data.chips) || ['tudo'];
+  const chips = tab === 'conv' ? [] : ((data && data.chips) || ['tudo']); // Da conversa = só vídeos
   const isMusic = tab === 'musica';
   const title = isMusic ? WT.tr(t, 'watch.listenTitle', 'Ouvir junto') : WT.tr(t, 'watch.title', 'Assistir junto');
 
@@ -193,7 +194,7 @@ export default function WatchCatalog() {
   let body;
   if (loading && !items.length) body = <View style={st.emptyBox}><ActivityIndicator color={c.muted} /></View>;
   else if (data && data.error) body = <Text style={[st.empty, { color: c.muted }]}>{WT.tr(t, 'watch.catalogError', 'Não deu para carregar. Tente de novo daqui a pouco.')}</Text>;
-  else if (!items.length) body = <Text style={[st.empty, { color: c.muted }]}>{tab === 'conv' ? WT.tr(t, 'watch.convEmpty', 'Ainda não mandaram vídeos ou áudios nesta conversa.') : WT.tr(t, 'watch.nothingFound', 'Nada encontrado. Tente outra palavra.')}</Text>;
+  else if (!items.length) body = <Text style={[st.empty, { color: c.muted }]}>{tab === 'conv' ? WT.tr(t, 'watch.convEmptyVideo', 'Ainda não mandaram vídeos nesta conversa.') : WT.tr(t, 'watch.nothingFound', 'Nada encontrado. Tente outra palavra.')}</Text>;
   else if (isMusic) {
     const top = items.slice(0, 6);
     body = (
@@ -269,6 +270,7 @@ export default function WatchCatalog() {
 
   return (
     <View style={[st.root, { backgroundColor: c.bg }]}>
+      <StatusBar barStyle="light-content" />
       <View style={{ paddingTop: insets.top }}>
         <View style={st.r1}>
           <Pressable hitSlop={10} style={st.ib} onPress={() => router.back()} accessibilityLabel={WT.tr(t, 'common.back', 'Voltar')}><IconArrowLeft size={22} color={c.text} /></Pressable>
@@ -351,10 +353,10 @@ const st = StyleSheet.create({
   busy: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   nm: { fontSize: 13.5, fontWeight: '600', marginTop: 7 },
   mt: { fontSize: 12 },
-  hero: { marginHorizontal: 16, marginTop: 14, borderRadius: 20, overflow: 'hidden', aspectRatio: 16 / 10 },
-  heroShade: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.38)' },
+  hero: { marginHorizontal: 16, marginTop: 14, borderRadius: 22, overflow: 'hidden', aspectRatio: 4 / 5 },
+  heroShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%', backgroundColor: 'rgba(0,0,0,0.62)' },
   heroIn: { ...StyleSheet.absoluteFillObject, padding: 16, justifyContent: 'flex-end' },
-  heroT: { color: '#fff', fontSize: 26, fontWeight: '800', letterSpacing: -0.6, marginTop: 8 },
+  heroT: { color: '#fff', fontSize: 34, fontWeight: '900', letterSpacing: -1, marginTop: 8, lineHeight: 36 },
   heroS: { color: 'rgba(255,255,255,0.85)', fontSize: 13, marginTop: 4 },
   heroBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 9, paddingHorizontal: 14, borderRadius: 999, backgroundColor: '#fff', maxWidth: 220 },
   heroBtnG: { backgroundColor: 'rgba(255,255,255,0.22)' },

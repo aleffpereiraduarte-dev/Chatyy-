@@ -14915,4 +14915,13 @@ export default {
   "watch.react.wow": "Uau",
   "watch.syncedWithShort": "sincronizado com {who}",
   "watch.youFollowed": "você foi junto",
+  // [assistir-junto 20/10] Ouvir junto (tela própria)
+  "listen.classics": "Clássicos",
+  "listen.hot": "Em alta",
+  "listen.lofi": "Lo-fi para relaxar",
+  "listen.queueShort": "Fila",
+  "listen.searchPh": "Músicas, artistas, gêneros",
+  "listen.tracks": "Faixas",
+  "listen.withName": "Ouvir junto com {name}",
+  "watch.convEmptyVideo": "Ainda não mandaram vídeos nesta conversa.",
 };

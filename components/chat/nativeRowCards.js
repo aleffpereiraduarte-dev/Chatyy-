@@ -1504,10 +1504,17 @@ function buildWatch(m, row, ctx, C, own) {
     { g: 6, al: 'c', bg: 'rgba(0,0,0,0.55)', r: 11, p: [3, 9, 3, 9] }) : null;
   let cover;
   if (music) {
+    // [separação 20/10] música: capa quadrada + equalizador (vídeo: pôster + AO VIVO)
+    const eq = live ? hstack([7, 13, 9, 15].map((hh) => vstack([], { w: 3, h: hh, r: 1, bg: '#FFFFFF' })), { g: 2, al: 'c' }) : null;
     cover = hstack([
-      cur.thumb ? image(cur.thumb, { w: 58, h: 58, r: 10, fit: 'cover' }) : vstack([icon(W.IconHeadphones, { s: 26, c: '#FFFFFF' })], { w: 58, h: 58, r: 10, bg: '#3a3a3c', al: 'c', jc: 'c' }),
-      vstack([text(cur.title || '', { fs: 15, fw: 700, c: '#FFFFFF', ml: 1 }), liveTag ? vstack([liveTag], { m: [6, 0, 0, 0] }) : null], { fl: 1 }),
-    ], { w: -1, g: 12, al: 'c', p: [12, 12, 12, 12], bg: '#2c2c2e', a: 'watch:open' });
+      cur.thumb ? image(cur.thumb, { w: 72, h: 72, r: 10, fit: 'cover' }) : vstack([icon(W.IconHeadphones, { s: 30, c: '#FFFFFF' })], { w: 72, h: 72, r: 10, bg: '#3a3a3c', al: 'c', jc: 'c' }),
+      vstack([
+        text(cur.title || '', { fs: 15, fw: 700, c: '#FFFFFF', ml: 2 }),
+        cur.artist || cur.author ? text(cur.artist || cur.author, { fs: 12, c: 'rgba(255,255,255,0.8)', ml: 1 }) : null,
+        live ? text(tf('watch.card.live', 'AO VIVO'), { fs: 10.5, fw: 800, c: '#ff453a', m: [4, 0, 0, 0] }) : null,
+      ], { fl: 1 }),
+      eq,
+    ], { w: -1, g: 12, al: 'c', p: [12, 12, 12, 12], bg: '#0b0b0c', a: 'watch:open' });
   } else {
     const base = cur.thumb ? image(cur.thumb, { w: -1, h: 128, fit: 'cover', bg: '#1c1c1e' }) : vstack([icon(W.IconTogether, { s: 40, c: 'rgba(255,255,255,0.7)' })], { w: -1, h: 128, bg: '#1c1c1e', al: 'c', jc: 'c' });
     cover = zstack([base, liveTag ? vstack([liveTag], { pos: 'tl', m: [10, 10, 0, 0] }) : null], { w: -1, a: 'watch:open' });

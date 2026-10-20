@@ -42,6 +42,25 @@ function LiveDot() {
   return <Animated.View style={[cs.dot, { opacity: a }]} />;
 }
 
+/** Equalizador (4 barras) do cartão de música. */
+function Eq({ playing }) {
+  const bars = useRef([0, 1, 2, 3].map(() => new Animated.Value(0.3))).current;
+  useEffect(() => {
+    if (!playing) { bars.forEach((b) => b.setValue(0.25)); return undefined; }
+    const loops = bars.map((b, i) => Animated.loop(Animated.sequence([
+      Animated.timing(b, { toValue: 1, duration: 380 + i * 90, useNativeDriver: true }),
+      Animated.timing(b, { toValue: 0.2, duration: 380 + i * 70, useNativeDriver: true }),
+    ])));
+    loops.forEach((l) => l.start());
+    return () => loops.forEach((l) => l.stop());
+  }, [playing, bars]);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 16, gap: 2, marginLeft: 4 }}>
+      {bars.map((b, i) => <Animated.View key={i} style={{ width: 3, height: 16, borderRadius: 1, backgroundColor: '#fff', transform: [{ scaleY: b }] }} />)}
+    </View>
+  );
+}
+
 function initials(n) {
   const p = String(n || '?').trim().split(/\s+/).filter(Boolean);
   return ((p[0] || '?')[0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
@@ -87,11 +106,13 @@ export function WatchInviteCard({ msg, isOwn, me, colors = {}, isDark, t, onOpen
       <Pressable onPress={() => live && onOpen && onOpen()} style={[cs.cv, music ? cs.cvMusic : null]}>
         {music ? (
           <>
-            <View style={cs.art}>{cur.thumb ? <Image source={{ uri: cur.thumb }} style={StyleSheet.absoluteFill} /> : <IconHeadphones size={26} color="#fff" />}</View>
+            <View style={cs.art}>{cur.thumb ? <Image source={{ uri: cur.thumb }} style={StyleSheet.absoluteFill} /> : <IconHeadphones size={30} color="#fff" />}</View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={cs.mt} numberOfLines={1}>{cur.title}</Text>
+              <Text style={cs.mt} numberOfLines={2}>{cur.title}</Text>
               <Text style={cs.ms} numberOfLines={1}>{cur.artist || cur.author || ''}</Text>
+              {live ? <Text style={cs.mLive}>{WT.tr(t, 'watch.card.live', 'AO VIVO')}</Text> : null}
             </View>
+            {live ? <Eq playing={!!(same && s.playing)} /> : null}
           </>
         ) : (
           <>
@@ -99,7 +120,7 @@ export function WatchInviteCard({ msg, isOwn, me, colors = {}, isDark, t, onOpen
             <View style={cs.shade} />
           </>
         )}
-        {live ? (
+        {live && !music ? (
           <View style={cs.live}>
             <LiveDot />
             <Text style={cs.liveTx}>{WT.tr(t, 'watch.card.live', 'AO VIVO')}{same ? ' · ' + WT.fmtTime(pos) : ''}</Text>
@@ -185,10 +206,11 @@ export function WatchMiniBar({ cid, me, colors = {}, isDark, t, onOpen }) {
 const cs = StyleSheet.create({
   card: { width: 268, borderRadius: 18, overflow: 'hidden' },
   cv: { height: 128, justifyContent: 'flex-end', backgroundColor: '#1c1c1e' },
-  cvMusic: { height: undefined, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, backgroundColor: '#2c2c2e' },
+  cvMusic: { height: undefined, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, backgroundColor: '#0b0b0c' },
   fb: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   shade: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.2)' },
-  art: { width: 58, height: 58, borderRadius: 10, overflow: 'hidden', backgroundColor: '#3a3a3c', alignItems: 'center', justifyContent: 'center' },
+  mLive: { color: '#ff453a', fontSize: 10.5, fontWeight: '800', marginTop: 4, letterSpacing: 0.4 },
+  art: { width: 72, height: 72, borderRadius: 10, overflow: 'hidden', backgroundColor: '#3a3a3c', alignItems: 'center', justifyContent: 'center' },
   mt: { color: '#fff', fontSize: 15, fontWeight: '700' },
   ms: { color: 'rgba(255,255,255,0.8)', fontSize: 12 },
   live: { position: 'absolute', left: 10, top: 10, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.55)', paddingVertical: 3, paddingHorizontal: 9, borderRadius: 999 },

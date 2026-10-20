@@ -14837,4 +14837,13 @@ export default {
   "watch.react.wow": "Wow",
   "watch.syncedWithShort": "in sync with {who}",
   "watch.youFollowed": "you followed",
+  // [assistir-junto 20/10] Ouvir junto (tela própria)
+  "listen.classics": "Classics",
+  "listen.hot": "Trending",
+  "listen.lofi": "Lo-fi to relax",
+  "listen.queueShort": "Queue",
+  "listen.searchPh": "Songs, artists, genres",
+  "listen.tracks": "Tracks",
+  "listen.withName": "Listen with {name}",
+  "watch.convEmptyVideo": "No videos have been sent in this chat yet.",
 };

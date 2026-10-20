@@ -22332,7 +22332,7 @@ function ChatConversationInnerBody() {
         let live = null; try { live = require('../services/watchTogether').liveSession(conversationId); } catch {}
         const music = type === 'listen_together';
         if (live && (live.kind === 'music') === music) return router.push({ pathname: '/watch-room', params: { cid: String(conversationId), name: conversationName || '' } });
-        return router.push({ pathname: '/watch-catalog', params: { cid: String(conversationId), name: conversationName || '', tab: music ? 'musica' : 'filmes' } });
+        return router.push({ pathname: music ? '/listen-catalog' : '/watch-catalog', params: { cid: String(conversationId), name: conversationName || '', tab: music ? '' : 'filmes' } }); // [separação 20/10] música tem tela própria
       }
       // 2026-05-18: in-chat short video (Reels-style). Flag-gated — when off
       // the menu item isn't even rendered. The recorder orchestrates capture

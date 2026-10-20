@@ -324,7 +324,7 @@ export default function WatchRoom() {
     WT.cmd(cid, 'ctrl', { mode }).catch(() => {});
     showToast(mode === 'host' ? WT.tr(t, 'watch.ctrlHostOn', 'Só o anfitrião controla') : WT.tr(t, 'watch.ctrlAllOn', 'Todos podem controlar'));
   };
-  const openCatalog = () => router.push({ pathname: '/watch-catalog', params: { cid, name: convName, tab: music ? 'musica' : 'filmes', mode: 'add' } });
+  const openCatalog = () => router.push({ pathname: music ? '/listen-catalog' : '/watch-catalog', params: { cid, name: convName, tab: music ? '' : 'filmes', mode: 'add' } });
   const goPip = () => { WT.setPip({ cid, name: convName }); router.back(); };
   const endSession = () => {
     try {
