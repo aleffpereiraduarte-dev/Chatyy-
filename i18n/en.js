@@ -1378,6 +1378,7 @@ export default {
   "waImport.delete": "Delete import",
   "waImport.deleteConfirm": "Delete this imported chat and its media? This doesn't affect WhatsApp.",
   "waImport.reviewTitle": "Review before importing",
+  "waImport.reviewTitleWith": "Import WhatsApp chat with {name}",
   "waImport.statsMessages": "{n} messages",
   "waImport.statsRange": "From {from} to {to}",
   "waImport.statsMedia": "{n} media files included",

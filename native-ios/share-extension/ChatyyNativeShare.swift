@@ -134,40 +134,54 @@ enum ChatyyShareDiag {
 // MARK: - Textos (pt-BR padrão; en/es)
 
 enum ChatyyShareL10n {
+  /// [2026-10-20 share-i18n] Idioma = o do APP (App Group "chatyy_app_lang", que o
+  /// LanguageContext espelha via ExpoCallKit.setNativeAppLanguage); sem ele, o do
+  /// sistema. Antes lia só o sistema → iPhone em inglês + app em pt-BR = "Send to".
+  /// pt-BR | pt-PT | es | en (resto → en).
   static let lang: String = {
-    let p = (Locale.preferredLanguages.first ?? "pt").lowercased()
-    if p.hasPrefix("pt") { return "pt" }
-    if p.hasPrefix("es") { return "es" }
+    let app = (UserDefaults(suiteName: ChatyyShareConst.appGroup)?.string(forKey: "chatyy_app_lang") ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let raw = (app.isEmpty ? (Locale.preferredLanguages.first ?? "pt-BR") : app)
+      .replacingOccurrences(of: "_", with: "-").lowercased()
+    if raw.hasPrefix("pt-pt") || raw.hasPrefix("pt-ao") || raw.hasPrefix("pt-mz") { return "pt-PT" }
+    if raw.hasPrefix("pt") { return "pt" }
+    if raw.hasPrefix("es") { return "es" }
     return "en"
   }()
-  static func t(_ pt: String, _ en: String, _ es: String) -> String {
-    switch lang { case "pt": return pt; case "es": return es; default: return en }
+  static func t(_ pt: String, _ en: String, _ es: String, ptPT: String? = nil) -> String {
+    switch lang {
+    case "pt": return pt
+    case "pt-PT": return ptPT ?? pt
+    case "es": return es
+    default: return en
+    }
   }
   static var cancel: String { t("Cancelar", "Cancel", "Cancelar") }
   static var sendTo: String { t("Enviar para", "Send to", "Enviar a") }
-  static var search: String { t("Buscar", "Search", "Buscar") }
+  static var search: String { t("Buscar", "Search", "Buscar", ptPT: "Pesquisar") }
   static var recents: String { t("CONVERSAS RECENTES", "RECENT CHATS", "CHATS RECIENTES") }
   static var group: String { t("Grupo", "Group", "Grupo") }
   static var caption: String { t("Adicionar legenda…", "Add a caption…", "Añadir un comentario…") }
   static var message: String { t("Mensagem", "Message", "Mensaje") }
   static var to: String { t("Para", "To", "Para") }
-  static var sending: String { t("Enviando…", "Sending…", "Enviando…") }
+  static var send: String { t("Enviar", "Send", "Enviar") }
+  static var sending: String { t("Enviando…", "Sending…", "Enviando…", ptPT: "A enviar…") }
   static var sent: String { t("Enviado", "Sent", "Enviado") }
-  static var background: String { t("Continua enviando em segundo plano", "Still sending in the background", "Se sigue enviando en segundo plano") }
+  static var background: String { t("Continua enviando em segundo plano", "Still sending in the background", "Se sigue enviando en segundo plano", ptPT: "Continua a enviar em segundo plano") }
   static var openApp: String { t("Mais opções no Chatyy", "More options in Chatyy", "Más opciones en Chatyy") }
   static var noResults: String { t("Nenhuma conversa encontrada", "No chats found", "No se encontraron chats") }
-  static var loading: String { t("Preparando…", "Preparing…", "Preparando…") }
-  static var icloud: String { t("Baixando do iCloud…", "Downloading from iCloud…", "Descargando de iCloud…") }
-  static var tooBig: String { t("Arquivo maior que 200 MB.", "File is larger than 200 MB.", "Archivo mayor de 200 MB.") }
+  static var loading: String { t("Preparando…", "Preparing…", "Preparando…", ptPT: "A preparar…") }
+  static var icloud: String { t("Baixando do iCloud…", "Downloading from iCloud…", "Descargando de iCloud…", ptPT: "A transferir do iCloud…") }
+  static var tooBig: String { t("Arquivo maior que 200 MB.", "File is larger than 200 MB.", "Archivo mayor de 200 MB.", ptPT: "Ficheiro maior que 200 MB.") }
   static var loadFailed: String { t("Não foi possível ler o conteúdo.", "Couldn't read the content.", "No se pudo leer el contenido.") }
-  static var maxChats: String { t("Até 5 conversas por vez", "Up to 5 chats at a time", "Hasta 5 chats a la vez") }
+  static var maxChats: String { t("Até 5 conversas por vez", "Up to 5 chats at a time", "Hasta 5 chats a la vez", ptPT: "Até 5 conversas de cada vez") }
   static var tooMany: String { t("Muitos envios de uma vez. Escolha menos conversas.", "Too many sends at once. Pick fewer chats.", "Demasiados envíos a la vez. Elige menos chats.") }
   static var failed: String { t("Não foi possível enviar", "Couldn't send", "No se pudo enviar") }
   static var ok: String { "OK" }
   static var openInApp: String { t("Abrir no Chatyy", "Open in Chatyy", "Abrir en Chatyy") }
   static var video: String { t("Vídeo", "Video", "Video") }
   static var photo: String { t("Foto", "Photo", "Foto") }
-  static var file: String { t("Arquivo", "File", "Archivo") }
+  static var file: String { t("Arquivo", "File", "Archivo", ptPT: "Ficheiro") }
 }
 
 // MARK: - Tema preto e branco (claro/escuro)
@@ -289,7 +303,14 @@ enum ChatyyShareGate {
       if p.hasItemConformingToTypeIdentifier("public.vcard") || p.hasItemConformingToTypeIdentifier("com.apple.pkpass") { return false }
       let name = (p.suggestedName ?? "").lowercased()
       if name.hasSuffix(".wastickers") { return false }
-      if (name.hasSuffix(".zip") || name.hasSuffix(".txt")) && (name.contains("whatsapp") || name.contains("_chat")) { return false }
+      // [2026-10-20 wa-export] "Exportar conversa" do WhatsApp → app (/share-receive
+      // abre /import-whatsapp). Antes só casava "nome.zip"/"nome.txt" — o iOS costuma
+      // dar suggestedName SEM extensão ("Conversa do WhatsApp com X") e a folha
+      // nativa tratava o export como arquivo comum ("Send to").
+      if ChatyyShareWaExport.enabled && ChatyyShareWaExport.providerLooksLikeExport(p, name: name) {
+        ChatyyShareDiag.log("info", "gate: export do WhatsApp (nome/tipo) → app")
+        return false
+      }
       if classify(p) == nil { return false }
     }
     return true
@@ -340,6 +361,109 @@ enum ChatyyShareGate {
     if let s = v as? String { return s }
     if let n = v as? NSNumber { return n.stringValue }
     return ""
+  }
+}
+
+// MARK: - Export do WhatsApp [2026-10-20 wa-export]
+//
+// Sinais (qualquer um → o app abre o importador; o JS confirma pelo conteúdo e,
+// se não for export, mostra a folha de envio do app — nada se perde):
+//   • .zip (qualquer): o JS olha o _chat.txt dentro; zip grande (> 200 MB) nem
+//     caberia no envio nativo;
+//   • nome "_chat.txt" / "WhatsApp Chat…" / "Conversa do WhatsApp…" / "Chat de
+//     WhatsApp…" (.txt, .zip ou sem extensão);
+//   • depois de carregar: .txt ou texto puro com ≥ 2 cabeçalhos de mensagem nas
+//     primeiras 40 linhas ("[dd/mm/aa hh:mm:ss] Nome: …" ou "dd/mm/aaaa hh:mm - Nome: …").
+// Kill switch: Info.plist ChatyyShareWaDetect = NO, ou App Group
+// "chatyy.share.wa_detect" = false.
+
+enum ChatyyShareWaExport {
+  static var enabled: Bool {
+    if let f = Bundle.main.object(forInfoDictionaryKey: "ChatyyShareWaDetect") {
+      if let b = f as? Bool, !b { return false }
+      if let s = f as? String, ["0", "no", "false"].contains(s.lowercased()) { return false }
+    }
+    if let ud = UserDefaults(suiteName: ChatyyShareConst.appGroup), ud.object(forKey: "chatyy.share.wa_detect") != nil,
+       !ud.bool(forKey: "chatyy.share.wa_detect") { return false }
+    return true
+  }
+
+  static func isZip(_ p: NSItemProvider, name: String) -> Bool {
+    if name.hasSuffix(".zip") { return true }
+    return p.hasItemConformingToTypeIdentifier(UTType.zip.identifier)
+      || p.hasItemConformingToTypeIdentifier("com.pkware.zip-archive")
+  }
+
+  /// Nome (minúsculo) com cara de export: _chat(.txt) ou "whatsapp" + .zip/.txt/sem extensão.
+  static func exportName(_ name: String) -> Bool {
+    if name.isEmpty { return false }
+    let ext = (name as NSString).pathExtension
+    let base = (["zip", "txt"].contains(ext) ? (name as NSString).deletingPathExtension : name)
+      .trimmingCharacters(in: .whitespaces)
+    if base == "_chat" || base.hasSuffix("/_chat") { return true }
+    var extOk = ext.isEmpty || ext == "zip" || ext == "txt"
+    if !extOk, let ut = UTType(filenameExtension: ext) {
+      // "WhatsApp Image 2024-….jpeg", vídeos, áudios, PDF → continuam no envio nativo;
+      // "WhatsApp Chat - Dr. Ana" (pathExtension " ana") → export
+      extOk = !(ut.conforms(to: .image) || ut.conforms(to: .audiovisualContent) || ut.conforms(to: .pdf))
+    } else if !extOk {
+      extOk = true
+    }
+    if !extOk { return false }
+    return base.contains("whatsapp") || base.contains("whats app")
+  }
+
+  static func providerLooksLikeExport(_ p: NSItemProvider, name: String) -> Bool {
+    if isZip(p, name: name) { return true }
+    return exportName(name)
+  }
+
+  // Mesmo critério do services/waImport/parser.js (HEADER_RE).
+  private static let headerRE: NSRegularExpression? = try? NSRegularExpression(
+    pattern: "^\\[?\\d{1,4}[./\\-]\\d{1,2}[./\\-]\\d{1,4}\\.?[,\\s]\\s*(?:[aApP]\\.?\\s?[mM]\\.?\\s?)?\\d{1,2}[:.]\\d{2}(?:[:.]\\d{2})?(?:\\s?(?:[aApP]\\.?\\s?[mM]\\.?))?(?:\\]\\s?|\\s?[-\\u2013\\u2014]\\s)",
+    options: [])
+
+  static func looksLikeChatText(_ text: String) -> Bool {
+    guard let re = headerRE else { return false }
+    var hits = 0
+    var nonEmpty = 0
+    var seen = 0
+    for raw in text.split(separator: "\n", maxSplits: 60, omittingEmptySubsequences: false) {
+      seen += 1
+      if seen > 60 { break }
+      var l = String(raw)
+      l = l.replacingOccurrences(of: "\r", with: "")
+      l = l.unicodeScalars.filter { !(0x200E...0x200F).contains($0.value) && !(0x202A...0x202E).contains($0.value) && $0.value != 0xFEFF }
+        .reduce(into: "") { $0.unicodeScalars.append($1) }
+      l = l.replacingOccurrences(of: "\u{00A0}", with: " ").replacingOccurrences(of: "\u{202F}", with: " ")
+      if !l.trimmingCharacters(in: .whitespaces).isEmpty { nonEmpty += 1 }
+      if re.firstMatch(in: l, options: [], range: NSRange(l.startIndex..., in: l)) != nil {
+        hits += 1
+        if hits >= 2 { return true }
+      }
+    }
+    return hits >= 1 && nonEmpty <= 2
+  }
+
+  static func headText(_ url: URL, max: Int = 16 * 1024) -> String {
+    guard let h = try? FileHandle(forReadingFrom: url) else { return "" }
+    defer { try? h.close() }
+    let d = h.readData(ofLength: max)
+    return String(decoding: d, as: UTF8.self)
+  }
+
+  /// Depois de carregar: .txt / texto com formato de export → true.
+  static func itemsLookLikeExport(_ items: [ChatyyShareItem]) -> Bool {
+    for it in items {
+      let n = it.fileName.lowercased()
+      if it.kind == .file {
+        if exportName(n) || n.hasSuffix(".zip") { return true }
+        if n.hasSuffix(".txt") || it.mime.hasPrefix("text/"), let u = it.fileURL, looksLikeChatText(headText(u)) { return true }
+      } else if it.kind == .text {
+        if looksLikeChatText(String(it.text.prefix(16 * 1024))) { return true }
+      }
+    }
+    return false
   }
 }
 
@@ -1275,7 +1399,7 @@ final class ChatyyShareComposeController: UIViewController, UITextViewDelegate, 
     sendButton.tintColor = ChatyyShareTheme.inkInverse
     sendButton.setImage(UIImage(systemName: "arrow.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .bold)), for: .normal)
     sendButton.layer.cornerRadius = 20
-    sendButton.accessibilityLabel = ChatyyShareL10n.t("Enviar", "Send", "Enviar")
+    sendButton.accessibilityLabel = ChatyyShareL10n.send
     sendButton.addTarget(self, action: #selector(tapSend), for: .touchUpInside)
     bottom.addSubview(sendButton)
 
@@ -1538,6 +1662,12 @@ final class ShareViewController: ChatyyShareIntentFallbackController {
     loader = l
     l.load(ChatyyShareGate.attachments(extensionContext)) { [weak self] items, errs in
       guard let self = self else { return }
+      // [2026-10-20 wa-export] .txt/texto que é export do WhatsApp (nome genérico) → app (importador)
+      if ChatyyShareWaExport.enabled && ChatyyShareWaExport.itemsLookLikeExport(items) {
+        ChatyyShareDiag.log("info", "export do WhatsApp (conteúdo) → app")
+        self.fallbackToApp("wa-export")
+        return
+      }
       self.items = items
       self.loadErrors = errs
       self.loaded = true

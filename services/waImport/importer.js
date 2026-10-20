@@ -95,6 +95,41 @@ let _sharedText = '';
 export function stashSharedText(txt) { _sharedText = String(txt || ''); }
 export function takeSharedText() { const x = _sharedText; _sharedText = ''; return x; }
 
+// [2026-10-20 wa-export-sniff] Export do WhatsApp com nome genérico (iOS manda
+// "Chat.zip", o .txt renomeado, ou só o conteúdo): olha DENTRO do arquivo.
+//   .zip → tem _chat.txt / "WhatsApp Chat*.txt" / "Conversa do WhatsApp*.txt"
+//   .txt (ou text/*) → ≥ 2 cabeçalhos de mensagem nas primeiras linhas
+// Barato: só o diretório central do zip (≤ 64 KB) e 16 KB do .txt; máx. 10 arquivos.
+const _SNIFF_TXT_RE = /^(?:_chat|.*whats\s?app.*)\.txt$/i;
+export function isSniffCandidate(f) {
+  const n = String(f?.name || f?.uri || '').toLowerCase();
+  const m = String(f?.mime || '').toLowerCase();
+  return /\.(zip|txt)$/.test(n) || /zip/.test(m) || m.startsWith('text/plain') || !/\.[a-z0-9]{1,5}$/.test(n.replace(/^.*[\\/]/, ''));
+}
+export async function sniffWhatsAppExport(files, { timeoutMs = 2500 } = {}) {
+  const list = (files || []).filter((f) => f && (f.uri || f.file) && isSniffCandidate(f)).slice(0, 10);
+  if (!list.length) return false;
+  const work = (async () => {
+    for (const item of list) {
+      let src = null;
+      try {
+        src = await openSource(item);
+        if (!src || !src.size) continue;
+        if (await isZip(src)) {
+          const entries = await listZipEntries(src);
+          const txts = entries.filter((e) => !e.isDir && /\.txt$/i.test(e.name || '') && !/__macosx/i.test(e.name || ''));
+          if (txts.some((e) => _SNIFF_TXT_RE.test(_base(e.name)) || !!titleFromFileName(_base(e.name)))) return true;
+          continue;
+        }
+        const head = await src.read(0, Math.min(src.size, 16384));
+        if (looksLikeWhatsAppChat(decodeChatBytes(head))) return true;
+      } catch {} finally { try { src?.close?.(); } catch {} }
+    }
+    return false;
+  })();
+  return Promise.race([work, new Promise((res) => setTimeout(() => res(false), timeoutMs))]);
+}
+
 function _err(code, extra) { return Object.assign(new Error(code), extra || {}); }
 
 /**
@@ -143,7 +178,7 @@ export async function prepareImport(files, { localeHint = '', myName = '', myPho
         }
       } else {
         src.close();
-        const isTxt = /\.txt$/i.test(name) || /^text\/plain/.test(item.mime || '');
+        const isTxt = /\.txt$/i.test(name) || /^text\/plain/.test(item.mime || '') || !/\.[a-z0-9]{1,5}$/i.test(name); // [2026-10-20] sem extensão: confere o conteúdo
         if (isTxt && !chatBytes) {
           if ((Number(item.size) || src.size || 0) > MAX_CHAT_TXT) throw _err('too_big', { max: MAX_CHAT_TXT });
           const bytes = await readAllText(item);

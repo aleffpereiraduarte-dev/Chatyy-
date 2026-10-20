@@ -283,7 +283,11 @@ export default function ImportWhatsAppScreen() {
     if (params.sharedText) {
       sharedOnce.current = true;
       const txt = takeSharedText();
-      if (txt) loadFiles([{ text: txt, name: '' }]);
+      // [2026-10-20 wa-export] texto do chat + mídias soltas (iOS) → importa as duas coisas juntas
+      let extra = [];
+      try { const a = params.files ? JSON.parse(String(params.files)) : []; if (Array.isArray(a)) extra = a; } catch {}
+      if (txt) loadFiles([{ text: txt, name: '' }, ...extra]);
+      else if (extra.length) loadFiles(extra);
       return;
     }
     if (!params.files) return;
@@ -562,7 +566,7 @@ export default function ImportWhatsAppScreen() {
     const mismatchExport = serverMismatch?.export_name || exportPeer || prep.fileTitle || '';
     return (
       <>
-        <Text style={[s.h2, { color: ink }]}>{t('waImport.reviewTitle')}</Text>
+        <Text style={[s.h2, { color: ink }]}>{/* [2026-10-20] "Importar conversa do WhatsApp com {Nome}" */ !isGroupExport && (prep.fileTitle || exportPeer) ? t('waImport.reviewTitleWith', { name: prep.fileTitle || exportPeer }) : t('waImport.reviewTitle')}</Text>
         <View style={[s.card, { backgroundColor: card, borderColor: line }]}>
           <Text style={{ color: ink, fontSize: 15 }}>{t('waImport.statsMessages', { n: st.total })}</Text>
           <Text style={{ color: sub, fontSize: 13, marginTop: 4 }}>{t('waImport.statsRange', { from: fmtDate(st.first, language), to: fmtDate(st.last, language) })}</Text>

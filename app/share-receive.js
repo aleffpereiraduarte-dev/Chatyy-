@@ -187,6 +187,7 @@ export default function ShareReceiveScreen() {
   const _plainFiles = useMemo(() => files.map(({ uri, name, mime, size }) => ({ uri, name, mime, size })), [files]);
   const isStickerShare = useMemo(() => files.length > 0 && files.every((f) => /\.(webp|wastickers)$/i.test(f.name || '') || String(f.mime || '').toLowerCase() === 'image/webp'), [files]);
   const _routedRef = useRef(false);
+  const [waSniffing, setWaSniffing] = useState(false);
   // [2026-10-18 cloud-send] Aberto pelo Cloud ("Enviar para conversa"): nunca
   // desviar para importador / figurinhas nem herdar sugestão do share sheet.
   const fromCloud = String(params.src || '') === 'cloud';
@@ -195,15 +196,32 @@ export default function ShareReceiveScreen() {
     let target = null;
     try {
       const imp = require('../services/waImport/importer');
+      const textIsChat = !!sharedText && require('../services/waImport/parser').looksLikeWhatsAppChat(sharedText);
       if (files.some((f) => imp.isWhatsAppExportName(f.name))) target = { pathname: '/import-whatsapp', params: { files: JSON.stringify(_plainFiles) } };
-      else if (!files.length && sharedText && require('../services/waImport/parser').looksLikeWhatsAppChat(sharedText)) {
+      else if (textIsChat) {
+        // [2026-10-20 wa-export] iOS às vezes manda o _chat como TEXTO + as mídias como itens soltos
         imp.stashSharedText(sharedText);
-        target = { pathname: '/import-whatsapp', params: { sharedText: '1' } };
+        target = { pathname: '/import-whatsapp', params: files.length ? { sharedText: '1', files: JSON.stringify(_plainFiles) } : { sharedText: '1' } };
       } else if (files.length && files.every((f) => /\.wastickers$/i.test(f.name || ''))) {
         target = { pathname: '/stickers/import', params: { files: JSON.stringify(_plainFiles) } };
       }
     } catch {}
-    if (target) { _routedRef.current = true; try { router.replace(target); } catch {} }
+    if (target) { _routedRef.current = true; try { router.replace(target); } catch {} return; }
+    // [2026-10-20 wa-export-sniff] Nome genérico ("Chat.zip", .txt renomeado): confere o
+    // CONTEÚDO (zip com _chat.txt / .txt com cabeçalhos de mensagem) antes da folha de envio.
+    let alive = true;
+    try {
+      const imp = require('../services/waImport/importer');
+      if (files.length && !files.every((f) => /\.wastickers$/i.test(f.name || '')) && files.some(imp.isSniffCandidate)) {
+        setWaSniffing(true);
+        imp.sniffWhatsAppExport(_plainFiles).then((yes) => {
+          if (!alive || _routedRef.current) return;
+          if (yes) { _routedRef.current = true; try { router.replace({ pathname: '/import-whatsapp', params: { files: JSON.stringify(_plainFiles) } }); } catch {} }
+          else setWaSniffing(false);
+        }).catch(() => { if (alive) setWaSniffing(false); });
+      }
+    } catch { setWaSniffing(false); }
+    return () => { alive = false; };
   }, [files, sharedText, _plainFiles, router, fromCloud]);
   const handleShareToStickers = useCallback(() => {
     try { router.replace({ pathname: '/stickers/import', params: { files: JSON.stringify(_plainFiles) } }); } catch {}
@@ -887,6 +905,11 @@ export default function ShareReceiveScreen() {
               ? <ActivityIndicator size="small" color={colors.onPrimary} />
               : <IconSend size={20} color={colors.onPrimary} />}
           </TouchableOpacity>
+        </View>
+      ) : null}
+      {waSniffing ? (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' }]} pointerEvents="auto">
+          <ActivityIndicator size="small" color={colors.textSecondary} />
         </View>
       ) : null}
     </KeyboardAvoidingView>

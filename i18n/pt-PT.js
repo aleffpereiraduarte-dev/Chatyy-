@@ -1359,6 +1359,7 @@ export default {
   "waImport.delete": "Apagar importação",
   "waImport.deleteConfirm": "Apagar esta conversa importada e a respetiva multimédia? Isto não afeta o WhatsApp.",
   "waImport.reviewTitle": "Reveja antes de importar",
+  "waImport.reviewTitleWith": "Importar conversa do WhatsApp com {name}",
   "waImport.statsMessages": "{n} mensagens",
   "waImport.statsRange": "De {from} a {to}",
   "waImport.statsMedia": "{n} ficheiros multimédia incluídos",
