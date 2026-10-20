@@ -9691,6 +9691,11 @@ export async function chatCreateMeetup(conversationId, title, datetime, location
   return apiCall('chat_create_meetup', { conversation_id: conversationId, title, datetime, location, description, ...(replyToId ? { reply_to_id: replyToId } : {}) }, 'POST'); // [2026-10-12 reply-media]
 }
 
+// [encontro2 2026-10-20] autor edita (title/datetime/location/description — só os que mudaram) ou cancela ({cancel:1}).
+export async function chatUpdateMeetup(messageId, fields = {}) {
+  return apiCall('chat_meetup_update', { message_id: messageId, ...fields, client_action_id: _chatActionId() }, 'POST');
+}
+
 export async function chatMeetupRsvp(messageId, status) {
   return apiCall('chat_meetup_rsvp', { message_id: messageId, status }, 'POST');
 }

@@ -25,7 +25,7 @@
 //
 // Ações (`a` dos nós → onRowPress part 'action', url = ação):
 //   loc · loc_stop · jloc · ct_msg · ct_inv · ct_save · ct_call · ct_open · poll:<i> ·
-//   rsvp:<going|maybe|not_going> · mt_map · pl_edit · pl_song:<i> · call_back:<v|a> ·
+//   rsvp:<going|maybe|not_going> · mt_map · mt_edit · pl_edit · pl_song:<i> · call_back:<v|a> ·
 //   call_join · st_open · vn_open · gift_thank · lp:<url> · lr:<share|decline|cancel>
 import { Platform } from 'react-native';
 import {
@@ -693,7 +693,10 @@ function buildMeetup(m, row, ctx, C, own) {
   let dateStr = mt.datetime;
   try { if (!isNaN(d.getTime())) dateStr = d.toLocaleString(_tr(C, '_locale', '') || undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch {}
   const total = going + maybe;
-  const past = !isNaN(d.getTime()) && d.getTime() < Date.now();
+  let MS = { cancelled: false, updated: false };
+  try { MS = require('../meetup/meetupLocation').meetupState(mt); } catch {}
+  const past = MS.cancelled || (!isNaN(d.getTime()) && d.getTime() < Date.now());
+  const canEdit = own && !MS.cancelled && typeof m.id === 'number' && !m.deleted_at; // [encontro2 2026-10-20]
   const ic = past ? '#6b7280' : '#111111';
   const w = _clampW(240, 280, 24 + 36 + 8 + Math.min(_estW(mt.title, 14, true), 200), 20 + 20 + _estW(dateStr, 12.5, true));
   const body = [
@@ -728,10 +731,11 @@ function buildMeetup(m, row, ctx, C, own) {
   const act = { going: '#22c55e', maybe: '#f59e0b', not_going: '#ef4444' };
   body.push(hstack(['going', 'maybe', 'not_going'].map((s) => {
     const on = my === s;
-    return vstack([text(labels[s], { fs: 12, c: on ? '#FFFFFF' : (own ? C.ownText : col.text), fw: on ? 700 : 500 })], {
-      fl: 1, p: [7, 0, 7, 0], r: 8, al: 'c', bg: on ? act[s] : undefined,
-      bw: on ? 0 : 1, bc: own ? 'rgba(255,255,255,0.15)' : ((col.border || '#E5E5EA') + '60'),
-      a: `rsvp:${s}`,
+    const tc = MS.cancelled ? (own ? C.ownMeta : col.textTertiary || '#8E8E93') : (on ? '#FFFFFF' : (own ? C.ownText : col.text));
+    return vstack([text(labels[s], { fs: 12, c: tc, fw: on ? 700 : 500 })], {
+      fl: 1, p: [7, 0, 7, 0], r: 8, al: 'c', bg: on && !MS.cancelled ? act[s] : undefined,
+      bw: on && !MS.cancelled ? 0 : 1, bc: own ? 'rgba(255,255,255,0.15)' : ((col.border || '#E5E5EA') + '60'),
+      ...(MS.cancelled ? {} : { a: `rsvp:${s}` }),
     });
   }), { g: 6, w: -1 }));
   row.bl = [vstack([
@@ -739,8 +743,10 @@ function buildMeetup(m, row, ctx, C, own) {
       vstack([iconPaths(MT_GLYPH_CAL.map((d) => ({ d, f: '#FFFFFF' })), { s: 18 })], { w: 36, h: 36, r: 10, bg: 'rgba(255,255,255,0.2)', al: 'c', jc: 'c' }),
       vstack([
         text(String(mt.title || ''), { fw: 700, fs: 14, c: '#FFFFFF', ml: 2 }),
-        past ? text(_tr(C, 'chatConv.eventPast', 'Evento encerrado'), { fs: 10, c: 'rgba(255,255,255,0.75)', fw: 600 }) : null,
+        past ? text(MS.cancelled ? _tr(C, 'chatConv.meetupCancelled', 'Encontro cancelado') : _tr(C, 'chatConv.eventPast', 'Evento encerrado'), { fs: 10, c: 'rgba(255,255,255,0.75)', fw: 600 }) : null,
+        !past && MS.updated ? text(_tr(C, 'chatConv.meetupUpdatedBadge', 'ATUALIZADO'), { fs: 10, c: 'rgba(255,255,255,0.85)', fw: 700, ls: 0.3 }) : null,
       ], { fl: 1 }),
+      canEdit ? vstack([text(_tr(C, 'chatConv.edit', 'Editar'), { fs: 11, fw: 700, c: '#FFFFFF' })], { p: [4, 9, 4, 9], r: 8, bg: 'rgba(255,255,255,0.18)', a: 'mt_edit' }) : null,
     ], { w: -1, bg: past ? '#6b7280' : '#111111', p: [8, 12, 8, 12], g: 8, al: 'c' }),
     vstack(body, { w: -1, p: 10, bg: own ? 'rgba(255,255,255,0.08)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)') }),
   ], { w, r: 12, m: [1, 0, 1, 0] })];
@@ -1766,6 +1772,10 @@ export function runCardAction(item, action, D) {
             }));
           }
         })().catch(() => {});
+        return;
+      }
+      case 'mt_edit': { // [encontro2 2026-10-20] autor abre a folha de edição
+        try { globalThis.__chatyy_meetup_edit_open && globalThis.__chatyy_meetup_edit_open(m); } catch {}
         return;
       }
       case 'mt_map': { // [encontro 2026-10-19] mapa/endereço do cartão do encontro

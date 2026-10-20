@@ -80,7 +80,12 @@ export function buildNativeCtxMenu(key, msg, env) {
     if (_isText && content.trim().length > 12) add('quote', _tf(t, 'chatConv.quote', 'Citar'), 'text.quote', IconReply);
     if (msg.content && (_isText || ['image', 'video', 'file'].includes(_mtype) && !/^\s*[{[]/.test(content))) add('copy', _tf(t, 'chatConv.copy', 'Copiar'), 'doc.on.doc', IconCopy);
     // Editar (própria, texto/legenda, até 15 min)
-    if (ownStrict && typeof msg.id === 'number') {
+    // [encontro2 2026-10-20] encontro do próprio autor: Editar sem janela de 15 min (cancelado = não)
+    if (ownStrict && typeof msg.id === 'number' && _mtype === 'meetup') {
+      let _mc = null;
+      try { _mc = JSON.parse(content || '{}'); } catch {}
+      if (!(_mc && _mc.cancelled)) add('edit', _tf(t, 'chatConv.edit', 'Editar'), 'pencil', IconEdit);
+    } else if (ownStrict && typeof msg.id === 'number') {
       let ek = null;
       try { ek = env.editKind ? env.editKind(msg) : null; } catch {}
       if (ek === 'text' || (ek === 'caption' && !env.e2eEnabled)) {
