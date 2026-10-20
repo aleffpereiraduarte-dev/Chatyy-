@@ -4691,6 +4691,13 @@ function CallScreenInner() {
         }
         sendData({ type: 'audio_muted', muted: newMuted });
         resetControlsTimer();
+      } else {
+        // [2026-10-20 wa2] Mudo ANTES de conectar (chamando/tocando) não fazia nada.
+        // Como no WhatsApp, guarda a escolha: o connect (LiveKit/P2P/nativo) já
+        // publica o mic conforme audioMutedRef.
+        setAudioMuted(newMuted);
+        audioMutedRef.current = newMuted;
+        resetControlsTimer();
       }
       return;
     }
@@ -4916,8 +4923,10 @@ function CallScreenInner() {
       // Back to earpiece when the call drops to audio-only (unless the user
       // had speaker on in an audio call to begin with — isVideoCall covers
       // the upgrade path only).
-      if (Platform.OS !== 'web' && !isVideoCall) {
+      // [2026-10-20 wa2] Respeita viva-voz escolhido à mão e mantém o ícone em sincronia.
+      if (Platform.OS !== 'web' && !isVideoCall && !speakerToggledRef.current) {
         try { await LK_AudioSession?.selectAudioOutput?.(lkOutputId('earpiece')); } catch {}
+        setSpeakerOn(false);
       }
       resetControlsTimer();
       return;
@@ -5009,6 +5018,7 @@ function CallScreenInner() {
       // WhatsApp behavior: turning video on routes audio to the speaker.
       if (Platform.OS !== 'web') {
         try { await LK_AudioSession?.selectAudioOutput?.(lkOutputId('speaker')); } catch {}
+        setSpeakerOn(true); // [2026-10-20 wa2] ícone do viva-voz acompanha a rota
       }
       // [2026-05-18 video-quality-push] Enable low-light auto-brightness on
       // the AVCaptureDevice (iOS) / CameraX exposure (Android). No-op on
