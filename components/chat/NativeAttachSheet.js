@@ -154,6 +154,7 @@ export async function openNativeCamera(t, opts = {}) {
       maxVideoSec: opts.maxVideoSec || 60,
       maxSelect: 30,
       withAudio: opts.withAudio != null ? !!opts.withAudio : !isInCall(),
+      ...(opts.inKeyboardWindow ? { inKeyboardWindow: true } : null), // [2026-10-20 attach-inwindow]
     });
     if (!r || !r.action) return null;
     return { action: r.action, files: toFiles(r.items) };
@@ -217,6 +218,7 @@ export default function NativeAttachSheet({
           // attach api >= 7: galleryMode = cabeçalho X | Fotos/Álbuns | HD,
           // altura grande e sem a faixa vazia embaixo.
           ...(opts && opts.gallery ? { actions: [], allowCamera: false, galleryMode: true } : null),
+          ...(opts && opts.inKeyboardWindow ? { inKeyboardWindow: true } : null), // [2026-10-20 attach-inwindow]
           // [2026-10-16 motion-attach] botões em cascata; kill switch OTA
           // globalThis.__chatyy_motion_attach = false (chave ausente = ligado).
           ...((() => { try { return globalThis.__chatyy_motion_attach === false || globalThis.__chatyy_motion === false; } catch { return false; } })() ? { motion: false } : null),

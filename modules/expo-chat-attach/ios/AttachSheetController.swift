@@ -20,6 +20,9 @@ final class AttachSheetController: UIViewController,
   var onFinish: (([String: Any]) -> Void)?
   /// [2026-10-19 attach-over-kb] folha numa janela acima do teclado (ChatyyAttachModule).
   var overKeyboardHost: AttachOverKeyboardHost?
+  /// [2026-10-20 attach-inwindow] remoção sem dismiss (folha na janela do painel).
+  var customRemove: ((@escaping () -> Void) -> Void)?
+  var onCaptionEditing: ((Bool) -> Void)?
 
   private let config: AttachConfig
   private let imageManager = PHCachingImageManager()
@@ -872,7 +875,12 @@ final class AttachSheetController: UIViewController,
   // visível: a janela desce p/ baixo do teclado e vira key antes do foco; se o
   // teclado do composer já estava aberto (mesmo quadro, pode não vir
   // notificação nova) a folha se ajusta pelo último quadro conhecido.
+  func textFieldDidEndEditing(_ textField: UITextField) {
+    onCaptionEditing?(false) // [2026-10-20 attach-inwindow]
+  }
+
   func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
+    onCaptionEditing?(true) // [2026-10-20 attach-inwindow]
     if let host = overKeyboardHost {
       host.prepareForTextInput()
       let kt = AttachKeyboardTracker.shared
@@ -1151,6 +1159,12 @@ final class AttachSheetController: UIViewController,
     if let host = overKeyboardHost {
       overKeyboardHost = nil
       host.tearDown(completion)
+      return
+    }
+    if let rm = customRemove { // [2026-10-20 attach-inwindow]
+      customRemove = nil
+      onCaptionEditing = nil
+      rm(completion)
       return
     }
     dismiss(animated: false, completion: completion)

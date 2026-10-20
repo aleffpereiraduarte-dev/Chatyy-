@@ -45,8 +45,12 @@ public class ChatyyAttachModule: Module {
     // 7 = [2026-10-20 attach-freeze] openSheet({galleryMode}) = só galeria
     //     (X | Fotos/Álbuns | HD, altura grande, sem ações); WillPresent leva
     //     kind ("sheet" | "camera") e openCamera também o posta.
+    // 8 = [2026-10-20 attach-inwindow] openSheet/openCamera({inKeyboardWindow}):
+    //     a folha/câmera entra como subview da MESMA janela do painel de anexos
+    //     (inputView do composer) — sem present, sem resign, nenhum evento de
+    //     teclado: conversa, composer e lista parados.
     Function("apiVersion") { () -> Int in
-      return 7
+      return 8
     }
 
     OnCreate {
@@ -94,6 +98,16 @@ public class ChatyyAttachModule: Module {
         promise.resolve(result)
       }
       self.sheet = vc
+      // [2026-10-20 attach-inwindow] painel de anexos aberto: folha dentro da
+      // janela do painel (acima dele por construção).
+      if (options["inKeyboardWindow"] as? Bool) == true, let kw = AttachInKeyboardWindowHost.panelWindow() {
+        let host = AttachInKeyboardWindowHost()
+        NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": true, "kind": "sheet", "inWindow": true])
+        vc.customRemove = { done in host.tearDown(slide: false, done) }
+        vc.onCaptionEditing = { editing in host.setBelowKeyboard(editing) }
+        host.show(vc, in: kw, slide: false)
+        return
+      }
       // [2026-10-19 attach-over-kb] teclado aberto: folha numa janela acima da
       // do teclado (sem present → o UIKit não "guarda" o first responder e o
       // teclado não some num quadro só). Falhou → apresentação normal.
@@ -135,6 +149,20 @@ public class ChatyyAttachModule: Module {
         promise.resolve(result)
       }
       self.camera = vc
+      // [2026-10-20 attach-inwindow] câmera do painel: mesma janela do painel,
+      // sobe por cima (sem present/stash do teclado).
+      if (options["inKeyboardWindow"] as? Bool) == true, let kw = AttachInKeyboardWindowHost.panelWindow() {
+        let host = AttachInKeyboardWindowHost()
+        NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": true, "kind": "camera", "inWindow": true])
+        vc.customRemove = { animated, done in
+          host.tearDown(slide: animated) {
+            NotificationCenter.default.post(name: AttachSheetController.didCloseNote, object: nil, userInfo: ["action": "camera", "kind": "camera", "user": true])
+            done()
+          }
+        }
+        host.show(vc, in: kw, slide: true)
+        return
+      }
       vc.modalPresentationStyle = .fullScreen
       vc.modalTransitionStyle = .coverVertical
       // [2026-10-20 attach-freeze] composer solta o painel/teclado segurado agora.
@@ -259,6 +287,87 @@ final class AttachOverKeyboardHost {
     w.rootViewController = nil
     if wasKey, let prev = previousKey, prev.windowScene != nil, !prev.isHidden { prev.makeKey() }
     completion()
+  }
+}
+
+// [2026-10-20 attach-inwindow] Founder (745, vídeo quadro a quadro): mesmo
+// congelada, a apresentação MODAL tirava o painel (stash do UIKit = resign +
+// notificações de teclado) → "+" voltava, lista deslocava, painel reaparecia
+// animado (dois painéis) ao fechar. AGORA: a folha/câmera vira subview da
+// MESMA janela onde o UIKit hospeda o painel (inputView) — fica acima dele por
+// construção; first responder não muda, nada é apresentado, nenhum evento de
+// teclado = zero movimento atrás. Legenda da folha precisa do teclado → a
+// folha desce p/ trás do host do teclado enquanto edita.
+// Kill switch JS: globalThis.__chatyy_attach_inwindow = false.
+final class AttachInKeyboardWindowHost {
+  private var container: UIView?
+  private weak var window: UIWindow?
+  private weak var vc: UIViewController?
+
+  /// Janela (do teclado) que contém o NCAttachPanel do composer, se visível.
+  static func panelWindow() -> UIWindow? {
+    for sc in UIApplication.shared.connectedScenes {
+      guard let ws = sc as? UIWindowScene else { continue }
+      for w in ws.windows.reversed() where !w.isHidden && w.alpha > 0.01 {
+        if containsPanel(w, depth: 0) { return w }
+      }
+    }
+    return nil
+  }
+
+  private static func containsPanel(_ v: UIView, depth: Int) -> Bool {
+    if NSStringFromClass(type(of: v)).hasSuffix("NCAttachPanel") { return v.window != nil && !v.isHidden }
+    if depth > 14 { return false }
+    for s in v.subviews where containsPanel(s, depth: depth + 1) { return true }
+    return false
+  }
+
+  func show(_ vc: UIViewController, in win: UIWindow, slide: Bool) {
+    let c = UIView(frame: win.bounds)
+    c.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    c.backgroundColor = .clear
+    win.addSubview(c)
+    container = c
+    window = win
+    self.vc = vc
+    vc.view.frame = c.bounds
+    vc.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    vc.beginAppearanceTransition(true, animated: slide)
+    c.addSubview(vc.view)
+    if slide {
+      c.transform = CGAffineTransform(translationX: 0, y: win.bounds.height)
+      UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 1.0, initialSpringVelocity: 0, options: [.allowUserInteraction]) {
+        c.transform = .identity
+      } completion: { _ in vc.endAppearanceTransition() }
+    } else {
+      vc.endAppearanceTransition()
+    }
+  }
+
+  /// Legenda editando: folha atrás do host do teclado (teclado visível por cima).
+  func setBelowKeyboard(_ below: Bool) {
+    guard let c = container, let w = window else { return }
+    if below { w.sendSubviewToBack(c) } else { w.bringSubviewToFront(c) }
+    if !below { NotificationCenter.default.post(name: Notification.Name("ChatyyAttachCaptionDone"), object: nil) }
+  }
+
+  func tearDown(slide: Bool, _ completion: @escaping () -> Void) {
+    guard let c = container else { completion(); return }
+    container = nil
+    let vc = self.vc
+    let finish = {
+      vc?.beginAppearanceTransition(false, animated: false)
+      c.removeFromSuperview()
+      vc?.endAppearanceTransition()
+      completion()
+    }
+    if slide {
+      UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseIn], animations: {
+        c.transform = CGAffineTransform(translationX: 0, y: c.bounds.height)
+      }, completion: { _ in finish() })
+    } else {
+      finish()
+    }
   }
 }
 

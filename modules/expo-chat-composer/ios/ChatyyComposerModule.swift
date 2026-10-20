@@ -181,8 +181,11 @@ public class ChatyyComposerModule: Module {
     //     painel até a folha/câmera ser apresentada (JS congela a conversa);
     //     retrato do painel por baixo da folha; cancelar = painel de volta sem
     //     animação; AsyncFunction showAttachPanel().
+    // 12 = [2026-10-20 attach-inwindow] folha/câmera do painel dentro da
+    //     janela do painel (WillPresent inWindow): sem resign, sync de teclado
+    //     suprimido, legenda devolve o painel, camera fecha via DidClose kind.
     Function("apiVersion") { () -> Int in
-      return 11
+      return 12
     }
 
     View(ChatyyComposerView.self) {

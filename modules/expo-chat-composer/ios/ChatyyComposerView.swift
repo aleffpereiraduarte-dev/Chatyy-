@@ -598,6 +598,10 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   var attachKeepKeyboard = false { didSet { if !attachKeepKeyboard && attachKeepWaiting { attachKeepWaiting = false; releaseForAttach() } } }
   private var attachKeepWaiting = false
   private var attachKeepActive = false
+  // [2026-10-20 attach-inwindow] api 12: folha/câmera dentro da janela do
+  // painel (expo-chat-attach api 8): nada de resign/present; sync de teclado
+  // suprimido enquanto ela está na tela; legenda da folha devolve o painel.
+  private var attachInWindow = false
   // [2026-10-20 attach-inputview] api 10: painel de anexos como inputView
   // (ver NCAttachPanel). Kill switch: prop attachPanel=false
   // (JS: globalThis.__chatyy_attach_inputview = false) → "+" = folha (api 9).
@@ -1235,6 +1239,11 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     appObservers.append(nc.addObserver(forName: Notification.Name("ChatyyAttachSheetWillPresent"), object: nil, queue: .main) { [weak self] n in
       self?.attachSheetPresenting(n)
     })
+    // [2026-10-20 attach-inwindow] legenda da folha soltou o teclado → painel de volta por baixo.
+    appObservers.append(nc.addObserver(forName: Notification.Name("ChatyyAttachCaptionDone"), object: nil, queue: .main) { [weak self] _ in
+      guard let self = self, self.attachKeepActive, self.attachInWindow, self.attachPanel, !self.panelActive else { return }
+      DispatchQueue.main.async { self.showAttachPanelInstant() }
+    })
   }
 
   private func attachSheetPresenting(_ n: Notification) {
@@ -1242,6 +1251,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     let over = (n.userInfo?["overKeyboard"] as? Bool) ?? false
     if over && attachKeepWaiting && window != nil {
       // Teclado fica aberto sob a folha; nada mais o solta até ela fechar.
+      attachInWindow = (n.userInfo?["inWindow"] as? Bool) ?? false // [2026-10-20 attach-inwindow]
       attachKeepWaiting = false
       attachKeepActive = true
       attachDeferPending = false
@@ -1330,10 +1340,20 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     // [2026-10-19 attach-over-kb] o teclado ficou aberto sob a folha: a folha
     // começou a descer → solta agora (ANIMADO, desce junto com ela; a barra
     // acompanha o teclado, sem buraco). Cancelar com 'did'/'will' = fica.
+    // [2026-10-20 attach-inwindow] câmera na janela do painel fechou: painel
+    // continua (a próxima tela, se houver, cuida do teclado).
+    if ((info["kind"] as? String) ?? "") == "camera" {
+      if attachKeepActive { attachKeepActive = false; attachInWindow = false }
+      return
+    }
     if attachKeepActive {
-      attachKeepActive = false
       // [2026-10-20 attach-inputview] veio do painel: cancelar volta ao painel.
       let keep = attachInstant && action == "cancel" && byUser && (attachRestore != "none" || panelActive)
+      // [2026-10-20 attach-inwindow] folha dentro da janela do painel: só
+      // solta o painel DEPOIS de a folha sair (senão some no meio da descida).
+      if attachInWindow && !final && !keep { return }
+      attachKeepActive = false
+      attachInWindow = false
       if textView.isFirstResponder {
         attachRestorePending = false
         if !keep { withInternalFocus { _ = textView.resignFirstResponder() } }
@@ -1848,6 +1868,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
 
   private func scheduleKeyboardSync(_ reason: String, after delay: TimeInterval) {
     guard nativeTransitions else { return }
+    if attachKeepActive && attachInWindow { return } // [2026-10-20 attach-inwindow] conversa parada sob a folha
     kbSyncGen += 1
     let gen = kbSyncGen
     let fire = { [weak self] in

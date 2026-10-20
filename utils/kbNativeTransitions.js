@@ -117,6 +117,15 @@ export function attachInputPanelOn() {
   return nativeComposerApi() >= 10;
 }
 
+// [2026-10-20 attach-inwindow] iOS composer api >= 12 + folha api >= 8: Fotos e
+// Câmera do painel entram DENTRO da janela do painel (sem present/resign →
+// nenhum evento de teclado, conversa parada). Kill switch OTA:
+// globalThis.__chatyy_attach_inwindow = false → folha modal congelada (api 11).
+export function attachInWindowOn() {
+  try { if (globalThis.__chatyy_attach_inwindow === false) return false; } catch {}
+  return nativeComposerApi() >= 12 && nativeAttachApi() >= 8;
+}
+
 // [2026-10-20 attach-inputview] Android composer api >= 7: o "+" não derruba o
 // IME; o painel de anexos (components/chat/AttachInputPanel) entra no lugar do
 // teclado e o IME só desce quando ele montou. Kill switch OTA (o mesmo do iOS):

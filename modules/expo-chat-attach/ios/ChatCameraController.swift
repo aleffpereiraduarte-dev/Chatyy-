@@ -17,6 +17,17 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
   UIGestureRecognizerDelegate {
 
   var onFinish: (([String: Any]) -> Void)?
+  /// [2026-10-20 attach-inwindow] remoção sem dismiss (câmera na janela do painel). (animated, completion)
+  var customRemove: ((Bool, @escaping () -> Void) -> Void)?
+
+  private func removeFromScreen(animated: Bool, _ completion: @escaping () -> Void) {
+    if let rm = customRemove {
+      customRemove = nil
+      rm(animated, completion)
+      return
+    }
+    dismiss(animated: animated, completion: completion)
+  }
 
   private let config: AttachConfig
   private let engine = CAEngine.shared
@@ -952,7 +963,7 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
     guard !finished else { return }
     finished = true
     releaseCamera()
-    dismiss(animated: true) {
+    removeFromScreen(animated: true) {
       self.onFinish?(result)
       self.onFinish = nil
     }
@@ -969,6 +980,6 @@ final class ChatCameraController: UIViewController, AVCapturePhotoCaptureDelegat
     releaseCamera()
     let cb = onFinish
     onFinish = nil
-    dismiss(animated: false) { cb?(["action": "cancel"]) }
+    removeFromScreen(animated: false) { cb?(["action": "cancel"]) }
   }
 }

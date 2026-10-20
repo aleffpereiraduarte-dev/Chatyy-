@@ -13291,6 +13291,11 @@ function ChatConversationInnerBody() {
     const wait = (st.panel && action === 'cancel' && api >= 11) ? 500 : 0;
     try { threadKbAttachThaw(wait); } catch {}
   };
+  // [2026-10-20 attach-inwindow] folha/câmera dentro da janela do painel (api 12/8).
+  const _attachInWin = () => {
+    if (Platform.OS !== 'ios') return false;
+    try { return !!require('../utils/kbNativeTransitions').attachInWindowOn(); } catch { return false; }
+  };
   const _openSheetFrozen = (sheetOpts, fromPanel) => {
     const open = _attachInstantOpenRef.current;
     if (typeof open !== 'function' || !mountedRef.current || _kbLeavingRef.current) return false;
@@ -13314,7 +13319,7 @@ function ChatConversationInnerBody() {
     _attachFreezeNow(true);
     let r = null;
     try {
-      if (NativeAttachBridge && NativeAttachBridge.nativeCameraUsable()) r = await NativeAttachBridge.openNativeCamera(t);
+      if (NativeAttachBridge && NativeAttachBridge.nativeCameraUsable()) r = await NativeAttachBridge.openNativeCamera(t, _attachInWin() ? { inKeyboardWindow: true } : {});
     } catch { r = null; }
     if (!r) {
       _attachThawNow('fail');
@@ -13342,7 +13347,7 @@ function ChatConversationInnerBody() {
       // [2026-10-20 attach-freeze] Fotos = SÓ a galeria (sem barra de ações nem
       // tile de câmera; attach api >= 7 = cabeçalho X | Fotos/Álbuns | HD e
       // altura grande), por cima de tudo, conversa congelada.
-      const galleryOpts = { gallery: true };
+      const galleryOpts = { gallery: true, ...(_attachInWin() ? { inKeyboardWindow: true } : null) }; // [2026-10-20 attach-inwindow]
       if (e.keep === true) {
         if (Platform.OS === 'ios' && _openSheetFrozen(galleryOpts, true)) return;
         _attachInstantRef.current = false;
