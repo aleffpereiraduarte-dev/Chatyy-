@@ -13751,7 +13751,7 @@ export default {
   "profileEdit.moreOptions": "Links extras e tipo de conta",
   // [2026-10-18 me-merge] tela "Você" (perfil + configurações)
   "me.search": "Buscar nas configurações",
-  "me.addNote": "Adicionar recado",
+  "me.addNote": "Adicionar nota",
   "me.plusSub": "Assinaturas e armazenamento",
   "me.publicProfile": "Perfil público",
   "me.publicProfileSub": "Posts, seguidores e destaques",
@@ -14622,4 +14622,19 @@ export default {
   // [2026-10-20 wa2]
   "chatConv.inviteRotateConfirm": "Redefinir o link? Quem tiver o link atual não vai mais conseguir entrar.",
   "chatConv.inviteRevokeConfirm": "Revogar o link? Ninguém mais vai entrar por ele.",
+  // [2026-10-20 nota-perfil] Nota do perfil (Instagram Notes)
+  "me.note.label": "Nota",
+  "me.note.newTitle": "Nova nota",
+  "me.note.changeTitle": "Trocar nota",
+  "me.note.change": "Trocar nota",
+  "me.note.delete": "Apagar nota",
+  "me.note.share": "Compartilhar",
+  "me.note.placeholder": "Compartilhe um pensamento...",
+  "me.note.audience": "Compartilhar com",
+  "me.note.audMutual": "Seguidores que você segue de volta",
+  "me.note.audContacts": "Contatos",
+  "me.note.hoursLeft": "Some em {h} h",
+  "me.note.expires": "A nota aparece acima da sua foto e some em 24 horas.",
+  "me.note.saveError": "Não foi possível compartilhar a nota. Tente de novo.",
+  "me.note.deleteError": "Não foi possível apagar a nota. Tente de novo.",
 };

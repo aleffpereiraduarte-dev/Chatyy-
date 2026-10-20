@@ -38,7 +38,7 @@
 import ErrorBoundary from '../components/ErrorBoundary';
 import { Suspense, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, BackHandler, Animated,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, BackHandler, Animated, Alert,
 } from 'react-native';
 import UIRefreshControl from '../components/ui/RefreshControl'; // [2026-10-16 motion] P&B + toque soft ao armar
 import { HapticsCompat as Haptics } from '../services/haptics';
@@ -46,6 +46,8 @@ import AccountSwitcherSheet from '../components/AccountSwitcherSheet';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { SettingsGroup, SettingsRow, SettingsSearchContext, useGroupedColors } from '../components/settings/SettingsKit';
 import MeHeader, { MeStatusScrim } from '../components/settings/MeHeader';
+import ProfileNoteSheet from '../components/settings/ProfileNoteSheet'; // [2026-10-20 nota-perfil]
+import { useProfileNote, refreshNote, profileNoteSheetOn } from '../services/profileNote';
 import { normalizeCoverUrl, meHeroImmersiveOn, prefetchCover } from '../services/profileCover'; // [2026-10-19 me-cover]
 import { normalizePlanState, planDisplayName } from '../services/planState';
 import { PLAN_NAME } from '../services/brandPlan';
@@ -239,8 +241,16 @@ function SettingsScreenInner() {
     const force = _profileFetchedAt.current !== 0;
     _profileFetchedAt.current = now;
     settingsCache.revalidate('profile', { force }).catch(() => {});
+    if (profileNoteSheetOn()) refreshNote(user.email).catch(() => {}); // [2026-10-20 nota-perfil]
     return undefined;
   }, [user?.email]));
+
+  // [2026-10-20 nota-perfil] Balão acima da foto = nota (Instagram Notes, 24 h).
+  // Antes o toque abria o editar perfil inteiro (sem campo de nota) → founder
+  // não conseguia adicionar/trocar. Kill switch: __chatyy_profile_note_sheet = false.
+  const noteOn = profileNoteSheetOn();
+  const myNote = useProfileNote();
+  const [noteOpen, setNoteOpen] = useState(false);
 
   // ── Subtítulos de estado (snapshot local; sem montar as categorias) ─────
   const privData = usePeek('privacy');
@@ -467,6 +477,8 @@ function SettingsScreenInner() {
       onQr={() => safeNav('/profile-qr')}
       onEdit={openEditProfile}
       onAbout={openEditProfile}
+      note={noteOn ? myNote : undefined}
+      onNote={noteOn ? () => { try { Haptics.selectionAsync?.(); } catch {} setNoteOpen(true); } : undefined}
       onAvatar={() => { try { Haptics.selectionAsync?.(); } catch {} setAvatarOpen(true); }}
       onChangePhoto={openEditProfile}
       onSwitch={openAccountSwitcher}
@@ -837,6 +849,15 @@ function SettingsScreenInner() {
       </SettingsHostContext.Provider>
 
       <AccountSwitcherSheet visible={accountSwitcherOpen} onClose={() => setAccountSwitcherOpen(false)} />
+      {noteOn ? (
+        <ProfileNoteSheet
+          visible={noteOpen}
+          note={myNote}
+          t={t}
+          onClose={() => setNoteOpen(false)}
+          onError={(msg) => { try { Alert.alert(msg); } catch {} }}
+        />
+      ) : null}
       <LazyAvatarLightbox
         visible={avatarOpen}
         onClose={() => setAvatarOpen(false)}

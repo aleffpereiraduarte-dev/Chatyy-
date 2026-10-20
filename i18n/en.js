@@ -14544,4 +14544,19 @@ export default {
   // [2026-10-20 wa2]
   "chatConv.inviteRotateConfirm": "Reset the link? Anyone with the current link won't be able to join anymore.",
   "chatConv.inviteRevokeConfirm": "Revoke the link? Nobody will be able to join with it anymore.",
+  // [2026-10-20 nota-perfil] Nota do perfil (Instagram Notes)
+  "me.note.label": "Note",
+  "me.note.newTitle": "New note",
+  "me.note.changeTitle": "Change note",
+  "me.note.change": "Change note",
+  "me.note.delete": "Delete note",
+  "me.note.share": "Share",
+  "me.note.placeholder": "Share a thought...",
+  "me.note.audience": "Share with",
+  "me.note.audMutual": "Followers you follow back",
+  "me.note.audContacts": "Contacts",
+  "me.note.hoursLeft": "Disappears in {h} h",
+  "me.note.expires": "Your note appears above your photo and disappears after 24 hours.",
+  "me.note.saveError": "Couldn't share your note. Try again.",
+  "me.note.deleteError": "Couldn't delete your note. Try again.",
 };

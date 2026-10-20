@@ -14543,4 +14543,19 @@ export default {
   // [2026-10-20 wa2]
   "chatConv.inviteRotateConfirm": "¿Restablecer el enlace? Quien tenga el enlace actual ya no podrá unirse.",
   "chatConv.inviteRevokeConfirm": "¿Revocar el enlace? Nadie más podrá unirse con él.",
+  // [2026-10-20 nota-perfil] Nota do perfil (Instagram Notes)
+  "me.note.label": "Nota",
+  "me.note.newTitle": "Nueva nota",
+  "me.note.changeTitle": "Cambiar nota",
+  "me.note.change": "Cambiar nota",
+  "me.note.delete": "Eliminar nota",
+  "me.note.share": "Compartir",
+  "me.note.placeholder": "Comparte una idea...",
+  "me.note.audience": "Compartir con",
+  "me.note.audMutual": "Seguidores a los que sigues",
+  "me.note.audContacts": "Contactos",
+  "me.note.hoursLeft": "Desaparece en {h} h",
+  "me.note.expires": "Tu nota aparece encima de tu foto y desaparece a las 24 horas.",
+  "me.note.saveError": "No se pudo compartir la nota. Inténtalo de nuevo.",
+  "me.note.deleteError": "No se pudo eliminar la nota. Inténtalo de nuevo.",
 };

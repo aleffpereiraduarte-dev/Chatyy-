@@ -216,11 +216,15 @@ export function meDisplay(user, profile) {
 export default function MeHeader({
   user, profile, avatarKey, multiAccount, t,
   onSearch, onQr, onEdit, onAvatar, onChangePhoto, onSwitch, onAbout,
-  coverUrl, topInset = 0, onBack,
+  coverUrl, topInset = 0, onBack, note, onNote,
 }) {
   const g = useGroupedColors();
   const tr = (k, fb) => { try { const v = t(k); return v && v !== k ? v : fb; } catch { return fb; } };
-  const { name, handle, phone, about } = meDisplay(user, profile);
+  const { name, handle, phone, about: _about } = meDisplay(user, profile);
+  // [2026-10-20 nota-perfil] Com onNote (pai liga), o balão = NOTA (Instagram
+  // Notes, 24 h) e o toque abre a folha da nota; sem onNote = recado de antes.
+  const noteMode = typeof onNote === 'function';
+  const about = noteMode ? String(note?.text || '').trim() : _about;
   const idLine = [phone, handle ? '@' + handle : ''].filter(Boolean).join('  •  ') || (user?.email || '');
 
   // Capa que falhou (404/rede) some até a URL mudar → volta ao visual sem capa.
@@ -297,16 +301,16 @@ export default function MeHeader({
       <View style={st.center}>
         {/* Balão do recado (nota) — acima do avatar, com "rabinho" de bolinhas. */}
         <PressableScale
-          onPress={onAbout || onEdit}
+          onPress={noteMode ? onNote : (onAbout || onEdit)}
           haptic="light"
           scaleTo={0.96}
           accessibilityRole="button"
-          accessibilityLabel={about ? `${tr('profile.about', 'Recado')}: ${about}` : tr('me.addNote', 'Adicionar recado')}
+          accessibilityLabel={about ? `${noteMode ? tr('me.note.label', 'Nota') : tr('profile.about', 'Recado')}: ${about}` : tr('me.addNote', 'Adicionar nota')}
           testID="settings-me-note"
           style={[st.note, { backgroundColor: g.cardBg, borderColor: g.separator }]}
         >
           <Text style={[st.noteText, { color: about ? g.text : g.secondary }]} numberOfLines={2} maxFontSizeMultiplier={1.4}>
-            {about || tr('me.addNote', 'Adicionar recado')}
+            {about || tr('me.addNote', 'Adicionar nota')}
           </Text>
         </PressableScale>
         <View style={[st.dot1, { backgroundColor: g.cardBg, borderColor: g.separator }]} />
