@@ -23,13 +23,9 @@ import { SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsCardContent, Set
 import AvatarCircle from '../AvatarCircle';
 import PressableRow from '../PressableRow';
 import Svg, { Rect as SvgRect, Path as SvgPath } from 'react-native-svg';
-import { IconCheck, IconCloud, IconZap, IconTrash, IconCreditCard, IconFile, IconClock, IconUsers } from '../Icons';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import StorageMeter, { StorageNudgeCard, meterFromPlan } from '../storage/StorageMeter'; // [2026-10-17 smart-storage]
-import { normalizePlanState, planDisplayName, formatQuotaBytes } from '../../services/planState';
-import { formatStorage } from '../../services/format'; // [2026-10-19 plano-consistente]
-import { openStripePortal, isStripePortalAvailable } from '../../services/stripeCheckout'; // [2026-10-18 stripe-off] compra nova só nas lojas; portal p/ assinantes Stripe existentes
-import { MONETIZATION_ENABLED } from '../../constants/featureFlags';
+import { IconCheck } from '../Icons';
+import { useRouter } from 'expo-router';
+import PlanHub from '../plan/PlanHub'; // [2026-10-20 plano-premium]
 
 // ─── Storage helpers (per-account, same contract as the old sheet) ────────
 function _activeEmail() {
@@ -355,215 +351,13 @@ export function BlockedContactsPanel() {
   );
 }
 
-// ─── Conta › Chatyy One (plano, uso e pagamento) ───────────────────────────
-// [2026-10-17 one-merge] Chatyy One + Armazenamento = UMA tela (/settings-one;
-// /storage reexporta). Plano + barra de uso + divisão (Arquivos/Email/Chat/
-// Feed) + Mudar de plano + Liberar espaço + Assinatura + Pagamento.
-const BREAKDOWN_KEYS = ['drive', 'email', 'chat', 'feed'];
-const BREAKDOWN_LABEL = { drive: ['storage.breakdown.files', 'Arquivos'], email: ['storage.breakdown.email', 'Email'], chat: ['storage.breakdown.chat', 'Chat'], feed: ['storage.breakdown.feed', 'Feed'] };
-function fmtBytesFine(b) {
-  const v = Number(b) || 0;
-  if (v >= 1024 ** 4) return (v / 1024 ** 4).toFixed(2) + ' TB';
-  if (v >= 1024 ** 3) return (v / 1024 ** 3).toFixed(2) + ' GB';
-  if (v >= 1024 ** 2) return (v / 1024 ** 2).toFixed(1) + ' MB';
-  if (v >= 1024) return (v / 1024).toFixed(1) + ' KB';
-  return v + ' B';
-}
-
+// ─── Plano (Chatyy Plus/Pro) ──────────────────────────────────────────────
+// [2026-10-20 plano-premium] /settings-one (e /storage) → components/plan/PlanHub.js:
+// selo + uso segmentado, comparação Grátis/Plus/Pro com preço da loja,
+// benefícios reais, família, assinatura (Apple/Google), estados.
+// Versão anterior deste painel: git show HEAD~1:components/settings/SettingsPanels.js
 export function ChatyyOnePanel() {
-  const { t, language } = useLanguage();
-  const g = useGroupedColors();
-  const router = useRouter();
-  // [2026-10-13 settings-instant] plano + uso salvos no aparelho (seção
-  // 'plan' = plan_info ‖ chat_storage_usage em paralelo) → abre na hora.
-  const { data: planSnap, revalidating, refresh: load } = settingsCache.useSettingsSection('plan');
-  const plan = planSnap?.plan || null;
-  const usage = planSnap?.usage || null;
-  const loading = !planSnap && revalidating;
-  const [busy, setBusy] = useState(false);
-  const [shop, setShop] = useState(false);
-  // [2026-10-17 smart-storage] /settings-one?offer=<tier> (avisos de espaço de
-  // outras telas) → abre a loja já no plano recomendado. 1× por chegada.
-  const routeParams = useLocalSearchParams();
-  const offerParam = typeof routeParams?.offer === 'string' ? routeParams.offer : '';
-  const [shopTier, setShopTier] = useState(null);
-  const offerDone = React.useRef('');
-  useEffect(() => {
-    if (!offerParam || offerDone.current === offerParam || !MONETIZATION_ENABLED) return undefined;
-    offerDone.current = offerParam;
-    const tm = setTimeout(() => { setShopTier(offerParam); setShop(true); }, 350); // depois da transição de entrada
-    return () => clearTimeout(tm);
-  }, [offerParam]);
-  // [2026-10-17 p2] assinatura Stripe existe? stripe_subscription_info responde
-  // 404 "No active subscription" p/ quem não tem (grátis, Apple, admin) → trata
-  // como "nenhuma" em silêncio e esconde Cobrança/Forma de pagamento.
-  // null = ainda não sabemos (seções Stripe ficam escondidas até confirmar).
-  const [stripeSub, setStripeSub] = useState(null);
-  const _paidForStripe = !!planSnap && normalizePlanState(plan, usage).isPaid;
-  useEffect(() => {
-    if (!_paidForStripe) { setStripeSub(false); return undefined; }
-    let alive = true;
-    (async () => {
-      let has = false;
-      try {
-        const r = await api.stripeSubscriptionInfo();
-        has = !!(r && r.success && r.data);
-      } catch { has = false; }
-      if (alive) setStripeSub(has);
-    })();
-    return () => { alive = false; };
-  }, [_paidForStripe]);
-  if (loading) return <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={g.secondary} /></View>;
-
-  const planNorm = normalizePlanState(plan, usage);
-  const isPaid = planNorm.isPaid;
-  const used = Number(usage?.used_bytes ?? plan?.storage_used);
-  const limit = planNorm.limitBytes;
-  const hasUsage = Number.isFinite(used) && limit > 0;
-  const pct = hasUsage ? Math.min(100, Math.max(0, (used / limit) * 100)) : 0;
-  const isIOS = Platform.OS === 'ios';
-  const stripeOk = isStripePortalAvailable();
-  const gbTxt = formatQuotaBytes(limit);
-  const breakdown = usage?.breakdown && typeof usage.breakdown === 'object' ? usage.breakdown : null;
-  const fmtDate = (iso) => {
-    if (!iso) return null;
-    const d = new Date(String(iso).replace(' ', 'T'));
-    if (isNaN(d.getTime())) return null;
-    try { return d.toLocaleDateString(language || undefined, { day: '2-digit', month: 'long', year: 'numeric' }); } catch { return d.toISOString().slice(0, 10); }
-  };
-  const renews = fmtDate(plan?.expires_at);
-  const period = plan?.billing_period === 'annual' || plan?.billing_period === 'yearly' ? t('chatyyOne.annual') : t('chatyyOne.monthly');
-  const manage = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const r = await openStripePortal();
-      if (!r?.success) Alert.alert(t('common.error'), t('storage.portalFailed'));
-      else load();
-    } finally { setBusy(false); }
-  };
-  let ShopSheet = null;
-  if (MONETIZATION_ENABLED) { try { ShopSheet = require('../StorageShopSheet').default; } catch {} }
-  return (
-    <>
-      <SettingsGroup>
-        <SettingsCardContent style={{ paddingVertical: 16 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-            <View style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: g.tileBg, alignItems: 'center', justifyContent: 'center' }}>
-              <IconCloud size={22} color={g.tileFg} />
-            </View>
-            {/* [2026-10-17 p2] título da tela = marca ({plan}); aqui o plano ATUAL numa linha clara */}
-            <View style={{ flex: 1, minWidth: 0 }} accessible accessibilityLabel={t('chatyyOne.yourPlanLine', { name: planDisplayName(planNorm.planId, t), size: gbTxt })}>
-              <Text style={{ fontSize: 13, color: g.secondary }}>{t('chatyyOne.yourPlanLabel')}</Text>
-              <Text style={{ fontSize: 18, fontWeight: '700', color: g.text, marginTop: 2 }} numberOfLines={2}>
-                {t('chatyyOne.yourPlanValue', { name: planDisplayName(planNorm.planId, t), size: gbTxt })}
-              </Text>
-            </View>
-            <Text style={{ fontSize: 12, fontWeight: '700', color: isPaid ? g.ink : g.secondary }}>
-              {isPaid ? t('chatyyOne.statusActive') : t('chatyyOne.statusFree')}
-            </Text>
-          </View>
-          {/* [2026-10-17 smart-storage] medidor único segmentado por tipo (Fotos/Vídeos/Arquivos quando medido, E-mail, Conversas, Feed, Backup) */}
-          <StorageMeter meter={meterFromPlan(planNorm)} legend={breakdown ? 'rows' : 'none'} style={{ marginTop: 16 }} testID="one-storage-meter" />
-          {pct >= 80 && !MONETIZATION_ENABLED ? <Text style={{ fontSize: 12.5, color: pct >= 95 ? '#ef4444' : g.secondary, marginTop: 8 }}>{t('chatyyOne.nearFull')}</Text> : null}
-          {planNorm.expiryNotice ? (
-            <Text style={{ fontSize: 13, lineHeight: 18, color: g.secondary, marginTop: 10 }}>
-              {planNorm.expiryNotice.kind === 'grace' ? t('planExpiry.grace', { date: planNorm.expiryNotice.date }) : t('planExpiry.expired')}
-            </Text>
-          ) : null}
-          {planNorm.graceActive ? (
-            <Text style={{ fontSize: 13, lineHeight: 18, color: g.secondary, marginTop: 10 }}>
-              {t('storage.graceBodyAmount', { n: gbTxt })}
-            </Text>
-          ) : null}
-        </SettingsCardContent>
-        {MONETIZATION_ENABLED && ShopSheet ? (
-          <SettingsRow
-            icon={IconZap}
-            title={isPaid ? t('chatyyOne.changePlan') : t('chatyyOne.upgrade')}
-            onPress={() => { try { const r = require('../../services/storageOffers').recommendTier(planNorm); setShopTier(r?.tier?.id || null); } catch {} setShop(true); }}
-          />
-        ) : null}
-        <SettingsRow
-          icon={IconTrash}
-          title={t('manageStorage.title') || 'Gerenciar armazenamento'}
-          subtitle={t('manageStorage.rowSub')}
-          onPress={() => { try { router.push('/manage-storage'); } catch {} }}
-          testID="one-free-space"
-        />
-      </SettingsGroup>
-      {/* [2026-10-19 plano-completo] O que o plano inclui (números do plan_info; sem promessa que o servidor não cumpre). */}
-      <SettingsGroup header={t('chatyyOne.includedHeader', 'Incluído no seu plano')}>
-        <SettingsRow icon={IconCloud} title={t('chatyyOne.benefitStorage', 'Armazenamento na nuvem')} subtitle={t('chatyyOne.benefitStorageSub', 'Fotos, vídeos, arquivos, e-mail e conversas')} value={gbTxt} />
-        <SettingsRow icon={IconFile} title={t('chatyyOne.benefitFile', 'Arquivos de até')} value={formatStorage(planNorm.maxFileBytes)} />
-        <SettingsRow icon={IconClock} title={t('chatyyOne.benefitBackup', 'Backup das conversas')} value={t('chatyyOne.benefitBackupDays', '{n} dias', { n: planNorm.backupRetentionDays }).replace('{n}', String(planNorm.backupRetentionDays))} />
-        {planNorm.maxMembers > 1 ? (
-          <SettingsRow icon={IconUsers} title={t('chatyyOne.benefitFamily', 'Compartilhar com a família')} value={t('chatyyOne.benefitFamilyN', 'Até {n} pessoas', { n: planNorm.maxMembers }).replace('{n}', String(planNorm.maxMembers))} />
-        ) : null}
-      </SettingsGroup>
-      {/* [2026-10-17 smart-storage] 80/95%: plano que cabe + preço (servidor/loja). Aqui sem teto (é a tela do plano). */}
-      <StorageNudgeCard
-        plan={planNorm}
-        always
-        onUpgrade={(tierId) => { setShopTier(tierId); setShop(true); }}
-        style={{ marginHorizontal: 16, marginBottom: 24 }}
-        testID="one-storage-nudge"
-      />
-      {isPaid ? (
-        <SettingsGroup header={t('chatyyOne.subscription')} footer={MONETIZATION_ENABLED ? (t('storage.cancelAnytime') || undefined) : undefined}>
-          <SettingsRow title={t('chatyyOne.status')} value={t('chatyyOne.statusActive')} />
-          {stripeSub ? <SettingsRow title={t('chatyyOne.billing')} value={period} /> : null}
-          {renews ? <SettingsRow title={t('chatyyOne.renewal')} value={renews} /> : null}
-          {isIOS ? (
-            // Assinatura feita no iPhone (IAP) = gerenciada na conta Apple (permitido pela Apple).
-            <SettingsRow
-              icon={IconCreditCard}
-              title={t('storage.manage') || 'Gerenciar assinatura'}
-              onPress={() => { Linking.openURL('https://apps.apple.com/account/subscriptions').catch(() => {}); }}
-              testID="one-manage-apple"
-            />
-          ) : null}
-          {Platform.OS === 'android' && stripeSub === false ? (
-            // [2026-10-18 stripe-off] assinatura pelo Google Play = gerenciada na conta Google.
-            <SettingsRow
-              icon={IconCreditCard}
-              title={t('storeOnly.managePlay')}
-              onPress={() => { Linking.openURL('https://play.google.com/store/account/subscriptions?package=com.onemundo.mail').catch(() => {}); }}
-              testID="one-manage-play"
-            />
-          ) : null}
-        </SettingsGroup>
-      ) : null}
-      {stripeSub ? (
-      <SettingsGroup header={t('chatyyOne.payment')} footer={isIOS ? t('chatyyOne.iosFootnote') : t('chatyyOne.footnote')}>
-        {isIOS ? (
-          <SettingsRow title={t('chatyyOne.manageOnWeb')} subtitle={t('chatyyOne.iosNote')} onPress={() => { Linking.openURL('https://chatyy.com.br').catch(() => {}); }} />
-        ) : (
-          <>
-            <SettingsRow title={t('chatyyOne.method')} subtitle={isPaid ? t('chatyyOne.methodCard') : t('chatyyOne.methodNone')} />
-            {stripeOk ? (
-              <SettingsRow
-                title={isPaid ? t('chatyyOne.managePayment') : t('chatyyOne.managePaymentFree')}
-                onPress={manage}
-                right={busy ? <ActivityIndicator size="small" color={g.secondary} /> : undefined}
-              />
-            ) : null}
-          </>
-        )}
-      </SettingsGroup>
-      ) : null}
-      {MONETIZATION_ENABLED && ShopSheet ? (
-        <ShopSheet
-          visible={shop}
-          onClose={() => { setShop(false); setShopTier(null); load(); }}
-          initialTier={shopTier}
-          currentTier={String(usage?.tier || 'free')}
-          usedBytes={hasUsage ? used : undefined}
-          limitBytes={limit}
-        />
-      ) : null}
-    </>
-  );
+  return <PlanHub />;
 }
 
 // ─── Cabeçalho do hub (foto, nome, recado/@, QR) ───────────────────────────
