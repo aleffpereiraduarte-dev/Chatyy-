@@ -488,6 +488,8 @@ import CallStatusBar, { CallBarInsetProvider, callBarScreenLayout } from '../com
 
 // Lazy-load call components to break circular dependency
 const IncomingCallListener = React.lazy(() => import('../components/IncomingCallListener'));
+// [2026-10-20 inapp-ring] Android: tela de chamada recebida do app com o app aberto (kill: globalThis.__chatyy_android_inapp_ring = false).
+const InAppIncomingCall = React.lazy(() => import('../components/calls/InAppIncomingCall'));
 // [2026-10-12 call-review] "Como foi a ligação?" (sampled post-call feedback).
 const CallQualityPrompt = React.lazy(() => import('../components/CallQualityPrompt'));
 const LiveLocationPingListener = React.lazy(() => import('../components/LiveLocationPingListener'));
@@ -2520,6 +2522,11 @@ export default function RootLayout() {
                 <Suspense fallback={null}>
                   <IncomingCallListener />
                 </Suspense>
+                {Platform.OS === 'android' ? (
+                  <Suspense fallback={null}>
+                    <InAppIncomingCall />
+                  </Suspense>
+                ) : null}
                 {Platform.OS !== 'web' ? (
                   <Suspense fallback={null}>
                     <CallQualityPrompt />

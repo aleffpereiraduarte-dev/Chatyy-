@@ -148,6 +148,15 @@ class ExpoCallKitModule : Module() {
       }
     }
 
+    // [2026-10-20 inapp-ring] Ponte genérica para InAppRing (tela de chamada
+    // do app com o app aberto). No-op sem instância JS.
+    fun hasJsInstance(): Boolean = instance.get() != null
+    fun emitEvent(name: String, body: Map<String, Any?>) {
+      try { instance.get()?.sendEvent(name, body) } catch (t: Throwable) {
+        Log.w(TAG, "emitEvent $name failed: ${t.message}")
+      }
+    }
+
     fun emitCallAnswered(callId: String) {
       markCallAccepting(callId)
       val inst = instance.get()
@@ -483,7 +492,9 @@ class ExpoCallKitModule : Module() {
       // JS subscriber in callkeep.js pushes /chat-conversation?id=...
       "onOpenChat",
       // [2026-10-11 ongoing-call] in-app call bar refresh trigger.
-      "onCallUiChanged"
+      "onCallUiChanged",
+      // [2026-10-20 inapp-ring] Chamada recebida com o app aberto → tela do app.
+      "onInAppIncomingCall", "onInAppRingEnded"
     )
 
     OnCreate {
@@ -509,8 +520,92 @@ class ExpoCallKitModule : Module() {
     // the native incoming call UI. When app is foreground we let the JS Modal
     // (IncomingCallListener) handle the whole flow — showing native + JS at the
     // same time confuses the user (incidente 2026-05-12).
-    OnActivityEntersForeground { isAppForeground = true }
-    OnActivityEntersBackground { isAppForeground = false }
+    OnActivityEntersForeground {
+      isAppForeground = true
+      // [2026-10-20 inapp-ring] Toque nativo em andamento → tela do app.
+      try { InAppRing.onAppForeground(context) } catch (t: Throwable) { Log.w(TAG, "inapp fg: ${t.message}") }
+    }
+    OnActivityEntersBackground {
+      isAppForeground = false
+      // [2026-10-20 inapp-ring] Tela do app saiu → heads-up/FSI nativo de volta.
+      try { InAppRing.onAppBackground(context) } catch (t: Throwable) { Log.w(TAG, "inapp bg: ${t.message}") }
+    }
+
+    // ─── [2026-10-20 inapp-ring] Chamada recebida com o app ABERTO ───
+    // apiVersion para o gate do JS (components/calls/InAppIncomingCall.js).
+    Function("inAppRingApi") { InAppRing.API }
+
+    // JS montou a tela (true) / desmontou ou kill switch (false).
+    Function("setInAppRingReady") { on: Boolean ->
+      if (on) {
+        InAppRing.jsReady = true
+        try { InAppRing.onAppForeground(context) } catch (_: Throwable) {}
+      } else {
+        try { InAppRing.onJsDetached(context) } catch (_: Throwable) {}
+      }
+      true
+    }
+
+    // Toque que a tela do app deve mostrar agora (ou null).
+    Function("getInAppRing") {
+      try { InAppRing.current(context) } catch (_: Throwable) { null }
+    }
+
+    // Atender pela tela do app = mesmo caminho do "Atender" da notificação
+    // (IncomingCallActivity auto_accept → Telecom ACTIVE, microfone, CallActivity).
+    Function("answerInAppRing") { callId: String ->
+      if (callId.isEmpty()) return@Function false
+      val ctx = context
+      try {
+        val act = appContext.currentActivity
+        val intent = Intent(act ?: ctx, IncomingCallActivity::class.java).apply {
+          putExtra("call_id", callId)
+          putExtra("auto_accept", true)
+          val info = InAppRing.current(ctx)?.takeIf { it["callId"] == callId }
+          if (info != null) {
+            putExtra("caller_name", info["callerName"] as? String ?: "")
+            putExtra("caller_email", info["callerEmail"] as? String ?: "")
+            putExtra("conversation_id", info["conversationId"] as? String ?: "")
+            putExtra("has_video", info["hasVideo"] as? Boolean ?: false)
+            putExtra("caller_avatar", info["callerAvatar"] as? String ?: "")
+            putExtra("is_group", info["isGroup"] as? Boolean ?: false)
+            putExtra("group_name", info["groupName"] as? String ?: "")
+          }
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        // A MainActivity pausa ANTES da IncomingCallActivity criar → sem isto o
+        // onAppBackground re-postaria o heads-up/FSI no meio do atender.
+        InAppRing.onAcceptFromApp(callId)
+        if (act != null) act.startActivity(intent) else ctx.startActivity(intent)
+        CallDiag.log("inapp_accept", callId, "act=${if (act != null) 1 else 0}", ctx.applicationContext)
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "answerInAppRing $callId failed: ${t.message}")
+        false
+      }
+    }
+
+    // Recusar pela tela do app = mesmo caminho do "Recusar" da notificação.
+    Function("declineInAppRing") { callId: String ->
+      if (callId.isEmpty()) return@Function false
+      val ctx = context
+      try {
+        val info = InAppRing.current(ctx)?.takeIf { it["callId"] == callId }
+        val i = Intent(ctx, CallActionReceiver::class.java).apply {
+          action = CallActionReceiver.ACTION_DECLINE_CALL
+          setPackage(ctx.packageName)
+          putExtra("call_id", callId)
+          putExtra("caller_email", info?.get("callerEmail") as? String ?: "")
+          putExtra("conversation_id", info?.get("conversationId") as? String ?: "")
+        }
+        ctx.sendBroadcast(i)
+        CallDiag.log("inapp_decline", callId, "", ctx.applicationContext)
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "declineInAppRing $callId failed: ${t.message}")
+        false
+      }
+    }
 
     AsyncFunction("setup") {
       // Create the notification channel for calls

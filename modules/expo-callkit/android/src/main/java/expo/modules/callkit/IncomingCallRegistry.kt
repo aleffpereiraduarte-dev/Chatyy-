@@ -414,6 +414,13 @@ object IncomingCallRegistry {
             Log.d(TAG, "launchRingingUi $callId src=$source: already in accept flow — skipping")
             return false
         }
+        // [2026-10-20 inapp-ring] App aberto + tela JS pronta: a tela de
+        // chamada é a do app (CallRingingService → InAppRing → onInAppIncomingCall).
+        // Nada de IncomingCallActivity por cima (era a "tela preta" do print).
+        if (InAppRing.isInApp(callId) || (try { InAppRing.canPresent(app) } catch (_: Throwable) { false })) {
+            Log.i(TAG, "launchRingingUi $callId src=$source: in-app ring screen owns the surface — skipping activity")
+            return false
+        }
         sweep()
         val prev = uiLaunchedAt.putIfAbsent(callId, System.currentTimeMillis())
         if (prev != null) {

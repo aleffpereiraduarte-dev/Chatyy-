@@ -485,6 +485,70 @@ export function hangupOngoingCall(): boolean {
   try { return !!m.hangupOngoingCall(); } catch { return false; }
 }
 
+// ─── [2026-10-20 inapp-ring] Android: chamada recebida com o app ABERTO ───
+// Tela de chamada do app (components/calls/InAppIncomingCall.js) no lugar do
+// heads-up + IncomingCallActivity. Binários antigos: inAppRingApi() = 0 e
+// tudo vira no-op (o fluxo nativo continua como antes).
+export type InAppRingCall = {
+  callId: string;
+  callerName: string;
+  callerEmail: string;
+  conversationId: string;
+  hasVideo: boolean;
+  callerAvatar: string;
+  isGroup: boolean;
+  groupName: string;
+  startedAt?: number;
+};
+
+export function inAppRingApi(): number {
+  const m: any = getModule();
+  if (!m || typeof m.inAppRingApi !== 'function') return 0;
+  try { return Number(m.inAppRingApi()) || 0; } catch { return 0; }
+}
+
+export function setInAppRingReady(on: boolean): boolean {
+  const m: any = getModule();
+  if (!m || typeof m.setInAppRingReady !== 'function') return false;
+  try { return !!m.setInAppRingReady(!!on); } catch { return false; }
+}
+
+export function getInAppRing(): InAppRingCall | null {
+  const m: any = getModule();
+  if (!m || typeof m.getInAppRing !== 'function') return null;
+  try { return m.getInAppRing() || null; } catch { return null; }
+}
+
+export function answerInAppRing(callId: string): boolean {
+  const m: any = getModule();
+  if (!m || typeof m.answerInAppRing !== 'function') return false;
+  try { return !!m.answerInAppRing(String(callId || '')); } catch { return false; }
+}
+
+export function declineInAppRing(callId: string): boolean {
+  const m: any = getModule();
+  if (!m || typeof m.declineInAppRing !== 'function') return false;
+  try { return !!m.declineInAppRing(String(callId || '')); } catch { return false; }
+}
+
+export function onInAppIncomingCall(cb: (data: InAppRingCall) => void): () => void {
+  const e: any = getEmitter();
+  if (!e) return () => {};
+  try {
+    const sub = e.addListener('onInAppIncomingCall', cb);
+    return () => { try { sub.remove(); } catch {} };
+  } catch { return () => {}; }
+}
+
+export function onInAppRingEnded(cb: (data: { callId: string }) => void): () => void {
+  const e: any = getEmitter();
+  if (!e) return () => {};
+  try {
+    const sub = e.addListener('onInAppRingEnded', cb);
+    return () => { try { sub.remove(); } catch {} };
+  } catch { return () => {}; }
+}
+
 /** JS bar mounted → iOS skips its native fallback overlay (no double bar). */
 export function setInAppCallBarActive(active: boolean): boolean {
   const m: any = getModule();

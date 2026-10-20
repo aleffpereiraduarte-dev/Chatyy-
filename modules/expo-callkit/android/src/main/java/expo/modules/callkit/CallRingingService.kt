@@ -206,6 +206,18 @@ class CallRingingService : Service() {
         // Create the notification channel (idempotent)
         CallNotificationService.createNotificationChannel(this)
 
+        // [2026-10-20 inapp-ring] App aberto na tela + tela JS pronta → a tela
+        // de chamada é a do app: notificação baixa, sem heads-up/FSI (ver
+        // InAppRing). Toque/vibração/timeout abaixo continuam iguais.
+        val inApp = try {
+            InAppRing.onRingStart(applicationContext, InAppRing.RingInfo(
+                callId = safeCallId, callerName = callerName, callerEmail = callerEmail,
+                conversationId = conversationId, hasVideo = hasVideo, callerAvatar = callerAvatar,
+                isGroup = isGroup, groupName = groupName, muteRingtone = muteRingtone,
+                startedAt = System.currentTimeMillis()
+            ), alreadyRinging)
+        } catch (_: Throwable) { false }
+
         // Build the call notification (use safeCallId — guaranteed non-null)
         val notification = CallNotificationService.buildIncomingCallNotification(
             this,
@@ -217,7 +229,8 @@ class CallRingingService : Service() {
             callerAvatar,
             muteRingtone = muteRingtone,
             isGroup = isGroup,
-            groupName = groupName
+            groupName = groupName,
+            inApp = inApp
         )
 
         // Start as foreground with the call notification.
@@ -273,7 +286,10 @@ class CallRingingService : Service() {
                             hasVideo, callerAvatar, bmp,
                             muteRingtone = muteRingtone,
                             isGroup = isGroup,
-                            groupName = groupName
+                            groupName = groupName,
+                            // [2026-10-20 inapp-ring] superfície ATUAL (pode ter
+                            // mudado: app foi/voltou do 2º plano durante o fetch).
+                            inApp = InAppRing.isInApp(safeCallId)
                         )
                         val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
                         // [2026-10-11 double-banner] ROOT CAUSE of the "2
@@ -310,6 +326,10 @@ class CallRingingService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+
+        // [2026-10-20 inapp-ring] Avisa a tela do app (também nos refresh de
+        // extras — avatar/grupo chegam no FCM depois do WS).
+        try { InAppRing.emitPresent(safeCallId) } catch (_: Throwable) {}
 
         // [2026-10-06 android-incoming] Duplicate start for a call we are
         // already ringing: notification refreshed above, ringer / vibrator /
@@ -414,6 +434,9 @@ class CallRingingService : Service() {
             // Only clear the "primary" pointer if we were it — otherwise
             // another concurrent ring is still the active primary.
             currentCallId.compareAndSet(cid, null)
+            // [2026-10-20 inapp-ring] Fim do toque (qualquer motivo) → a tela
+            // do app some (sincroniza atender/recusar feitos em outra superfície).
+            try { InAppRing.onRingStop(cid) } catch (_: Throwable) {}
         } else {
             currentCallId.set(null)
         }

@@ -364,7 +364,14 @@ object CallNotificationService {
     // intents carry is_group=true so IncomingCallActivity.onAccept routes to
     // GroupCallActivity (N-way grid) instead of CallActivity (1:1).
     isGroup: Boolean = false,
-    groupName: String = ""
+    groupName: String = "",
+    // [2026-10-20 inapp-ring] App aberto na tela: a tela de chamada é a do
+    // app (JS). Canal BAIXO, sem heads-up, sem som, SEM full-screen intent;
+    // tocar na notificação só traz o app pra frente.
+    inApp: Boolean = false,
+    // [2026-10-20 inapp-ring] Re-post quando o app sai da frente durante o
+    // toque: precisa alertar de novo (heads-up / FSI), então sem onlyAlertOnce.
+    realert: Boolean = false
   ): Notification {
     val notificationId = callId.hashCode()
 
@@ -455,13 +462,18 @@ object CallNotificationService {
     // [mute-call-ringtone, 2026-05-19] Pick the silent channel when the
     // caller asked us to mute. Both channels live at IMPORTANCE_HIGH so
     // heads-up + FSI still fire — only sound + vibration differ.
-    val activeChannel = if (muteRingtone) CHANNEL_ID_SILENT else CHANNEL_ID
+    val activeChannel = when {
+      inApp -> InAppRing.CHANNEL_ID
+      muteRingtone -> CHANNEL_ID_SILENT
+      else -> CHANNEL_ID
+    }
+    if (inApp) InAppRing.ensureChannel(context)
 
     val builder = NotificationCompat.Builder(context, activeChannel)
       .setSmallIcon(iconRes)
       .setContentTitle(callerName)
-      .setContentText(callTypeText)
-      .setPriority(NotificationCompat.PRIORITY_MAX)
+      .setContentText(if (inApp) (if (hasVideo) "Chamada de video recebida" else "Chamada de voz recebida") else callTypeText)
+      .setPriority(if (inApp) NotificationCompat.PRIORITY_LOW else NotificationCompat.PRIORITY_MAX)
       .setCategory(NotificationCompat.CATEGORY_CALL)
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .setOngoing(true)
@@ -469,9 +481,26 @@ object CallNotificationService {
       // [2026-10-11 double-banner] Re-posts of the SAME call (avatar refresh,
       // FCM-after-WS extras refresh) must not re-play the channel ringtone /
       // re-pop the heads-up.
-      .setOnlyAlertOnce(true)
+      .setOnlyAlertOnce(!realert)
       .addAction(0, "Recusar", declinePendingIntent)
       .addAction(0, "Atender", acceptPendingIntent)
+    if (inApp) {
+      builder.setSilent(true)
+      builder.setDefaults(0)
+      try {
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        }
+        if (launch != null) {
+          builder.setContentIntent(PendingIntent.getActivity(
+            context, notificationId + 3, launch,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+          ))
+        }
+      } catch (_: Throwable) {}
+      if (largeIcon != null) builder.setLargeIcon(largeIcon)
+      return builder.build()
+    }
     if (muteRingtone) {
       // Belt-and-suspenders for pre-O devices (no channel concept). On O+
       // the channel config already silences everything; these calls are
