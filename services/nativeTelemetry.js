@@ -546,7 +546,7 @@ export function notePerfPhase(phase, ttlMs = 600) {
 }
 
 /** Stall do JS (atraso do timer com o app ativo), ms ≥ 400. Só agrega. */
-export function notePerfStall(ms, route) {
+export function notePerfStall(ms, route, la) {
   if (_perfOff()) return;
   const v = Math.round(Number(ms) || 0);
   if (!(v >= 400)) return;
@@ -556,7 +556,7 @@ export function notePerfStall(ms, route) {
   const e = _jsStall[k] || (_jsStall[k] = { c: 0, b: [0, 0, 0, 0], mx: 0, sum: 0 });
   e.c += 1; e.sum += v;
   e.b[v < 700 ? 0 : v < 1500 ? 1 : v < 2500 ? 2 : 3] += 1;
-  if (v > e.mx) e.mx = v;
+  if (v > e.mx) { e.mx = v; if (la) e.la = String(la).slice(0, 96); }
   _jsStallN += 1;
 }
 
@@ -630,6 +630,7 @@ function _perfMaybeSend(why) {
   for (const r of Object.keys(stalls)) {
     const e = ag.rt[r] || (ag.rt[r] = { r, n: 0, sl: 0, fz: 0, mx: 0, j: 0 });
     e.js = stalls[r].c; e.jb = stalls[r].b; e.jmx = stalls[r].mx; e.jsum = stalls[r].sum;
+    if (stalls[r].la) e.jla = stalls[r].la; // [perf-js] última ação antes da maior trava
   }
   const routes = Object.values(ag.rt)
     .sort((a, b) => ((b.fz * 50 + b.sl + (b.js || 0) * 5) - (a.fz * 50 + a.sl + (a.js || 0) * 5)) || (b.n - a.n))
@@ -637,6 +638,8 @@ function _perfMaybeSend(why) {
   let fr = 0; let sl = 0; let fz = 0;
   for (const e of routes) { fr += e.n; sl += e.sl; fz += e.fz; }
   const data = { w: ag.n, t0: ag.t0, t1: ag.t1, rr: ag.rr, rt: routes, mem: ag.mem, why: String(why || '').slice(0, 8), api: m ? 1 : 0 };
+  // [perf-js] trechos JS mais lentos da janela (ws:evento, conv:… — n/máx ms)
+  try { const tr = require('./perfTrace'); const sp = tr.topSpans(6); if (sp && sp !== '-') data.sp = sp; tr.resetSpans(); } catch {}
   _perfLastSend = now;
   _perfSends += 1;
   _perfSending = true;

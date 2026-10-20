@@ -28,6 +28,7 @@ function _nativeIngestOn() {
 // default); while off, every code path stays JSON-only. Phase 1 of the WS
 // transport upgrade (see docs/transport_upgrade_plan.md).
 let _msgpack = null;
+let _perfTraceMod = null; // [2026-10-20 perf-js] services/perfTrace (lazy)
 function _getMsgpack() {
   if (_msgpack) return _msgpack;
   try {
@@ -3645,7 +3646,18 @@ class MailWebSocket {
     // última msg chega DEPOIS do recibo (eco do servidor atrasado / GIF da fila nativa).
     else if (event === 'chat_delivered' || event === 'message_delivered') { try { require('./peerReadLive').ingestDeliveredEvent(this.email, data); } catch {} }
     const cbs = this.listeners.get(event);
-    if (cbs) cbs.forEach(cb => { try { cb(data); } catch {} });
+    if (!cbs || !cbs.size) return;
+    // [2026-10-20 perf-js] marca o evento ANTES do fan-out e mede os ouvintes
+    // (perfTrace: js_stall diz qual evento WS estava rodando quando o JS travou).
+    let tr = null; let t0 = 0; let tag = '';
+    try {
+      tr = _perfTraceMod || (_perfTraceMod = require('./perfTrace'));
+      tag = 'ws:' + String(event).replace(/[^a-z0-9_]/gi, '').slice(0, 24);
+      tr.traceAction(tag);
+      t0 = Date.now();
+    } catch { tr = null; }
+    cbs.forEach(cb => { try { cb(data); } catch {} });
+    if (tr) { try { tr.traceSpan(tag, Date.now() - t0); } catch {} }
   }
 
   // ─── Resume token persistence ───

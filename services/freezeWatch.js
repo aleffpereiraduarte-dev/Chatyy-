@@ -69,6 +69,11 @@ function _modals() {
 function _perf() {
   try { return require('./nativeTelemetry'); } catch { return null; } // eslint-disable-line global-require
 }
+// [2026-10-20 perf-js] origem da trava: últimas ações antes do início (services/perfTrace)
+function _trace() {
+  try { return require('./perfTrace'); } catch { return null; } // eslint-disable-line global-require
+}
+let _lastLa = '';
 
 export function setFreezeRoute(r) {
   try { _route = String(r || '').slice(0, 48); } catch {}
@@ -91,6 +96,7 @@ function _snap(now) {
     tap: _lastTouch ? Math.round((now - _lastTouch) / 1000) : -1,
     st: _stalls, mx: _maxStall, s4: _stalls4, sp: _suspends, up: Math.round((now - _bootAt) / 1000),
   };
+  try { const tr = _trace(); o.la = tr ? tr.lastActions(now, 3) : '-'; if (_lastLa) o.sla = _lastLa; } catch {}
   try { AS.setItem(KEY, JSON.stringify(o)).catch(() => {}); } catch {}
 }
 
@@ -110,7 +116,9 @@ function _reportPrev(raw) {
   if (!(age >= 0 && age < PREV_MAX_AGE_MS)) return;
   if (o.as === 'background') return; // suspenso/jetsam em 2º plano = normal
   _prevEnd = { as: o.as, gap: Math.round(age / 1000), r: o.r || '-', n: o.n || 0, tap: o.tap, st: o.st || 0, mx: o.mx || 0, s4: o.s4 || 0, up: o.up || 0 };
-  _report('prev_end', `as=${o.as} gap=${Math.round(age / 1000)}s r=${o.r || '-'} n=${o.n || 0} m=${o.m || '-'} tap=${o.tap} st=${o.st || 0} mx=${o.mx || 0} up=${o.up || 0}`);
+  if (o.la) _prevEnd.la = String(o.la).slice(0, 120);
+  if (o.sla) _prevEnd.sla = String(o.sla).slice(0, 120);
+  _report('prev_end', `as=${o.as} gap=${Math.round(age / 1000)}s r=${o.r || '-'} n=${o.n || 0} m=${o.m || '-'} tap=${o.tap} st=${o.st || 0} mx=${o.mx || 0} up=${o.up || 0} la=${o.la || '-'}`);
 }
 
 function _mono() {
@@ -127,18 +135,36 @@ function _tick() {
   if (_appState !== 'active') return;
   // evento de AppState perdido/atrasado → confia no estado atual
   try { const cs = AppState.currentState; if (cs && cs !== 'active' && cs !== 'unknown') { _appState = cs; return; } } catch {}
-  if (late > SUSPEND_MS || (late >= PERF_STALL_MS && monoLate < late / 2)) { _suspends += 1; return; }
+  if (late > SUSPEND_MS || (late >= PERF_STALL_MS && monoLate < late / 2)) {
+    _suspends += 1;
+    // [2026-10-20 perf-js] iOS não suspende app ATIVO: > 60 s com o relógio
+    // monotônico andando junto = trava real (main+JS: o contador nativo viu
+    // quadros de 184–454 s em /chat-conversation que sumiam como "suspensão").
+    if (Platform.OS === 'ios' && late > SUSPEND_MS && monoLate >= late * 0.9 && _stallPosts < 8) {
+      _stallPosts += 1;
+      let la = '-';
+      try { const tr = _trace(); la = tr ? tr.lastActions(now - late, 3) : '-'; } catch {}
+      _report('js_stall', `ms=${late} long=1 r=${_route || '-'} up=${Math.round((now - _bootAt) / 1000)} la=${la}`);
+    }
+    return;
+  }
+  let la = '';
   if (late >= PERF_STALL_MS) {
     _stalls4 += 1;
-    try { _perf()?.notePerfStall?.(late, _route); } catch {}
+    // início da trava ≈ agora − atraso; a última ação ANTES disso é a suspeita
+    try { const tr = _trace(); la = tr ? tr.lastActions(now - late, 3) : ''; } catch {}
+    try { _perf()?.notePerfStall?.(late, _route, la); } catch {}
   }
   if (late > STALL_MS) {
     _stalls += 1;
-    if (late > _maxStall) _maxStall = late;
+    if (late > _maxStall) { _maxStall = late; _lastLa = la; }
     if (_stallPosts < 8) {
       _stallPosts += 1;
       const m = _modals();
-      _report('js_stall', `ms=${late} r=${_route || '-'} n=${m.length} m=${m.slice(0, 3).join(',') || '-'} up=${Math.round((now - _bootAt) / 1000)}`);
+      let sp = '-';
+      try { const tr = _trace(); sp = tr ? tr.topSpans(3) : '-'; } catch {}
+      const tap = _lastTouch ? Math.max(0, (now - late) - _lastTouch) : -1;
+      _report('js_stall', `ms=${late} r=${_route || '-'} n=${m.length} m=${m.slice(0, 3).join(',') || '-'} up=${Math.round((now - _bootAt) / 1000)} tap=${tap} la=${la || '-'} sp=${sp}`);
     }
     _snap(now);
     return;
