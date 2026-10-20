@@ -536,6 +536,8 @@ async function _diagPush(step, info) {
 // app em 1º plano e aí o handler tirava banner E som do sistema e deixava o
 // toast in-app (haptic leve, sem som; e invisível com o app 'inactive').
 const _FG_CHAT_TYPES = new Set(['chat_message', 'chat_mention', 'chat_keyword']);
+// [2026-10-20 newemail-call] pushes de controle de chamada: nunca visíveis no 1º plano.
+const _CALL_CTL_PUSH_TYPES = new Set(['call_cancel', 'call_end', 'call_ended', 'answered_elsewhere', 'call_dismissed', 'call_declined']);
 let _fgLagMs = -1;
 // Handler respondeu depois dos 3 s do expo-notifications → o iOS já descartou a
 // apresentação. Reapresenta 1x como notificação local (mesmo título/corpo/
@@ -617,6 +619,16 @@ async function loadModules() {
         // Reapresentação local de um push perdido pelo timeout (abaixo) → mostra.
         if (data?.__fgRepost) {
           return { shouldShowAlert: true, shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false };
+        }
+
+        // [2026-10-20 newemail-call] Push de CONTROLE de chamada (cancelar/
+        // atendida noutro aparelho/fim) chega no iOS como alerta de título e
+        // corpo VAZIOS (APNs direto) e caía no "Other notifications" lá embaixo
+        // → toast/banner "New email"/"Novo email" (fallback do título) ao
+        // atender uma ligação. O CallKit/VoIP e o WS já fazem o desmonte; aqui
+        // nunca mostra nada. Kill: globalThis.__chatyy_fg_callctl_drop = false.
+        if (globalThis.__chatyy_fg_callctl_drop !== false && _CALL_CTL_PUSH_TYPES.has(String(data?.type || ''))) {
+          return { shouldShowAlert: false, shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
         }
 
         // Silent sync push — background data refresh, no visible notification
@@ -1015,6 +1027,13 @@ async function loadModules() {
         }
 
         // Other notifications in foreground: show toast
+        // [2026-10-20 newemail-call] sem título E sem corpo = push técnico → não
+        // vira toast genérico ("New email" era o fallback do título).
+        const _otherTitle = String(notification.request?.content?.title || '').trim();
+        const _otherBody = String(notification.request?.content?.body || '').trim();
+        if (!_otherTitle && !_otherBody && globalThis.__chatyy_fg_callctl_drop !== false) {
+          return { shouldShowAlert: false, shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
+        }
         if (_onForegroundNotification && data) {
           _onForegroundNotification({
             title: notification.request.content.title,

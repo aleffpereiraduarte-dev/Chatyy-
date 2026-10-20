@@ -23,6 +23,21 @@ function getNotificationType(data) {
   return 'email';
 }
 
+// [2026-10-20 newemail-call] O título padrão "New email"/"Novo email" só vale
+// p/ push de e-mail. Push sem título nem corpo (controle de chamada etc.) não
+// aparece; outros tipos sem título usam o nome de quem enviou ou "Chatyy".
+const _EMAIL_TOAST_TYPES = new Set(['new_email', 'email', 'email_new']);
+function _isBlankNotif(n) {
+  if (!n || globalThis.__chatyy_fg_callctl_drop === false) return false;
+  return !String(n.title || '').trim() && !String(n.body || '').trim();
+}
+function _toastTitle(n, t) {
+  if (n?.title) return n.title;
+  const d = n?.data || {};
+  if (!d.type || _EMAIL_TOAST_TYPES.has(String(d.type))) return t('toast.newEmail');
+  return d.sender_name || d.from_name || d.caller_name || d.from || 'Chatyy';
+}
+
 // Type-specific accent colors
 const TYPE_ACCENTS = {
   email: { light: '#2563eb', dark: '#60a5fa' },
@@ -292,7 +307,10 @@ export default function NotificationToast({ notification, onDismiss }) {
     if (!nb || jsFallbackFor === notification) return;
     const data = notification.data || {};
     const notifType = getNotificationType(data);
-    const title = notification.title || t('toast.newEmail');
+    // [2026-10-20 newemail-call] push técnico (sem título nem corpo, ex.: cancelar
+    // chamada) nunca vira banner "New email".
+    if (_isBlankNotif(notification)) { onDismissRef.current?.(); return; }
+    const title = _toastTitle(notification, t);
     const id = `b${++_bannerSeq}`;
     nativeIdRef.current = id;
     nativeDataRef.current.set(id, data);
@@ -340,6 +358,7 @@ export default function NotificationToast({ notification, onDismiss }) {
 
   useEffect(() => {
     if (!notification || !useJs) return;
+    if (_isBlankNotif(notification)) { onDismissRef.current?.(); return; }
     dismissingRef.current = false;
     setIsVisible(true);
 
@@ -488,9 +507,9 @@ export default function NotificationToast({ notification, onDismiss }) {
     _openFromNotificationData(data);
   }, [notification, dismiss]);
 
-  if (!useJs || !isVisible || !notification) return null;
+  if (!useJs || !isVisible || !notification || _isBlankNotif(notification)) return null;
 
-  const title = notification.title || t('toast.newEmail');
+  const title = _toastTitle(notification, t);
   const body = notification.body || '';
   const data = notification.data || {};
   const notifType = getNotificationType(data);
