@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import FastImage from './FastImage'; // [2026-10-09 expo-image]
+import { GridSkeleton, ListSkeleton } from './SkeletonLoader';
 import {
   View, Text, TouchableOpacity, FlatList, Modal, Image, ActivityIndicator,
   Platform, StyleSheet, Alert,
@@ -103,16 +104,16 @@ function EmptyState({ type, colors, t }) {
   const _tr = (k, fb) => { try { const v = t && t(k); return v && v !== k ? v : fb; } catch { return fb; } };
   const emptyLabel = type === 'link' ? _tr('chat.noLinksYet', 'Nenhum link ainda')
     : type === 'media' ? _tr('chat.noMediaYet', 'Nenhuma mídia ainda')
-    : type === 'image' ? 'Nenhuma foto ainda'
-    : type === 'video' ? 'Nenhum vídeo ainda'
-    : type === 'audio' ? 'Nenhum áudio ainda'
-    : 'Nenhum documento ainda';
+    : type === 'image' ? _tr('chat.noPhotosYet', 'Nenhuma foto ainda')
+    : type === 'video' ? _tr('chat.noVideosYet', 'Nenhum vídeo ainda')
+    : type === 'audio' ? _tr('chat.noAudioYet', 'Nenhum áudio ainda')
+    : _tr('chat.noDocsYet', 'Nenhum documento ainda');
   const emptyHint = type === 'link' ? _tr('chat.noLinksHint', 'Os links compartilhados nesta conversa aparecem aqui.')
     : type === 'media' ? _tr('chat.noMediaHint', 'As fotos e os vídeos desta conversa aparecem aqui.')
-    : type === 'image' ? 'As fotos enviadas nesta conversa aparecem aqui.'
-    : type === 'video' ? 'Os vídeos enviados nesta conversa aparecem aqui.'
-    : type === 'audio' ? 'As mensagens de voz e áudios aparecem aqui.'
-    : 'Os PDFs e documentos compartilhados aparecem aqui.';
+    : type === 'image' ? _tr('chat.noPhotosHint', 'As fotos enviadas nesta conversa aparecem aqui.')
+    : type === 'video' ? _tr('chat.noVideosHint', 'Os vídeos enviados nesta conversa aparecem aqui.')
+    : type === 'audio' ? _tr('chat.noAudioHint', 'As mensagens de voz e áudios aparecem aqui.')
+    : _tr('chat.noDocsHint', 'Os PDFs e documentos compartilhados aparecem aqui.');
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 }}>
       <View style={{
@@ -732,9 +733,10 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
 
         {/* Content */}
         {loading ? (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <ActivityIndicator size="large" color={colors.textTertiary} />
-          </View>
+          // [2026-10-20 ux] skeleton com a FORMA do conteúdo (grade p/ mídia, linhas p/ links/docs/áudio)
+          (activeTab === 'media' || activeTab === 'image' || activeTab === 'video')
+            ? <View style={{ flex: 1 }}><GridSkeleton count={15} columns={3} /></View>
+            : <View style={{ flex: 1, paddingTop: 8 }}><ListSkeleton count={7} /></View>
         ) : (useNativeGrid && nativeItems.length > 0) ? (
           <NativeMediaGrid
             ref={gridRef}

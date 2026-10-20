@@ -101,6 +101,9 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
           mascot="search"
           title={t('chat.emptySearchTitle')}
           subtitle={t('chat.emptySearchDesc', { query: q.length > 40 ? `${q.slice(0, 40)}…` : q })}
+          // [2026-10-20 ux] estado vazio COM ação (Telegram): procurar a pessoa em "Nova conversa".
+          cta={{ label: t('chat.newConversation') || 'Nova conversa', icon: 'plus', onPress: () => { try { router.push('/chat-new'); } catch {} } }}
+          secondary={back}
         />
       );
     }

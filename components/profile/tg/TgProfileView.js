@@ -20,6 +20,8 @@ import {
 import { useLanguage } from '../../../context/LanguageContext';
 import Svg, { Defs, LinearGradient, Stop, Circle } from 'react-native-svg';
 import FastImage from '../../FastImage';
+import { GridSkeleton, PostSkeleton } from '../../SkeletonLoader';
+import { SkeletonRows } from '../../Skeleton';
 import TgIcon from './TgIcons';
 import { tgT, useTgLang, presenceLine, relTime } from './tgStrings';
 import { useTgProfileData, normPost, likePost, deletePost, reportPost, absUrl } from './useTgProfileData';
@@ -610,7 +612,11 @@ export default function TgProfileView(props) {
           </Pressable>
         );
       }
-      case 'spin': return <View style={s.state}><ActivityIndicator color={th.muted} /></View>;
+      // [2026-10-20 ux] skeleton com a forma da aba (grade p/ mídia/posts em grade, cartão p/ posts, linhas p/ o resto)
+      case 'spin':
+        if (tab === 'media' || (tab === 'posts' && view === 'grid')) return <GridSkeleton count={9} columns={3} />;
+        if (tab === 'posts') return <PostSkeleton count={1} />;
+        return <SkeletonRows count={5} avatarSize={44} />;
       case 'more': return <View style={{ paddingVertical: 18 }}><ActivityIndicator color={th.muted} /></View>;
       case 'err': return (
         <Pressable onPress={() => (tab === 'posts' ? data.reloadPosts() : data.reloadShared(tab))} style={s.state}>

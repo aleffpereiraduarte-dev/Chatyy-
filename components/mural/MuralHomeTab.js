@@ -19,6 +19,7 @@ import { View, Text, Pressable, FlatList, RefreshControl, ActivityIndicator, Sty
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Rect, Path } from 'react-native-svg';
 import FastImage from '../FastImage';
+import { PostSkeleton } from '../SkeletonLoader';
 import { useMuralTheme } from './muralTheme';
 import MIcon from './MuralIcons';
 import { Avatar, sharePost } from './parts';
@@ -357,7 +358,7 @@ function MuralHomeTab(props) {
         <Text style={{ color: th.accentInk, fontWeight: '700', fontSize: 15 }}>{feed.error ? t('mural.feed.retry', 'Tentar de novo') : t('mural.publish', 'Publicar')}</Text>
       </Pressable>
     </View>
-  ) : (!feed.loaded && !feed.posts.length ? <ActivityIndicator style={{ marginTop: 40 }} color={th.muted} /> : null);
+  ) : (!feed.loaded && !feed.posts.length ? <PostSkeleton count={2} /> /* [2026-10-20 ux] skeleton em vez de spinner */ : null);
 
   const footer = feed.loading && feed.posts.length ? <ActivityIndicator style={{ marginVertical: 18 }} color={th.muted} />
     : (feed.loaded && !feed.hasMore && feed.posts.length > 3 ? <Text style={[s.end, { color: th.muted }]}>{t('mural.feed.end', 'Você viu tudo')}</Text> : null);

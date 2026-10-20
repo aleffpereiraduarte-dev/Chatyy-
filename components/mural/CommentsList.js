@@ -9,6 +9,7 @@ import MIcon from './MuralIcons';
 import { LIKE } from './muralTheme';
 import { Avatar, AnimatedHeart, shortAgo, count } from './parts';
 import * as store from '../../services/muralStore';
+import { CommentSkeleton } from '../SkeletonLoader';
 
 function _menu(opts) {
   try { require('../../services/profilePostComposer').showActionMenu(opts); } catch {}
@@ -83,7 +84,7 @@ export function CommentsBody({ postId, th, me, isPostOwner, onReply, onReport, e
   const st = store.useComments(postId);
   const items = st?.items || [];
   if (!st || (!st.loaded && st.loading)) {
-    return <View style={{ paddingVertical: 28, alignItems: 'center' }}><ActivityIndicator color={th.muted} /></View>;
+    return <CommentSkeleton count={4} />; // [2026-10-20 ux] skeleton em vez de spinner
   }
   if (st.error && !st.loaded) {
     return (

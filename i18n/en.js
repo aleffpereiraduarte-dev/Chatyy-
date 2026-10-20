@@ -14848,4 +14848,12 @@ export default {
   "listen.tracks": "Tracks",
   "listen.withName": "Listen with {name}",
   "watch.convEmptyVideo": "No videos have been sent in this chat yet.",
+  "chat.noPhotosYet": "No photos yet",
+  "chat.noPhotosHint": "Photos sent in this chat show up here.",
+  "chat.noVideosYet": "No videos yet",
+  "chat.noVideosHint": "Videos sent in this chat show up here.",
+  "chat.noAudioYet": "No audio yet",
+  "chat.noAudioHint": "Voice messages and audio show up here.",
+  "chat.noDocsYet": "No documents yet",
+  "chat.noDocsHint": "Shared PDFs and documents show up here.",
 };

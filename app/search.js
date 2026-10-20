@@ -25,6 +25,7 @@ import { contactTile, photoTile, queryTokens, matchesAll, snippetAround } from '
 // [2026-10-18 search-tabs] barra de busca NATIVA no header (UISearchController /
 // SearchView) + abas estilo Telegram. Kill switch: __chatyy_native_search_header = false.
 import { USE_NATIVE_HEADER, nativeHeaderOptions, NativeHeaderSafeArea } from '../components/nativeHeader';
+import { SkeletonRows } from '../components/Skeleton'; // [2026-10-20 ux]
 
 
 // Unified search screen — Pessoas / Hashtags / Sons / Lives. Each tab calls
@@ -737,8 +738,9 @@ export default function SearchScreen() {
       </ScrollView>
 
       {loading && !(nativeOn && !isMsgTab(tab)) && !isMsgTab(tab) && tab !== 'chats' && (
-        <View style={{ paddingVertical: 10 }}>
-          <ActivityIndicator size="small" color={colors.textSecondary} />
+        // [2026-10-20 ux] skeleton das linhas em vez de spinner solto
+        <View style={{ paddingTop: 4 }}>
+          <SkeletonRows count={5} avatarSize={40} />
         </View>
       )}
 

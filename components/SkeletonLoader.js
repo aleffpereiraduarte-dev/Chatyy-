@@ -182,6 +182,48 @@ export function ProfileSkeleton() {
   );
 }
 
+// [2026-10-20 ux] Post de feed (Mural): cabeçalho avatar+nome, mídia quadrada e barra de ações.
+// Substitui o spinner solto no 1º carregamento (Telegram/Instagram mostram a FORMA que vem).
+export function PostSkeleton({ count = 2 }) {
+  return (
+    <View>
+      {Array.from({ length: count }).map((_, i) => (
+        <View key={i} style={{ paddingVertical: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 10 }}>
+            <Shimmer style={{ width: 36, height: 36, borderRadius: 18 }} delay={i * 80} />
+            <View style={{ flex: 1, gap: 6 }}>
+              <Shimmer style={{ width: `${32 + _jit(i, 9) * 20}%`, height: 12, borderRadius: 6 }} delay={i * 80 + 20} />
+              <Shimmer style={{ width: 64, height: 10, borderRadius: 5 }} delay={i * 80 + 40} />
+            </View>
+          </View>
+          <Shimmer style={{ width: '100%', aspectRatio: 1, borderRadius: 0, marginTop: 10 }} delay={i * 80 + 60} />
+          <View style={{ flexDirection: 'row', paddingHorizontal: 16, marginTop: 10, gap: 14 }}>
+            {[0, 1, 2].map((k) => <Shimmer key={k} style={{ width: 24, height: 24, borderRadius: 12 }} delay={i * 80 + 80 + k * 20} />)}
+          </View>
+          <Shimmer style={{ width: `${55 + _jit(i, 10) * 30}%`, height: 11, borderRadius: 6, marginTop: 10, marginLeft: 16 }} delay={i * 80 + 140} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+// [2026-10-20 ux] Comentários: avatar pequeno + 2 linhas (substitui spinner no 1º carregamento).
+export function CommentSkeleton({ count = 4 }) {
+  return (
+    <View style={{ paddingVertical: 6 }}>
+      {Array.from({ length: count }).map((_, i) => (
+        <View key={i} style={{ flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 8, gap: 10 }}>
+          <Shimmer style={{ width: 32, height: 32, borderRadius: 16 }} delay={i * 50} />
+          <View style={{ flex: 1, gap: 6, paddingTop: 2 }}>
+            <Shimmer style={{ width: 90, height: 10, borderRadius: 5 }} delay={i * 50 + 20} />
+            <Shimmer style={{ width: `${45 + _jit(i, 11) * 45}%`, height: 12, borderRadius: 6 }} delay={i * 50 + 40} />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 // Generic list skeleton (files, notes, contacts, etc.)
 export function ListSkeleton({ count = 6, showIcon = true }) {
   return (

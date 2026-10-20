@@ -7,6 +7,7 @@
 // Os chips usam o MESMO estilo das pílulas de aba da tela (pillStyle vem do
 // search.js), então ajuste visual lá vale aqui também.
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { SkeletonRows } from './Skeleton';
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Pressable, StyleSheet } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import FastImage from './FastImage';
@@ -500,7 +501,10 @@ export default function GlobalMessageSearch({ query, colors, isDark, t, router, 
       </ScrollView>
 
       {loading && !nativeOn ? (
-        <View style={{ paddingVertical: 10 }}><ActivityIndicator size="small" color={sub} /></View>
+        // [2026-10-20 ux] 1ª busca = skeleton das linhas (Telegram); refinando c/ resultados = spinner fino
+        rows.length === 0
+          ? <View style={{ paddingTop: 4 }}><SkeletonRows count={6} avatarSize={40} /></View>
+          : <View style={{ paddingVertical: 10 }}><ActivityIndicator size="small" color={sub} /></View>
       ) : null}
 
       {gridOn && gridItems.length > 0 ? (

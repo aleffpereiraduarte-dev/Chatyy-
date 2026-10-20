@@ -14926,4 +14926,12 @@ export default {
   "listen.tracks": "Faixas",
   "listen.withName": "Ouvir junto com {name}",
   "watch.convEmptyVideo": "Ainda não mandaram vídeos nesta conversa.",
+  "chat.noPhotosYet": "Nenhuma foto ainda",
+  "chat.noPhotosHint": "As fotos enviadas nesta conversa aparecem aqui.",
+  "chat.noVideosYet": "Nenhum vídeo ainda",
+  "chat.noVideosHint": "Os vídeos enviados nesta conversa aparecem aqui.",
+  "chat.noAudioYet": "Nenhum áudio ainda",
+  "chat.noAudioHint": "As mensagens de voz e áudios aparecem aqui.",
+  "chat.noDocsYet": "Nenhum documento ainda",
+  "chat.noDocsHint": "Os PDFs e documentos compartilhados aparecem aqui.",
 };
