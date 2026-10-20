@@ -5967,6 +5967,7 @@ export default {
   'chatConv.meetupAdjustOnMap': 'Ajustar en el mapa',
   'chatConv.meetupPastTime': 'Elige un horario que aún no haya pasado.',
   'chatConv.going': 'van',
+  'chatConv.meetupNoRsvp': 'Nadie confirmó todavía',
   'chatConv.maybe': 'quizás',
   'chatConv.imGoing': '¡Voy!',
   'chatConv.imMaybe': 'Quizás',

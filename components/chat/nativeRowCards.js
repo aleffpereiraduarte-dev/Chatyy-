@@ -667,6 +667,18 @@ function _meetupLoc(raw) {
   try { return require('../meetup/meetupLocation').parseMeetupLocation(raw); } catch { return { text: String(raw || ''), lat: null, lng: null }; }
 }
 
+// [2026-10-20 encontro-glyph] founder: "quadrado vazio" no cartão — icon(IconCalendar/
+// IconClock/IconMapPin/IconCheckCircle) em traço saía vazio no nativo. Glifos CHEIOS só com
+// M/H/V/C/Z (sem arco); calendário = retângulos (sem furo/evenodd).
+const MT_GLYPH_CAL = [
+  'M3 6C3 4.9 3.9 4 5 4H19C20.1 4 21 4.9 21 6V9H3Z',
+  'M7 2H9V6H7Z', 'M15 2H17V6H15Z',
+  'M3 9H5V20H3Z', 'M19 9H21V20H19Z',
+  'M3 19H21V20C21 21.1 20.1 22 19 22H5C3.9 22 3 21.1 3 20Z',
+  'M7 12H11V16H7Z',
+];
+const MT_GLYPH_PIN = 'M12 2C8.13 2 5 5.13 5 9C5 14.25 12 22 12 22C12 22 19 14.25 19 9C19 5.13 15.87 2 12 2Z';
+
 function buildMeetup(m, row, ctx, C, own) {
   const mt = _json(m.content) || {};
   const P = _palette(own, C); const col = P.col; const isDark = P.dark;
@@ -683,7 +695,7 @@ function buildMeetup(m, row, ctx, C, own) {
   const ic = past ? '#6b7280' : '#111111';
   const w = _clampW(240, 280, 24 + 36 + 8 + Math.min(_estW(mt.title, 14, true), 200), 20 + 20 + _estW(dateStr, 12.5, true));
   const body = [
-    hstack([icon(IconClock, { s: 14, c: ic }), text(String(dateStr || ''), { fs: 12.5, fw: 600, c: own ? C.ownText : col.text })], { g: 6, m: [0, 0, 4, 0], al: 'c' }),
+    text(String(dateStr || ''), { fs: 13, fw: 700, c: own ? C.ownText : col.text, m: [0, 0, 6, 0] }),
   ];
   if (mt.location) {
     // [encontro 2026-10-19] "Lugar, Endereço|lat,lng" → mapa estático c/ pino + endereço; toque (mt_map)
@@ -698,13 +710,15 @@ function buildMeetup(m, row, ctx, C, own) {
     }
     body.push(vstack([
       mapNode,
-      hstack([icon(IconMapPin, { s: 14, c: past ? ic : (own ? C.ownText : col.text) }), text(String(ML.text || ''), { fs: 12, c: own ? C.ownMeta : col.textSecondary, fl: 1, ml: 2 })], { g: 6, al: 'c', w: -1 }),
+      hstack([iconPaths([{ d: MT_GLYPH_PIN, f: past ? ic : (own ? C.ownText : col.text) }], { s: 14 }), text(String(ML.text || ''), { fs: 12, c: own ? C.ownMeta : col.textSecondary, fl: 1, ml: 2 })], { g: 6, al: 'c', w: -1 }),
     ].filter(Boolean), { w: -1, m: [0, 0, 4, 0], a: 'mt_map' }));
   }
   if (mt.description) body.push(text(String(mt.description), { fs: 12, c: own ? C.ownMeta : col.textSecondary, m: [2, 0, 4, 0], ml: 3 }));
   body.push(hstack([
-    hstack([icon(IconCheckCircle, { s: 12, c: own ? C.ownText : col.text }), text(`${going} ${_tr(C, 'chatConv.going', 'vão')}`, { fs: 11, fw: 700, c: own ? C.ownText : col.text })], { g: 4, al: 'c' }),
-    maybe > 0 ? hstack([icon(IconHelpCircle, { s: 12, c: own ? C.ownMeta : col.textSecondary }), text(`${maybe} ${_tr(C, 'chatConv.maybe', 'talvez')}`, { fs: 11, fw: 600, c: own ? C.ownMeta : col.textSecondary })], { g: 4, al: 'c' }) : null,
+    total === 0
+      ? text(_tr(C, 'chatConv.meetupNoRsvp', 'Ninguém confirmou ainda'), { fs: 11, fw: 600, c: own ? C.ownMeta : col.textSecondary })
+      : text(`${going} ${_tr(C, 'chatConv.going', 'vão')}`, { fs: 11, fw: 700, c: own ? C.ownText : col.text }),
+    maybe > 0 ? text(`${maybe} ${_tr(C, 'chatConv.maybe', 'talvez')}`, { fs: 11, fw: 600, c: own ? C.ownMeta : col.textSecondary }) : null,
     total > 0 ? { t: 'sp', fl: 1 } : null,
     total > 0 ? text(`${total} ${total === 1 ? _tr(C, 'chatConv.attendee', 'participante') : _tr(C, 'chatConv.attendees', 'participantes')}`, { fs: 10, c: own ? C.ownMeta : C.otherMeta }) : null,
   ], { m: [4, 0, 8, 0], g: 12, al: 'c', w: -1 }));
@@ -720,7 +734,7 @@ function buildMeetup(m, row, ctx, C, own) {
   }), { g: 6, w: -1 }));
   row.bl = [vstack([
     hstack([
-      vstack([icon(IconCalendar, { s: 18, c: '#FFFFFF' })], { w: 36, h: 36, r: 10, bg: 'rgba(255,255,255,0.2)', al: 'c', jc: 'c' }),
+      vstack([iconPaths(MT_GLYPH_CAL.map((d) => ({ d, f: '#FFFFFF' })), { s: 18 })], { w: 36, h: 36, r: 10, bg: 'rgba(255,255,255,0.2)', al: 'c', jc: 'c' }),
       vstack([
         text(String(mt.title || ''), { fw: 700, fs: 14, c: '#FFFFFF', ml: 2 }),
         past ? text(_tr(C, 'chatConv.eventPast', 'Evento encerrado'), { fs: 10, c: 'rgba(255,255,255,0.75)', fw: 600 }) : null,
