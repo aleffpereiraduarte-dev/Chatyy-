@@ -3135,6 +3135,16 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     if (!router) return;
     const email = item.contactEmail || item.contact_email || '';
     const name = item.contactName || item.contact_name || '';
+    // [2026-10-20 wa2] Linha de chamada em GRUPO: ligar de volta abria uma chamada 1:1 com
+    // contact_email (quem iniciou). Abre a conversa do grupo, onde a chamada em grupo começa.
+    if (item.isGroup && item.conversation_id) {
+      try {
+        require('../services/openConversation').openConversation(`/chat-conversation?id=${item.conversation_id}&name=${encodeURIComponent(name)}&type=group`);
+      } catch {
+        router.push({ pathname: '/chat-conversation', params: { id: String(item.conversation_id), name, type: 'group' } });
+      }
+      return;
+    }
     if (!email) return;
     // [2026-10-17 polish-calls-wa] linha do servidor traz type='video' (não item.video):
     // rediscar uma chamada de vídeo saía como voz.
@@ -3198,6 +3208,14 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
           // [WAVE 117A] Web only — mobile shows no fallback JS screen.
           if (Platform.OS === 'web') {
             router.push(`/call?contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
+          } else {
+            // [2026-10-20 wa2] Falha ao ligar no celular ficava muda (nada acontecia ao tocar).
+            try {
+              Alert.alert(
+                (t && t('common.error')) || 'Erro',
+                (t && t('calls.callFailed')) || 'Não foi possível iniciar a chamada. Tente de novo.',
+              );
+            } catch {}
           }
         }
       })();
@@ -3205,7 +3223,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     }
     // Web fallback: keep /call.js
     router.push(`/call?contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
-  }, [router, handleHistoryPress]);
+  }, [router, handleHistoryPress, t]);
 
   // [2026-10-17 sem-pstn] "Nova chamada" (só Chatyy) — substitui o discador.
   // Recentes = pessoas Chatyy do histórico (sem linhas de telefone).
@@ -3335,8 +3353,9 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     for (const v of voipHistory) {
       merged.push({
         id: `voip_${v.id}`,
-        type: v.status === 'completed' ? 'outgoing' : (v.status === 'failed' ? 'missed' : 'outgoing'),
-        direction: v.status === 'failed' ? 'missed' : 'outgoing', // [2026-10-06 UX2] PSTN rows are always placed by us
+        // [2026-10-20 wa2] Ligação feita por nós nunca é "perdida" (WhatsApp não pinta de vermelho a própria saída).
+        type: 'outgoing',
+        direction: 'outgoing', // [2026-10-06 UX2] PSTN rows are always placed by us
         contactName: v.contact_name || '',
         contactEmail: '',
         to_number: v.to_number,
@@ -3389,6 +3408,15 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
         timestamp: c.timestamp || c.created_at || c.started_at,
         video: callIsVideo(c),
         source: isPhone ? 'voip' : 'chat',
+        // [2026-10-20 wa2] Campos do servidor que o merge descartava: ícone de recado de voz,
+        // filtro de grupo em "Recentes" e ligar de volta para a conversa certa.
+        isGroup: !!(c.isGroup || c.is_group || c.type === 'group'),
+        conversation_id: c.conversation_id || c.conversationId || null,
+        has_voicemail: c.has_voicemail,
+        voicemail_message_id: c.voicemail_message_id,
+        voicemail_url: c.voicemail_url,
+        voicemail_duration: c.voicemail_duration,
+        call_id: c.call_id,
       });
     }
     // Null-safe sort: if either side has no timestamp (backend returned
