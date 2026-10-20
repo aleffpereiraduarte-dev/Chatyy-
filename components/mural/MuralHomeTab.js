@@ -29,6 +29,7 @@ import { normPost, absUrl, reportPost } from '../profile/tg/useTgProfileData';
 import { usePendingProfilePosts, openPendingPostMenu } from '../ProfilePostProgress';
 import * as store from '../../services/muralStore';
 import * as muralNav from '../../services/muralNav';
+import * as signals from '../../services/muralSignals'; // [mural-cerebro 2026-10-20]
 import { useLanguage } from '../../context/LanguageContext';
 
 const ReelsHomeTab = React.lazy(() => import('../ReelsHomeTab'));
@@ -58,7 +59,7 @@ function useMuralFeed(tab, enabled) {
   const [st, setSt] = useState(() => {
     const cached = _readCache(tab);
     if (cached) _prime(cached);
-    return { posts: cached || [], cursor: null, hasMore: true, loading: false, refreshing: false, error: false, loaded: false, fromCache: !!cached };
+    return { posts: cached || [], cursor: null, hasMore: true, loading: false, refreshing: false, error: false, loaded: false, fromCache: !!cached, fs: null, railAt: 1 };
   });
   const busy = useRef(false);
   const stRef = useRef(st);
@@ -72,7 +73,7 @@ function useMuralFeed(tab, enabled) {
     setSt((s) => ({ ...s, loading: mode !== 'refresh', refreshing: mode === 'refresh', error: false }));
     let r = null;
     try {
-      r = await _api().apiCall('mural_feed', { tab, limit: PAGE, ...(mode === 'more' ? { cursor: cur.cursor } : null) }, 'POST');
+      r = await _api().apiCall('mural_feed', { tab, limit: PAGE, tz: -new Date().getTimezoneOffset(), ...(mode === 'more' ? { cursor: cur.cursor } : null) }, 'POST');
     } catch { r = null; }
     busy.current = false;
     const d = r && r.success && r.data ? r.data : null;
@@ -84,7 +85,10 @@ function useMuralFeed(tab, enabled) {
     setSt((s) => {
       const posts = mode === 'more' ? [...s.posts, ...d.posts.filter((p) => !s.posts.some((q) => String(q.id) === String(p.id)))] : d.posts;
       if (mode !== 'more') _writeCache(tab, posts);
-      return { posts, cursor: d.next_cursor || null, hasMore: !!d.has_more, loading: false, refreshing: false, error: false, loaded: true, fromCache: false };
+      // [mural-cerebro 2026-10-20] fs = sessão ranqueada do servidor (sinais/A-B); rail_at = onde entra a faixa de Reels
+      const fs = d.fs || (mode === 'more' ? s.fs : null) || null;
+      const railAt = Number.isFinite(Number(d.rail_at)) ? Math.max(0, Math.min(6, Number(d.rail_at))) : (mode === 'more' ? s.railAt : 1);
+      return { posts, cursor: d.next_cursor || null, hasMore: !!d.has_more, loading: false, refreshing: false, error: false, loaded: true, fromCache: false, fs, railAt };
     });
   }, [tab]);
 
@@ -164,7 +168,7 @@ function ReelGlyph({ size = 16, color = '#000' }) {
 }
 
 // ─── um post do feed (cópia viva do muralStore por cima do objeto do servidor) ──
-const FeedRow = memo(function FeedRow({ raw, th, lang, shadow, onMore }) {
+const FeedRow = memo(function FeedRow({ raw, th, lang, shadow, onMore, ctx }) {
   const sp = store.usePost(raw.id);
   const post = useMemo(() => {
     const base = normPost(raw);
@@ -177,11 +181,11 @@ const FeedRow = memo(function FeedRow({ raw, th, lang, shadow, onMore }) {
     name: au.name || '', username: au.username || '',
     avatar: (sz) => <Avatar email={au.email} name={au.name || au.email} size={sz} />,
   }), [au.email, au.name, au.username]); // eslint-disable-line react-hooks/exhaustive-deps
-  const onOpen = useCallback(() => { try { muralNav.openPost(raw); } catch {} }, [raw]);
-  const onLike = useCallback(() => { try { store.toggleLike(raw.id); } catch {} }, [raw.id]);
-  const onComments = useCallback(() => { try { muralNav.openComments(raw, { post: raw }); } catch {} }, [raw]);
-  const onShare = useCallback(() => { sharePost({ id: raw.id, caption: (sp && sp.caption) || raw.text || '' }, (k, f) => f); }, [raw, sp]);
-  const onBookmark = useCallback(() => { try { store.toggleSave(raw.id); } catch {} }, [raw.id]);
+  const onOpen = useCallback(() => { signals.trackMural(raw.id, 'open', ctx); try { muralNav.openPost(raw); } catch {} }, [raw, ctx]);
+  const onLike = useCallback(() => { signals.trackMural(raw.id, (sp ? sp.liked : raw.liked_by_me) ? 'unlike' : 'like', ctx); try { store.toggleLike(raw.id); } catch {} }, [raw.id, sp, ctx]);
+  const onComments = useCallback(() => { signals.trackMural(raw.id, 'comment', ctx); try { muralNav.openComments(raw, { post: raw }); } catch {} }, [raw, ctx]);
+  const onShare = useCallback(() => { signals.trackMural(raw.id, 'share', ctx); sharePost({ id: raw.id, caption: (sp && sp.caption) || raw.text || '' }, (k, f) => f); }, [raw, sp, ctx]);
+  const onBookmark = useCallback(() => { signals.trackMural(raw.id, sp && sp.saved ? 'unsave' : 'save', ctx); try { store.toggleSave(raw.id); } catch {} }, [raw.id, sp, ctx]);
   const more = useCallback(() => onMore(raw), [onMore, raw]);
   if (!post) return null;
   return (
@@ -282,22 +286,61 @@ function MuralHomeTab(props) {
 
   const shadow = th.isDark ? null : (Platform.OS === 'web' ? { boxShadow: '0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06)' } : { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 1 });
 
+  // [mural-cerebro 2026-10-20] "Não tenho interesse" / ocultar autor somem na hora (o servidor tira da sessão também)
+  const [hidden, setHidden] = useState(() => ({ ids: new Set(), authors: new Set() }));
+  const hide = useCallback((id, author, on) => setHidden((h) => {
+    const ids = new Set(h.ids); const authors = new Set(h.authors);
+    if (id) { if (on) ids.add(String(id)); else ids.delete(String(id)); }
+    if (author) { if (on) authors.add(String(author).toLowerCase()); else authors.delete(String(author).toLowerCase()); }
+    return { ids, authors };
+  }), []);
+  const ctxFor = useMemo(() => ({ fs: feed.fs, tab: seg }), [feed.fs, seg]);
   const onMore = useCallback((raw) => {
     let pc = null;
     try { pc = require('../../services/profilePostComposer'); } catch { pc = null; }
     if (!pc || !pc.showActionMenu) return;
+    const toast = (o) => { try { require('../ui/Toast').showToast(o); } catch {} };
     const mine = !!(raw.is_mine || String(raw.author?.email || '').toLowerCase() === me.email.toLowerCase());
-    const opts = [{ label: t('mural.share', 'Compartilhar'), onPress: () => sharePost({ id: raw.id, caption: raw.text || '' }, t) }];
+    const share = { label: t('mural.share', 'Compartilhar'), onPress: () => { signals.trackMural(raw.id, 'share', ctxFor); sharePost({ id: raw.id, caption: raw.text || '' }, t); } };
+    const opts = [];
     if (mine) {
+      opts.push(share);
       opts.push({ label: t('mural.delete', 'Apagar'), destructive: true, onPress: async () => {
         const ok = await store.deletePost(raw.id);
-        try { require('../ui/Toast').showToast({ message: ok ? t('mural.deleted', 'Publicação apagada') : t('mural.err.delete', 'Não foi possível apagar'), kind: ok ? 'success' : 'error' }); } catch {}
+        toast({ message: ok ? t('mural.deleted', 'Publicação apagada') : t('mural.err.delete', 'Não foi possível apagar'), kind: ok ? 'success' : 'error' });
       } });
     } else {
-      opts.push({ label: t('mural.report', 'Denunciar'), destructive: true, onPress: () => { reportPost(raw.id).then((ok) => { if (ok) { try { require('../ui/Toast').showToast({ message: t('mural.feed.reported', 'Obrigado. Vamos analisar.'), kind: 'success' }); } catch {} } }); } });
+      const au = raw.author || {};
+      const auName = au.name || String(au.email || '').split('@')[0];
+      opts.push({ label: t('mural.why.menu', 'Por que estou vendo isto?'), onPress: async () => {
+        let text = raw.rec ? signals.whyText(raw.rec, t) : '';
+        if (!text) { const d = await signals.muralWhy(raw.id, ctxFor); text = signals.whyText(d && d.why, t); }
+        const foot = t('mural.why.foot', 'O Mural aprende com o que você vê, curte e comenta aqui no Chatyy. Você pode desligar isso em Ajustes > Privacidade.');
+        try { require('../../utils/confirm').alertAsync(t('mural.why.title', 'Por que estou vendo isto?'), `${text}\n\n${foot}`); } catch {}
+      } });
+      opts.push({ label: t('mural.notInterested', 'Não tenho interesse'), onPress: () => {
+        hide(raw.id, null, true);
+        signals.muralFeedback(raw.id, 'not_interested', ctxFor);
+        toast({ message: t('mural.notInterestedDone', 'Ok, você verá menos publicações assim'), kind: 'success',
+          action: { label: t('mural.undo', 'Desfazer'), onPress: () => { hide(raw.id, null, false); signals.muralFeedback(raw.id, 'undo_not_interested', ctxFor); } } });
+      } });
+      opts.push({ label: t('mural.hideAuthor', 'Ocultar publicações de {name}').replace('{name}', auName), onPress: () => {
+        hide(null, au.email, true);
+        signals.muralFeedback(raw.id, 'hide_author', { ...ctxFor, author: au.email });
+        toast({ message: t('mural.hideAuthorDone', 'Você não verá mais publicações de {name} no Mural').replace('{name}', auName), kind: 'success',
+          action: { label: t('mural.undo', 'Desfazer'), onPress: () => { hide(null, au.email, false); signals.muralFeedback(raw.id, 'undo_hide_author', { ...ctxFor, author: au.email }); } } });
+      } });
+      opts.push(share);
+      opts.push({ label: t('mural.report', 'Denunciar'), destructive: true, onPress: () => { reportPost(raw.id).then((ok) => { if (ok) { hide(raw.id, null, true); toast({ message: t('mural.feed.reported', 'Obrigado. Vamos analisar.'), kind: 'success' }); } }); } });
+    }
+    // Android: o Alert só mostra 3 botões → as 2 primeiras + "Mais opções"
+    if (Platform.OS === 'android' && opts.length > 3) {
+      const rest = opts.slice(2);
+      pc.showActionMenu({ options: [opts[0], opts[1], { label: t('mural.moreOptions', 'Mais opções'), onPress: () => setTimeout(() => pc.showActionMenu({ options: rest, cancelLabel: t('common.cancel', 'Cancelar') }), 250) }], cancelLabel: t('common.cancel', 'Cancelar') });
+      return;
     }
     pc.showActionMenu({ options: opts, cancelLabel: t('common.cancel', 'Cancelar') });
-  }, [me.email, t]);
+  }, [me.email, t, ctxFor, hide]);
 
   const openComposer = useCallback((mode) => {
     try { muralNav.openComposer({ router, mode, from: 'mural', ...(mode === 'photo' ? { pick: 'library' } : null) }); } catch {}
@@ -306,19 +349,43 @@ function MuralHomeTab(props) {
   // linhas: pendentes → posts (faixa de Reels depois do 2º no "Para você")
   const rows = useMemo(() => {
     const out = pending.map((p) => ({ k: 'pend', key: `pend${p.id}`, post: p }));
-    feed.posts.forEach((p, i) => {
+    const railAt = Number.isFinite(feed.railAt) ? feed.railAt : 1; // [mural-cerebro 2026-10-20] quem gosta de vídeo vê a faixa antes
+    const vis = feed.posts.filter((p) => !hidden.ids.has(String(p.id)) && !hidden.authors.has(String((p.author && p.author.email) || '').toLowerCase()));
+    vis.forEach((p, i) => {
       out.push({ k: 'post', key: `p${p.id}`, raw: p });
-      if (seg === 'foryou' && i === 1) out.push({ k: 'rail', key: 'rail' });
+      if (seg === 'foryou' && i === railAt) out.push({ k: 'rail', key: 'rail' });
     });
-    if (seg === 'foryou' && feed.posts.length > 0 && feed.posts.length < 2) out.push({ k: 'rail', key: 'rail' });
+    if (seg === 'foryou' && vis.length > 0 && vis.length <= railAt) out.push({ k: 'rail', key: 'rail' });
     return out;
-  }, [pending, feed.posts, seg]);
+  }, [pending, feed.posts, feed.railAt, seg, hidden]);
 
   const renderItem = useCallback(({ item }) => {
     if (item.k === 'rail') return <ReelsRail th={th} t={t} lang={lang} onOpen={() => setSeg('reels')} enabled={active} />;
     if (item.k === 'pend') return <PendingRow post={item.post} th={th} lang={lang} shadow={shadow} me={me} />;
-    return <FeedRow raw={item.raw} th={th} lang={lang} shadow={shadow} onMore={onMore} />;
-  }, [th, t, lang, shadow, me, onMore, setSeg, active]);
+    return <FeedRow raw={item.raw} th={th} lang={lang} shadow={shadow} onMore={onMore} ctx={ctxFor} />;
+  }, [th, t, lang, shadow, me, onMore, setSeg, active, ctxFor]);
+
+  // [mural-cerebro 2026-10-20] impressão = ≥50% na tela; o tempo visível vira dwell (services/muralSignals)
+  const viewCtx = useRef(ctxFor);
+  viewCtx.current = ctxFor;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50, minimumViewTime: 0 }).current;
+  const viewing = useRef(new Set());
+  const feedVisible = active && seg !== 'reels';
+  const feedVisibleRef = useRef(feedVisible);
+  feedVisibleRef.current = feedVisible;
+  const onViewableItemsChanged = useRef(({ changed }) => {
+    for (const c of changed || []) {
+      const it = c && c.item;
+      if (!it || it.k !== 'post' || !it.raw) continue;
+      if (c.isViewable) { viewing.current.add(it.raw.id); if (feedVisibleRef.current) signals.muralViewStart(it.raw.id, viewCtx.current); }
+      else { viewing.current.delete(it.raw.id); signals.muralViewEnd(it.raw.id); }
+    }
+  }).current;
+  useEffect(() => {
+    if (!feedVisible) { signals.endAllViews(); signals.flushMuralSignals(); return; }
+    for (const id of viewing.current) signals.muralViewStart(id, viewCtx.current); // voltou p/ a aba: o que está na tela conta de novo
+  }, [feedVisible]);
+  useEffect(() => () => { signals.endAllViews(); signals.flushMuralSignals(); }, []);
 
   let StoriesStrip = null;
   try { StoriesStrip = require('../ChatFeedTab').StoriesStrip || null; } catch { StoriesStrip = null; }
@@ -387,6 +454,8 @@ function MuralHomeTab(props) {
           onEndReachedThreshold={0.6}
           onEndReached={() => { if (feed.loaded && feed.hasMore && !feed.loading) feed.load('more'); }}
           refreshControl={<RefreshControl refreshing={!!feed.refreshing} onRefresh={() => feed.load('refresh')} tintColor={th.muted} />}
+          viewabilityConfig={viewabilityConfig}
+          onViewableItemsChanged={onViewableItemsChanged}
           initialNumToRender={5}
           maxToRenderPerBatch={5}
           windowSize={7}

@@ -8,16 +8,20 @@
  *     por padrão; extração no aparelho — recurso ainda desligado no produto, o
  *     switch só grava a preferência).
  *   - Receber ofertas e promoções do Chatyy e parceiros (consentimento; DESLIGADO).
+ *   - [mural-cerebro 2026-10-20] Mural: "Personalizar o Mural com base na minha atividade" (LIGADO;
+ *     desligar = Mural em ordem de tempo e nada de comportamento guardado) + "Limpar histórico de
+ *     interesses" (Mural e Reels; services/muralSignals → mural_prefs / mural_interest_clear).
  * Cada mudança vira um registro no servidor (services/consents.js → consent_set,
  * canal 'settings'). Revogar é tão fácil quanto consentir: um toque.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useLanguage } from '../context/LanguageContext';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { SettingsScreen, SettingsGroup, SettingsRow, SettingsSwitchRow, useGroupedColors } from '../components/settings/SettingsKit';
 import { useConsentState, setConsent, TERMS_VERSION } from '../services/consents';
+import { muralPrefsGet, muralPrefsSet, muralInterestClear } from '../services/muralSignals';
 
 export default function PrivacyPersonalizationScreen() {
   const { t } = useLanguage();
@@ -25,6 +29,33 @@ export default function PrivacyPersonalizationScreen() {
   const g = useGroupedColors();
   const s = useConsentState();
   const [failed, setFailed] = useState(false);
+  const [mural, setMural] = useState(null); // { personalize } — null = carregando / sem rede
+  const [clearing, setClearing] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    muralPrefsGet().then((d) => { if (alive && d) setMural({ personalize: d.personalize !== false }); });
+    return () => { alive = false; };
+  }, []);
+  const toggleMural = async (v) => {
+    const prev = mural;
+    setMural({ personalize: !!v });
+    const d = await muralPrefsSet(!!v);
+    if (!d) { setMural(prev); setFailed(true); }
+  };
+  const clearMural = async () => {
+    let ok = false;
+    try {
+      ok = await require('../utils/confirm').confirmAsync({
+        title: t('mural.prefs.clearTitle'), message: t('mural.prefs.clearMsg'),
+        confirmLabel: t('mural.prefs.clearConfirm'), destructive: true,
+      });
+    } catch { ok = false; }
+    if (!ok) return;
+    setClearing(true);
+    const done = await muralInterestClear();
+    setClearing(false);
+    try { require('../components/ui/Toast').showToast({ message: done ? t('mural.prefs.cleared') : t('mural.prefs.clearFailed'), kind: done ? 'success' : 'error' }); } catch {}
+  };
 
   const change = (purpose) => async (v) => {
     setFailed(false);
@@ -47,6 +78,24 @@ export default function PrivacyPersonalizationScreen() {
             value={s.personalization !== false}
             onValueChange={change('personalization')}
             testID="consent-personalization-switch"
+          />
+        </SettingsGroup>
+
+        <SettingsGroup header={t('mural.prefs.section')} footer={t('mural.prefs.footer')}>
+          <SettingsSwitchRow
+            title={t('mural.prefs.personalizeTitle')}
+            subtitle={t('mural.prefs.personalizeDesc')}
+            value={mural ? mural.personalize : true}
+            disabled={!mural}
+            onValueChange={toggleMural}
+            testID="mural-personalize-switch"
+          />
+          <SettingsRow
+            title={t('mural.prefs.clear')}
+            destructive
+            disabled={clearing}
+            onPress={clearMural}
+            testID="mural-clear-interests"
           />
         </SettingsGroup>
 
