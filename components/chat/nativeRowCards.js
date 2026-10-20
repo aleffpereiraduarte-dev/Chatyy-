@@ -388,6 +388,7 @@ function cardKind(item, ctx) {
     case 'game': // [jogos 2026-10-18]
       return type;
     case 'location_request': return _lrOn() ? type : null; // [loc-pedido 2026-10-19] desligado = cartao-resumo
+    case 'watch_session': return _watchOn() ? type : null; // [assistir-junto 2026-10-20] desligado = fallback (texto legível)
     // [2026-10-16 native-cover] vídeo redondo antigo (200 px) → mesma nota de vídeo nativa
     case 'video_message': return (item.file_url || item._localUri) ? 'vn' : null;
     default: break;
@@ -428,6 +429,7 @@ export function cardReason(item, ctx) {
     case 'meetup': case 'playlist': case 'call_card': return _json(item.content) ? '' : k + '-raw';
     case 'game': { try { return require('../../services/games').parseGameContent(item.content) ? '' : 'game-raw'; } catch { return 'game-raw'; } } // [jogos 2026-10-18]
     case 'location': return '';
+    case 'watch_session': { try { return require('../../services/watchTogether').parseWatchContent(item.content) ? '' : 'watch-raw'; } catch { return 'watch-raw'; } } // [assistir-junto 2026-10-20]
     default: return '';
   }
 }
@@ -1460,6 +1462,76 @@ function buildLocReq(m, row, ctx, C, own) {
   row.cw = W + 12; row.pad = PAD; row.mp = 'below';
 }
 
+// ─── [assistir-junto 2026-10-20] convite "Assistir/Ouvir junto" (espelho de components/watch/WatchInviteCard) ───
+// Ação: watch:open → sala (app/watch-room). Ao vivo/encerrada vem do estado da sessão (services/watchTogether);
+// mudança de sessão/viewers → cards.bump(). Sem relógio correndo aqui (o JS mostra o tempo).
+function _watchOn() { try { return require('../../services/watchTogether').watchEnabled(); } catch { return false; } }
+let _watchBumpFn = null;
+let _watchBumpOff = null;
+function _watchHookBump(C) {
+  if (C && typeof C.bump === 'function') _watchBumpFn = C.bump;
+  if (_watchBumpOff) return;
+  try {
+    let last = '';
+    _watchBumpOff = require('../../services/watchTogether').onAnySession((cid, s) => {
+      const sig = s ? [s.sid, s.status, s.qi, (s.item && s.item.id) || '', (s.viewers || []).length].join('|') : 'null';
+      if (sig === last) return;
+      last = sig;
+      try { _watchBumpFn && _watchBumpFn(); } catch {}
+    });
+  } catch {}
+}
+function buildWatch(m, row, ctx, C, own) {
+  const WT = require('../../services/watchTogether');
+  const W = require('../watch/WatchIcons');
+  const j = WT.parseWatchContent(m.content);
+  if (!j) return;
+  _watchHookBump(C);
+  const tf = (k, fb, vars) => WT.tr(C.t, k, fb, vars);
+  const s = WT.getSession(m.conversation_id);
+  const same = s && s.sid === j.sid;
+  const live = same ? WT.isLive(s) : (j.status === 'live' && !s);
+  const music = j.mode === 'music';
+  const cur = same && s.item ? s.item : { title: j.title, thumb: j.thumb };
+  const P = _palette(own, C); const col = P.col;
+  const ink = own ? C.ownText : (col.text || '#111111');
+  const sub = own ? C.ownMeta : (col.textSecondary || C.otherMeta || '#6b7280');
+  const w = 268;
+  const me = String(ctx.myEmail || '').toLowerCase();
+  const who = String(j.host || '').toLowerCase() === me ? tf('watch.you', 'Você') : (j.host_name || '');
+  const verb = music ? tf('watch.card.startedListening', 'começou a ouvir') : tf('watch.card.startedWatching', 'começou a assistir');
+  const liveTag = live ? hstack([vstack([], { w: 7, h: 7, r: 4, bg: '#ff453a' }), text(tf('watch.card.live', 'AO VIVO'), { fs: 11.5, fw: 700, c: '#FFFFFF' })],
+    { g: 6, al: 'c', bg: 'rgba(0,0,0,0.55)', r: 11, p: [3, 9, 3, 9] }) : null;
+  let cover;
+  if (music) {
+    cover = hstack([
+      cur.thumb ? image(cur.thumb, { w: 58, h: 58, r: 10, fit: 'cover' }) : vstack([icon(W.IconHeadphones, { s: 26, c: '#FFFFFF' })], { w: 58, h: 58, r: 10, bg: '#3a3a3c', al: 'c', jc: 'c' }),
+      vstack([text(cur.title || '', { fs: 15, fw: 700, c: '#FFFFFF', ml: 1 }), liveTag ? vstack([liveTag], { m: [6, 0, 0, 0] }) : null], { fl: 1 }),
+    ], { w: -1, g: 12, al: 'c', p: [12, 12, 12, 12], bg: '#2c2c2e', a: 'watch:open' });
+  } else {
+    const base = cur.thumb ? image(cur.thumb, { w: -1, h: 128, fit: 'cover', bg: '#1c1c1e' }) : vstack([icon(W.IconTogether, { s: 40, c: 'rgba(255,255,255,0.7)' })], { w: -1, h: 128, bg: '#1c1c1e', al: 'c', jc: 'c' });
+    cover = zstack([base, liveTag ? vstack([liveTag], { pos: 'tl', m: [10, 10, 0, 0] }) : null], { w: -1, a: 'watch:open' });
+  }
+  const viewers = same ? WT.viewersOf(s) : [];
+  const others = viewers.filter((v) => String(v.e).toLowerCase() !== String(j.host || '').toLowerCase());
+  const status = !live ? tf('watch.ended', 'Sessão encerrada')
+    : (others.length === 1 ? tf('watch.card.joined1', '{name} entrou', { name: String(others[0].e).toLowerCase() === me ? tf('watch.you', 'Você') : others[0].n })
+      : (others.length > 1 ? tf('watch.card.joinedN', '{n} entraram', { n: others.length }) : ''));
+  const joinBg = own || C.isDark ? '#FFFFFF' : '#111111';
+  const joinInk = own || C.isDark ? '#111111' : '#FFFFFF';
+  const body = vstack([
+    text(who + ' ' + verb + ' ' + (j.title || ''), { fs: 14.5, c: ink, lh: 19 }),
+    text(WT.sourceLabel(C.t, j) + (j.dur ? ' · ' + WT.fmtTime(j.dur) : ''), { fs: 12, c: sub, m: [3, 0, 0, 0] }),
+    hstack([
+      text(status, { fs: 12, c: sub, fl: 1 }),
+      live ? hstack([text(music ? tf('watch.card.listen', 'Ouvir junto') : tf('watch.card.join', 'Entrar'), { fs: 14, fw: 700, c: joinInk })],
+        { bg: joinBg, r: 16, p: [8, 16, 8, 16], a: 'watch:open' }) : null,
+    ], { w: -1, al: 'c', g: 8, m: [10, 0, 0, 0] }),
+  ], { w: -1, p: [10, 12, 12, 12], a: live ? 'watch:open' : undefined });
+  row.bl = [vstack([cover, body], { w, r: 18, m: [1, 0, 1, 0] })];
+  row.cw = w; row.pad = PAD; row.mp = 'below';
+}
+
 export function buildFallbackCard(item, row, ctx, reason) {
   const C = ctx && ctx.cards;
   const isAlbum = item && item._type === 'album';
@@ -1619,6 +1691,7 @@ export function buildCard(item, row, ctx) {
       case 'lottie_sticker': buildLottie(item, row, C); break;
       case 'game': buildGame(item, row, ctx, C, own); break; // [jogos 2026-10-18]
       case 'location_request': buildLocReq(item, row, ctx, C, own); break; // [loc-pedido 2026-10-19]
+      case 'watch_session': buildWatch(item, row, ctx, C, own); break; // [assistir-junto 2026-10-20]
       default: return false;
     }
   } catch (e) {
@@ -1754,6 +1827,10 @@ export function runCardAction(item, action, D) {
             D.safeAlert(tt('common.error', 'Erro'), tt('chatConv.contactSaveError', 'Não foi possível salvar o contato'));
           }
         })();
+        return;
+      }
+      case 'watch': { // [assistir-junto 2026-10-20] cartão do convite → sala
+        try { D.router.push({ pathname: '/watch-room', params: { cid: String(m.conversation_id || D.conversationId || ''), name: '' } }); } catch {}
         return;
       }
       case 'poll': { _vote(m, Number(arg), D); return; }

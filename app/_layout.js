@@ -2362,6 +2362,8 @@ export default function RootLayout() {
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="feed/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="game/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true, fullScreenGestureEnabled: true, gestureDirection: 'horizontal' }} />{/* [jogos 2026-10-18] tela do jogo · [jogos 2026-10-19] swipe-back de tela cheia (push nativo) */}
+                  <Stack.Screen name="watch-catalog" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true }} />{/* [assistir-junto 2026-10-20] catálogo */}
+                  <Stack.Screen name="watch-room" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_bottom', gestureEnabled: true, gestureDirection: 'vertical' }} />{/* [assistir-junto 2026-10-20] sala (desce = minimiza) */}
                   <Stack.Screen name="search" options={{ headerShown: false, animation: _PUSH }} />
                   <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false, ..._DARK_BG }} />
                   <Stack.Screen name="call/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />{/* [2026-10-14 nav-nativa] era fade 120ms (página de link de chamada, não é o player) */}

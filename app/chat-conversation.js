@@ -5041,6 +5041,10 @@ function describeReplyTarget(rt, ref, t) {
       return { Icon: _IconGamepad, label: lbl || tr('games.preview', 'Jogo'), lines: 1, thumb: null };
     }
     case 'location_request': return { Icon: IconMapPin, label: tr('locReq.preview', 'Pedido de localização'), lines: 1, thumb: null }; // [loc-pedido 2026-10-19]
+    case 'watch_session': { // [assistir-junto 2026-10-20]
+      let lbl = ''; try { lbl = require('../services/watchTogether').previewText(t, m.content); } catch {}
+      return { Icon: IconVideo, label: lbl || tr('watch.menu.watch', 'Assistir junto'), lines: 1, thumb: null };
+    }
     case 'meetup': {
       const ttl = String((m.meetup && m.meetup.title) || (_rtJSON(m.content) || {}).title || _rtField(content, 'title') || '').trim();
       return { Icon: IconCalendar, label: ttl || tr('chat.meetup', 'Reunião'), lines: 1, thumb: null };
@@ -6065,15 +6069,15 @@ function AttachmentMenu(props) {
   const [nativeFailed, setNativeFailed] = useState(false);
   if (!nativeFailed && NativeAttachBridge && NativeAttachBridge.nativeAttachUsable()) {
     const NativeSheet = NativeAttachBridge.default;
-    return <NativeSheet {...props} t={t} items={buildAttachItems(t, { gift: !!props.giftEnabled, games: !!props.gamesEnabled })} onFail={() => setNativeFailed(true)} />;
+    return <NativeSheet {...props} t={t} items={buildAttachItems(t, { gift: !!props.giftEnabled, games: !!props.gamesEnabled, watch: !!props.watchEnabled })} onFail={() => setNativeFailed(true)} />;
   }
   if (ATTACH_SHEET_NATIVE && AttachSheetNative) {
-    return <AttachSheetNative {...props} items={buildAttachItems(t, { gift: !!props.giftEnabled, games: !!props.gamesEnabled })} />;
+    return <AttachSheetNative {...props} items={buildAttachItems(t, { gift: !!props.giftEnabled, games: !!props.gamesEnabled, watch: !!props.watchEnabled })} />;
   }
   return <AttachmentMenuLegacy {...props} />;
 }
 
-function AttachmentMenuLegacy({ visible, onClose, onPick, colors, giftEnabled, gamesEnabled }) {
+function AttachmentMenuLegacy({ visible, onClose, onPick, colors, giftEnabled, gamesEnabled, watchEnabled }) {
   const { t } = useLanguage();
   const sheetAnim = useRef(new Animated.Value(0)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
@@ -6095,7 +6099,7 @@ function AttachmentMenuLegacy({ visible, onClose, onPick, colors, giftEnabled, g
   }, [visible]);
 
   if (!show) return null;
-  const items = buildAttachItems(t, { gift: !!giftEnabled, games: !!gamesEnabled });
+  const items = buildAttachItems(t, { gift: !!giftEnabled, games: !!gamesEnabled, watch: !!watchEnabled });
 
   const translateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [350, 0] });
   const scale = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1] });
@@ -6132,6 +6136,15 @@ function AttachmentMenuLegacy({ visible, onClose, onPick, colors, giftEnabled, g
     </View>
   );
 }
+
+// [assistir-junto 2026-10-20] mini-player e botão do cabeçalho (require preguiçoso: nada carrega com o kill switch).
+function _WatchMiniBarLazy(p) { const M = require('../components/watch/WatchInviteCard'); return <M.WatchMiniBar {...p} />; }
+function _WatchHeaderBtnLazy(p) { const M = require('../components/watch/WatchInviteCard'); return <M.WatchHeaderButton {...p} />; }
+// [assistir-junto 2026-10-20] helpers do item "Assistir/Ouvir junto" (ícones SVG em components/watch/WatchIcons).
+function _watchOn() { try { return require('../services/watchTogether').watchEnabled(); } catch { return false; } }
+function _attachTr(t, k, fb) { try { const v = t(k); return (typeof v === 'string' && v && v !== k) ? v : fb; } catch { return fb; } }
+function _IconWatchTogether(p) { const W = require('../components/watch/WatchIcons'); return <W.IconTogether {...p} />; }
+function _IconWatchHeadphones(p) { const W = require('../components/watch/WatchIcons'); return <W.IconHeadphones {...p} />; }
 
 // Attachment sheet items — shared by the legacy sheet (web) and the native
 // UI-thread sheet. [2026-10-08 chat-native] extracted, contents unchanged.
@@ -6172,6 +6185,11 @@ function buildAttachItems(t, opts = {}) {
     // Presente segue no perfil/conversa; Vídeo curto na aba Reels. opts.gift ignorado aqui.
     // [jogos 2026-10-18] "Jogos" — só com o servidor pronto (chat_game_types) e sem o kill switch __chatyy_games === false.
     ...(opts.games ? [{ key: 'games', icon: _IconGamepad, label: t('games.menu') || 'Jogos', color: '#111111' }] : []),
+    // [assistir-junto 2026-10-20] "Assistir junto" / "Ouvir junto" (catálogo legal + sala sincronizada). Kill: __chatyy_watch_together = false.
+    ...(opts.watch && _watchOn() ? [
+      { key: 'watch_together', icon: _IconWatchTogether, label: _attachTr(t, 'watch.menu.watch', 'Assistir junto'), color: '#111111' },
+      { key: 'listen_together', icon: _IconWatchHeadphones, label: _attachTr(t, 'watch.menu.listen', 'Ouvir junto'), color: '#111111' },
+    ] : []),
     // 2026-05-18: "Vídeo curto" — Reels-style 9:16 clip in-chat. Only renders
     // when the feature flag is on (isShortVideoInChatEnabled returns true).
     // Returns null otherwise so the grid silently drops the slot for users
@@ -13441,6 +13459,7 @@ function ChatConversationInnerBody() {
       const base = buildAttachItems(t, {
         gift: DIAMONDS_ENABLED && conversationType === 'direct' && !isSavedMode && !!conversationId,
         games: gamesOn && !isSavedMode && !!conversationId && (conversationType === 'direct' || conversationType === 'group'),
+        watch: !isSavedMode && !!conversationId && (conversationType === 'direct' || conversationType === 'group'), // [assistir-junto 2026-10-20]
       });
       const rename = {
         gallery: _l('chatConv.photos', 'Fotos'),
@@ -22304,6 +22323,14 @@ function ChatConversationInnerBody() {
       case 'playlist':     return setShowPlaylistCreator(true);
       case 'gift':         return setShowGiftSheet(true);
       case 'games':        { try { if (require('../services/gamesInline').openPickerInChat(conversationId)) return; } catch {} return setShowGamePicker(true); } // [jogos 2026-10-20 dock] seletor no painel da conversa (kill → folha)
+      // [assistir-junto 2026-10-20] sessão ao vivo do mesmo tipo → volta p/ a sala; senão abre o catálogo
+      case 'watch_together': case 'listen_together': {
+        if (!conversationId) return;
+        let live = null; try { live = require('../services/watchTogether').liveSession(conversationId); } catch {}
+        const music = type === 'listen_together';
+        if (live && (live.kind === 'music') === music) return router.push({ pathname: '/watch-room', params: { cid: String(conversationId), name: conversationName || '' } });
+        return router.push({ pathname: '/watch-catalog', params: { cid: String(conversationId), name: conversationName || '', tab: music ? 'musica' : 'filmes' } });
+      }
       // 2026-05-18: in-chat short video (Reels-style). Flag-gated — when off
       // the menu item isn't even rendered. The recorder orchestrates capture
       // → compress → upload → send via shortVideoRecord.js. We surface a
@@ -33672,6 +33699,12 @@ function ChatConversationInnerBody() {
           return <LRC msg={msg} isOwn={isOwn} currentEmail={currentEmail} colors={colors} isDark={isDark} t={t} peerName={conversationName}
             onAction={(m, a) => { try { _locReqActionRef.current && _locReqActionRef.current(m, a); } catch {} }} />;
         }
+        case 'watch_session': { // [assistir-junto 2026-10-20] convite ao vivo com Entrar
+          const WIC = _watchOn() ? require('../components/watch/WatchInviteCard').WatchInviteCard : null;
+          if (!WIC) return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{(() => { try { return require('../services/watchTogether').previewText(t, msg.content); } catch { return ''; } })()}</Text>;
+          return <WIC msg={msg} isOwn={isOwn} me={currentEmail} colors={colors} isDark={isDark} t={t}
+            onOpen={() => router.push({ pathname: '/watch-room', params: { cid: String(conversationId), name: conversationName || '' } })} />;
+        }
         case 'game': { // [jogos 2026-10-18] cartão do jogo (convite/andamento/resultado)
           return <GameChatCard msg={msg} isOwn={isOwn} currentEmail={currentEmail} colors={colors} isDark={isDark} t={t}
             onAction={(m, a) => { try { _gameCardActionRef.current && _gameCardActionRef.current(m, a); } catch {} }} />;
@@ -36978,6 +37011,11 @@ function ChatConversationInnerBody() {
             [2026-10-18 header-no-more] ⋯ saiu: tudo dele vive em Dados do
             contato/grupo (toque no nome). Fica só p/ canal/sem dados/web largo
             — ver _headerMoreOn (kill switch globalThis.__chatyy_header_more). */}
+        {/* [assistir-junto 2026-10-20] atalho p/ a sala quando há sessão ao vivo */}
+        {conversationId && !isSavedMode && _watchOn() ? (
+          <_WatchHeaderBtnLazy cid={conversationId} isDark={isDark} style={styles.headerBtn} t={t}
+            onOpen={() => router.push({ pathname: '/watch-room', params: { cid: String(conversationId), name: conversationName || '' } })} />
+        ) : null}
         {conversationType === 'channel' ? (
         <TouchableOpacity
           onPress={() => { setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus?.(), 200); }}
@@ -37450,6 +37488,12 @@ function ChatConversationInnerBody() {
       {/* [wa-import-v2 2026-10-13] "Importando do WhatsApp · N%" (import em 2º plano, conversa
           segue utilizável) / aviso "X importou o histórico" + Ocultar para mim. */}
       {WaImportBanner && conversationId ? <WaImportBanner conversationId={conversationId} /> : null}
+
+      {/* [assistir-junto 2026-10-20] mini-player fixo enquanto há sessão "Assistir/Ouvir junto" ao vivo */}
+      {conversationId && !isSavedMode && _watchOn() ? (
+        <_WatchMiniBarLazy cid={conversationId} me={currentEmail} colors={colors} isDark={isDark} t={t}
+          onOpen={() => router.push({ pathname: '/watch-room', params: { cid: String(conversationId), name: conversationName || '' } })} />
+      ) : null}
 
       {/* Pinned messages list — WhatsApp parity: up to 3 stacked pins, each
           tappable to scroll-to-message, long-press to unpin. visiblePinned
@@ -40589,6 +40633,7 @@ function ChatConversationInnerBody() {
         colors={colors}
         giftEnabled={DIAMONDS_ENABLED && conversationType === 'direct' && !isSavedMode && !!conversationId}
         gamesEnabled={gamesOn && !isSavedMode && !!conversationId && (conversationType === 'direct' || conversationType === 'group')}
+        watchEnabled={!isSavedMode && !!conversationId && (conversationType === 'direct' || conversationType === 'group') /* [assistir-junto 2026-10-20] */}
       />
 
       {/* [jogos 2026-10-18] seletor de jogos (+ quem joga no grupo) e placar */}
