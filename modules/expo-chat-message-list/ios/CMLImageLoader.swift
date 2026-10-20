@@ -35,15 +35,15 @@ final class CMLImageLoader {
     try? FileManager.default.createDirectory(at: diskDir, withIntermediateDirectories: true)
   }
 
-  func cached(_ uri: String, maxPixel: CGFloat) -> UIImage? {
+  func cached(_ uri: String, maxPixel: CGFloat, animated: Bool = false) -> UIImage? {
     if uri.isEmpty { return nil }
-    return memory.object(forKey: key(uri, maxPixel) as NSString)
+    return memory.object(forKey: key(uri, maxPixel, animated) as NSString)
   }
 
   /// completion SEMPRE na main.
   func load(_ uri: String, maxPixel: CGFloat, animated: Bool = false, completion: @escaping (UIImage?) -> Void) {
     if uri.isEmpty { completion(nil); return }
-    let k = key(uri, maxPixel)
+    let k = key(uri, maxPixel, animated)
     if let img = memory.object(forKey: k as NSString) { completion(img); return }
     if waiters[k] != nil { waiters[k]?.append(completion); return }
     waiters[k] = [completion]
@@ -60,8 +60,8 @@ final class CMLImageLoader {
     }
   }
 
-  func prefetch(_ uri: String, maxPixel: CGFloat) {
-    load(uri, maxPixel: maxPixel) { _ in }
+  func prefetch(_ uri: String, maxPixel: CGFloat, animated: Bool = false) {
+    load(uri, maxPixel: maxPixel, animated: animated) { _ in }
   }
 
   // [2026-10-18 lqip] miniatura (LQIP) com desfoque gaussiano: nunca "pixelada".
@@ -106,8 +106,10 @@ final class CMLImageLoader {
     return UIImage(cgImage: res, scale: 1, orientation: .up)
   }
 
-  private func key(_ uri: String, _ maxPixel: CGFloat) -> String {
-    return "\(Int(maxPixel))|\(uri)"
+  // [2026-10-19 sticker-anim] decodificação animada tem chave PRÓPRIA: antes o
+  // prefetch (estático, mesma chave) deixava GIF/figurinha parada no 1º quadro.
+  private func key(_ uri: String, _ maxPixel: CGFloat, _ animated: Bool = false) -> String {
+    return animated ? "\(Int(maxPixel))|a|\(uri)" : "\(Int(maxPixel))|\(uri)"
   }
 
   private func finish(_ k: String, _ img: UIImage?) {
@@ -213,10 +215,19 @@ final class CMLImageLoader {
         guard let f = frame(s, i, min(maxPixel, 480)) else { continue }
         frames.append(f)
         var delay = 0.1
-        if let props = CGImageSourceCopyPropertiesAtIndex(s, i, nil) as? [String: Any],
-           let gif = props[kCGImagePropertyGIFDictionary as String] as? [String: Any] {
-          if let d = (gif[kCGImagePropertyGIFUnclampedDelayTime as String] as? NSNumber)?.doubleValue, d > 0.011 { delay = d }
-          else if let d = (gif[kCGImagePropertyGIFDelayTime as String] as? NSNumber)?.doubleValue, d > 0.011 { delay = d }
+        if let props = CGImageSourceCopyPropertiesAtIndex(s, i, nil) as? [String: Any] {
+          if let gif = props[kCGImagePropertyGIFDictionary as String] as? [String: Any] {
+            if let d = (gif[kCGImagePropertyGIFUnclampedDelayTime as String] as? NSNumber)?.doubleValue, d > 0.011 { delay = d }
+            else if let d = (gif[kCGImagePropertyGIFDelayTime as String] as? NSNumber)?.doubleValue, d > 0.011 { delay = d }
+          } else if let wp = props[kCGImagePropertyWebPDictionary as String] as? [String: Any] {
+            // [2026-10-19 sticker-anim] figurinha WebP animada tocava a 10 fps fixos (só lia GIF)
+            if let d = (wp[kCGImagePropertyWebPUnclampedDelayTime as String] as? NSNumber)?.doubleValue, d > 0.011 { delay = d }
+            else if let d = (wp[kCGImagePropertyWebPDelayTime as String] as? NSNumber)?.doubleValue, d > 0.011 { delay = d }
+          } else if let png = props[kCGImagePropertyPNGDictionary as String] as? [String: Any] {
+            // APNG
+            if let d = (png[kCGImagePropertyAPNGUnclampedDelayTime as String] as? NSNumber)?.doubleValue, d > 0.011 { delay = d }
+            else if let d = (png[kCGImagePropertyAPNGDelayTime as String] as? NSNumber)?.doubleValue, d > 0.011 { delay = d }
+          }
         }
         total += delay
       }

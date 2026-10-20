@@ -1127,7 +1127,7 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
     for ip in indexPaths {
       guard let k = ds.itemIdentifier(for: ip), let r = rows[k], let L = layouts[k] else { continue }
       if let m = r.media, !m.uri.isEmpty, !L.mediaFrame.isEmpty {
-        CMLImageLoader.shared.prefetch(m.uri, maxPixel: max(L.mediaFrame.width, L.mediaFrame.height) * scale)
+        CMLImageLoader.shared.prefetch(m.uri, maxPixel: max(L.mediaFrame.width, L.mediaFrame.height) * scale, animated: m.kind == "gif" || m.kind == "sticker")
       }
       for (i, m) in r.album.enumerated() where i < L.albumFrames.count && !m.uri.isEmpty {
         let f = L.albumFrames[i]

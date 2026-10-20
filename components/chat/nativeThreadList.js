@@ -1000,6 +1000,16 @@ function _mc() { try { return require('../../services/mediaCache'); } catch { re
 // stickerCache (o mesmo do seletor) quando já baixado; senão a URL e agenda o
 // download (figurinha: sempre, pequena; GIF: só no Wi-Fi). Kill switch → URL.
 let _stkM;
+// [2026-10-19 sticker-anim] poses do mascote que têm GIF animado publicado
+// (scripts/render-mascot-gif.py gera public/stickers/<pose>.gif a partir do .json).
+const _MASCOT_GIF_POSES = new Set(['aceno']);
+function _lottieStickerGif(u) {
+  const m = /^(.*\/stickers\/chatyy-([a-z]+))\.json(?:[?#].*)?$/i.exec(u);
+  if (!m || !_MASCOT_GIF_POSES.has(m[2].toLowerCase())) return '';
+  let base = m[1];
+  if (!/^https?:\/\//i.test(base)) base = 'https://chatyy.com.br' + (base.startsWith('/') ? '' : '/') + base;
+  return base + '.gif';
+}
 function _stkLocal(u, gif) {
   if (!u || !/^https?:\/\//i.test(u)) return u;
   if (_stkM === undefined) { try { _stkM = require('../../services/stickerCache'); } catch { _stkM = null; } }
@@ -1502,6 +1512,18 @@ function _buildRowInner(item, key, ctx) {
   if (rx) row.rx = rx;
   // [fase 2] cartão rico → row.bl (+ cw/bare/pad/mp); true = pronto.
   if (_api >= 2) _p2Common(item, row, ctx, own);
+  // [2026-10-19 sticker-anim] Figurinha Lottie do mascote na lista nativa era o PNG
+  // ESTÁTICO (painel anima, bolha parada). Agora vai como mídia 'sticker' apontando
+  // p/ o GIF animado pré-renderizado (public/stickers/<pose>.gif, mesma animação do
+  // JSON) — o nativo (ImageIO iOS / Glide Android) já anima GIF em loop nas figurinhas.
+  // Kill switch: globalThis.__chatyy_lottie_sticker_gif_off = true (volta o PNG).
+  if (item.type === 'lottie_sticker' && !item.deleted_at && globalThis.__chatyy_lottie_sticker_gif_off !== true) {
+    const gu = _lottieStickerGif(String(item.file_url || item.content || ''));
+    if (gu) {
+      row.media = { t: 'sticker', uri: _stkLocal(gu, false), w: 120, h: 120 };
+      return row;
+    }
+  }
   // [native-cover] linha não suportada → cartão-resumo nativo (toque = versão JS em folha)
   if (_api >= 2) {
     const why = _reasonOf(item, ctx);

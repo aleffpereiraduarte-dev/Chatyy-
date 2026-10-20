@@ -741,7 +741,7 @@ final class CMLCell: UICollectionViewCell {
     }
     if slot < 0 { mediaToken = tok } else if slot < albumTokens.count { albumTokens[slot] = tok }
     let loader = CMLImageLoader.shared
-    if let img = loader.cached(uri, maxPixel: maxPixel) { iv.image = img; fullTok[slot] = tok; return }
+    if let img = loader.cached(uri, maxPixel: maxPixel, animated: animated) { iv.image = img; fullTok[slot] = tok; return }
     if !keepLQIP {
       if !thumb.isEmpty, let t = loader.cachedBlurred(thumb) { iv.image = t } else { iv.image = nil }
     }
