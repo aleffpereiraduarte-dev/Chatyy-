@@ -1,0 +1,444 @@
+// [tabs-v2 2026-10-20] Aba "Mural" da barra de baixo (Opção A aprovada pelo founder:
+// Conversas | Mural | Ligações | Perfil). Mockup: scratchpad navegacao/index.html.
+//
+//   topo: título "Mural" + segmento  Para você | Seguindo | Reels
+//   Para você / Seguindo → feed estilo X/Facebook (texto e fotos misturados):
+//       faixa de status (StoriesStrip do ChatFeedTab), caixa "No que você está
+//       pensando?" (muralNav.openComposer), posts pendentes da fila
+//       (profilePostQueue) e os do servidor (`mural_feed {tab, cursor}`, formato
+//       Post do /root/mural-2026-10-20/API.md) em PostCard (TgPostTiles).
+//       "Para você" ganha a faixa "Reels para você" (reels_rec_feed) depois do 2º post.
+//   Reels → a MESMA tela da antiga aba Reels (ReelsHomeTab/ReelsViewer), tela cheia;
+//       o segmento vira texto branco por cima do vídeo (voltar | Para você | Seguindo | Reels).
+//
+// Curtir/salvar/comentar/abrir = services/muralStore + services/muralNav (mesma cópia
+// do post que PostViewer/TextPostView/folha de comentários usam → contadores ao vivo).
+// Kill switch da barra nova inteira: globalThis.__chatyy_tabs_v2 = false (app/chat.js).
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, Pressable, FlatList, RefreshControl, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Rect, Path } from 'react-native-svg';
+import FastImage from '../FastImage';
+import { useMuralTheme } from './muralTheme';
+import MIcon from './MuralIcons';
+import { Avatar, sharePost } from './parts';
+import { MuralCommentsHost } from './CommentsSheet';
+import { PostCard, fmtN } from '../profile/tg/TgPostTiles';
+import { normPost, absUrl, reportPost } from '../profile/tg/useTgProfileData';
+import { usePendingProfilePosts, openPendingPostMenu } from '../ProfilePostProgress';
+import * as store from '../../services/muralStore';
+import * as muralNav from '../../services/muralNav';
+import { useLanguage } from '../../context/LanguageContext';
+
+const ReelsHomeTab = React.lazy(() => import('../ReelsHomeTab'));
+
+export const MURAL_SEGMENTS = ['foryou', 'following', 'reels'];
+const PAGE = 15;
+const CACHE_KEY = (tab) => `mural_feed_v1_${tab}`;
+
+function _api() { return require('../../services/api'); }
+
+// ─── dados do feed (1 estado por aba; cache em disco p/ pintar na hora) ──────
+function _readCache(tab) {
+  try {
+    const d = require('../../services/cache').getCachedSync(CACHE_KEY(tab));
+    if (d && Array.isArray(d.posts)) return d.posts;
+  } catch {}
+  return null;
+}
+function _writeCache(tab, posts) {
+  try { require('../../services/cache').setCache(CACHE_KEY(tab), { posts: posts.slice(0, PAGE) }, 3 * 86400000).catch(() => {}); } catch {}
+}
+function _prime(posts) {
+  for (const p of posts) { try { store.primePost(p); } catch {} }
+}
+
+function useMuralFeed(tab, enabled) {
+  const [st, setSt] = useState(() => {
+    const cached = _readCache(tab);
+    if (cached) _prime(cached);
+    return { posts: cached || [], cursor: null, hasMore: true, loading: false, refreshing: false, error: false, loaded: false, fromCache: !!cached };
+  });
+  const busy = useRef(false);
+  const stRef = useRef(st);
+  stRef.current = st;
+
+  const load = useCallback(async (mode) => { // 'first' | 'refresh' | 'more'
+    if (busy.current) return;
+    const cur = stRef.current;
+    if (mode === 'more' && (!cur.hasMore || !cur.cursor)) return;
+    busy.current = true;
+    setSt((s) => ({ ...s, loading: mode !== 'refresh', refreshing: mode === 'refresh', error: false }));
+    let r = null;
+    try {
+      r = await _api().apiCall('mural_feed', { tab, limit: PAGE, ...(mode === 'more' ? { cursor: cur.cursor } : null) }, 'POST');
+    } catch { r = null; }
+    busy.current = false;
+    const d = r && r.success && r.data ? r.data : null;
+    if (!d || !Array.isArray(d.posts)) {
+      setSt((s) => ({ ...s, loading: false, refreshing: false, error: true, loaded: true }));
+      return;
+    }
+    _prime(d.posts);
+    setSt((s) => {
+      const posts = mode === 'more' ? [...s.posts, ...d.posts.filter((p) => !s.posts.some((q) => String(q.id) === String(p.id)))] : d.posts;
+      if (mode !== 'more') _writeCache(tab, posts);
+      return { posts, cursor: d.next_cursor || null, hasMore: !!d.has_more, loading: false, refreshing: false, error: false, loaded: true, fromCache: false };
+    });
+  }, [tab]);
+
+  useEffect(() => {
+    if (enabled && !st.loaded && !busy.current) load('first');
+  }, [enabled, st.loaded, load]);
+
+  // post apagado (aqui, no visualizador ou no perfil) → some da lista
+  useEffect(() => store.onAnyPostChange((p) => {
+    if (p && p.deleted) setSt((s) => (s.posts.some((q) => Number(q.id) === Number(p.id)) ? { ...s, posts: s.posts.filter((q) => Number(q.id) !== Number(p.id)) } : s));
+  }), []);
+
+  return { ...st, load };
+}
+
+// ─── faixa "Reels para você" ─────────────────────────────────────────────────
+const ReelsRail = memo(function ReelsRail({ th, t, lang, onOpen, enabled }) {
+  const [items, setItems] = useState(() => {
+    try { const d = require('../../services/cache').getCachedSync('mural_reels_rail_v1'); return Array.isArray(d) ? d : []; } catch { return []; }
+  });
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let alive = true;
+    (async () => {
+      try {
+        const api = _api();
+        const r = api.reelsRecFeed ? await api.reelsRecFeed({ limit: 8 }) : null;
+        const list = r && r.success && r.data ? (r.data.posts || r.data.items || []) : [];
+        const clean = list.filter((p) => p && p.id && (p.thumbnail_url || p.thumbnail)).slice(0, 8)
+          .map((p) => ({ id: String(p.id), thumb: absUrl(p.thumbnail_url || p.thumbnail), views: Number(p.view_count || p.views || 0) || 0 }));
+        if (alive && clean.length) {
+          setItems(clean);
+          try { require('../../services/cache').setCache('mural_reels_rail_v1', clean, 86400000).catch(() => {}); } catch {}
+        }
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [enabled]);
+  if (!items.length) return null;
+  return (
+    <View style={[s.rail, { backgroundColor: th.card }]}>
+      <View style={s.railHead}>
+        <ReelGlyph size={17} color={th.text} />
+        <Text style={[s.railTitle, { color: th.text }]} accessibilityRole="header">{t('mural.feed.reelsForYou', 'Reels para você')}</Text>
+        <Pressable onPress={onOpen} hitSlop={8} accessibilityRole="button">
+          <Text style={[s.railMore, { color: th.muted }]}>{t('mural.feed.seeAll', 'Ver todos')}</Text>
+        </Pressable>
+      </View>
+      <FlatList
+        horizontal
+        data={items}
+        keyExtractor={(it) => `rr${it.id}`}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
+        renderItem={({ item }) => (
+          <Pressable onPress={onOpen} style={[s.railTile, { backgroundColor: th.chip }]} accessibilityRole="button" accessibilityLabel={t('mural.feed.reels', 'Reels')}>
+            <FastImage source={{ uri: item.thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" recyclingKey={`rr${item.id}`} />
+            <View style={s.railMeta} pointerEvents="none">
+              <MIcon name="play" size={12} color="#fff" fill="#fff" strokeWidth={1} />
+              <Text style={s.railMetaTxt}>{fmtN(item.views, lang)}</Text>
+            </View>
+          </Pressable>
+        )}
+      />
+    </View>
+  );
+});
+
+function ReelGlyph({ size = 16, color = '#000' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+      <Rect x="3" y="3" width="18" height="18" rx="5" />
+      <Path d="M3 8.5h18M9 3.2l2.5 5.3M14.5 3.2L17 8.5" />
+      <Path d="M10.5 12.2v5.1l4.2-2.55z" fill={color} />
+    </Svg>
+  );
+}
+
+// ─── um post do feed (cópia viva do muralStore por cima do objeto do servidor) ──
+const FeedRow = memo(function FeedRow({ raw, th, lang, shadow, onMore }) {
+  const sp = store.usePost(raw.id);
+  const post = useMemo(() => {
+    const base = normPost(raw);
+    if (!base || !sp) return base;
+    if (sp.deleted) return null;
+    return { ...base, text: sp.caption != null ? sp.caption : base.text, like_count: sp.likes, liked_by_me: !!sp.liked, comment_count: sp.comments, allow_comments: sp.allow_comments !== false };
+  }, [raw, sp]);
+  const au = raw.author || {};
+  const author = useMemo(() => ({
+    name: au.name || '', username: au.username || '',
+    avatar: (sz) => <Avatar email={au.email} name={au.name || au.email} size={sz} />,
+  }), [au.email, au.name, au.username]); // eslint-disable-line react-hooks/exhaustive-deps
+  const onOpen = useCallback(() => { try { muralNav.openPost(raw); } catch {} }, [raw]);
+  const onLike = useCallback(() => { try { store.toggleLike(raw.id); } catch {} }, [raw.id]);
+  const onComments = useCallback(() => { try { muralNav.openComments(raw, { post: raw }); } catch {} }, [raw]);
+  const onShare = useCallback(() => { sharePost({ id: raw.id, caption: (sp && sp.caption) || raw.text || '' }, (k, f) => f); }, [raw, sp]);
+  const onBookmark = useCallback(() => { try { store.toggleSave(raw.id); } catch {} }, [raw.id]);
+  const more = useCallback(() => onMore(raw), [onMore, raw]);
+  if (!post) return null;
+  return (
+    <PostCard post={post} th={th} lang={lang} author={author} shadow={shadow}
+      onOpen={onOpen} onLike={onLike} onComments={onComments} onShare={onShare} onMore={more}
+      onBookmark={onBookmark} bookmarked={!!(sp && sp.saved)} />
+  );
+});
+
+const PendingRow = memo(function PendingRow({ post, th, lang, shadow, me }) {
+  const author = useMemo(() => ({ name: me.name, username: '', avatar: (sz) => <Avatar email={me.email} name={me.name} size={sz} /> }), [me.email, me.name]);
+  const open = useCallback(() => { try { openPendingPostMenu(post.raw || post); } catch {} }, [post]);
+  return <PostCard post={post} th={th} lang={lang} author={author} shadow={shadow} onOpen={open} onLike={open} onComments={open} onShare={open} onMore={open} onBookmark={open} bookmarked={false} />;
+});
+
+// ─── segmento ────────────────────────────────────────────────────────────────
+function Segmented({ value, onChange, th, t }) {
+  const labels = { foryou: t('mural.feed.forYou', 'Para você'), following: t('mural.feed.following', 'Seguindo'), reels: t('mural.feed.reels', 'Reels') };
+  return (
+    <View style={[s.seg, { backgroundColor: th.chip }]} accessibilityRole="tablist">
+      {MURAL_SEGMENTS.map((k) => {
+        const on = value === k;
+        return (
+          <Pressable key={k} onPress={() => onChange(k)} style={[s.segBtn, on && [{ backgroundColor: th.card }, th.isDark ? null : s.segOnShadow]]}
+            accessibilityRole="tab" accessibilityState={{ selected: on }}>
+            {k === 'reels' ? <ReelGlyph size={15} color={on ? th.text : th.muted} /> : null}
+            <Text style={[s.segTxt, { color: on ? th.text : th.muted }]} numberOfLines={1}>{labels[k]}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+// Por cima do vídeo (segmento Reels): voltar | Para você | Seguindo | Reels — a câmera
+// (criar reel) continua à direita, desenhada pelo próprio ReelsViewer.
+function ReelsTopBar({ top, onChange, t }) {
+  const tab = (k, label, on) => (
+    <Pressable key={k} onPress={() => onChange(k)} hitSlop={8} accessibilityRole="tab" accessibilityState={{ selected: on }} style={s.rtTab}>
+      <Text style={[s.rtTxt, on && s.rtTxtOn]} numberOfLines={1}>{label}</Text>
+      <View style={[s.rtInd, !on && { backgroundColor: 'transparent' }]} />
+    </Pressable>
+  );
+  return (
+    <View style={[s.rtWrap, { top }]} pointerEvents="box-none">
+      <Pressable onPress={() => onChange('foryou')} hitSlop={8} style={s.rtBack} accessibilityRole="button" accessibilityLabel={t('mural.feed.backToFeed', 'Voltar ao feed')}>
+        <MIcon name="back" size={24} color="#fff" strokeWidth={2.2} />
+      </Pressable>
+      <View style={s.rtTabs} pointerEvents="box-none" accessibilityRole="tablist">
+        {tab('foryou', t('mural.feed.forYou', 'Para você'), false)}
+        {tab('following', t('mural.feed.following', 'Seguindo'), false)}
+        {tab('reels', t('mural.feed.reels', 'Reels'), true)}
+      </View>
+    </View>
+  );
+}
+
+// ─── a aba ───────────────────────────────────────────────────────────────────
+function MuralHomeTab(props) {
+  const { colors, isDark, t, user, router, tabActive, segment = 'foryou', onSegmentChange, requestOpenStatus, requestNewStatus } = props;
+  const th = useMuralTheme();
+  const insets = useSafeAreaInsets();
+  const { language } = useLanguage() || {};
+  const lang = language || 'pt-BR';
+  const active = tabActive === 'mural';
+  const seg = MURAL_SEGMENTS.includes(segment) ? segment : 'foryou';
+  const setSeg = useCallback((k) => { try { require('../../constants/theme').haptic.select(); } catch {} onSegmentChange && onSegmentChange(k); }, [onSegmentChange]);
+
+  const forYou = useMuralFeed('foryou', active && seg === 'foryou');
+  const following = useMuralFeed('following', active && seg === 'following');
+  const feed = seg === 'following' ? following : forYou;
+
+  const [reelsMounted, setReelsMounted] = useState(seg === 'reels');
+  useEffect(() => { if (seg === 'reels' && active) setReelsMounted(true); }, [seg, active]);
+
+  // post publicado pela fila → recarrega a 1ª página das duas abas
+  const loadFy = forYou.load; const loadFo = following.load;
+  useEffect(() => {
+    let off = null;
+    try { off = require('../../services/profilePostQueue').onProfilePostPublished(() => { loadFy('refresh'); loadFo('refresh'); }); } catch {}
+    return () => { try { off && off(); } catch {} };
+  }, [loadFy, loadFo]);
+  // voltou para a aba depois de um tempo → atualiza em 2º plano
+  const lastActive = useRef(0);
+  useEffect(() => {
+    if (!active || seg === 'reels') return;
+    const now = Date.now();
+    if (lastActive.current && now - lastActive.current > 120000) feed.load('refresh');
+    lastActive.current = now;
+  }, [active, seg]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const me = useMemo(() => ({ email: user?.email || '', name: user?.name || String(user?.email || '').split('@')[0] }), [user?.email, user?.name]);
+  const pendingRaw = usePendingProfilePosts(me.email);
+  const pending = useMemo(() => {
+    const ids = new Set(feed.posts.map((p) => String(p.id)));
+    return (pendingRaw || []).map(normPost).filter((p) => p && !ids.has(String(p.id)));
+  }, [pendingRaw, feed.posts]);
+
+  const shadow = th.isDark ? null : (Platform.OS === 'web' ? { boxShadow: '0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06)' } : { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 1 });
+
+  const onMore = useCallback((raw) => {
+    let pc = null;
+    try { pc = require('../../services/profilePostComposer'); } catch { pc = null; }
+    if (!pc || !pc.showActionMenu) return;
+    const mine = !!(raw.is_mine || String(raw.author?.email || '').toLowerCase() === me.email.toLowerCase());
+    const opts = [{ label: t('mural.share', 'Compartilhar'), onPress: () => sharePost({ id: raw.id, caption: raw.text || '' }, t) }];
+    if (mine) {
+      opts.push({ label: t('mural.delete', 'Apagar'), destructive: true, onPress: async () => {
+        const ok = await store.deletePost(raw.id);
+        try { require('../ui/Toast').showToast({ message: ok ? t('mural.deleted', 'Publicação apagada') : t('mural.err.delete', 'Não foi possível apagar'), kind: ok ? 'success' : 'error' }); } catch {}
+      } });
+    } else {
+      opts.push({ label: t('mural.report', 'Denunciar'), destructive: true, onPress: () => { reportPost(raw.id).then((ok) => { if (ok) { try { require('../ui/Toast').showToast({ message: t('mural.feed.reported', 'Obrigado. Vamos analisar.'), kind: 'success' }); } catch {} } }); } });
+    }
+    pc.showActionMenu({ options: opts, cancelLabel: t('common.cancel', 'Cancelar') });
+  }, [me.email, t]);
+
+  const openComposer = useCallback((mode) => {
+    try { muralNav.openComposer({ router, mode, from: 'mural', ...(mode === 'photo' ? { pick: 'library' } : null) }); } catch {}
+  }, [router]);
+
+  // linhas: pendentes → posts (faixa de Reels depois do 2º no "Para você")
+  const rows = useMemo(() => {
+    const out = pending.map((p) => ({ k: 'pend', key: `pend${p.id}`, post: p }));
+    feed.posts.forEach((p, i) => {
+      out.push({ k: 'post', key: `p${p.id}`, raw: p });
+      if (seg === 'foryou' && i === 1) out.push({ k: 'rail', key: 'rail' });
+    });
+    if (seg === 'foryou' && feed.posts.length > 0 && feed.posts.length < 2) out.push({ k: 'rail', key: 'rail' });
+    return out;
+  }, [pending, feed.posts, seg]);
+
+  const renderItem = useCallback(({ item }) => {
+    if (item.k === 'rail') return <ReelsRail th={th} t={t} lang={lang} onOpen={() => setSeg('reels')} enabled={active} />;
+    if (item.k === 'pend') return <PendingRow post={item.post} th={th} lang={lang} shadow={shadow} me={me} />;
+    return <FeedRow raw={item.raw} th={th} lang={lang} shadow={shadow} onMore={onMore} />;
+  }, [th, t, lang, shadow, me, onMore, setSeg, active]);
+
+  let StoriesStrip = null;
+  try { StoriesStrip = require('../ChatFeedTab').StoriesStrip || null; } catch { StoriesStrip = null; }
+
+  const header = (
+    <View>
+      {StoriesStrip ? (
+        <View style={s.stories}>
+          <StoriesStrip user={user} colors={colors} background={th.bg} isDark={isDark} t={t} requestOpenStatus={requestOpenStatus} requestNewStatus={requestNewStatus} />
+        </View>
+      ) : null}
+      <Pressable onPress={() => openComposer('text')} style={[s.compose, { backgroundColor: th.card }, shadow]} accessibilityRole="button" accessibilityLabel={t('mural.feed.whatsOnMind', 'No que você está pensando?')}>
+        <Avatar email={me.email} name={me.name} size={38} />
+        <View style={[s.composePh, { backgroundColor: th.chip }]}>
+          <Text style={{ color: th.muted, fontSize: 14.5 }} numberOfLines={1}>{t('mural.feed.whatsOnMind', 'No que você está pensando?')}</Text>
+        </View>
+        <Pressable onPress={() => openComposer('photo')} hitSlop={6} style={s.composeIb} accessibilityRole="button" accessibilityLabel={t('mural.feed.photo', 'Foto')}>
+          <MIcon name="image" size={22} color={th.text} />
+        </Pressable>
+      </Pressable>
+      {seg === 'following' ? (
+        <View style={s.note}>
+          <MIcon name="users" size={14} color={th.muted} />
+          <Text style={{ color: th.muted, fontSize: 13 }}>{t('mural.feed.followingNote', 'Só de quem você segue e dos seus contatos, em ordem de tempo')}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+
+  const empty = feed.loaded && !feed.loading && !feed.posts.length && !pending.length ? (
+    <View style={s.empty}>
+      <Text style={[s.emptyTitle, { color: th.text }]}>{feed.error ? t('mural.feed.error', 'Não foi possível carregar o Mural') : t('mural.feed.empty', 'Nada por aqui ainda')}</Text>
+      <Text style={[s.emptySub, { color: th.muted }]}>
+        {feed.error ? '' : (seg === 'following' ? t('mural.feed.emptyFollowing', 'Siga pessoas ou converse com amigos para ver as publicações delas aqui.') : t('mural.feed.emptyForYou', 'Ainda não há publicações. Que tal fazer a primeira?'))}
+      </Text>
+      <Pressable onPress={() => (feed.error ? feed.load('first') : openComposer('text'))} style={[s.emptyBtn, { backgroundColor: th.accent }]} accessibilityRole="button">
+        <Text style={{ color: th.accentInk, fontWeight: '700', fontSize: 15 }}>{feed.error ? t('mural.feed.retry', 'Tentar de novo') : t('mural.publish', 'Publicar')}</Text>
+      </Pressable>
+    </View>
+  ) : (!feed.loaded && !feed.posts.length ? <ActivityIndicator style={{ marginTop: 40 }} color={th.muted} /> : null);
+
+  const footer = feed.loading && feed.posts.length ? <ActivityIndicator style={{ marginVertical: 18 }} color={th.muted} />
+    : (feed.loaded && !feed.hasMore && feed.posts.length > 3 ? <Text style={[s.end, { color: th.muted }]}>{t('mural.feed.end', 'Você viu tudo')}</Text> : null);
+
+  const reelsOn = seg === 'reels';
+  const rtTop = Platform.OS === 'web' ? 10 : Math.max(insets.top || 0, Platform.OS === 'android' ? 24 : 44) + 2;
+
+  return (
+    <View style={[s.root, { backgroundColor: reelsOn ? '#000' : th.bg }]}>
+      {/* Para você / Seguindo */}
+      <View style={{ flex: 1, display: reelsOn ? 'none' : 'flex', paddingTop: insets.top }}>
+        <View style={[s.head, { backgroundColor: th.bg }]}>
+          <Text style={[s.title, { color: th.text }]} accessibilityRole="header">{t('chat.tabMural', 'Mural')}</Text>
+        </View>
+        <View style={{ backgroundColor: th.bg, paddingBottom: 6 }}>
+          <Segmented value={seg} onChange={setSeg} th={th} t={t} />
+        </View>
+        <FlatList
+          data={rows}
+          keyExtractor={(it) => it.key}
+          renderItem={renderItem}
+          ListHeaderComponent={header}
+          ListEmptyComponent={empty}
+          ListFooterComponent={footer}
+          contentContainerStyle={{ paddingBottom: 24 }}
+          onEndReachedThreshold={0.6}
+          onEndReached={() => { if (feed.loaded && feed.hasMore && !feed.loading) feed.load('more'); }}
+          refreshControl={<RefreshControl refreshing={!!feed.refreshing} onRefresh={() => feed.load('refresh')} tintColor={th.muted} />}
+          initialNumToRender={5}
+          maxToRenderPerBatch={5}
+          windowSize={7}
+          removeClippedSubviews={Platform.OS === 'android'}
+          keyboardShouldPersistTaps="handled"
+        />
+      </View>
+      {/* Reels — a mesma tela da antiga aba, tela cheia */}
+      {reelsMounted ? (
+        <View style={[StyleSheet.absoluteFill, { display: reelsOn ? 'flex' : 'none', backgroundColor: '#000' }]}>
+          <React.Suspense fallback={<View style={{ flex: 1, backgroundColor: '#000' }} />}>
+            <ReelsHomeTab colors={colors} isDark={isDark} t={t} user={user} router={router} tabActive={active && reelsOn ? 'reels' : 'mural'} hideHeaderTabs />
+          </React.Suspense>
+          {reelsOn ? <ReelsTopBar top={rtTop} onChange={setSeg} t={t} /> : null}
+        </View>
+      ) : null}
+      <MuralCommentsHost enabled={active && !reelsOn} />
+    </View>
+  );
+}
+
+export default memo(MuralHomeTab);
+
+const s = StyleSheet.create({
+  root: { flex: 1 },
+  head: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 2 },
+  title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.6 },
+  seg: { flexDirection: 'row', gap: 4, marginHorizontal: 16, marginTop: 8, borderRadius: 12, padding: 3 },
+  segBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7, borderRadius: 9 },
+  segOnShadow: Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,.12)' } : { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  segTxt: { fontSize: 14, fontWeight: '600' },
+  stories: { marginBottom: 2 },
+  compose: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 10, marginTop: 6, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 18 },
+  composePh: { flex: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
+  composeIb: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  note: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 18, paddingBottom: 8 },
+  rail: { marginHorizontal: 10, marginBottom: 8, borderRadius: 18, paddingTop: 12, paddingBottom: 12 },
+  railHead: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 14, marginBottom: 10 },
+  railTitle: { flex: 1, fontSize: 15, fontWeight: '700' },
+  railMore: { fontSize: 13.5, fontWeight: '600' },
+  railTile: { width: 104, height: 168, borderRadius: 12, overflow: 'hidden' },
+  railMeta: { position: 'absolute', left: 7, bottom: 6, flexDirection: 'row', alignItems: 'center', gap: 3 },
+  railMetaTxt: { color: '#fff', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 3, textShadowOffset: { width: 0, height: 1 } },
+  empty: { alignItems: 'center', paddingHorizontal: 32, paddingTop: 48 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', textAlign: 'center' },
+  emptySub: { fontSize: 14.5, textAlign: 'center', marginTop: 6, lineHeight: 20 },
+  emptyBtn: { marginTop: 18, borderRadius: 999, paddingHorizontal: 22, paddingVertical: 11 },
+  end: { textAlign: 'center', fontSize: 13, marginVertical: 18 },
+  rtWrap: { position: 'absolute', left: 0, right: 92, height: 44, flexDirection: 'row', alignItems: 'center', zIndex: 30 },
+  rtBack: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
+  rtTabs: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 18 },
+  rtTab: { alignItems: 'center' },
+  rtTxt: { color: 'rgba(255,255,255,0.62)', fontSize: 15.5, fontWeight: '600', textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  rtTxtOn: { color: '#fff', fontWeight: '800' },
+  rtInd: { width: 20, height: 2.5, borderRadius: 2, backgroundColor: '#fff', marginTop: 6 },
+});

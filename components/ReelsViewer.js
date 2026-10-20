@@ -2879,7 +2879,7 @@ function EmptyReels({ colors, isDark, t, error = false, following = false, onRet
 }
 
 // ── Main ReelsViewer ──
-export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp, parentActive = true, onCreate, recommended = true }) {
+export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp, parentActive = true, onCreate, recommended = true, hideHeaderTabs = false }) {
   // [reels-v1 2026-10-13] "Para você" vem do ranking do servidor (reels_rec_feed) — com
   // fallback automático pro feedList antigo se o servidor ainda não tem o endpoint.
   const useRec = !!recommended && !soundIdProp;
@@ -4016,7 +4016,8 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       {/* [2026-10-13 reels-visual] Cabeçalho único (TikTok/Instagram): abas centralizadas com
           indicador; à direita interesses + criar, espaçados. Mudo saiu do topo (canto inferior). */}
       <View style={[styles.reelHeader, { top: reelHeaderTop(outerInsets) }]} pointerEvents="box-none">
-        <View style={styles.reelTabBar} pointerEvents="box-none">
+        {/* [tabs-v2 2026-10-20] hideHeaderTabs: o Mural desenha o segmento dele por cima. */}
+        <View style={[styles.reelTabBar, hideHeaderTabs && { display: 'none' }]} pointerEvents="box-none">
           <Pressable
             onPress={() => { if (reelTab !== 'following') handleTabChange('following'); }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}

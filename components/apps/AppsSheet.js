@@ -113,7 +113,7 @@ const AppTile = React.memo(function AppTile({ item, badge, onPress, isDark, t, t
   );
 });
 
-function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, desktop, onOpenFeed, onOpenReels, onOpenChannels, onOpenCommunities, badges }) {
+function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, desktop, onOpenFeed, onOpenReels, onOpenChannels, onOpenCommunities, badges, tabsV2 = false }) {
   const insets = useSafeAreaInsets();
   // Cascata só na abertura.
   const [openSeq, setOpenSeq] = useState(0);
@@ -159,6 +159,8 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, des
     { key: 'snapmap',     label: t('snapmap.tile'),      ic: I(IconMapPin),      route: '/snap-map' },
     { key: 'profile',     label: t('sidebar.profile'),   ic: I(IconUser),        action: go('/settings') },
   ] : [
+    // [tabs-v2 2026-10-20] Opção A: Email saiu da barra de baixo → 1º da grade, com o selo de não lidos.
+    ...(tabsV2 ? [{ key: 'email', label: t('apps.email'), ic: I(IconMail), route: '/inbox' }] : []),
     { key: 'calendar',    label: t('sidebar.calendar'),  ic: I(IconCalendar),    route: '/calendar' },
     { key: 'meet',        label: t('sidebar.meetings'),  ic: I(IconVideo),       route: '/meetings' },
     { key: 'files',       label: t('sidebar.files'),     ic: I(IconFolder),      route: '/files' },
@@ -166,14 +168,15 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, des
     { key: 'docs',        label: t('sidebar.documents'), ic: I(IconFileText),    route: '/documentos' },
     { key: 'notes',       label: t('sidebar.notes'),     ic: I(IconStickyNote),  route: '/notes' },
     { key: 'tasks',       label: t('tasks.title'),       ic: I(IconCheckCircle), route: '/tasks' },
-    { key: 'feed',        label: t('apps.feed'),         ic: I(IconGrid),        action: onOpenFeed },
+    // [tabs-v2 2026-10-20] com a aba Mural na barra, o Feed antigo sai da grade.
+    ...(tabsV2 ? [] : [{ key: 'feed', label: t('apps.feed'), ic: I(IconGrid), action: onOpenFeed }]),
     // [2026-10-19 home-clean] Comunidades + Canais saíram das pílulas do topo da home → aqui.
     { key: 'communities', label: t('community.title'),   ic: I(IconUsersSmall),  action: onOpenCommunities },
     { key: 'channels',    label: t('channel.title'),     ic: I(IconMegaphone),   action: onOpenChannels },
     { key: 'live',        label: t('apps.goLive'),       ic: I(IconBroadcast),   route: '/live-broadcast' },
     { key: 'snapmap',     label: t('snapmap.tile'),      ic: I(IconMapPin),      route: '/snap-map' },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ]), [t, desktop, onOpenFeed, onOpenReels, onOpenChannels, onOpenCommunities, go]);
+  ]), [t, desktop, tabsV2, onOpenFeed, onOpenReels, onOpenChannels, onOpenCommunities, go]);
 
   const itemByKey = useMemo(() => {
     const m = new Map();
@@ -334,7 +337,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, des
       key: 'all',
       title: '', // sem cabeçalho (api 2 só desenha título não-vazio)
       items: items.map((it) => ({
-        id: it.key, t: it.label, n: it.label, feat: 0,
+        id: it.key, t: it.label, n: it.label, feat: (tabsV2 && it.key === 'email') ? 1 : 0, // [tabs-v2 2026-10-20]
         // [2026-10-18 bia-orb-icon] Bia = orb pelo id 'one' (sf = fallback).
         ...(it.key === 'one' ? { sf: 'circle.fill' } : null),
       })),

@@ -11,7 +11,9 @@ import ReelPublishProgress from './ReelPublishProgress';
 
 const ReelsViewer = React.lazy(() => import('./ReelsViewer'));
 
-export default function ReelsHomeTab({ colors, isDark, t, user, router, tabActive }) {
+// [tabs-v2 2026-10-20] hideHeaderTabs: dentro do Mural o segmento (voltar | Para você | Seguindo | Reels)
+// fica por cima do vídeo → o ReelsViewer não desenha as abas próprias dele.
+export default function ReelsHomeTab({ colors, isDark, t, user, router, tabActive, hideHeaderTabs = false }) {
   const insets = useSafeAreaInsets();
   const active = tabActive === 'reels';
   const onCreate = useCallback(() => { try { router?.push('/video-studio/camera'); } catch {} }, [router]);
@@ -21,7 +23,7 @@ export default function ReelsHomeTab({ colors, isDark, t, user, router, tabActiv
       {active ? <StatusBar style="light" /> : null}
       <React.Suspense fallback={<View style={styles.root} />}>
         <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} router={router}
-          parentActive={active} onCreate={onCreate} recommended />
+          parentActive={active} onCreate={onCreate} recommended hideHeaderTabs={hideHeaderTabs} />
       </React.Suspense>
       <ReelPublishProgress email={user?.email} t={t} top={insets.top + 52} />
     </View>

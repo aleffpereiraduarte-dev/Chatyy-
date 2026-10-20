@@ -67,7 +67,7 @@ class ChatyyTabBarModule : Module() {
     // 5 = (só iOS: foto por cima do ícone + autochecagem) — Android pula de 4 p/ 6.
     // 6 = [2026-10-19 tabbar-offline] items[].avatarLocalPath + avatarKey: foto OFFLINE-FIRST (última
     //     foto boa por conta em disco, síncrona; rede só revalida; falha nunca volta ao vetor).
-    Function("apiVersion") { 6 }
+    Function("apiVersion") { 7 } // [tabs-v2 2026-10-20] 7 = vetor "mural" (aba Mural)
 
     View(ChatyyTabBarView::class) {
       Events("onTabPress", "onTabLongPress", "onPreferredHeight")

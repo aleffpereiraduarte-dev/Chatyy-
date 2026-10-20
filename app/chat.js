@@ -42,6 +42,8 @@ const KidsLearnTab = React.lazy(() => import('../components/KidsLearnTab'));
 const KidsTVTab = React.lazy(() => import('../components/KidsTVTab'));
 // [reels-v1 2026-10-13] Aba Reels (tela cheia, ranking do servidor) — lazy: só monta ao abrir.
 const ReelsHomeTab = React.lazy(() => import('../components/ReelsHomeTab'));
+// [tabs-v2 2026-10-20] Aba Mural (Para você | Seguindo | Reels) — Opção A do founder.
+const MuralHomeTab = React.lazy(() => import('../components/mural/MuralHomeTab'));
 // [2026-10-14 perf] 1º toque em Ligações/Reels: o lazy suspendia → skeleton e o
 // React 19 segura a revelação ≥300 ms. Resolve os 2 lazies em idle após a 1ª
 // pintura da lista (Ligações ~25 KB gz na web; Reels ~1 KB) → troca de aba sem espera.
@@ -101,6 +103,19 @@ function IconReelsTab({ size = 24, color = '#666', active }) {
       <Line x1="9" y1="3.2" x2="11.5" y2="8.5" />
       <Line x1="14.5" y1="3.2" x2="17" y2="8.5" />
       <Path d="M10.5 12.2v5.1l4.2-2.55z" fill={active ? color : 'none'} />
+    </Svg>
+  );
+}
+
+// [tabs-v2 2026-10-20] Mural: quadro com foto + linhas de texto (post de feed); foto cheia quando ativo.
+function IconMuralTab({ size = 24, color = '#666', active }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={active ? 2 : 1.75} strokeLinecap="round" strokeLinejoin="round">
+      <Rect x="3" y="3.5" width="18" height="17" rx="4" />
+      <Rect x="6.5" y="7" width="5" height="5" rx="1.2" fill={active ? color : 'none'} />
+      <Line x1="14.5" y1="8" x2="17.5" y2="8" />
+      <Line x1="14.5" y1="11" x2="17.5" y2="11" />
+      <Line x1="6.5" y1="16" x2="17.5" y2="16" />
     </Svg>
   );
 }
@@ -297,6 +312,12 @@ const DESKTOP_BREAKPOINT = 900;
 // [reels-v1 2026-10-13 founder] Reels VOLTA pra barra, no centro (Instagram): "as pessoas gostam
 // de scroll". Ordem: Conversas · Email · Reels · Ligações · Apps.
 const TAB_KEYS_FULL = ['chats', 'email', 'reels', 'calls', 'apps'];
+// [tabs-v2 2026-10-20] Opção A (founder): Conversas | Mural | Ligações | Perfil. Email vai p/ a
+// grade de Apps (ícone 2x2 do topo, com selo de não lidos; toque longo = Email); Reels vira o
+// segmento "Reels" do Mural. Kill switch OTA: globalThis.__chatyy_tabs_v2 = false → barra antiga.
+const TAB_KEYS_FULL_V2 = ['chats', 'mural', 'calls', 'apps'];
+const MURAL_SEGS = ['foryou', 'following', 'reels'];
+function _tabsV2Flag() { try { return globalThis.__chatyy_tabs_v2 !== false; } catch { return true; } }
 // Desktop keeps the classic email-hub layout — user asked for it to stay as-is.
 // Profile is no longer a chat tab — tap the avatar in the header to reach
 // /u/{email}. Keeps a single profile surface across the whole app.
@@ -362,7 +383,7 @@ function ChatHub() {
   // over the current tab — never as a visible tab body. A `?tab=status` deep-link
   // therefore falls back to 'chats' (which still shows the stories strip); the
   // composer deep-link (`?new=1`) still mounts the hidden status surface below.
-  const VALID_TABS = ['chats','calls','feed','learn','tv','channels','communities','reels'];
+  const VALID_TABS = ['chats','calls','feed','learn','tv','channels','communities','reels','mural'];
   // ?tab=reels / ?tab=apps are special — they trigger handleTabPress side-effects
   // (setPendingReels+goto feed / openAppsDrawer) instead of mapping 1:1 to a
   // renderable tab. We start on 'chats' and let a useEffect below dispatch them.
@@ -373,7 +394,11 @@ function ChatHub() {
   const _tabParam = typeof params.tab === 'string' ? params.tab : '';
   // [reels-v1 2026-10-13] Reels é aba própria no celular; desktop/Kids seguem no modo reels do Feed.
   const _reelsIsTab = !isKids && !(Platform.OS === 'web' && Dimensions.get('window').width >= DESKTOP_BREAKPOINT);
-  const _initialTab = _tabParam === 'reels' ? (_reelsIsTab ? 'reels' : 'feed') : (VALID_TABS.includes(_tabParam) && (_tabParam !== 'reels') ? _tabParam : 'chats');
+  // [tabs-v2 2026-10-20] celular c/ barra nova: ?tab=reels → Mural no segmento Reels; ?tab=feed (sem repost) → Mural.
+  const _v2Init = _reelsIsTab && _tabsV2Flag();
+  const _initialTab = (_v2Init && (_tabParam === 'reels' || _tabParam === 'mural' || (_tabParam === 'feed' && !params.repost_of))) ? 'mural'
+    : (_tabParam === 'reels' ? (_reelsIsTab ? 'reels' : 'feed') : (VALID_TABS.includes(_tabParam) && (_tabParam !== 'reels') && (_tabParam !== 'mural') ? _tabParam : 'chats'));
+  const [muralSeg, setMuralSeg] = useState(() => (_tabParam === 'reels' ? 'reels' : (MURAL_SEGS.includes(params.seg) ? params.seg : 'foryou')));
   // Composer deep-link (`?new=1`, from the share sheet / UnifiedComposeFab /
   // notifications) needs the hidden status surface mounted so ChatStatusTab's
   // camera composer Modal can open over the current tab on first mount.
@@ -394,7 +419,7 @@ function ChatHub() {
   const [, _setLazyTick] = useState(0);
   useEffect(() => {
     let alive = true;
-    const LAZY = { calls: ChatCallsTab, feed: ChatFeedTab, status: ChatStatusTab, channels: ChannelsTab, communities: CommunitiesTab, learn: KidsLearnTab, tv: KidsTVTab, reels: ReelsHomeTab };
+    const LAZY = { calls: ChatCallsTab, feed: ChatFeedTab, status: ChatStatusTab, channels: ChannelsTab, communities: CommunitiesTab, learn: KidsLearnTab, tv: KidsTVTab, reels: ReelsHomeTab, mural: MuralHomeTab };
     try {
       const { whenLazyReady } = require('../services/webRoutePrewarm');
       mountedTabs.forEach((k) => {
@@ -468,7 +493,9 @@ function ChatHub() {
 
   // Mobile and desktop have different layouts — mobile put One/Apps in the
   // bottom bar, desktop keeps the classic Feed/Status rail.
-  const TAB_KEYS = isKids ? TAB_KEYS_KIDS : (isDesktop ? TAB_KEYS_DESKTOP : TAB_KEYS_FULL);
+  // [tabs-v2 2026-10-20] barra nova só no celular (desktop web segue com a lateral de sempre).
+  const TABS_V2 = !isKids && !isDesktop && _tabsV2Flag();
+  const TAB_KEYS = isKids ? TAB_KEYS_KIDS : (isDesktop ? TAB_KEYS_DESKTOP : (TABS_V2 ? TAB_KEYS_FULL_V2 : TAB_KEYS_FULL));
 
   // Animated indicator position. Width comes from the responsive `windowWidth`
   // state (not a one-shot Dimensions.get) so the sliding indicator stays
@@ -518,6 +545,8 @@ function ChatHub() {
   const [feedBadge, setFeedBadge] = useState(0);
 
   const closeAppsDrawer = useCallback(() => setShowAppsDrawer(false), []);
+  // [tabs-v2 2026-10-20] Email na grade de Apps: selo = o mesmo número da antiga aba Email.
+  const appsBadgesV2 = useMemo(() => (emailBadge > 0 ? { ...appsBadges, email: emailBadge } : appsBadges), [appsBadges, emailBadge]);
 
   // [2026-10-07 native-ui-build] Large title "Conversas" que colapsa com o
   // scroll (padrão UINavigationBar / M3 large top app bar). O título grande
@@ -607,8 +636,10 @@ function ChatHub() {
   const onNativeTabsReady = useCallback(() => {
     try { require('../services/nativeTelemetry').noteNativeMount('tabbar'); } catch {}
   }, []);
+  // [tabs-v2 2026-10-20] Android: o vetor "mural" só existe no binário com o módulo api 7+ → barra JS até o build.
   const NATIVE_TABS = useMemo(() => !isKids && !nativeTabsFailed && nativeTabsAvailable()
-    && !(YOU_TAB && Platform.OS === 'android' && nativeTabsApi() < 2), [isKids, YOU_TAB, nativeTabsFailed]);
+    && !(YOU_TAB && Platform.OS === 'android' && nativeTabsApi() < 2)
+    && !(TABS_V2 && Platform.OS === 'android' && nativeTabsApi() < 7), [isKids, YOU_TAB, TABS_V2, nativeTabsFailed]);
   // [2026-10-18 you-tab-avatar] api 3+ (iOS/Android): foto do usuário na aba "Você"
   // (mesma URL/cache do AvatarCircle). Binário < 3 → ícone de antes.
   const NATIVE_YOU_AVATAR = useMemo(() => NATIVE_TABS && YOU_TAB && nativeTabsApi() >= 3
@@ -685,17 +716,21 @@ function ChatHub() {
     if (!NATIVE_TABS) return null;
     return [
       { key: 'chats', label: t('chat.tabChats') || 'Chats', sfSymbol: 'bubble.left.and.bubble.right', sfSymbolActive: 'bubble.left.and.bubble.right.fill', androidIcon: 'chats', badge: chatsBadge || 0, longPress: true },
-      { key: 'email', label: t('chat.tabEmail') || 'Email', sfSymbol: 'envelope', sfSymbolActive: 'envelope.fill', androidIcon: 'email', badge: emailBadge || 0, selectable: false },
-      { key: 'reels', label: t('reels.title') || 'Reels', sfSymbol: 'play.rectangle', sfSymbolActive: 'play.rectangle.fill', androidIcon: 'reels' },
+      ...(TABS_V2 ? [
+        { key: 'mural', label: t('chat.tabMural') || 'Mural', sfSymbol: 'newspaper', sfSymbolActive: 'newspaper.fill', androidIcon: 'mural' },
+      ] : [
+        { key: 'email', label: t('chat.tabEmail') || 'Email', sfSymbol: 'envelope', sfSymbolActive: 'envelope.fill', androidIcon: 'email', badge: emailBadge || 0, selectable: false },
+        { key: 'reels', label: t('reels.title') || 'Reels', sfSymbol: 'play.rectangle', sfSymbolActive: 'play.rectangle.fill', androidIcon: 'reels' },
+      ]),
       { key: 'calls', label: t('chat.tabCalls') || 'Ligações', sfSymbol: 'phone', sfSymbolActive: 'phone.fill', androidIcon: 'calls', badge: missedCallBadge || 0 },
       YOU_TAB
         ? { key: 'you', label: t('chat.tabYou') || 'Você', sfSymbol: 'person.crop.circle', sfSymbolActive: 'person.crop.circle.fill', androidIcon: 'you', selectable: false,
             ...(NATIVE_YOU_NOLABEL ? { hideLabel: true } : null),
             ...(youAvatarUrl ? { avatarUrl: youAvatarUrl, avatarHeaders: youAvatarHeaders } : null),
             ...(youAvatarKey ? { avatarKey: youAvatarKey, avatarLocalPath: youAvatarLocal || null } : null) }
-        : { key: 'apps', label: t('chat.tabApps') || 'Apps', sfSymbol: 'square.grid.2x2', sfSymbolActive: 'square.grid.2x2.fill', androidIcon: 'apps' },
+        : { key: 'apps', label: t('chat.tabApps') || 'Apps', sfSymbol: 'square.grid.2x2', sfSymbolActive: 'square.grid.2x2.fill', androidIcon: 'apps', ...(TABS_V2 ? { badge: emailBadge || 0, longPress: true } : null) },
     ];
-  }, [NATIVE_TABS, YOU_TAB, NATIVE_YOU_NOLABEL, t, chatsBadge, emailBadge, missedCallBadge, youAvatarUrl, youAvatarHeaders, youAvatarLocal, youAvatarKey]);
+  }, [NATIVE_TABS, YOU_TAB, TABS_V2, NATIVE_YOU_NOLABEL, t, chatsBadge, emailBadge, missedCallBadge, youAvatarUrl, youAvatarHeaders, youAvatarLocal, youAvatarKey]);
 
   // Compute missed-call count from cached call history.
   // We gate by a persisted "calls last seen" timestamp — counting only missed
@@ -1028,6 +1063,9 @@ function ChatHub() {
     // "Apps" is a drawer overlay — it doesn't switch tabs, so we keep the
     // chats tab active underneath and just open the modal.
     if (tab === 'apps') { setShowAppsDrawer(true); return; }
+    // [tabs-v2 2026-10-20] Reels mora no Mural (segmento). Sem a barra nova, 'mural' cai em Conversas.
+    if (tab === 'reels' && TABS_V2) { setMuralSeg('reels'); tab = 'mural'; }
+    if (tab === 'mural' && !TABS_V2) tab = 'chats';
     // [2026-10-18 you-tab] "Você" = tela de perfil+ajustes (/settings), push nativo
     // (slide + swipe-back), igual ao toque no avatar de antes; não troca de aba.
     if (tab === 'you') { try { router.push('/settings'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
@@ -1085,7 +1123,7 @@ function ChatHub() {
 
     setActiveTab(tab);
     setMountedTabs(prev => { const next = new Set(prev); next.add(tab); return next; });
-  }, [indicatorAnim, contentOpacity, contentTranslateX, activeTab, TAB_KEYS, isDesktop, isKids]);
+  }, [indicatorAnim, contentOpacity, contentTranslateX, activeTab, TAB_KEYS, isDesktop, isKids, TABS_V2]);
 
   // Trigger initial sync ONCE per account (not per app-version-bump).
   // Old gate was a global `sync_version` bump that re-ran the 8-phase
@@ -1271,12 +1309,12 @@ function ChatHub() {
   // vira pageview '/chat' no _layout; aqui so as trocas (e aba inicial != chats).
   const _tabTrackRef = useRef(null);
   useEffect(() => {
-    const key = activeTab === 'feed' && feedReelsMode ? 'reels' : activeTab;
+    const key = (activeTab === 'feed' && feedReelsMode) || (activeTab === 'mural' && muralSeg === 'reels') ? 'reels' : (activeTab === 'mural' ? 'mural/' + muralSeg : activeTab);
     const prev = _tabTrackRef.current;
     _tabTrackRef.current = key;
     if (prev === key || (prev === null && key === 'chats')) return;
     try { trackScreenView('/chat/' + key); } catch {}
-  }, [activeTab, feedReelsMode]);
+  }, [activeTab, feedReelsMode, muralSeg]);
   // [2026-05-30 STATUS CONSOLIDATION] When the chat-list home strip (ChatListTab)
   // taps a story ring, it flips to the canonical `status` tab and stashes the
   // tapped email here so ChatStatusTab deep-opens that user's viewer. This
@@ -1346,6 +1384,8 @@ function ChatHub() {
     if (!tp || tp === lastTabParamRef.current) return;
     lastTabParamRef.current = tp;
     if (tp === 'reels') { handleTabPress('reels'); return; }
+    if (tp === 'feed' && TABS_V2 && !params.repost_of) { if (MURAL_SEGS.includes(params.seg)) setMuralSeg(params.seg); handleTabPress('mural'); return; } // [tabs-v2 2026-10-20]
+    if (tp === 'mural' && MURAL_SEGS.includes(params.seg)) setMuralSeg(params.seg);
     if (tp === 'apps' || tp === 'email' || tp === 'one' || tp === 'you') { handleTabPress(tp); return; }
     if (VALID_TABS.includes(tp)) handleTabPress(tp);
   }, [params.tab]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1371,6 +1411,7 @@ function ChatHub() {
     channels: t('channel.title') || 'Canais',
     communities: t('community.title') || 'Comunidades',
     reels: t('reels.title') || 'Reels',
+    mural: t('chat.tabMural') || 'Mural',
   };
 
   const renderHeaderAction = () => {
@@ -1676,9 +1717,12 @@ function ChatHub() {
   // ── MOBILE LAYOUT (bottom tab bar) ──
   // Reels = full-bleed immersive (Instagram): no shell header / search bar;
   // ChatFeedTab's own "Posts" pill is the way back.
-  const reelsImmersive = (activeTab === 'feed' && feedReelsMode) || activeTab === 'reels';
+  const muralReels = activeTab === 'mural' && muralSeg === 'reels'; // [tabs-v2 2026-10-20]
+  const reelsImmersive = (activeTab === 'feed' && feedReelsMode) || activeTab === 'reels' || muralReels;
+  // [tabs-v2 2026-10-20] Mural desenha o próprio topo (título + segmento) → sem o header do shell.
+  const muralShell = activeTab === 'mural';
   // [reels-v1 2026-10-13] Barra escura sobre o vídeo (Instagram) quando a aba Reels está ativa.
-  const barDark = isDark || activeTab === 'reels';
+  const barDark = isDark || activeTab === 'reels' || muralReels;
   // [wave8-list] header sobreposto à lista (só Conversas, busca fechada).
   const homeOverlay = homeTopBar && LIST_LARGE_TITLE && activeTab === 'chats' && !searchOpen && !reelsImmersive && homeHeaderH > 0;
   // [2026-10-16 wave12-c] web/fallback: atalhos Comunidades/Canais numa linha sob o header.
@@ -1689,12 +1733,12 @@ function ChatHub() {
       backgroundColor: reelsImmersive ? '#000' : (isDark ? SHELL_DARK : '#ffffff'),
       // [2026-10-13 reels-visual] Aba Reels = vídeo de borda a borda (TikTok/Instagram):
       // começa atrás da status bar; o ReelsViewer aplica o inset no cabeçalho + gradiente.
-      paddingTop: activeTab === 'reels' ? 0 : insets.top,
+      paddingTop: (activeTab === 'reels' || muralShell) ? 0 : insets.top,
     }]}>
       {/* WhatsApp-style header — no back arrow on mobile (Chatyy IS home) */}
       <View onLayout={onHomeHeaderLayout} style={[styles.header, {
         ...glassHeader,
-        ...(reelsImmersive ? { display: 'none' } : null),
+        ...((reelsImmersive || muralShell) ? { display: 'none' } : null),
         paddingLeft: 14,
         // [2026-10-18 compact-list] Conversas: barra 48 pt (era 54 + 11/11) —
         // botões 36 + hitSlop 6 seguem com alvo ≥ 44. Kill: __chatyy_compact_list=false.
@@ -1755,14 +1799,23 @@ function ChatHub() {
         {activeTab === 'chats' && YOU_TAB && (
           <TouchableOpacity
             onPress={() => handleTabPress('apps')}
+            onLongPress={TABS_V2 ? (() => { try { haptic.select(); } catch {} handleTabPress('email'); }) : undefined /* [tabs-v2 2026-10-20] segurar = Email direto */}
+            delayLongPress={350}
             activeOpacity={0.6}
             hitSlop={6}
             style={[styles.headerIconBtn, { marginRight: 4, marginLeft: -6 }]}
             accessibilityRole="button"
-            accessibilityLabel={t('chat.tabApps') || 'Apps'}
+            accessibilityLabel={(t('chat.tabApps') || 'Apps') + (TABS_V2 && emailBadge > 0 ? ', ' + (t('apps.emailUnread', { count: emailBadge > 99 ? '99+' : String(emailBadge) }) || '') : '')}
+            accessibilityHint={TABS_V2 ? (t('apps.longPressEmail') || undefined) : undefined}
             accessibilityState={{ expanded: !!showAppsDrawer }}
           >
             <IconAppsTab size={22} color={colors.text} active={showAppsDrawer} />
+            {/* [tabs-v2 2026-10-20] selo de e-mails não lidos (o mesmo número da antiga aba Email) */}
+            {TABS_V2 && emailBadge > 0 ? (
+              <View pointerEvents="none" style={[styles.appsMailBadge, { backgroundColor: isDark ? '#FFFFFF' : '#0B0B0C', borderColor: isDark ? SHELL_DARK : '#FFFFFF' }]}>
+                <Text style={{ color: isDark ? '#000000' : '#FFFFFF', fontSize: 10.5, fontWeight: '700', letterSpacing: -0.2 }} numberOfLines={1}>{emailBadge > 99 ? '99+' : String(emailBadge)}</Text>
+              </View>
+            ) : null}
           </TouchableOpacity>
         )}
         {activeTab === 'chats' && !YOU_TAB && (
@@ -1830,7 +1883,7 @@ function ChatHub() {
         // hairline still rendered on web (border-box) → 9px blank band + double
         // divider under the header on every tab. Only pad/border while open.
         ...(searchOpen ? null : { paddingBottom: 0, borderBottomWidth: 0 }),
-        ...(reelsImmersive ? { display: 'none' } : null),
+        ...((reelsImmersive || muralShell) ? { display: 'none' } : null),
       }]}>
         {searchOpen && (
           <View style={[styles.searchBar, {
@@ -1876,6 +1929,9 @@ function ChatHub() {
         {mountedTabs.has('reels') && <View style={{ display: activeTab === 'reels' ? 'flex' : 'none', flex: activeTab === 'reels' ? 1 : undefined, backgroundColor: '#000' }}>
           <ChatErrorBoundary name="reels"><Suspense fallback={null}><ReelsHomeTab {...mediaTabProps} /></Suspense></ChatErrorBoundary>
         </View>}
+        {mountedTabs.has('mural') && <View style={{ display: activeTab === 'mural' ? 'flex' : 'none', flex: activeTab === 'mural' ? 1 : undefined, backgroundColor: muralSeg === 'reels' ? '#000' : undefined }}>
+          <ChatErrorBoundary name="mural"><Suspense fallback={null}><MuralHomeTab {...mediaTabProps} segment={muralSeg} onSegmentChange={setMuralSeg} /></Suspense></ChatErrorBoundary>
+        </View>}
         {mountedTabs.has('status') && <View style={_statusSurfaceStyle(activeTab === 'status')} pointerEvents={activeTab === 'status' ? 'auto' : 'box-none'}>
           <ChatErrorBoundary name="status" resetKey={`${newStatusNonce}|${openStatusEmail || ''}`}><Suspense fallback={null}><ChatStatusTab {...tabProps} largeTitle={LIST_LARGE_TITLE && !isKids ? titles.status : undefined} onLargeTitleCollapsedChange={LIST_LARGE_TITLE && !isKids ? onStatusTitleCollapse : undefined} /></Suspense></ChatErrorBoundary>
         </View>}
@@ -1898,7 +1954,7 @@ function ChatHub() {
       {NATIVE_TABS && nativeTabItems ? (
         <NativeHomeTabBar
           items={nativeTabItems}
-          selectedKey={(showAppsDrawer && !YOU_TAB) ? 'apps' : ((activeTab === 'chats' || activeTab === 'reels' || activeTab === 'calls') ? activeTab : null)}
+          selectedKey={(showAppsDrawer && !YOU_TAB) ? 'apps' : ((activeTab === 'chats' || activeTab === 'reels' || activeTab === 'calls' || activeTab === 'mural') ? activeTab : null)}
           isDark={barDark}
           translucent={GLASS_TAB_BAR && !_reduceTransparency()}
           bottomInset={insets.bottom}
@@ -1907,7 +1963,7 @@ function ChatHub() {
           backgroundColor={barDark ? SHELL_DARK : '#ffffff'}
           hairlineColor={barDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.12)'}
           onTabPress={handleTabPress}
-          onTabLongPress={(key) => { if (key === 'chats') requestNewStatus(); /* [2026-10-09 status-composer] segurar = câmera do status */ }}
+          onTabLongPress={(key) => { if (key === 'chats') requestNewStatus(); /* [2026-10-09 status-composer] segurar = câmera do status */ else if (key === 'apps' && TABS_V2) handleTabPress('email'); /* [tabs-v2 2026-10-20] */ }}
           onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined}
           onNativeFail={onNativeTabsFail}
           onNativeReady={onNativeTabsReady}
@@ -2026,6 +2082,18 @@ function ChatHub() {
               floating={FLOAT_TAB_BAR}
               badge={chatsBadge}
             />
+            {/* [tabs-v2 2026-10-20] Opção A: Mural no lugar de Email + Reels (Reels = segmento do Mural;
+                Email = grade de Apps do topo). Kill switch __chatyy_tabs_v2=false → as 2 abas de antes. */}
+            {TABS_V2 ? (
+            <TabBarItem
+              icon={(active) => <IconMuralTab size={TAB_ICON} color={active ? _tabOn(barDark) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
+              label={t('chat.tabMural') || 'Mural'}
+              active={activeTab === 'mural'}
+              onPress={() => handleTabPress('mural')}
+              isDark={barDark}
+              floating={FLOAT_TAB_BAR}
+            />
+            ) : (<>
             {/* [2026-10-03] Email no lugar do Reels — diferencial do super-app
                 + utilidade diária. Abre o inbox (/inbox) via handleTabPress('email'). */}
             {/* [2026-10-15] No web, quando o chat está no painel lateral (iframe) do inbox, o e-mail já está aberto ao lado — esconde a aba. */}
@@ -2049,6 +2117,7 @@ function ChatHub() {
               isDark={barDark}
               floating={FLOAT_TAB_BAR}
             />
+            </>)}
             <TabBarItem
               icon={(active) => <IconCallsTab size={TAB_ICON} color={active ? _tabOn(barDark) : (barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT)} active={active} />}
               label={t('chat.tabCalls') || 'Ligações'}
@@ -2092,8 +2161,10 @@ function ChatHub() {
               label={t('chat.tabApps') || 'Apps'}
               active={showAppsDrawer}
               onPress={() => handleTabPress('apps')}
+              onLongPress={TABS_V2 ? (() => handleTabPress('email')) : undefined /* [tabs-v2 2026-10-20] segurar = Email */}
               isDark={barDark}
               floating={FLOAT_TAB_BAR}
+              badge={TABS_V2 ? emailBadge : 0}
             />
             )}
           </>
@@ -2113,7 +2184,8 @@ function ChatHub() {
         onOpenReels={openReelsFromApps}
         onOpenChannels={openChannelsFromApps}
         onOpenCommunities={openCommunitiesFromApps}
-        badges={appsBadges}
+        badges={TABS_V2 ? appsBadgesV2 : appsBadges}
+        tabsV2={TABS_V2}
       />
       {/* No UnifiedComposeFab here — ChatListTab has its own FAB with
           new chat/group/channel, and each other tab owns its composer. */}
@@ -2424,6 +2496,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     ...(Platform.OS === 'web' ? { transition: 'background-color 0.2s ease, transform 0.15s cubic-bezier(0.34,1.56,0.64,1)', cursor: 'pointer' } : {}),
   },
+  // [tabs-v2 2026-10-20] selo de e-mails não lidos no ícone de Apps do topo
+  appsMailBadge: { position: 'absolute', top: -3, right: -9, minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   headerAccentBtn: {
     backgroundColor: 'rgba(255,255,255,0.1)',
   },

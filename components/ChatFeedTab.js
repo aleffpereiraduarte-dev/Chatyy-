@@ -293,7 +293,7 @@ function EmptyFeedIllustration({ isDark }) {
 // "Seu status" tile opens the viewer when you already have a story, otherwise
 // it opens the composer (requestNewStatus). Both reuse ChatStatusTab's existing
 // viewer/composer; we never duplicate that logic here.
-const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t, requestOpenStatus, requestNewStatus }) {
+const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t, requestOpenStatus, requestNewStatus, background }) {
   const { groups } = useStatuses(user?.email, { warmCacheVideos: false });
   const myEntry = (groups || []).find(g => String(g.email || '').toLowerCase() === String(user?.email || '').toLowerCase());
   const others = (groups || []).filter(g => String(g.email || '').toLowerCase() !== String(user?.email || '').toLowerCase());
@@ -319,9 +319,9 @@ const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t,
   return (
     <View style={{
       paddingVertical: 10,
-      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomWidth: background ? 0 : StyleSheet.hairlineWidth, // [tabs-v2 2026-10-20] Mural: fundo próprio, sem hairline
       borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-      backgroundColor: isDark ? colors.background : FEED_CANVAS,
+      backgroundColor: background || (isDark ? colors.background : FEED_CANVAS),
     }}>
       {/* [2026-10-08 apps-native] Horizontal FlatList (virtualized) instead of
           ScrollView+map — a big contact list with active statuses mounted every
@@ -2325,3 +2325,5 @@ const styles = StyleSheet.create({
 // Memo skips re-running its render on unrelated chat.js parent churn now that
 // tabProps is a stable reference.
 export default React.memo(ChatFeedTab);
+// [tabs-v2 2026-10-20] faixa de status reaproveitada pela aba Mural (components/mural/MuralHomeTab).
+export { StoriesStrip };
