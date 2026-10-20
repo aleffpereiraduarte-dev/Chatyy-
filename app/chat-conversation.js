@@ -309,6 +309,7 @@ import MessageScreenEffect, { SCREEN_EFFECT_IDS } from '../components/MessageScr
 const MessageScreenEffectMemo = React.memo(MessageScreenEffect);
 import MessageBubbleEffect from '../components/MessageBubbleEffect';
 import MediaGallery from '../components/MediaGallery';
+import TgContactInfo from '../components/profile/TgContactInfo'; // [mural 2026-10-20]
 import JumpToDateSheet from '../components/chat/JumpToDateSheet'; // [busca-conversa 2026-10-16]
 import ExportConversationModal from '../components/ExportConversationModal';
 import FormatToolbar from '../components/FormatToolbar';
@@ -26554,6 +26555,9 @@ function ChatConversationInnerBody() {
   const [nativeChatInfoOff, setNativeChatInfoOff] = _useStateT(false);
   const _ciOn = Platform.OS !== 'web' && !nativeChatInfoOff && isNativeChatInfoEnabled();
   const _ciOwnsHeader = _ciOn && nativeChatInfoOwnsHeader(); // [2026-10-18 elegance] binário api ≥ 2 desenha a barra (X) nativa
+  // [mural 2026-10-20] folha "Dados do contato" (sem a rota empurrada / web) no perfil novo. Kill: __chatyy_profile_tg = false.
+  const [tgCiOff, setTgCiOff] = _useStateT(false);
+  const _tgCi = !tgCiOff && require('../components/profile/TgContactInfo').tgContactInfoOn();
   const _ciOff = (why) => {
     try { globalThis.__chatyyNativeChatInfoFail = { at: Date.now(), why: String(why || '') }; } catch {}
     setNativeChatInfoOff(true);
@@ -26756,8 +26760,16 @@ function ChatConversationInnerBody() {
     else rows.push({ id: 'block', sid: 'danger', k: 'a', dest: true, icon: 'block', title: `${_ciTr('chat.blockUser', 'Bloquear')} ${peerName}`.trim(), onPress: () => go(() => handleBlockUser(peer)) });
     rows.push({ id: 'report', sid: 'danger', k: 'a', dest: true, icon: 'flag', title: `${_ciTr('chat.reportUser', 'Denunciar')} ${peerName}`.trim(), onPress: () => go(() => handleReportUser(peer, null, false)) });
     rows.push({ id: 'reportLeave', sid: 'danger', k: 'a', dest: true, icon: 'logout', title: _ciTr('chatConv.reportAndLeave', 'Reportar e sair'), onPress: () => go(handleReportAndLeave) });
+    // [mural 2026-10-20] extras p/ o perfil novo (components/profile/TgContactInfo): mesmo mute de hoje.
+    const tg = {
+      email: peerEmail || peer, conversationId, presence: presenceText || '', muted: !!mutedUntil,
+      onMuteFor: (d) => handleMuteChat(d), onUnmute: () => handleMuteChat(null),
+      bio: ident?.bio || '', phone: ident?.phone || '',
+      commonGroups: contactCommonGroups.map((g) => ({ id: g.id, name: g.name || '', avatar_url: g.avatar_url || g.avatar || '', member_count: g.member_count || g.members_count || 0 })),
+      openGroup: (g) => go(() => require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: g.id, name: g.name || '', type: 'group' } }, { replace: true })),
+    };
     return require('../components/profile/contactProfileExtras').decorateContactChatInfo({
-      hero, rows, media: _ciMedia(),
+      tg, hero, rows, media: _ciMedia(),
       onMediaPress: () => _ciOpenGallery(go),
       labels: { photo: _ciTr('chatConv.viewPhoto', 'Ver foto') },
     }, _ppContact, { t, router, peerName, v6: chatInfoV6() });
@@ -42440,7 +42452,7 @@ function ChatConversationInnerBody() {
       >
         <View style={styles.infoSheetBackdrop}>{/* [2026-10-14 vis3] fundo escurecido: sem ele a conversa aparecia "vazando" acima da folha */}
         <View style={[styles.forwardModal, { backgroundColor: colors.background, overflow: 'hidden' }]}>
-          {(_ciOn ? !_ciOwnsHeader : !_npContact) && (
+          {!_tgCi && (_ciOn ? !_ciOwnsHeader : !_npContact) && (
           <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
             <Text style={[styles.forwardTitle, { color: colors.text, fontSize: 17, fontWeight: '600' }]}>{t('chatConv.contactInfoTitle') || 'Dados do contato'}</Text>
             <TouchableOpacity onPress={() => setShowContactInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginRight: -10 }}>
@@ -42450,7 +42462,9 @@ function ChatConversationInnerBody() {
           )}
           {/* [2026-10-15 native-profile] _npContact → cabeçalho nativo (avatar encolhe p/ a barra, puxar abre a galeria) */}
           {/* [2026-10-18 chat-info-native] tela 100% nativa; folha JS abaixo = fallback */}
-          {_ciOn ? (
+          {_tgCi ? (
+            <TgContactInfo info={buildContactChatInfo()} bottomInset={insets.bottom + 16} onFailure={() => setTgCiOff(true)} onClose={() => setShowContactInfo(false)} backLabel={t('common.close') || 'Fechar'} />
+          ) : _ciOn ? (
             <NativeChatInfo {...buildContactChatInfo()} bottomInset={insets.bottom + 16} onFailure={_ciOff} onClose={() => setShowContactInfo(false)} closeLabel={t('common.close') || 'Fechar'} />
           ) : (
           <ProfileScrollHost native={_npContact && showContactInfo ? buildContactNativeHeader() : null} onFatal={_npOff} style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl + insets.bottom }}>
@@ -42736,12 +42750,16 @@ function ChatConversationInnerBody() {
       </Modal>)}</LazyMount>
       )}
 
+      {/* [mural 2026-10-20] perfil novo: o "peek" estilo Instagram (Seguir/seguidores) não abre mais —
+          o contato desta conversa → "Dados do contato" (Telegram + Mural); outra pessoa → /u (TgUserProfile).
+          Kill switch: globalThis.__chatyy_profile_tg = false. */}
+      {(() => { if (profileViewer && _tgCi && !profileViewer.__tg) { profileViewer.__tg = 1; const _pe = String(profileViewer.email || '').toLowerCase(); setTimeout(() => { setProfileViewer(null); if (!_pe) return; if (conversationType === 'direct' && _pe === String(getContactPeerEmail() || params.email || '').toLowerCase()) setShowContactInfo(true); else { try { router.push(`/u/${encodeURIComponent(_pe)}`); } catch {} } }, 0); } return null; })()}
       {/* Profile viewer modal */}
       {/* Unified Profile (replaces ProfileViewerModal). Same peek sheet,
           but now backed by /api/profile_get — 1 fetch, real shared media,
           common chats, follower stats. "Ver perfil completo" routes to
           /u/[username] which renders the full-screen layout. */}
-      <LazyMount when={!!profileViewer}>{(_lmV) => (<Profile
+      <LazyMount when={!!profileViewer && !_tgCi}>{(_lmV) => (<Profile
         mode="peek"
         visible={_lmV}
         email={profileViewer?.email}

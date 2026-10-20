@@ -15,6 +15,8 @@ import { IconArrowLeft } from '../../components/Icons';
 import PressableScale from '../../components/PressableScale'; // [2026-10-08 apps-native]
 import { computeContentMaxWidth } from '../../utils/responsive';
 import { useGroupedColors } from '../../components/settings/SettingsKit'; // [2026-10-18 profile-native]
+import TgUserProfile from '../../components/profile/TgUserProfile'; // [mural 2026-10-20] perfil Telegram + Mural
+import { isTgProfileEnabled } from '../../components/profile/tg/TgProfileView';
 
 // [2026-10-15 profile-fast] Web: o chunk desta rota avalia ~250 ms antes do 1o render
 // do Profile (arvore de providers inteira montando) -> o profile_get ja sai daqui e o
@@ -43,6 +45,14 @@ export default function UserProfileScreen() {
     try { if (globalThis.__chatyy_profile_native_first === false) return false; } catch {}
     try { return require('../../components/chat/NativeChatInfo').isNativeProfileEnabled(); } catch { return false; }
   });
+  // [mural 2026-10-20] Perfil novo (Telegram + Mural) no lugar do estilo Instagram
+  // (Seguir / seguidores / destaques). Fluxos que só o antigo tem (abrir status,
+  // ajustes, editar inline, grade ?grid=1) continuam nele.
+  // Kill switch OTA: globalThis.__chatyy_profile_tg = false → antigo.
+  const [useTg] = useState(() => isTgProfileEnabled() && !wantsGrid
+    && !(_one(openStatus) === '1' || _one(openStatus) === 'true')
+    && !(_one(openSettings) === '1' || _one(openSettings) === 'true')
+    && !(_one(edit) === '1' || _one(edit) === 'true'));
   const gc = useGroupedColors();
   const router = useRouter();
   const { colors, isDark } = useTheme();
@@ -100,6 +110,23 @@ export default function UserProfileScreen() {
   // spacer there (it left @handle visibly indented vs. the avatar below).
   const { width: winW } = useWindowDimensions();
   const headerLead = (Platform.OS === 'web' && (winW - computeContentMaxWidth(winW)) / 2 >= 56) ? 0 : 48;
+
+  if (useTg) {
+    return (
+      <View style={styles.container}>
+        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+        <TgUserProfile
+          identifier={identifier}
+          router={router}
+          onOpenChat={handleChat}
+          onOpenCall={handleCall}
+          topInset={insets.top || 0}
+          bottomInset={insets.bottom || 0}
+          initialTab={typeof _one(tab) === 'string' ? _one(tab) : undefined}
+        />
+      </View>
+    );
+  }
 
   return (
     // The back button is absolute-positioned at left:14 (38px wide, so right edge ~52px).

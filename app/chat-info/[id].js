@@ -14,6 +14,7 @@ import { useGroupedColors } from '../../components/settings/SettingsKit';
 import { useLanguage } from '../../context/LanguageContext';
 import { getInfo, subscribeInfo, screenMounted, screenGone } from '../../services/chatInfoRoute';
 import ChatyySecureView from '../../components/chat/ChatyySecureView'; // [2026-10-19 secure-view]
+import TgContactInfo, { tgContactInfoOn } from '../../components/profile/TgContactInfo'; // [mural 2026-10-20]
 import { useCaptureScope, secureViewAvailable } from '../../services/captureBlock';
 import { acquireCaptureProtection, addScreenshotListener, sendScreenshotNotice } from '../../services/chatPrivacy';
 
@@ -55,6 +56,10 @@ export default function ChatInfoRouteScreen() {
   routeKeyRef.current = route?.key;
   const poppedRef = useRef(false);
   const _capProt = useInfoCaptureProtect(t);
+  // [mural 2026-10-20] "Dados do contato" no perfil novo (Telegram + Mural, JS).
+  // Grupo segue na ChatyyChatInfo nativa. Falha → nativa (tgFailed).
+  const [tgFailed, setTgFailed] = useState(false);
+  const _tgOn = key.startsWith('contact:') && !tgFailed && tgContactInfoOn();
 
   // Remove SÓ esta rota (pop com source = não mexe no que estiver por cima);
   // withBelow = também a conversa logo abaixo (sair/apagar grupo).
@@ -91,6 +96,25 @@ export default function ChatInfoRouteScreen() {
   }, [navigation, popSelf]);
 
   if (!props) return <View style={[styles.fill, { backgroundColor: gc.pageBg }]} />;
+  if (_tgOn) {
+    return (
+      <ChatyySecureView enabled={_capProt} dark={!!gc.isDark} coverColor={gc.pageBg} t={t}>
+      <View style={styles.fill}>
+        <StatusBar barStyle={gc.isDark ? 'light-content' : 'dark-content'} />
+        <TgContactInfo
+          info={props}
+          onClose={onClose}
+          onFailure={() => setTgFailed(true)}
+          topInset={insets.top || 0}
+          bottomInset={insets.bottom || 0}
+          backLabel={(t && t('common.back')) || 'Voltar'}
+        />
+        {props.overlay || null}
+        <ProfilePhotoGalleryHost t={t} />
+      </View>
+      </ChatyySecureView>
+    );
+  }
   const hero = { ...(props.hero || {}), back: true };
   return (
     <ChatyySecureView enabled={_capProt} dark={!!gc.isDark} coverColor={gc.pageBg} t={t}>
