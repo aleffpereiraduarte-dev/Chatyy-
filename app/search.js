@@ -88,7 +88,7 @@ export default function SearchScreen() {
   // [2026-10-14 busca-global] /search?tab=messages abre direto na aba Mensagens.
   const _params = useLocalSearchParams();
   const [tab, setTab] = useState(() => (TABS.some((x) => x.key === _params?.tab) ? String(_params.tab) : 'chats'));
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(() => String(_params?.q || '').slice(0, 200)); // [2026-10-20 tg1] /search?tab=messages&q=… (vem da busca da lista)
   const [loading, setLoading] = useState(false);
   // [2026-10-14 offline-first] listas iniciais (em alta / sons / lives) pintam
   // do último valor salvo no aparelho; a rede só atualiza em 2º plano.

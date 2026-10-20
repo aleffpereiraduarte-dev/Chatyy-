@@ -788,6 +788,15 @@ export default function GlobalSearch({
                     colors={colors}
                   />
                 ))}
+                {/* [2026-10-20 tg1] busca com filtro de data e tipo (Telegram) → /search aba Mensagens */}
+                {!!router && (
+                  <FilterChip
+                    label={tt('gsearch.dateType', 'Data e tipo')}
+                    active={false}
+                    onPress={() => { const q = String(term || '').trim(); close(); setTimeout(() => { try { router.push(`/search?tab=messages${q ? `&q=${encodeURIComponent(q)}` : ''}`); } catch {} }, 60); }}
+                    colors={colors}
+                  />
+                )}
               </ScrollView>
             </View>
           )}
