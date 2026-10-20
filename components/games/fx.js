@@ -1,7 +1,13 @@
 // components/games/fx.js — [jogos 2026-10-18] haptics + paleta P&B dos jogos (nunca lança).
 import { Platform } from 'react-native';
 
-function H() { try { return require('expo-haptics'); } catch { return null; } }
+// [2026-10-20 ux] respeita "Vibração ao tocar" (Configurações > Acessibilidade): sem isso os jogos
+// vibravam mesmo com a preferência desligada. Proxy no-op quando desligado = nenhum call site muda.
+const _NOOP = { selectionAsync() {}, impactAsync() {}, notificationAsync() {}, ImpactFeedbackStyle: {}, NotificationFeedbackType: {} };
+function H() {
+  try { if (!require('../../services/hapticsPref').isHapticsEnabled()) return _NOOP; } catch {}
+  try { return require('expo-haptics'); } catch { return null; }
+}
 function snd(n) { try { require('./sound').playSfx(n); } catch {} }
 const web = Platform.OS === 'web';
 // Mapa único som+háptico (polish 2): tap=seleção, move/capture/card/draw=impacto, ok/win=sucesso,

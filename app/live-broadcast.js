@@ -1206,7 +1206,7 @@ function LiveBroadcastScreen() {
               return [{ email: viewerEmail, name: viewerName || viewerEmail.split('@')[0], ts: Date.now() }, ...prev].slice(0, 30);
             });
             // Strong buzz so host feels it on cheek/hand mid-stream.
-            try { require('react-native').Vibration.vibrate([0, 80, 60, 80]); } catch {}
+            try { require('../services/haptics').warning(); /* [2026-10-20 ux] era Vibration cru (ignorava a preferência de vibração) */ } catch {}
             // Auto-open the sheet so accept/deny is one tap away.
             setRequestsOpen(true);
           }

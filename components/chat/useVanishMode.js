@@ -168,7 +168,7 @@ export function VanishSwipeArea({ enabled, active, onActivate, isAtBottom, t, is
     if (phaseRef.current === p) return;
     phaseRef.current = p;
     setPhase(p);
-    if (p === 2) { try { require('expo-haptics').selectionAsync(); } catch {} }
+    if (p === 2) { try { require('../../services/haptics').selection(); /* [2026-10-20 ux] shim respeita a preferência de vibração */ } catch {} }
   };
   const reset = () => {
     startRef.current = null;

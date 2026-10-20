@@ -352,8 +352,8 @@ export default function VoicemailRecorder() {
           // call is a full ~400 ms system buzz) → crisp rigid tick via
           // services/haptics instead; Android keeps the short 50 ms pulse.
           const _tick = () => {
-            if (Platform.OS === 'ios') { try { require('../services/haptics').haptics.recordLimitTick(); } catch {} }
-            else { try { Vibration.vibrate(50); } catch {} }
+            // [2026-10-20 ux] Android também pelo shim (performHapticFeedback + preferência de vibração)
+            try { require('../services/haptics').haptics.recordLimitTick(); } catch {}
           };
           _tick();
           vibrateIntervalRef.current = setInterval(_tick, 1000);
