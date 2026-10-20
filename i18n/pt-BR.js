@@ -13868,7 +13868,7 @@ export default {
   "homeCarousel.statusNew": "Status novo",
   "homeCarousel.statusSeen": "Status visto",
   "homeCarousel.pinStoryHint": "Toque para ver o status. Toque e segure para abrir a conversa.",
-  "me.publicProfile": "Mural",
+  "me.publicProfile": "Meu mural",
   "me.publicProfileSub": "Suas publicações de texto e fotos",
   "me.lists": "Listas",
   "me.broadcast": "Mensagens de transmissão",

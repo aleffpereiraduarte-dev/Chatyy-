@@ -13790,7 +13790,7 @@ export default {
   "homeCarousel.statusNew": "New status",
   "homeCarousel.statusSeen": "Status seen",
   "homeCarousel.pinStoryHint": "Tap to view the status. Touch and hold to open the chat.",
-  "me.publicProfile": "Wall",
+  "me.publicProfile": "My wall",
   "me.publicProfileSub": "Your text and photo posts",
   "me.lists": "Lists",
   "me.broadcast": "Broadcast messages",

@@ -13789,7 +13789,7 @@ export default {
   "homeCarousel.statusNew": "Estado nuevo",
   "homeCarousel.statusSeen": "Estado visto",
   "homeCarousel.pinStoryHint": "Toca para ver el estado. Mantén pulsado para abrir el chat.",
-  "me.publicProfile": "Muro",
+  "me.publicProfile": "Mi muro",
   "me.publicProfileSub": "Tus publicaciones de texto y fotos",
   "me.lists": "Listas",
   "me.broadcast": "Mensajes de difusión",

@@ -509,7 +509,7 @@ function SettingsScreenInner() {
   const rootCards = [
     [
       { key: 'plus', type: 'r', icon: PLUS_NATIVE_ICON(), Icon: IconPlusCircle, title: plusTitle, sub: plusSub, value: plusValue, route: '/settings-one' },
-      { key: 'public', type: 'r', icon: 'followers', Icon: IconUsers, title: tr('me.publicProfile', 'Mural'), sub: tr('me.publicProfileSub', 'Suas publicações de texto e fotos'), go: openPublicProfile },
+      { key: 'public', type: 'r', icon: 'followers', Icon: IconUsers, title: tr('me.publicProfile', 'Meu mural'), sub: tr('me.publicProfileSub', 'Suas publicações de texto e fotos'), go: openPublicProfile },
       // [perfil-fotos 2026-10-19] galeria de fotos do perfil (Telegram) + publicar no perfil.
       ProfilePhotos.isProfileGalleryEnabled() ? { key: 'ppAdd', type: 'r', icon: 'camera', Icon: IconCamera, title: ProfilePhotos.ppT(t, 'addPhoto'), sub: ProfilePhotos.ppT(t, 'addPhotoHint'), go: () => { ProfilePhotos.pickAndAddProfilePhoto({ t, email: user?.email || '' }); } } : null,
       ProfilePhotos.isProfilePostsCiEnabled() ? { key: 'ppPublish', type: 'r', icon: 'image', Icon: IconImage, title: ProfilePhotos.ppT(t, 'publish'), sub: ProfilePhotos.ppT(t, 'publishHint'), go: () => { ProfilePhotos.startProfilePost(router, t); } } : null,
