@@ -950,17 +950,19 @@ export default function ChatNewScreen() {
   // On web (no phone access), show directory users as fallback.
   const allChatyyUsers = useMemo(() => {
     const merged = new Map();
+    // [2026-10-20 wa2] chave em minúsculas: a mesma pessoa aparecia 2x (Joao@ vs joao@).
+    const _k = (e) => String(e || '').trim().toLowerCase();
     // Always include recent chat contacts (people you've already talked to)
     for (const r of recentContacts) {
-      if (r.email) merged.set(r.email, { ...r, hasRecentChat: true });
+      if (r.email) merged.set(_k(r.email), { ...r, hasRecentChat: true });
     }
     // Include phone contacts that are on Chatyy (matched by phone sync)
     for (const p of phoneContacts) {
-      if (p.email && !merged.has(p.email)) {
-        merged.set(p.email, { ...p, isRegistered: true, isPhoneContact: true });
-      } else if (p.email && merged.has(p.email)) {
-        const existing = merged.get(p.email);
-        merged.set(p.email, { ...existing, name: p.name || existing.name, isPhoneContact: true });
+      if (p.email && !merged.has(_k(p.email))) {
+        merged.set(_k(p.email), { ...p, isRegistered: true, isPhoneContact: true });
+      } else if (p.email && merged.has(_k(p.email))) {
+        const existing = merged.get(_k(p.email));
+        merged.set(_k(p.email), { ...existing, name: p.name || existing.name, isPhoneContact: true });
       }
     }
     // On WEB always, and on native in pickMode: include the directory list so
@@ -970,8 +972,8 @@ export default function ChatNewScreen() {
     // also live in the address book).
     if (Platform.OS === 'web' || pickMode) {
       for (const d of directoryUsers) {
-        if (d.email && !merged.has(d.email)) {
-          merged.set(d.email, { ...d, isRegistered: true });
+        if (d.email && !merged.has(_k(d.email))) {
+          merged.set(_k(d.email), { ...d, isRegistered: true });
         }
       }
     }
@@ -1013,7 +1015,9 @@ export default function ChatNewScreen() {
     // (chat with self) via the existing chatSaved endpoint. Hidden in
     // pickMode (adding someone else to a group, doesn't make sense).
     const onChatyyBucket = [];
-    if (!pickMode && user?.email) {
+    // [2026-10-20 wa2] Só na conversa individual: ao montar um grupo o toque abria
+    // "Mensagem para você mesmo" e perdia a seleção.
+    if (!pickMode && mode === 'direct' && user?.email) {
       onChatyyBucket.push({
         _isMessageYourself: true,
         email: user.email,
@@ -1035,7 +1039,8 @@ export default function ChatNewScreen() {
       const buckets = new Map(); // letter -> array
       const nonAlpha = [];
       for (const c of sorted) {
-        const first = ((c.name || c.email || '?')[0] || '?').toUpperCase();
+        // [2026-10-20 wa2] "Álvaro"/"Érica" caíam no grupo de símbolos (acima do A).
+        const first = (foldSearchText(c.name || c.email || '?')[0] || '?').toUpperCase();
         if (first >= 'A' && first <= 'Z') {
           if (!buckets.has(first)) buckets.set(first, []);
           buckets.get(first).push(c);
@@ -1088,7 +1093,7 @@ export default function ChatNewScreen() {
       sections.push({
         key: 'invite',
         title: `${t('chat.inviteToChatyy')} (${otherContacts.length})`,
-        data: otherContacts.slice(0, 50),
+        data: otherContacts.slice(0, 1500), // [2026-10-20 wa2] 50 escondia o resto da agenda (lista virtualizada)
       });
     } else if (Platform.OS === 'web') {
       // On web we can't access phone contacts, show a placeholder invite section
@@ -1099,7 +1104,7 @@ export default function ChatNewScreen() {
       });
     }
     return sections;
-  }, [allChatyyUsers, otherContacts, phoneContacts, suggestions, pickMode, user?.email, user?.name, t]);
+  }, [allChatyyUsers, otherContacts, phoneContacts, suggestions, pickMode, mode, user?.email, user?.name, t]);
 
   // Memoize the built sections so the A-Z sort + bucketing only runs when its
   // real inputs change (contacts/suggestions/pickMode/user/t) — NOT on every
@@ -1259,6 +1264,27 @@ export default function ChatNewScreen() {
     // Pick-mode: adding this contact to an existing group. One-tap flow —
     // hit chatAddMember, toast, navigate back into the conversation.
     if (pickMode && addMemberConvId && contact?.email) {
+      // [2026-10-20 wa2] WhatsApp confirma antes ("Adicionar Fulano ao grupo X?") — um
+      // toque sem querer adicionava a pessoa na hora.
+      const _who = contact.name || contact.email;
+      const _grp = pageParams.addMemberConvName || '';
+      const _q = (_grp
+        ? (t('groupAdd.confirmNamed') || 'Adicionar {name} ao grupo "{group}"?').replace('{group}', _grp)
+        : (t('groupAdd.confirm') || 'Adicionar {name} ao grupo?')).replace('{name}', _who);
+      safeAlert('', _q, [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        { text: t('groupAdd.add') || 'Adicionar', onPress: () => _doAddMember(contact) },
+      ]);
+      return;
+    }
+    if (mode === 'direct') {
+      handleCreateDirect(contact.email, contact.name || contact.email);
+      return;
+    }
+    _toggleGroupMember(contact);
+  };
+
+  const _doAddMember = (contact) => {
       (async () => {
         try {
           const r = await api.chatAddMember(addMemberConvId, contact.email);
@@ -1269,18 +1295,21 @@ export default function ChatNewScreen() {
             // pick-mode only ever starts from the group/channel info modal.
             require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(addMemberConvId), type: pageParams.addMemberConvType || 'group', name: pageParams.addMemberConvName || '' } }, { replace: true });
           } else {
-            safeAlert(t('common.error') || 'Erro', r?.message || t('uiG.chatNew.addFailed'));
+            const _m = String(r?.message || '');
+            const _txt = /already a member/i.test(_m)
+              ? (t('groupAdd.alreadyMember') || 'Essa pessoa já está no grupo.')
+              : /only (channel )?admins/i.test(_m)
+                ? (t('groupAdd.onlyAdmins') || 'Só admins podem adicionar participantes.')
+                : (r?.data?.error === 'group_full' ? _m : (t('uiG.chatNew.addFailed') || _m));
+            safeAlert(t('common.error') || 'Erro', _txt);
           }
         } catch (e) {
-          safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+          safeAlert(t('common.error') || 'Erro', t('common.networkError') || String(e?.message || e));
         }
       })();
-      return;
-    }
-    if (mode === 'direct') {
-      handleCreateDirect(contact.email, contact.name || contact.email);
-      return;
-    }
+  };
+
+  const _toggleGroupMember = (contact) => {
     // [2026-10-15 native-group-create] limite do grupo (1024 contando quem cria).
     if (mode === 'group' && !selectedMembers.some(m => m.email === contact.email) && selectedMembers.length >= GROUP_MAX_MEMBERS - 1) {
       safeAlert('', (t('groupNew.limitReached') || 'Limite de {max} membros').replace('{max}', String(GROUP_MAX_MEMBERS)));
@@ -1397,7 +1426,7 @@ export default function ChatNewScreen() {
       safeAlert(t('chat.invalidEmail'), t('chat.invalidEmailDesc'));
       return;
     }
-    if (email === user?.email) return;
+    if (email === String(user?.email || '').toLowerCase()) return;
     if (mode === 'direct') {
       handleCreateDirect(email, email);
     } else {
@@ -1412,6 +1441,10 @@ export default function ChatNewScreen() {
   // Invite handlers
   const handleInviteShare = async (contact) => {
     const name = contact?.name || '';
+    // [2026-10-20 wa2] Convite com o link pessoal (ref) como em /invite-friends.
+    if (Platform.OS !== 'web') {
+      try { await require('../services/inviteContact').shareInvite(t, name); return; } catch {}
+    }
     const inviteMsg = `${name ? name + ', ' : ''}${t('chat.inviteShareMessage')}`;
     if (Platform.OS === 'web') {
       try {
@@ -1443,6 +1476,8 @@ export default function ChatNewScreen() {
 
   const handleInviteViaWhatsApp = (contact) => {
     const phone = contact.phone || '';
+    // [2026-10-20 wa2] wa.me exige DDI: número salvo sem +55 abria link inválido.
+    try { require('../services/inviteContact').inviteByWhatsApp(t, phone, contact?.name || ''); return; } catch {}
     const msg = encodeURIComponent(t('chat.inviteShareMessage'));
     const url = phone
       ? `https://wa.me/${phone.replace(/\D/g, '')}?text=${msg}`
@@ -1585,7 +1620,7 @@ export default function ChatNewScreen() {
     const letterSet = new Set();
     const source = phoneContacts.length > 0 ? phoneContacts : allChatyyUsers;
     for (const u of source) {
-      const first = ((u.name || u.email || '?')[0] || '?').toUpperCase();
+      const first = (foldSearchText(u.name || u.email || '?')[0] || '?').toUpperCase();
       if (first >= 'A' && first <= 'Z') letterSet.add(first);
     }
     return Array.from(letterSet).sort();

@@ -14517,4 +14517,10 @@ export default {
   "status.replyUnavailable": "This status is no longer available.",
   "status.replyBlocked": "You can't reply to this status.",
   "status.replyTooFast": "You're sending too fast. Wait a few seconds.",
+  // [2026-10-20 wa2]
+  "groupAdd.confirm": "Add {name} to the group?",
+  "groupAdd.confirmNamed": "Add {name} to \"{group}\"?",
+  "groupAdd.add": "Add",
+  "groupAdd.alreadyMember": "This person is already in the group.",
+  "groupAdd.onlyAdmins": "Only admins can add participants.",
 };

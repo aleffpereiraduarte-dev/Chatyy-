@@ -192,15 +192,10 @@ export default function GroupNewDetailsScreen() {
     if (d) { try { await api.chatUpdateGroup(convId, { description: d }); } catch {} }
     if (!membersCanSend) { try { await api.chatGroupSetAdminOnly(convId, true); } catch {} }
     if (membersCanEdit) {
-      // edit_info é por membro (chat_group_admin); 4 por vez.
-      const queue = members.map(m => m.email).filter(Boolean);
-      const worker = async () => {
-        while (queue.length) {
-          const em = queue.shift();
-          try { await api.chatGroupAdmin(convId, { email: em, permissions: { edit_info: true } }); } catch {}
-        }
-      };
-      await Promise.all([worker(), worker(), worker(), worker()]);
+      // [2026-10-20 wa2] Flag do GRUPO (members_edit_info), a mesma que a tela de dados do
+      // grupo lê/alterna. Antes dava edit_info membro a membro: a tela mostrava
+      // "Só admins editam" ligado e desligar não tirava as permissões individuais.
+      try { await api.chatUpdateGroup(convId, { members_edit_info: true }); } catch {}
     }
   }, [photo, isChannel, desc, membersCanSend, membersCanEdit, members]);
 

@@ -14595,4 +14595,10 @@ export default {
   "status.replyUnavailable": "Este status não está mais disponível.",
   "status.replyBlocked": "Não é possível responder a este status.",
   "status.replyTooFast": "Você está enviando rápido demais. Aguarde alguns segundos.",
+  // [2026-10-20 wa2]
+  "groupAdd.confirm": "Adicionar {name} ao grupo?",
+  "groupAdd.confirmNamed": "Adicionar {name} ao grupo \"{group}\"?",
+  "groupAdd.add": "Adicionar",
+  "groupAdd.alreadyMember": "Essa pessoa já está no grupo.",
+  "groupAdd.onlyAdmins": "Só admins podem adicionar participantes.",
 };

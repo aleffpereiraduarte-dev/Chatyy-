@@ -199,6 +199,10 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
       if (result.success) {
         const convId = result.data?.conversation_id || result.data?.id;
         const convName = result.data?.name || name;
+        // [2026-10-20 wa2] descrição do grupo era digitada e descartada (chatCreate não leva).
+        if (!isChannel && convId && groupDescription.trim()) {
+          try { await api.chatUpdateGroup(convId, { description: groupDescription.trim() }); } catch {}
+        }
         // If a photo was picked, upload it now that we have a conversation id.
         // Reuses the proven chat_upload → chat_update avatar_url pipeline (same
         // one the group-info "change photo" flow uses). Best-effort: a failed
@@ -451,13 +455,13 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
                   placeholderTextColor={g.secondary}
                   value={groupName}
                   onChangeText={setGroupName}
-                  maxLength={100}
+                  maxLength={60} /* [2026-10-20 wa2] servidor corta em 60 */
                   autoFocus
                   returnKeyType="next"
                   accessibilityLabel={isChannel ? t('channel.name') : t('group.name')}
                 />
-                <Text style={[sty.counter, { color: groupName.length >= 100 ? g.destructive : g.secondary }]}>
-                  {100 - groupName.length}
+                <Text style={[sty.counter, { color: groupName.length >= 60 ? g.destructive : g.secondary }]}>
+                  {60 - groupName.length}
                 </Text>
               </View>
               <View style={[sty.cardSep, { backgroundColor: g.separator }]} />
@@ -468,7 +472,7 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
                 value={groupDescription}
                 onChangeText={setGroupDescription}
                 multiline
-                maxLength={1000}
+                maxLength={500} /* [2026-10-20 wa2] servidor corta em 500 */
                 accessibilityLabel={isChannel ? t('channel.description') : t('group.description')}
               />
             </View>

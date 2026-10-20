@@ -652,7 +652,21 @@ function ContactsScreenInner() {
         for (const dc of allContacts) for (const pn of (dc.phoneNumbers || [])) { if (pn?.number) phones.push(pn.number); }
         if (emails.length > 0 || phones.length > 0) {
           // server caps each list at 500 (400 above that → nothing matched).
-          const r = await api.checkContacts(emails.slice(0, 500), phones.slice(0, 500));
+          // [2026-10-20 wa2] Em lotes de 500 (como services/contactSync): agenda grande
+          // jogava todo mundo depois do 500º em "Convidar", mesmo quem usa o Chatyy.
+          const r = await (async () => {
+            const CC = 500;
+            const all = [];
+            let ok = false;
+            const n = Math.max(emails.length, phones.length);
+            for (let i = 0; i < n && i < CC * 16; i += CC) {
+              try {
+                const rr = await api.checkContacts(emails.slice(i, i + CC), phones.slice(i, i + CC));
+                if (rr?.success) { ok = true; if (Array.isArray(rr.data?.registered)) all.push(...rr.data.registered); }
+              } catch {}
+            }
+            return { success: ok, data: { registered: all } };
+          })();
           if (r.success && r.data?.registered) {
             const regEmails = (r.data.registered || []).map(u => String(u?.email || u || '').toLowerCase()).filter(Boolean);
             setRegisteredEmails(new Set(regEmails));
