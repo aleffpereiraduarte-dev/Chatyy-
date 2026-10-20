@@ -149,6 +149,60 @@ public class ExpoCallKitModule: Module {
   // own provider (the common case for outgoing calls).
   static weak var sharedProvider: CXProvider?
 
+  // [2026-10-20 callend-reload] callId → UUID que NENHUM caminho de fim apaga
+  // (o observer de fim remoto zera sharedUUIDByCallId ANTES do VC reportar ao
+  // CallKit). Só p/ garantir que o CallKit encerrou a ligação certa. Máx. 32.
+  private static var stickyUUIDByCallId: [String: UUID] = [:]
+  private static var stickyOrder: [String] = []
+  private static func _stickyRememberLocked(_ uuid: UUID, callId: String) {
+    if stickyUUIDByCallId[callId] == nil { stickyOrder.append(callId) }
+    stickyUUIDByCallId[callId] = uuid
+    while stickyOrder.count > 32 {
+      let k = stickyOrder.removeFirst()
+      stickyUUIDByCallId.removeValue(forKey: k)
+    }
+  }
+  static func rememberStickyCallKitUUID(_ uuid: UUID, forCallId callId: String) {
+    guard !callId.isEmpty else { return }
+    sharedUUIDLock.lock(); _stickyRememberLocked(uuid, callId: callId); sharedUUIDLock.unlock()
+  }
+  static func stickyCallKitUUID(forCallId callId: String) -> UUID? {
+    sharedUUIDLock.lock()
+    defer { sharedUUIDLock.unlock() }
+    return sharedUUIDByCallId[callId] ?? stickyUUIDByCallId[callId]
+  }
+
+  /// [2026-10-20 callend-reload] Rede de segurança: depois de `delay` s, se o
+  /// CallKit AINDA tem a ligação deste callId viva, encerra em TODOS os
+  /// providers (processo/módulo/early) + CXEndCallAction. Idempotente: não faz
+  /// nada se a ligação já acabou. Kill switch App Group `chatyy_callkit_ensure_off`.
+  static func ensureCallKitEnded(callId: String, reason: CXCallEndedReason = .remoteEnded,
+                                 src: String, delay: Double = 0.6) {
+    guard !callId.isEmpty else { return }
+    if UserDefaults(suiteName: kAppGroupId)?.bool(forKey: "chatyy_callkit_ensure_off") == true { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+      guard let uuid = stickyCallKitUUID(forCallId: callId) else { return }
+      guard let c = CXCallObserver().calls.first(where: { $0.uuid == uuid }), !c.hasEnded else { return }
+      nativeCallDiag("callkit_end_ensure", callId,
+                     "src=\(src) connected=\(c.hasConnected) outgoing=\(c.isOutgoing)")
+      var seen: [ObjectIdentifier] = []
+      let provs: [CXProvider?] = [processProvider, sharedProvider, VoipPushAppDelegateSubscriber.earlyProvider]
+      for p in provs.compactMap({ $0 }) {
+        let id = ObjectIdentifier(p)
+        if seen.contains(id) { continue }
+        seen.append(id)
+        p.reportCall(with: uuid, endedAt: Date(), reason: reason)
+      }
+      let ctrl = processCallController ?? CXCallController()
+      ctrl.request(CXTransaction(action: CXEndCallAction(call: uuid))) { _ in }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        if let c2 = CXCallObserver().calls.first(where: { $0.uuid == uuid }), !c2.hasEnded {
+          nativeCallDiag("callkit_end_stuck", callId, "src=\(src)")
+        }
+      }
+    }
+  }
+
   static func sharedCallKitUUID(forCallId callId: String) -> UUID? {
     sharedUUIDLock.lock()
     defer { sharedUUIDLock.unlock() }
@@ -159,6 +213,7 @@ public class ExpoCallKitModule: Module {
     var removed = false
     if let uuid = uuid {
       sharedUUIDByCallId[callId] = uuid
+      _stickyRememberLocked(uuid, callId: callId) // [2026-10-20 callend-reload]
     } else {
       removed = sharedUUIDByCallId.removeValue(forKey: callId) != nil
     }
@@ -192,6 +247,7 @@ public class ExpoCallKitModule: Module {
       return existing
     }
     sharedUUIDByCallId[callId] = uuid
+    _stickyRememberLocked(uuid, callId: callId) // [2026-10-20 callend-reload]
     return uuid
   }
 
@@ -1927,8 +1983,54 @@ public class ExpoCallKitModule: Module {
     }
   }
 
+  // [2026-10-20 callend-reload] CXProvider/CXCallController são do PROCESSO,
+  // não da instância do módulo. call_1792499079830_j17zj2v6x: o founder tocou
+  // "Atualizar" em Ajustes > Ajuda no meio da ligação (boot_reload why=help) →
+  // o JS recarregou, o Expo recriou ESTE módulo e setupProvider() criou um
+  // CXProvider NOVO. A ligação continuou dona do provider ANTIGO: no call_end
+  // remoto o reportCall(.remoteEnded) foi no provider novo (no-op), activeCalls
+  // estava vazio e a UI do CallKit ficou aberta. Agora o provider é reutilizado
+  // (só troca o delegate) e activeCalls é re-semeado do mapa estático.
+  private static var processProvider: CXProvider?
+  private static var processCallController: CXCallController?
+  /// Process-scope provider (survives JS reload). Main thread.
+  static var liveProcessProvider: CXProvider? { return processProvider }
+
   private func setupProvider() {
     guard provider == nil else { return }
+    if let existing = ExpoCallKitModule.processProvider {
+      provider = existing
+      ExpoCallKitModule.sharedProvider = existing
+      providerDelegate = ProviderDelegate(module: self)
+      existing.setDelegate(providerDelegate, queue: DispatchQueue.main)
+      callController = ExpoCallKitModule.processCallController ?? CXCallController()
+      ExpoCallKitModule.processCallController = callController
+      let seeded: [String: UUID] = {
+        ExpoCallKitModule.sharedUUIDLock.lock()
+        defer { ExpoCallKitModule.sharedUUIDLock.unlock() }
+        return ExpoCallKitModule.sharedUUIDByCallId
+      }()
+      let live = Set(CXCallObserver().calls.filter { !$0.hasEnded }.map { $0.uuid })
+      var n = 0
+      safeStateSync {
+        for (cid, u) in seeded where live.contains(u) && self.activeCalls[cid] == nil {
+          self.activeCalls[cid] = u
+          n += 1
+        }
+      }
+      nativeCallDiag("callkit_provider_reused", "-", "seeded=\(n) live=\(live.count)")
+      ExpoCallKitModule._setProviderDelegateBound(true)
+      audioInterruptionObserver = NotificationCenter.default.addObserver(
+        forName: AVAudioSession.interruptionNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] notification in
+        self?.handleAudioInterruption(notification)
+      }
+      CallHoldResumer.shared.install()
+      CallMultitaskingCamera.install()
+      return
+    }
     let config = CXProviderConfiguration(localizedName: "Chatyy")
     config.supportsVideo = true
     config.maximumCallGroups = 1
@@ -1955,9 +2057,11 @@ public class ExpoCallKitModule: Module {
     // earlyProvider — a different CXProvider — and CallKit ignored it,
     // leaving the system pill ghost on screen.
     ExpoCallKitModule.sharedProvider = provider
+    ExpoCallKitModule.processProvider = provider // [2026-10-20 callend-reload]
     providerDelegate = ProviderDelegate(module: self)
     provider?.setDelegate(providerDelegate, queue: DispatchQueue.main)
     callController = CXCallController()
+    ExpoCallKitModule.processCallController = callController
     // [STAGE-A 2026-05-20] GAP #3 — module's ProviderDelegate is now LIVE.
     // From this point onwards the cold-start stub in VoipPushAppDelegate-
     // Subscriber will bail on CXAnswer / present so we don't double-mount.
@@ -3446,19 +3550,50 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
   /// CallViewController.swift / GroupCallViewController.swift edits (Wave B/C
   /// is in restored state — see commit 2026-05-19).
   static func dismissActiveCallSurfaces(reason: String, forCallId: String? = nil) {
-    guard let root = resolvePresentingViewController() else {
+    // [2026-10-20 callend-reload] Antes só a cadeia da key window. Um reload
+    // do JS troca o rootViewController do RN e a CallViewController apresentada
+    // pelo root ANTIGO some da cadeia (call_1792499079830_j17zj2v6x: nenhum
+    // dismiss_surface no founder). Agora: todas as windows de todas as scenes
+    // + as instâncias vivas do 1:1 deste callId.
+    var roots: [UIViewController] = []
+    if let r = resolvePresentingViewController() { roots.append(r) }
+    for sc in UIApplication.shared.connectedScenes {
+      guard let ws = sc as? UIWindowScene else { continue }
+      for w in ws.windows {
+        if let r = w.rootViewController, !roots.contains(where: { $0 === r }) { roots.append(r) }
+      }
+    }
+    if roots.isEmpty {
       print("[ProviderDelegate] dismissActiveCallSurfaces(\(reason)): no presenting VC")
-      return
     }
     // Walk down to the topmost presented VC and back up, dismissing each
     // call-surface VC we find. Most cases only have one of our VCs
     // presented at a time, but we walk the whole stack to be safe (e.g.
     // CallViewController.handleAddMember could push a child VC).
     var stack: [UIViewController] = []
-    var cur: UIViewController? = root
-    while let v = cur {
-      stack.append(v)
-      cur = v.presentedViewController
+    for root in roots {
+      var cur: UIViewController? = root
+      while let v = cur {
+        if !stack.contains(where: { $0 === v }) { stack.append(v) }
+        cur = v.presentedViewController
+      }
+    }
+    if let wantId = forCallId, !wantId.isEmpty {
+      for vc in CallViewController.liveCallVCs(forCallId: wantId)
+      where !stack.contains(where: { $0 === vc }) {
+        // Fora de qualquer cadeia (root antigo do RN): dismiss pelo presenter
+        // órfão e, se a view continuar numa window, tira a view.
+        nativeCallDiag("dismiss_orphan_callvc", wantId, "reason=\(reason) inWindow=\(vc.viewIfLoaded?.window != nil)")
+        vc.dismiss(animated: false) {
+          if vc.viewIfLoaded?.window != nil { vc.view.removeFromSuperview() }
+        }
+      }
+    }
+    var dismissedAny = false
+    defer {
+      if !dismissedAny, let wantId = forCallId, !wantId.isEmpty {
+        nativeCallDiag("dismiss_none_found", wantId, "reason=\(reason) roots=\(roots.count)")
+      }
     }
     // Dismiss from the top so each parent's presented chain remains valid.
     for vc in stack.reversed() {
@@ -3500,6 +3635,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
         }
         NSLog("[CALL-CLOSE] dismissActiveCallSurfaces(\(reason)): dismissing \(name) forCallId=\(forCallId ?? "<any>")")
         nativeCallDiag("dismiss_surface", forCallId ?? "", "vc=\(name) reason=\(reason)")
+        dismissedAny = true
         vc.dismiss(animated: true, completion: nil)
       }
     }

@@ -2572,6 +2572,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
+    /// [2026-10-20 callend-reload] 1:1 screens of `callId` still attached to a
+    /// window (MAIN THREAD). Used by dismissActiveCallSurfaces to reach a screen
+    /// orphaned by a JS reload (presented by the OLD RN root).
+    static func liveCallVCs(forCallId callId: String) -> [CallViewController] {
+        guard Thread.isMainThread else { return [] }
+        return liveInstances.allObjects.filter { $0.callId == callId && $0.viewIfLoaded?.window != nil }
+    }
+
     override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
 
     // MARK: - Action routes
@@ -2627,6 +2635,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [CALL-CLOSE diag 2026-05-27] Mark this teardown path so the next
         // answered call's voip_diag trace shows EXACTLY which path closed it.
         nativeCallDiag("call_close_handleHangup", callId)
+        // [2026-10-20 callend-reload] Se o CXEndCallAction abaixo cair num
+        // provider velho (JS recarregado no meio da ligação), encerra mesmo assim.
+        ExpoCallKitModule.ensureCallKitEnded(callId: callId, src: "handleHangup", delay: 1.5)
         // [minimize-drop fix 2026-05-26] This is a REAL hangup, not a minimize.
         // Clear the minimize flag so the Room teardown below + deinit run, and
         // release the strong holder so the VC can finally dealloc. handleHangup
@@ -5595,6 +5606,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // only strong ref (the suspected double-VC teardown). Surfacing it
             // here on the voip_diag log tells us if THIS is the close path.
             nativeCallDiag("call_close_deinit_teardown", callId)
+            ExpoCallKitModule.ensureCallKitEnded(callId: callId, src: "callvc_deinit", delay: 1.0) // [2026-10-20 callend-reload]
             P2PCallBridge.close(callId: callId, reason: "deinit") // [2026-10-09 p2p-ios]
             // [#1207 NativeCallRoom REAL] Belt-and-braces: usually handleHangup
             // or didDisconnect have already cleared the singleton by the time
@@ -8360,6 +8372,17 @@ extension CallViewController: RoomDelegate {
             // above), so deinit's room-teardown is a no-op either way.
             self.isMinimizing = false
             CallViewController.minimizedInstance = nil
+            // [2026-10-20 callend-reload] Minimizada (barra "voltar à ligação" /
+            // PiP) e o outro lado desligou: tira a barra nativa, para o PiP e
+            // avisa o snapshot do JS — antes só o handleHangup fazia isso.
+            OngoingCallBarOverlayController.shared.uninstall()
+            if #available(iOS 15.0, *), let pip = self.pipController, pip.isPictureInPictureActive {
+                pip.stopPictureInPicture()
+            }
+            OngoingCallState.shared.notifyChanged()
+            ExpoCallKitModule.ensureCallKitEnded(callId: self.callId,
+                                                 reason: error != nil ? .failed : .remoteEnded,
+                                                 src: "lk_disconnect")
             // [2026-10-18 call-resilience] LiveKit gave up its own reconnect
             // (network/timeout class error) on a call whose media flowed →
             // WhatsApp "Chamada encerrada — conexão perdida".

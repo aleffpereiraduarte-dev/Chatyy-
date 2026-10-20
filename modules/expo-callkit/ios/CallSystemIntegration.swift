@@ -180,6 +180,37 @@ enum CallRecentsIntentStore {
         defaults.set(map, forKey: mapKey)
     }
 
+    /// [2026-10-20 caller-name] Último nome de exibição conhecido p/ um e-mail
+    /// (ligações anteriores). nil quando não há nome útil.
+    static func knownName(forEmail email: String) -> String? {
+        let mail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !mail.isEmpty else { return nil }
+        if let m = defaults.dictionary(forKey: namesKey) as? [String: String],
+           let n = m[mail], CallerNameResolver.isUseful(n, email: mail) { return n }
+        guard let map = defaults.dictionary(forKey: mapKey) as? [String: [String: Any]] else { return nil }
+        var best: (String, Double)? = nil
+        for (_, v) in map {
+            guard ((v["email"] as? String) ?? "").lowercased() == mail,
+                  let n = v["name"] as? String, CallerNameResolver.isUseful(n, email: mail),
+                  n.lowercased() != String(mail.split(separator: "@").first ?? "") else { continue }
+            let ts = (v["ts"] as? Double) ?? 0
+            if best == nil || ts > best!.1 { best = (n, ts) }
+        }
+        return best?.0
+    }
+    private static let namesKey = "chatyy.caller_names_v1"
+    /// [2026-10-20 caller-name] Guarda e-mail → nome (máx. 500).
+    static func rememberName(_ name: String, forEmail email: String) {
+        let mail = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard mail.contains("@"), CallerNameResolver.isUseful(n, email: mail) else { return }
+        var m = (defaults.dictionary(forKey: namesKey) as? [String: String]) ?? [:]
+        if m[mail] == n { return }
+        if m.count >= 500, let k = m.keys.first { m.removeValue(forKey: k) }
+        m[mail] = n
+        defaults.set(m, forKey: namesKey)
+    }
+
     /// Parse an INStartCallIntent-family user activity. Returns true when it
     /// was a call intent (handled), false otherwise.
     static func handle(userActivity: NSUserActivity) -> Bool {
@@ -241,5 +272,37 @@ enum CallRecentsIntentStore {
         let ts = (p["ts"] as? Double) ?? 0
         if Date().timeIntervalSince1970 - ts > pendingTtl { return nil }
         return p
+    }
+}
+
+
+/// [2026-10-20 caller-name] Nome de quem liga p/ o CallKit — nunca "Chatyy"
+/// quando há QUALQUER pista: caller_name → caller_display → nome já visto p/
+/// esse e-mail → parte local do e-mail → "Chatyy". Prod 20/10 12:36Z: o hub
+/// (auth pelo atalho PG auth_tokens) mandou caller_name "" e o banner mostrou
+/// "Chatyy" com o e-mail da Thalisa no mesmo frame.
+enum CallerNameResolver {
+    static func isUseful(_ raw: String, email: String) -> Bool {
+        let n = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if n.isEmpty { return false }
+        let l = n.lowercased()
+        if l == "chatyy" || l == "unknown" || l == "desconhecido" { return false }
+        if !email.isEmpty && l == email.lowercased() { return false }
+        return true
+    }
+    static func resolve(_ dict: [AnyHashable: Any], email: String) -> String {
+        let mail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        for k in ["caller_name", "callerName", "caller_display", "caller_display_name"] {
+            if let s = dict[k] as? String, isUseful(s, email: mail) {
+                let n = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                CallRecentsIntentStore.rememberName(n, forEmail: mail)
+                return n
+            }
+        }
+        if let n = CallRecentsIntentStore.knownName(forEmail: mail) { return n }
+        if let at = mail.firstIndex(of: "@"), at > mail.startIndex {
+            return String(mail[..<at])
+        }
+        return mail.isEmpty ? "Chatyy" : mail
     }
 }

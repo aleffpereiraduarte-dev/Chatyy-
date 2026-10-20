@@ -661,7 +661,8 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             return
         }
 
-        let callerName = (dict["caller_name"] as? String) ?? (dict["caller_email"] as? String) ?? "Unknown"
+        // [2026-10-20 caller-name] "" também cai no fallback (nome visto/e-mail).
+        let callerName = CallerNameResolver.resolve(dict, email: (dict["caller_email"] as? String) ?? "")
         let hasVideo = (dict["video"] as? String) == "1" || (dict["call_type"] as? String) == "video"
         // [2026-10-09 p2p-ios] Tipo da ligação + flag P2P (se o servidor mandar
         // `p2p` no push; senão o P2PCallBridge usa o último config da conta).
@@ -754,6 +755,11 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         if let alive = kCallIdToUUID[callId] {
             kCallIdToUUIDLock.unlock()
             print("[VoipSubscriber] duplicate incoming push for \(callId) — already ringing as \(alive.uuidString); no-op")
+            // [2026-10-20 caller-name] O WS reportou primeiro (às vezes com nome
+            // vazio → "Chatyy"); o push traz o nome/telefone completos → atualiza
+            // a exibição da ligação que já está tocando (no-op se UUID morto).
+            VoipPushAppDelegateSubscriber.earlyProvider?.reportCall(with: alive, updated: update)
+            nativeCallDiag("voip_dup_push_display_update", callId, "")
             completion()
             return
         }

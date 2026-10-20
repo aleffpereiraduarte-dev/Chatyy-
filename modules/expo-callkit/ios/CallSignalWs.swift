@@ -835,6 +835,12 @@ final class CallSignalWs: NSObject {
                 NSLog("[CallSignalWs] call_end \(callId) UUID via shared map fallback")
             }
         }
+        // [2026-10-20 callend-reload] Mapa vivo já zerado (JS recarregou e o
+        // módulo novo nasceu sem activeCalls) → UUID "sticky" do mesmo callId.
+        if stashedUUID == nil {
+            stashedUUID = ExpoCallKitModule.stickyCallKitUUID(forCallId: callId)
+            if stashedUUID != nil { nativeCallDiag("ws_call_end_sticky_uuid", callId, "") }
+        }
 
         // Hop to main: CallKit and NotificationCenter posts must run on main.
         DispatchQueue.main.async {
@@ -869,6 +875,10 @@ final class CallSignalWs: NSObject {
                     NSLog("[CallSignalWs] call_end \(callId) reportCall(.remoteEnded) via sharedProvider")
                     hit = true
                 }
+                if let p = ExpoCallKitModule.liveProcessProvider, p !== ExpoCallKitModule.sharedProvider {
+                    p.reportCall(with: uuid, endedAt: Date(), reason: endReason) // [2026-10-20 callend-reload]
+                    hit = true
+                }
                 if let p = VoipPushAppDelegateSubscriber.earlyProvider, p !== ExpoCallKitModule.sharedProvider {
                     p.reportCall(with: uuid, endedAt: Date(), reason: endReason)
                     NSLog("[CallSignalWs] call_end \(callId) reportCall(.remoteEnded) via earlyProvider")
@@ -898,6 +908,13 @@ final class CallSignalWs: NSObject {
             // the user just answered. Root cause of "atende no nativo e a
             // ligação fecha".
             ExpoCallKitModule.dismissActiveCallSurfacesFromVC(reason: "ws_call_end_\(callId)", forCallId: callId)
+            // 5. [2026-10-20 callend-reload] Confere em 0,6 s que o CallKit
+            //    encerrou mesmo (provider trocado num reload do JS = no-op acima).
+            ExpoCallKitModule.ensureCallKitEnded(
+                callId: callId,
+                reason: reason == "answered_elsewhere" ? .answeredElsewhere
+                    : (reason == "declined_elsewhere" ? .declinedElsewhere : .remoteEnded),
+                src: "ws_call_end")
             // 5. [2026-10-08 call-video-fix] Kill the ring-window preconnect
             //    Room of a call that was never answered here (zombie SFU
             //    participant that later re-joined and broke the next call).
@@ -919,6 +936,21 @@ final class CallSignalWs: NSObject {
         // start, so by the time the WS frame lands the call is already up).
         if seenIncomingInvites.contains(callId) {
             NSLog("[CallSignalWs] call_invite \(callId): already surfaced, skipping")
+            // [2026-10-20 caller-name] 2º frame (ex.: broadcast do PHP invite_v2)
+            // trazendo o nome que faltou no 1º → atualiza o CallKit já tocando.
+            let em = (obj["caller_email"] as? String) ?? ""
+            let raw = (obj["caller_name"] as? String) ?? ""
+            if CallerNameResolver.isUseful(raw, email: em),
+               let u = inviteUUIDsByCallId.first(where: { $0.callId == callId })?.uuid {
+                let name = CallerNameResolver.resolve(obj, email: em)
+                DispatchQueue.main.async {
+                    let upd = CXCallUpdate()
+                    upd.remoteHandle = CXHandle(type: .generic, value: name)
+                    upd.localizedCallerName = name
+                    VoipPushAppDelegateSubscriber.earlyProvider?.reportCall(with: u, updated: upd)
+                    nativeCallDiag("ws_invite_name_update", callId, "src=dup_frame")
+                }
+            }
             return
         }
         seenIncomingInvites.append(callId)
@@ -936,7 +968,12 @@ final class CallSignalWs: NSObject {
         }
 
         let callerEmail = (obj["caller_email"] as? String) ?? ""
-        let callerName = (obj["caller_name"] as? String) ?? callerEmail
+        // [2026-10-20 caller-name] "" no frame NÃO caía no fallback (`??` só
+        // pega nil) → CallKit mostrava "Chatyy". Agora nunca vazio.
+        let callerName = CallerNameResolver.resolve(obj, email: callerEmail)
+        if !CallerNameResolver.isUseful((obj["caller_name"] as? String) ?? "", email: callerEmail) {
+            nativeCallDiag("ws_invite_name_fallback", callId, "known=\(CallRecentsIntentStore.knownName(forEmail: callerEmail) != nil)")
+        }
         let conversationId: String = {
             if let s = obj["conversation_id"] as? String { return s }
             if let n = obj["conversation_id"] as? NSNumber { return n.stringValue }

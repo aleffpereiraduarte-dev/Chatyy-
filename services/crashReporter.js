@@ -633,9 +633,53 @@ export function reportError(error, { fatal = false, source = 'global', extra = '
 const RELOAD_KEY = '@chatyy/reload_reason_v1';
 const UPDLOG_KEY = '@chatyy/upd_log_last_v1';
 
+// [2026-10-20 callend-reload] Recarregar o JS NO MEIO de uma ligação recria os
+// módulos nativos (CXProvider novo, root do RN novo): o call_end remoto não
+// fechava mais a UI do CallKit (call_1792499079830_j17zj2v6x, boot_reload
+// why=help 12:30:52Z, peer desligou 12:31:02Z). Com ligação ativa o reload
+// espera ela acabar (checa a cada 3 s, teto 3 h). Kill: __chatyy_reload_call_guard=false.
+function _callActiveNow() {
+  try {
+    if (globalThis.__chatyyNativeCallActive) return true;
+    // eslint-disable-next-line global-require
+    const r = require('./call-state-reader');
+    const snap = r && r.getCurrentCallSnapshotSync ? r.getCurrentCallSnapshotSync() : null;
+    if (snap && snap.callId && snap.ringState !== 'ended' && snap.ringState !== 'idle') return true;
+  } catch {}
+  try {
+    // eslint-disable-next-line global-require
+    const cs = require('./callState');
+    const st = cs && cs.getCallState ? cs.getCallState() : null;
+    if (st === 'active' || st === 'answered' || st === 'ringing') return true;
+  } catch {}
+  return false;
+}
+let _deferredReload = null;
+function _waitCallEnd() {
+  if (_deferredReload) return _deferredReload;
+  const t0 = Date.now();
+  _deferredReload = new Promise((resolve) => {
+    const tick = () => {
+      if (!_callActiveNow() || Date.now() - t0 > 3 * 3600 * 1000) { resolve(); return; }
+      setTimeout(tick, 3000);
+    };
+    setTimeout(tick, 3000);
+  });
+  return _deferredReload;
+}
+export function isCallActiveForReload() {
+  return globalThis.__chatyy_reload_call_guard !== false && _callActiveNow();
+}
+
 export async function reloadWithReason(reason) {
   const U = _lazyUpdates();
   if (!U || typeof U.reloadAsync !== 'function') throw new Error('expo-updates indisponível');
+  if (isCallActiveForReload()) {
+    try { reportStep('reload_deferred_call', `why=${String(reason || '?').slice(0, 24)}`); } catch {}
+    await _waitCallEnd();
+    // 1,5 s p/ o fim da ligação (CallKit/LiveKit) assentar antes do reload.
+    await new Promise((res) => setTimeout(res, 1500));
+  }
   try {
     const AS = _lazyAsyncStorage();
     const from = U.updateId ? String(U.updateId).slice(0, 8) : (U.isEmbeddedLaunch ? 'embedded' : '?');
