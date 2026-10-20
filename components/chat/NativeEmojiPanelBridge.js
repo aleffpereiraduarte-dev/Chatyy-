@@ -475,6 +475,8 @@ function PlainPanelShell({ visible, fullHeight, compactHeight, background, child
 }
 
 const PanelShell = _Rea ? KCPanelShell : PlainPanelShell;
+// [2026-10-20 attach-inputview] mesma casca (altura = teclado, troca sem pulo) p/ o painel de anexos.
+export const KeyboardPanelShell = PanelShell;
 
 const COMPACT_EMOJI = 96;
 const COMPACT_GIF = 152;

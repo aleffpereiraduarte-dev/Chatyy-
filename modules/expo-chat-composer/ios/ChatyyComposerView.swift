@@ -37,6 +37,14 @@ final class NCTextView: UITextView {
     return super.resignFirstResponder()
   }
 
+  /// [2026-10-20 attach-inputview] toque no campo com o painel de anexos no lugar do teclado.
+  var onTouchDown: (() -> Void)?
+
+  override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+    onTouchDown?()
+    super.touchesBegan(touches, with: event)
+  }
+
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
     let v = super.hitTest(point, with: event)
     if v != nil, event?.type == .touches { lastTouchAt = CACurrentMediaTime() }
@@ -432,6 +440,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   let onSendMenu = EventDispatcher()
   let onKeyboardFrame = EventDispatcher()
   let onKeyboardSync = EventDispatcher() // [2026-10-19 kb-native]
+  let onAttachPanel = EventDispatcher() // [2026-10-20 attach-inputview] {key, keep?}
 
   // MARK: Props
   var placeholderText: String = "" { didSet { textView.placeholderLabel.text = placeholderText } }
@@ -577,6 +586,27 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   var attachDeferResign = false { didSet { if !attachDeferResign { releaseForAttach() } } }
   private var attachDeferPending = false
   private var attachDeferGen = 0
+  // [2026-10-19 attach-over-kb] api 9: "+" com o teclado aberto NÃO solta o
+  // teclado: a folha (expo-chat-attach api 6) sobe numa janela ACIMA do
+  // teclado e ele fica aberto por baixo — nenhum evento de teclado, conversa
+  // parada (sem hold/clamp do JS). O teclado só desce quando a folha fecha
+  // (ChatyyAttachSheetWillClose), junto com ela; cancelar com attachRestore
+  // 'did'/'will' = nem desce. Rede: sem ChatyyAttachSheetWillPresent
+  // {overKeyboard:true} em 0,6 s (ou folha apresentada do jeito antigo) →
+  // solta como na api 8. Kill switch: prop attachKeepKeyboard=false
+  // (JS: globalThis.__chatyy_attach_over_kb = false).
+  var attachKeepKeyboard = false { didSet { if !attachKeepKeyboard && attachKeepWaiting { attachKeepWaiting = false; releaseForAttach() } } }
+  private var attachKeepWaiting = false
+  private var attachKeepActive = false
+  // [2026-10-20 attach-inputview] api 10: painel de anexos como inputView
+  // (ver NCAttachPanel). Kill switch: prop attachPanel=false
+  // (JS: globalThis.__chatyy_attach_inputview = false) → "+" = folha (api 9).
+  var attachPanel = false { didSet { if !attachPanel && panelActive { deactivatePanel(reload: true) } } }
+  var attachPanelItems: [(key: String, label: String)] = []
+  private var panelActive = false
+  private var panelView: NCAttachPanel?
+  private var lastSystemKbHeight: CGFloat = 0
+  private static var panelHeightFix: CGFloat = 0
   private var kbNoteOverlap: CGFloat = 0
   private var kbSyncGen = 0
 
@@ -637,6 +667,11 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     textView.smartInsertDeleteType = .default
     textView.placeholderLabel.font = font
     textView.onPasteImage = { [weak self] img, data, mime in self?.handlePastedImage(img, data: data, mime: mime) }
+    // [2026-10-20 attach-inputview] toque no campo com o painel = volta ao teclado (WhatsApp).
+    textView.onTouchDown = { [weak self] in
+      guard let self = self, self.panelActive, self.textView.isFirstResponder else { return }
+      self.deactivatePanel(reload: true)
+    }
     textView.shouldBlockFocus = { [weak self] in self?.shouldBlockBecome() ?? false }
     textView.shouldBlockResign = { [weak self] in self?.shouldBlockResign() ?? false }
     installAppObservers()
@@ -737,7 +772,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     pillView.backgroundColor = c.pill
     pillView.layer.borderColor = c.pillBorder.cgColor
     textView.textColor = c.text
-    textView.tintColor = c.accent
+    textView.tintColor = panelActive ? .clear : c.accent // [2026-10-20 attach-inputview]
     textView.keyboardAppearance = theme.dark ? .dark : .light
     textView.placeholderLabel.textColor = c.placeholder
     plusButton.tintColor = c.text
@@ -768,8 +803,8 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       plusButton.isEnabled = false
     } else {
       plusSpinner.stopAnimating()
-      plusButton.setImage(UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)), for: .normal)
       plusButton.isEnabled = true
+      setPlusIcon(keyboard: panelActive) // [2026-10-20 attach-inputview]
     }
   }
 
@@ -890,6 +925,11 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
   // MARK: Buttons
 
   @objc private func plusTapped() {
+    // [2026-10-20 attach-inputview] painel no lugar do teclado (toggle).
+    if attachPanel && attachInstant && !attachPanelItems.isEmpty && !voice.isActive && !disabled {
+      if panelActive { switchPanelToKeyboard() } else { showAttachPanel() }
+      return
+    }
     if focusGuard { attachGuard = true } // [2026-10-18 kb-resume]
     let had = textView.isFirstResponder
     // [2026-10-19 attach-instant] resign ANIMADO neste mesmo runloop, ANTES da
@@ -897,6 +937,21 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     // teclado desce junto com a folha subindo.
     attachRestorePending = attachInstant && had
     attachRestoreAt = CACurrentMediaTime()
+    // [2026-10-19 attach-over-kb] folha por cima do teclado: não solta nada.
+    if had && attachKeepKeyboard && attachInstant {
+      attachDeferPending = true
+      attachKeepWaiting = true
+      attachKeepActive = false
+      attachDeferGen &+= 1
+      let gen = attachDeferGen
+      onAttach(["hadKeyboard": true, "instant": true, "deferred": true, "keep": true])
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+        guard let self = self, self.attachDeferGen == gen, self.attachKeepWaiting else { return }
+        self.attachKeepWaiting = false
+        self.releaseForAttach()
+      }
+      return
+    }
     // [2026-10-19 attach-hold] adia o resign até o JS armar o hold da conversa.
     if had && attachDeferResign && attachInstant {
       attachDeferPending = true
@@ -914,10 +969,105 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     onAttach(body)
   }
 
+  // MARK: Painel de anexos (attach-inputview)
+
+  private func panelTargetHeight() -> CGFloat {
+    let safe = window?.safeAreaInsets.bottom ?? 0
+    // inputView custom: o sistema soma a área do home indicator por fora.
+    let kb = lastSystemKbHeight > safe + 100 ? lastSystemKbHeight - safe : 291
+    return max(200, kb + ChatyyComposerView.panelHeightFix)
+  }
+
+  private func setPlusIcon(keyboard: Bool) {
+    guard !uploading else { return }
+    let name = keyboard ? "keyboard" : "plus"
+    plusButton.setImage(UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: keyboard ? 19 : 22, weight: .regular)), for: .normal)
+    plusButton.accessibilityLabel = keyboard ? (labels["keyboard"] ?? "Teclado") : labels["attach"]
+  }
+
+  private func showAttachPanel() {
+    let panel = panelView ?? NCAttachPanel(height: panelTargetHeight())
+    if panelView == nil {
+      panel.onPick = { [weak self] key in self?.attachPanelPicked(key) }
+      panelView = panel
+    }
+    panel.apply(items: attachPanelItems, text: themeColors.text, dark: theme.dark)
+    var f = panel.frame
+    f.size.height = panelTargetHeight()
+    f.size.width = window?.bounds.width ?? UIScreen.main.bounds.width
+    panel.frame = f
+    panelActive = true
+    textView.inputView = panel
+    textView.tintColor = .clear // sem cursor com o painel (WhatsApp)
+    setPlusIcon(keyboard: true)
+    if textView.isFirstResponder {
+      textView.reloadInputViews() // troca no MESMO lugar, sem resign
+    } else {
+      withInternalFocus { _ = textView.becomeFirstResponder() }
+      if !textView.isFirstResponder { deactivatePanel(reload: false) }
+    }
+  }
+
+  private func deactivatePanel(reload: Bool) {
+    guard panelActive else { return }
+    panelActive = false
+    textView.inputView = nil
+    textView.tintColor = themeColors.accent
+    setPlusIcon(keyboard: false)
+    if reload && textView.isFirstResponder { textView.reloadInputViews() }
+  }
+
+  private func switchPanelToKeyboard() {
+    if textView.isFirstResponder { deactivatePanel(reload: true) }
+    else { deactivatePanel(reload: false); focusInput() }
+  }
+
+  private func attachPanelPicked(_ key: String) {
+    guard panelActive else { return }
+    // Fotos → folha "Recentes" ACIMA do painel (expo-chat-attach api 6): o
+    // painel fica por baixo; cancelar volta ao painel sem mexer em nada.
+    if (key == "gallery" || key == "photos") && attachKeepKeyboard && textView.isFirstResponder {
+      if focusGuard { attachGuard = true }
+      attachRestorePending = false
+      attachDeferPending = true
+      attachKeepWaiting = true
+      attachKeepActive = false
+      attachDeferGen &+= 1
+      let gen = attachDeferGen
+      onAttachPanel(["key": key, "keep": true])
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+        guard let self = self, self.attachDeferGen == gen, self.attachKeepWaiting else { return }
+        self.attachKeepWaiting = false
+        self.releaseForAttach()
+      }
+      return
+    }
+    // Demais ações (tela/modal próprio): o painel desce como o teclado e a
+    // ação abre em seguida (sem modal "guardando" o responder no meio).
+    if focusGuard { attachGuard = true }
+    if textView.isFirstResponder { withInternalFocus { _ = textView.resignFirstResponder() } }
+    deactivatePanel(reload: false)
+    onAttachPanel(["key": key])
+  }
+
+  /// Quadro do teclado com o painel ativo: aprende a diferença (1x) se o
+  /// sistema não somou o home indicator como esperado.
+  private func notePanelFrame(_ overlap: CGFloat) {
+    guard panelActive, let panel = panelView, overlap > 100, lastSystemKbHeight > 100 else { return }
+    let diff = lastSystemKbHeight - overlap
+    guard abs(diff) > 1, abs(diff) < 80, abs(ChatyyComposerView.panelHeightFix) < 0.5 else { return }
+    ChatyyComposerView.panelHeightFix = diff
+    var f = panel.frame
+    f.size.height = max(200, f.size.height + diff)
+    panel.frame = f
+    if textView.isFirstResponder { textView.reloadInputViews() }
+  }
+
   /// [2026-10-19 attach-hold] JS armou o hold (ou rede de 350 ms): agora o
   /// teclado desce, ANIMADO, antes da folha ser apresentada (ela não acha
   /// first responder p/ guardar e devolver).
   func releaseForAttach() {
+    attachKeepWaiting = false
     guard attachDeferPending else { return }
     attachDeferPending = false
     attachDeferGen &+= 1
@@ -1068,6 +1218,24 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     appObservers.append(nc.addObserver(forName: Notification.Name("ChatyyAttachSheetDidClose"), object: nil, queue: .main) { [weak self] n in
       self?.attachSheetClosing(n, final: true)
     })
+    // [2026-10-19 attach-over-kb] folha entrando: acima do teclado = mantém.
+    appObservers.append(nc.addObserver(forName: Notification.Name("ChatyyAttachSheetWillPresent"), object: nil, queue: .main) { [weak self] n in
+      self?.attachSheetPresenting(n)
+    })
+  }
+
+  private func attachSheetPresenting(_ n: Notification) {
+    guard attachDeferPending else { return }
+    let over = (n.userInfo?["overKeyboard"] as? Bool) ?? false
+    if over && attachKeepWaiting && window != nil {
+      // Teclado fica aberto sob a folha; nada mais o solta até ela fechar.
+      attachKeepWaiting = false
+      attachKeepActive = true
+      attachDeferPending = false
+      attachDeferGen &+= 1
+      return
+    }
+    releaseForAttach() // folha do jeito antigo (modal) → comportamento da api 8
   }
 
   // MARK: Attach sheet (attach-instant)
@@ -1077,10 +1245,24 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     // (fechado ⇒ assenta o lift na hora; nada de barra "levantada" sem teclado).
     if final { scheduleKeyboardSync("attach-closed", after: 0.05) }
     releaseForAttach()
-    guard attachRestorePending else { return }
     let info: [AnyHashable: Any] = n.userInfo ?? [:]
     let action: String = (info["action"] as? String) ?? ""
     let byUser: Bool = (info["user"] as? Bool) ?? false
+    // [2026-10-19 attach-over-kb] o teclado ficou aberto sob a folha: a folha
+    // começou a descer → solta agora (ANIMADO, desce junto com ela; a barra
+    // acompanha o teclado, sem buraco). Cancelar com 'did'/'will' = fica.
+    if attachKeepActive {
+      attachKeepActive = false
+      // [2026-10-20 attach-inputview] veio do painel: cancelar volta ao painel.
+      let keep = attachInstant && action == "cancel" && byUser && (attachRestore != "none" || panelActive)
+      if textView.isFirstResponder {
+        attachRestorePending = false
+        if !keep { withInternalFocus { _ = textView.resignFirstResponder() } }
+        return
+      }
+      // legenda da folha levou o teclado: segue a regra de devolução abaixo.
+    }
+    guard attachRestorePending else { return }
     // Só "cancelar" pelo usuário devolve o teclado (WhatsApp). Ação (Galeria,
     // Câmera, Arquivo…), Enviar ou fechamento pelo JS (troca de tela) → fechado.
     // [2026-10-19 attach-none] "none" (padrão api 7) = teclado continua fechado
@@ -1201,6 +1383,7 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     // modal/menu/push, blur JS, KeyboardController.dismiss) → a devolução
     // automática que vier depois é recusada. App indo p/ o fundo não conta.
     if restoreGuard && !internalFocusOp && !appInactive { restoreParked = true }
+    deactivatePanel(reload: false) // [2026-10-20 attach-inputview] próximo foco = teclado
     flushChange()
     onFocusChange(["focused": false])
   }
@@ -1559,6 +1742,12 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       kbNoteOverlap = 0
     } else {
       kbNoteOverlap = max(0, win.bounds.maxY - r.minY)
+      // [2026-10-20 attach-inputview] altura do teclado do SISTEMA (painel usa).
+      if textView.isFirstResponder && !panelActive && textView.inputView == nil && kbNoteOverlap > win.safeAreaInsets.bottom + 100 {
+        lastSystemKbHeight = kbNoteOverlap
+      } else if panelActive {
+        notePanelFrame(kbNoteOverlap)
+      }
     }
   }
 
@@ -1781,5 +1970,129 @@ struct NCResolvedTheme {
     replyCard = ncColor(t.replyCard, surface)
     replyCardBorder = ncColor(t.replyCardBorder, d.replyCardBorder)
     recording = ncColor(t.recording, d.recording)
+  }
+}
+
+// MARK: - Painel de anexos no lugar do teclado (attach-inputview)
+
+// [2026-10-20 attach-inputview] WhatsApp iOS: com o teclado aberto o "+" NÃO
+// abre folha — o painel de anexos entra NO LUGAR do teclado (mesma altura,
+// textView.inputView + reloadInputViews), o composer fica parado e focado e o
+// "+" vira ícone de teclado (toque = volta ao teclado no mesmo lugar). Teclado
+// fechado: o painel sobe como inputView (mesma animação do teclado), sem
+// cursor visível. Grade 4 colunas de botões redondos P&B (SF Symbols).
+final class NCAttachPanel: UIInputView {
+  var onPick: ((String) -> Void)?
+  private let scroll = UIScrollView()
+  private var buttons: [UIControl] = []
+  private var itemsSig = ""
+  private var dark = false
+
+  init(height: CGFloat) {
+    super.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: height), inputViewStyle: .keyboard)
+    allowsSelfSizing = false
+    autoresizingMask = [.flexibleWidth]
+    scroll.showsVerticalScrollIndicator = false
+    scroll.alwaysBounceVertical = false
+    addSubview(scroll)
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  static func symbol(for key: String) -> String? {
+    switch key {
+    case "gallery", "photos": return "photo.on.rectangle"
+    case "camera": return "camera.fill"
+    case "file": return "doc.fill"
+    case "scan_document": return "doc.viewfinder"
+    case "location", "liveLocation": return "location.fill"
+    case "contact": return "person.crop.circle"
+    case "poll": return "chart.bar.fill"
+    case "meetup": return "calendar"
+    case "playlist", "audio", "music": return "music.note"
+    case "gift": return "gift.fill"
+    case "games": return "gamecontroller.fill"
+    case "short_video": return "film"
+    case "gif": return nil
+    default: return "square.grid.2x2"
+    }
+  }
+
+  func apply(items: [(key: String, label: String)], text: UIColor, dark: Bool) {
+    let sig = items.map { "\($0.key)=\($0.label)" }.joined(separator: "|") + (dark ? "#d" : "#l")
+    guard sig != itemsSig else { return }
+    itemsSig = sig
+    self.dark = dark
+    buttons.forEach { $0.removeFromSuperview() }
+    buttons = []
+    let circleBg = dark ? UIColor(white: 0.20, alpha: 1) : UIColor.white
+    for it in items {
+      let b = UIControl()
+      b.accessibilityLabel = it.label
+      b.accessibilityTraits = .button
+      b.isAccessibilityElement = true
+      b.accessibilityIdentifier = it.key
+      let circle = UIView()
+      circle.backgroundColor = circleBg
+      circle.layer.cornerRadius = 31
+      circle.isUserInteractionEnabled = false
+      circle.tag = 1
+      b.addSubview(circle)
+      if let sym = NCAttachPanel.symbol(for: it.key) {
+        let iv = UIImageView(image: UIImage(systemName: sym, withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .regular)))
+        iv.tintColor = text
+        iv.contentMode = .center
+        iv.tag = 2
+        circle.addSubview(iv)
+      } else {
+        let gl = UILabel()
+        gl.text = "GIF"
+        gl.font = .systemFont(ofSize: 16, weight: .heavy)
+        gl.textColor = text
+        gl.textAlignment = .center
+        gl.tag = 2
+        circle.addSubview(gl)
+      }
+      let lb = UILabel()
+      lb.text = it.label
+      lb.font = .systemFont(ofSize: 13)
+      lb.textColor = text
+      lb.textAlignment = .center
+      lb.adjustsFontSizeToFitWidth = true
+      lb.minimumScaleFactor = 0.8
+      lb.tag = 3
+      b.addSubview(lb)
+      let key = it.key
+      b.addAction(UIAction { [weak self] _ in
+        UISelectionFeedbackGenerator().selectionChanged()
+        self?.onPick?(key)
+      }, for: .touchUpInside)
+      b.addAction(UIAction { _ in UIView.animate(withDuration: 0.12) { circle.transform = CGAffineTransform(scaleX: 0.92, y: 0.92) } }, for: .touchDown)
+      b.addAction(UIAction { _ in UIView.animate(withDuration: 0.18) { circle.transform = .identity } }, for: [.touchUpInside, .touchUpOutside, .touchCancel])
+      scroll.addSubview(b)
+      buttons.append(b)
+    }
+    setNeedsLayout()
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    let safeB = window?.safeAreaInsets.bottom ?? 0
+    scroll.frame = CGRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - safeB))
+    let cols: CGFloat = 4
+    let cellW = floor(bounds.width / cols)
+    let rowH: CGFloat = 104
+    let top: CGFloat = 22
+    for (i, b) in buttons.enumerated() {
+      let r = CGFloat(i / 4), c = CGFloat(i % 4)
+      b.frame = CGRect(x: c * cellW, y: top + r * rowH, width: cellW, height: rowH)
+      if let circle = b.viewWithTag(1) {
+        circle.frame = CGRect(x: (cellW - 62) / 2, y: 0, width: 62, height: 62)
+        circle.viewWithTag(2)?.frame = circle.bounds
+      }
+      b.viewWithTag(3)?.frame = CGRect(x: 2, y: 70, width: cellW - 4, height: 18)
+    }
+    let rows = CGFloat((buttons.count + 3) / 4)
+    scroll.contentSize = CGSize(width: bounds.width, height: top + rows * rowH)
   }
 }

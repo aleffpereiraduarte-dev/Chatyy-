@@ -79,6 +79,49 @@ export function attachHoldOn() {
   return true;
 }
 
+/** apiVersion da folha nativa expo-chat-attach (0 = sem módulo). */
+export function nativeAttachApi() {
+  try {
+    // eslint-disable-next-line global-require
+    const m = require('../modules/expo-chat-attach');
+    return typeof m.apiVersion === 'function' ? (Number(m.apiVersion()) || 0) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// [2026-10-19 attach-over-kb] iOS composer api >= 9 + folha api >= 6: o "+"
+// com o teclado aberto NÃO solta o teclado; a folha nativa sobe numa janela
+// ACIMA do teclado (que fica aberto por baixo) e ele só desce quando a folha
+// fecha — sem quadro de buraco/wallpaper, conversa parada, sem hold/clamp JS.
+// Kill switch OTA: globalThis.__chatyy_attach_over_kb = false (= api 8 hold).
+export function attachOverKeyboardOn() {
+  try { if (globalThis.__chatyy_attach_over_kb === false) return false; } catch {}
+  if (!attachInstantOn()) return false;
+  return nativeComposerApi() >= 9 && nativeAttachApi() >= 6;
+}
+
+// [2026-10-20 attach-inputview] iOS composer api >= 10 (WhatsApp): o "+" troca
+// o teclado pelo PAINEL de anexos no mesmo lugar (inputView, mesma altura,
+// composer parado e focado; "+" vira ícone de teclado). Fotos abre a folha
+// "Recentes" acima do painel. Kill switch OTA:
+// globalThis.__chatyy_attach_inputview = false → "+" abre a folha (over-kb).
+export function attachInputPanelOn() {
+  try { if (globalThis.__chatyy_attach_inputview === false) return false; } catch {}
+  if (!attachInstantOn()) return false;
+  return nativeComposerApi() >= 10;
+}
+
+// [2026-10-20 attach-inputview] Android composer api >= 7: o "+" não derruba o
+// IME; o painel de anexos (components/chat/AttachInputPanel) entra no lugar do
+// teclado e o IME só desce quando ele montou. Kill switch OTA (o mesmo do iOS):
+// globalThis.__chatyy_attach_inputview = false → folha do "+" como antes.
+export function androidAttachPanelOn() {
+  try { if (globalThis.__chatyy_attach_inputview === false) return false; } catch {}
+  if (!androidAttachInstantOn()) return false;
+  return nativeComposerApi() >= 7;
+}
+
 // [2026-10-19 android-parity] "+" no Android nível WhatsApp Android: a folha
 // nativa (Dialog, SOFT_INPUT_STATE_HIDDEN) abre NO MESMO TOQUE — o composer
 // nativo já escondeu o IME — sem os 80 ms + render de antes. Vale em qualquer

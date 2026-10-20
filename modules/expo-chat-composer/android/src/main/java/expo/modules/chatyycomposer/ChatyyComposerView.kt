@@ -617,6 +617,13 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
       // [2026-10-19 android-parity] api 5: o JS sabe se o teclado estava aberto
       // pelo IME REAL (antes do hide; Keyboard.isVisible do RN chega atrasado).
       val had = imeVisibleNow()
+      // [2026-10-20 attach-inputview] api 7: painel de anexos no lugar do IME
+      // (JS). O IME NÃO desce aqui — o JS monta o painel na altura do teclado e
+      // só então chama hideImeKeepFocus() (painel cresce enquanto o IME desce).
+      if (attachPanel && attachInstant) {
+        onAttach(mapOf("hadKeyboard" to had, "instant" to true, "panel" to true, "open" to !attachPanelOpen))
+        return@setOnClickListener
+      }
       hideKeyboard()
       onAttach(mapOf("hadKeyboard" to had, "instant" to attachInstant))
     }
@@ -733,7 +740,7 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
 
   fun setLabels(m: Map<String, String>) {
     labels = m
-    plusButton.contentDescription = m["attach"]
+    plusButton.contentDescription = if (attachPanelOpen) (m["keyboard"] ?: "Teclado") else m["attach"]
     emojiButton.contentDescription = m["emoji"]
     cameraButton.contentDescription = m["camera"]
     videoNoteButton.contentDescription = m["videoNote"]
@@ -992,6 +999,22 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   // attachInstant (api 5): onAttach{instant:true} → o JS abre a folha nativa no
   // mesmo toque (sem os 80 ms + render). Kill switch: prop attachInstant=false.
   var attachInstant = true
+  // [2026-10-20 attach-inputview] api 7: "+" alterna o painel de anexos do JS
+  // (no lugar do IME) e vira ícone de teclado com ele aberto. Kill switch:
+  // prop attachPanel=false (JS: globalThis.__chatyy_attach_inputview = false).
+  var attachPanel = false
+  var attachPanelOpen = false
+    set(v) {
+      if (field == v) return
+      field = v
+      plusButton.setImageResource(if (v) R.drawable.nc_ic_keyboard else R.drawable.nc_ic_plus)
+      plusButton.contentDescription = if (v) (labels["keyboard"] ?: "Teclado") else labels["attach"]
+    }
+
+  /** [2026-10-20 attach-inputview] desce o IME sem tirar o foco do campo. */
+  fun hideImeKeepFocus() {
+    hideKeyboard()
+  }
   // restoreGuard (api 6): voltar o foco da janela (folha do "+", diálogo, outra
   // Activity, alguns OEMs) não reabre um teclado que estava FECHADO ao sair.
   // Toque no compositor ou focus() explícito liberam. Kill switch: prop restoreGuard=false.

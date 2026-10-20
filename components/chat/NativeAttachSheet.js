@@ -182,7 +182,9 @@ export default function NativeAttachSheet({
   // [2026-10-19 attach-instant] Abre a folha nativa JÁ (sem esperar o render da
   // conversa com visible=true): true = apresentação começou. O pai seta o
   // visible logo depois só para manter o estado; o efeito abaixo vê openRef.
-  openNowRef.current = () => {
+  // [2026-10-19 attach-over-kb] opts.overKeyboard = folha numa janela acima do
+  // teclado (composer api 9 mantém o teclado aberto por baixo).
+  openNowRef.current = (opts) => {
     if (openRef.current) return true;
     const m = getNA();
     if (!m) return false;
@@ -206,6 +208,7 @@ export default function NativeAttachSheet({
           // [2026-10-19 media-quality] chip HD começa no nível salvo (Wi-Fi/dados)
           hdDefault: _hdDefault,
           allowCamera: true,
+          ...(opts && opts.overKeyboard ? { overKeyboard: true } : null),
           // [2026-10-16 motion-attach] botões em cascata; kill switch OTA
           // globalThis.__chatyy_motion_attach = false (chave ausente = ligado).
           ...((() => { try { return globalThis.__chatyy_motion_attach === false || globalThis.__chatyy_motion === false; } catch { return false; } })() ? { motion: false } : null),
@@ -262,7 +265,7 @@ export default function NativeAttachSheet({
 
   useEffect(() => {
     if (!instantRef || typeof instantRef !== 'object') return undefined;
-    const fn = () => { try { return !!(openNowRef.current && openNowRef.current()); } catch { return false; } };
+    const fn = (opts) => { try { return !!(openNowRef.current && openNowRef.current(opts)); } catch { return false; } };
     instantRef.current = fn;
     return () => { if (instantRef.current === fn) instantRef.current = null; };
   }, [instantRef]);

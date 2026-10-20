@@ -18,6 +18,8 @@ final class AttachSheetController: UIViewController,
   UIGestureRecognizerDelegate, PHPhotoLibraryChangeObserver, UITextFieldDelegate {
 
   var onFinish: (([String: Any]) -> Void)?
+  /// [2026-10-19 attach-over-kb] folha numa janela acima do teclado (ChatyyAttachModule).
+  var overKeyboardHost: AttachOverKeyboardHost?
 
   private let config: AttachConfig
   private let imageManager = PHCachingImageManager()
@@ -756,6 +758,19 @@ final class AttachSheetController: UIViewController,
     caHaptic("select")
   }
 
+  // [2026-10-19 attach-over-kb] acima do teclado a legenda não teria teclado
+  // visível: a janela desce p/ baixo do teclado e vira key antes do foco; se o
+  // teclado do composer já estava aberto (mesmo quadro, pode não vir
+  // notificação nova) a folha se ajusta pelo último quadro conhecido.
+  func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
+    if let host = overKeyboardHost {
+      host.prepareForTextInput()
+      let kt = AttachKeyboardTracker.shared
+      if kt.visible { applyKeyboard(end: kt.endFrame, hide: false, duration: 0.25) }
+    }
+    return true
+  }
+
   func textFieldShouldReturn(_ textField: UITextField) -> Bool {
     onSendTap()
     return false
@@ -916,8 +931,16 @@ final class AttachSheetController: UIViewController,
     guard !finished else { return }
     guard let end = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
     let dur = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
+    // [2026-10-19 attach-over-kb] acima do teclado: o teclado do composer
+    // (aberto por baixo da folha) não conta — só o da legenda.
+    if overKeyboardHost != nil && !captionField.isFirstResponder && n.name != UIResponder.keyboardWillHideNotification { return }
+    applyKeyboard(end: end, hide: n.name == UIResponder.keyboardWillHideNotification, duration: dur)
+  }
+
+  private func applyKeyboard(end: CGRect, hide: Bool, duration dur: Double) {
+    guard !finished else { return }
     let local = view.convert(end, from: nil)
-    let overlap = n.name == UIResponder.keyboardWillHideNotification ? 0 : max(0, view.bounds.maxY - local.minY)
+    let overlap = hide ? 0 : max(0, view.bounds.maxY - local.minY)
     keyboardOverlap = overlap
     updateBottomInset()
     // Teclado aberto na folha recolhida espremeria a grade a zero → expande.
@@ -939,6 +962,9 @@ final class AttachSheetController: UIViewController,
   // userInfo: action (String), user (Bool: false = fechada pelo JS/substituída).
   static let willCloseNote = Notification.Name("ChatyyAttachSheetWillClose")
   static let didCloseNote = Notification.Name("ChatyyAttachSheetDidClose")
+  // [2026-10-19 attach-over-kb] logo antes de a folha entrar; userInfo
+  // overKeyboard (Bool): true = teclado do composer fica aberto por baixo.
+  static let willPresentNote = Notification.Name("ChatyyAttachSheetWillPresent")
 
   private func postClose(_ name: Notification.Name, _ result: [String: Any], byUser: Bool) {
     let action: String = (result["action"] as? String) ?? ""
@@ -971,7 +997,7 @@ final class AttachSheetController: UIViewController,
     }
     let done: (Bool) -> Void = { _ in
       self.stopCamera()
-      self.dismiss(animated: false) {
+      self.removeFromScreen {
         self.postClose(AttachSheetController.didCloseNote, result, byUser: byUser)
         self.onFinish?(result)
         self.onFinish = nil
@@ -1004,9 +1030,19 @@ final class AttachSheetController: UIViewController,
     onFinish = nil
     let result: [String: Any] = ["action": "cancel"]
     postClose(AttachSheetController.willCloseNote, result, byUser: false)
-    dismiss(animated: false) {
+    removeFromScreen {
       self.postClose(AttachSheetController.didCloseNote, result, byUser: false)
       cb?(result)
     }
+  }
+
+  /// Modal: dismiss do UIKit. Acima do teclado: a janela some (attach-over-kb).
+  private func removeFromScreen(_ completion: @escaping () -> Void) {
+    if let host = overKeyboardHost {
+      overKeyboardHost = nil
+      host.tearDown(completion)
+      return
+    }
+    dismiss(animated: false, completion: completion)
   }
 }

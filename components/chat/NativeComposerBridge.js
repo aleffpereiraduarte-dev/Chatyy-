@@ -23,7 +23,7 @@ import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo
 import { Platform, processColor } from 'react-native';
 import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
 import { threadKbNoteComposerBlur, threadKbNoteComposerFocus } from '../../utils/threadKeyboard'; // [2026-10-19 kb-heal] · [2026-10-19 attach-hold]
-import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi, androidAttachInstantOn, attachLegacyNoneActive, attachHoldOn } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
+import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi, androidAttachInstantOn, attachLegacyNoneActive, attachHoldOn, attachOverKeyboardOn, attachInputPanelOn, androidAttachPanelOn } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
 
 let _failed = false;
 
@@ -70,6 +70,10 @@ function _attachInstantProps() {
   else {
     o.attachRestore = attachRestoreMode();
     if (api >= 8 && attachHoldOn()) o.attachDeferResign = true; // [2026-10-19 attach-hold]
+    // [2026-10-19 attach-over-kb] api 9 + folha api 6: teclado fica sob a folha.
+    if (attachOverKeyboardOn()) o.attachKeepKeyboard = true;
+    // [2026-10-20 attach-inputview] api 10: painel no lugar do teclado.
+    if (attachInputPanelOn()) o.attachPanel = true;
   }
   if (!kbRestoreGuardOn() && api >= 6) o.restoreGuard = false;
   return o;
@@ -81,6 +85,7 @@ function _androidAttachProps() {
   const o = {};
   if (api >= 5 && !androidAttachInstantOn()) o.attachInstant = false;
   if (api >= 6 && !kbRestoreGuardOn()) o.restoreGuard = false;
+  if (androidAttachPanelOn()) o.attachPanel = true; // [2026-10-20 attach-inputview] api 7
   return o;
 }
 
@@ -181,6 +186,9 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
     onSendMenu,
     onHeightChange,
     onKeyboardFrame,
+    attachPanelItems, // [2026-10-20 attach-inputview] [{key,label}]
+    onAttachPanel, // [2026-10-20 attach-inputview] ({key, keep}) => void
+    attachPanelOpen = false, // [2026-10-20 attach-inputview] Android: "+" vira teclado
   } = props;
 
   const NativeView = useMemo(() => {
@@ -212,6 +220,15 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
   useImperativeHandle(ref, () => ({
     focus: () => { try { nativeRef.current?.focus?.()?.catch?.(() => {}); } catch {} },
     blur: () => { try { nativeRef.current?.blur?.()?.catch?.(() => {}); } catch {} },
+    // [2026-10-20 attach-inputview] Android api 7: desce o IME sem tirar o foco.
+    hideImeKeepFocus: () => {
+      try {
+        const f = nativeRef.current?.hideImeKeepFocus;
+        if (typeof f !== 'function') return false;
+        f.call(nativeRef.current)?.catch?.(() => {});
+        return true;
+      } catch { return false; }
+    },
     // [2026-10-19 attach-hold] iOS api >= 8: solta o teclado adiado pelo "+".
     releaseForAttach: () => {
       try {
@@ -293,6 +310,7 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
     resumeRecording: _tr(t, 'nativeComposer.resumeRecording', 'Continuar gravação'),
     playPreview: _tr(t, 'nativeComposer.playPreview', 'Ouvir gravação'),
     pausePreview: _tr(t, 'nativeComposer.pausePreview', 'Pausar'),
+    keyboard: _tr(t, 'chatConv.keyboard', 'Teclado'), // [2026-10-20 attach-inputview] "+" virou teclado
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [labelsKey, t]);
 
@@ -368,6 +386,18 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
   const _simple = (name) => () => { try { cbRef.current[name]?.(); } catch {} };
   // [2026-10-19 attach-instant] api >= 5 manda { hadKeyboard, instant }.
   const _onAttach = useCallback((e) => { try { cbRef.current.onAttach?.(e?.nativeEvent || null); } catch {} }, []);
+  // [2026-10-20 attach-inputview] botão do painel de anexos (api 10).
+  const _onAttachPanel = useCallback((e) => {
+    const ne = e?.nativeEvent || null;
+    if (!ne || ne.key == null) return;
+    try { cbRef.current.onAttachPanel?.({ key: String(ne.key), keep: ne.keep === true }); } catch {}
+  }, []);
+  const panelItemsKey = JSON.stringify(Array.isArray(attachPanelItems) ? attachPanelItems.map((it) => [it && it.key, it && it.label]) : []);
+  const panelItems = useMemo(() => (Array.isArray(attachPanelItems) ? attachPanelItems : [])
+    .filter((it) => it && it.key)
+    .map((it) => ({ key: String(it.key), label: String(it.label || it.key) })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [panelItemsKey]);
   const _onCamera = useMemo(() => _simple('onCamera'), []);
   const _onEmoji = useMemo(() => _simple('onEmoji'), []);
   const _onVideoNote = useMemo(() => _simple('onVideoNote'), []);
@@ -437,6 +467,8 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
       onSendMenu={_onSendMenu}
       onKeyboardFrame={_onKeyboardFrame}
       onKeyboardSync={_onKeyboardSync}
+      {...(Platform.OS === 'ios' && panelItems.length ? { attachPanelItems: panelItems, onAttachPanel: _onAttachPanel } : null) /* [2026-10-20 attach-inputview] */}
+      {...(Platform.OS === 'android' && androidAttachPanelOn() ? { attachPanelOpen: !!attachPanelOpen } : null)}
     />
   );
 });

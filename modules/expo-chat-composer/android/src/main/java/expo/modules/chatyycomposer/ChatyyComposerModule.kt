@@ -97,7 +97,10 @@ class ChatyyComposerModule : Module() {
     //     (folha/diálogo/outra Activity/OEM) o IME que estava FECHADO ao sair não
     //     reabre sozinho — só por toque no compositor ou focus() explícito.
     // (7 = iOS attachRestore "none": no Android o padrão já é o JS não devolver.)
-    Function("apiVersion") { 6 }
+    // 7 = [2026-10-20 attach-inputview] props attachPanel/attachPanelOpen +
+    //     onAttach{panel:true, open} sem descer o IME + hideImeKeepFocus(): o
+    //     painel de anexos (JS) entra no lugar do teclado, "+" vira teclado.
+    Function("apiVersion") { 7 }
     // [2026-10-19 core-chat] kill switch da pausa ao ir p/ 2º plano (JS:
     // globalThis.__chatyy_voice_bg_pause = false → setVoiceBgPause(false)).
     Function("setVoiceBgPause") { on: Boolean -> ChatyyComposerView.voiceBgPause = on }
@@ -138,6 +141,8 @@ class ChatyyComposerModule : Module() {
       Prop("changeDebounceMs") { view: ChatyyComposerView, v: Double? -> view.changeDebounceMs = (v ?: 60.0).coerceAtLeast(0.0).toLong() }
       Prop("keyboardTracking") { view: ChatyyComposerView, v: String? -> view.setKeyboardTracking(v ?: "none") }
       Prop("motion") { view: ChatyyComposerView, v: Boolean? -> view.setMotion(v ?: true) } // [2026-10-16 motion-composer]
+      Prop("attachPanel") { view: ChatyyComposerView, v: Boolean? -> view.attachPanel = v ?: false } // [2026-10-20 attach-inputview]
+      Prop("attachPanelOpen") { view: ChatyyComposerView, v: Boolean? -> view.attachPanelOpen = v ?: false } // [2026-10-20 attach-inputview]
       Prop("focusGuard") { view: ChatyyComposerView, v: Boolean? -> view.focusGuard = v ?: true } // [2026-10-18 kb-resume]
       Prop("nativeTransitions") { view: ChatyyComposerView, v: Boolean? -> view.nativeTransitions = v ?: true } // [2026-10-19 kb-native]
       Prop("attachInstant") { view: ChatyyComposerView, v: Boolean? -> view.attachInstant = v ?: true } // [2026-10-19 android-parity]
@@ -147,6 +152,7 @@ class ChatyyComposerModule : Module() {
 
       AsyncFunction("focus") { view: ChatyyComposerView -> view.focusInput() }.runOnQueue(Queues.MAIN)
       AsyncFunction("blur") { view: ChatyyComposerView -> view.blurInput() }.runOnQueue(Queues.MAIN)
+      AsyncFunction("hideImeKeepFocus") { view: ChatyyComposerView -> view.hideImeKeepFocus() }.runOnQueue(Queues.MAIN) // [2026-10-20 attach-inputview]
       AsyncFunction("setText") { view: ChatyyComposerView, text: String -> view.setTextFromJS(text) }.runOnQueue(Queues.MAIN)
       AsyncFunction("clear") { view: ChatyyComposerView -> view.setTextFromJS("") }.runOnQueue(Queues.MAIN)
       AsyncFunction("setSelection") { view: ChatyyComposerView, start: Int, end: Int ->

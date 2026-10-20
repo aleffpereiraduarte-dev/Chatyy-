@@ -280,6 +280,7 @@ import ReminderSheet from '../components/ReminderSheet';
 import { detectReminder as detectChatReminder, createReminder as createChatReminder, formatReminderWhen } from '../services/reminders';
 import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
+import AttachInputPanel from '../components/chat/AttachInputPanel'; // [2026-10-20 attach-inputview] Android
 import NativeEmojiPanel, { shouldUseNativeEmojiPanel, shouldUseNativeStickerPanel, insertAtSelection as _npInsert, deleteBackward as _npDelete } from '../components/chat/NativeEmojiPanelBridge'; // [2026-10-15 native-emoji]
 import NativeChatInfo, { isNativeChatInfoEnabled, nativeChatInfoOwnsHeader, isNativeProfileEnabled, useGroupMembersPager, chatInfoV6 } from '../components/chat/NativeChatInfo'; // [2026-10-18 chat-info-native] [2026-10-18 elegance] cabeçalho que encolhe
 import GroupInfoEditor from '../components/chat/GroupInfoEditor'; // [2026-10-18 chat-info-native]
@@ -13116,6 +13117,10 @@ function ChatConversationInnerBody() {
 
   const [messageInfo, setMessageInfo] = _useStateT(null); // { id, delivered: [], read: [] }
   const [showAttachMenu, setShowAttachMenu] = _useStateT(false);
+  // [2026-10-20 attach-inputview] Android: painel de anexos no lugar do IME.
+  const [showAttachPanelA, setShowAttachPanelA] = _useStateT(false);
+  const _attachPanelDismissKbRef = useRef(false);
+  const _attachPanelFallbackRef = useRef(null);
   // [2026-10-09] Enquanto o menu de anexos estiver aberto, o teclado não pode reaparecer por cima.
   useEffect(() => {
     if (!showAttachMenu) {
@@ -13176,6 +13181,19 @@ function ChatConversationInnerBody() {
     if (!mountedRef.current || _kbLeavingRef.current) { release(); return false; }
     const open = _attachInstantOpenRef.current;
     if (typeof open !== 'function') { release(); return false; }
+    // [2026-10-19 attach-over-kb] composer api 9 (e.keep): o teclado fica ABERTO
+    // sob a folha (janela acima do teclado) e só desce quando ela fecha — nada
+    // de hold/clamp/release aqui (a conversa não recebe evento de teclado).
+    // Kill switch OTA: globalThis.__chatyy_attach_over_kb = false.
+    if (e.keep === true && kn.attachOverKeyboardOn && kn.attachOverKeyboardOn()) {
+      _attachInstantRef.current = true;
+      _attachKbRef.current = { had: false, at: 0 };
+      let okK = false;
+      try { okK = !!open({ overKeyboard: true }); } catch { okK = false; }
+      if (!okK) { _attachInstantRef.current = false; release(); return false; }
+      setShowAttachMenu(true);
+      return true;
+    }
     _attachInstantRef.current = true;
     _attachKbRef.current = { had: false, at: 0 };
     try { threadKbAttachBegin(e.hadKeyboard === true); } catch {}
@@ -13216,6 +13234,106 @@ function ChatConversationInnerBody() {
     setShowAttachMenu(true);
     return true;
   };
+  // [2026-10-20 attach-inputview] Painel de anexos no lugar do teclado (iOS
+  // composer api 10, WhatsApp). Ordem/rotulagem do WhatsApp com os nossos
+  // equivalentes; o resto (GIF, Playlist, Presente, Jogos…) vem depois.
+  const _attachPanelItemsFor = () => {
+    try {
+      const kn = require('../utils/kbNativeTransitions');
+      if (Platform.OS === 'ios') { if (!kn.attachInputPanelOn || !kn.attachInputPanelOn()) return null; }
+      else if (Platform.OS === 'android') { if (!kn.androidAttachPanelOn || !kn.androidAttachPanelOn()) return null; }
+      else return null;
+      const _l = (k, fb) => { try { const v = t(k); return (typeof v === 'string' && v && v !== k) ? v : fb; } catch { return fb; } };
+      const base = buildAttachItems(t, {
+        gift: DIAMONDS_ENABLED && conversationType === 'direct' && !isSavedMode && !!conversationId,
+        games: gamesOn && !isSavedMode && !!conversationId && (conversationType === 'direct' || conversationType === 'group'),
+      });
+      const rename = {
+        gallery: _l('chatConv.photos', 'Fotos'),
+        file: _l('chatConv.document', 'Documento'),
+        meetup: _l('chatConv.event', 'Evento'),
+      };
+      const order = ['gallery', 'camera', 'location', 'contact', 'file', 'poll', 'meetup'];
+      const byKey = {};
+      base.forEach((it) => { if (it && it.key) byKey[it.key] = it; });
+      const out = [];
+      order.forEach((k) => { if (byKey[k]) out.push({ key: k, label: rename[k] || byKey[k].label, icon: byKey[k].icon }); });
+      base.forEach((it) => { if (it && it.key && !order.includes(it.key)) out.push({ key: it.key, label: it.label, icon: it.icon }); });
+      return out;
+    } catch { return null; }
+  };
+  const _onAttachPanel = (e) => {
+    const key = e && e.key;
+    if (!key) return;
+    if (key === 'gallery' || key === 'photos') {
+      // Fotos → folha "Recentes" (acima do painel quando o nativo segura o teclado).
+      if (e.keep === true) {
+        const open = _attachInstantOpenRef.current;
+        let ok = false;
+        if (typeof open === 'function' && mountedRef.current && !_kbLeavingRef.current) {
+          _attachInstantRef.current = true;
+          _attachKbRef.current = { had: false, at: 0 };
+          try { ok = !!open({ overKeyboard: true }); } catch { ok = false; }
+        }
+        if (ok) { setShowAttachMenu(true); return; }
+        _attachInstantRef.current = false;
+        try { inputRef.current?.releaseForAttach?.(); } catch {}
+      }
+      setShowAttachMenu(true);
+      return;
+    }
+    try { handlePickAttachment(key); } catch {}
+  };
+  // [2026-10-20 attach-inputview] Android (composer api 7): "+" alterna o
+  // painel; o IME só desce quando o painel montou (onShown) → o painel cresce
+  // enquanto o IME desce (mesma casca do painel de emoji). Teclado de volta:
+  // focus() → o painel encolhe com o IME subindo e some no keyboardDidShow.
+  const _toggleAttachPanelAndroid = (ev) => {
+    if (ev && ev.open === false) {
+      try { inputRef.current?.focus?.(); } catch {}
+      if (_attachPanelFallbackRef.current) clearTimeout(_attachPanelFallbackRef.current);
+      _attachPanelFallbackRef.current = setTimeout(() => {
+        _attachPanelFallbackRef.current = null;
+        let vis = false;
+        try { vis = !!Keyboard.isVisible?.(); } catch {}
+        if (!vis) setShowAttachPanelA(false);
+      }, 900);
+      return;
+    }
+    try { setShowNativeEmoji(false); } catch {}
+    _attachPanelDismissKbRef.current = !!(ev && ev.hadKeyboard);
+    setShowAttachPanelA(true);
+    if (_attachPanelDismissKbRef.current) {
+      setTimeout(() => { if (_attachPanelDismissKbRef.current) { _attachPanelDismissKbRef.current = false; _attachPanelHideIme(); } }, 220);
+    }
+  };
+  const _attachPanelHideIme = () => {
+    let ok = false;
+    try { ok = !!inputRef.current?.hideImeKeepFocus?.(); } catch {}
+    if (!ok) _dismissKbNow();
+  };
+  const _onAttachPanelShownA = () => {
+    if (!_attachPanelDismissKbRef.current) return;
+    _attachPanelDismissKbRef.current = false;
+    _attachPanelHideIme();
+  };
+  const _onAttachPanelPickA = (key) => {
+    setShowAttachPanelA(false);
+    if (key === 'gallery' || key === 'photos') { setShowAttachMenu(true); return; }
+    try { handlePickAttachment(key); } catch {}
+  };
+  useEffect(() => {
+    if (!showAttachPanelA || Platform.OS !== 'android') return undefined;
+    const sub = Keyboard.addListener('keyboardDidShow', () => {
+      let composerFocused = false;
+      try { composerFocused = !!inputRef.current?.isFocused?.(); } catch {}
+      if (!composerFocused) return;
+      if (_attachPanelFallbackRef.current) { clearTimeout(_attachPanelFallbackRef.current); _attachPanelFallbackRef.current = null; }
+      setShowAttachPanelA(false);
+    });
+    const back = require('react-native').BackHandler.addEventListener('hardwareBackPress', () => { setShowAttachPanelA(false); return true; });
+    return () => { try { sub.remove(); } catch {} try { back.remove(); } catch {} };
+  }, [showAttachPanelA]); // eslint-disable-line react-hooks/exhaustive-deps
   const _openAttachMenuKb = (had) => {
     const legacy = () => setTimeout(() => setShowAttachMenu(true), Platform.OS === 'android' ? 80 : 60);
     if (!kbResumeGuardOn()) { legacy(); return; }
@@ -13731,6 +13849,7 @@ function ChatConversationInnerBody() {
   };
   const openNativeEmojiPanel = useCallback((tab) => {
     if (tab) setNativeEmojiTab(tab);
+    setShowAttachPanelA(false); // [2026-10-20 attach-inputview]
     setShowStickerPicker(false);
     setShowGifPicker(false);
     let kbOpen = false;
@@ -39350,7 +39469,9 @@ function ChatConversationInnerBody() {
             onBlur={_onComposerBlur}
             onSelectionChange={_onComposerSelection}
             onSend={() => { if (!sending) handleSend(); }}
+            attachPanelOpen={showAttachPanelA /* [2026-10-20 attach-inputview] Android */}
             onAttach={(ev) => {
+              if (Platform.OS === 'android' && ev && ev.panel === true) { _toggleAttachPanelAndroid(ev); return; } // [2026-10-20 attach-inputview]
               // [2026-10-19 attach-instant] api >= 5: folha já, teclado é do nativo.
               if (_openAttachInstant(ev)) return;
               // [2026-10-18 kb-resume] o nativo já fez resign; teclado ainda descendo = estava aberto.
@@ -39361,6 +39482,8 @@ function ChatConversationInnerBody() {
               _openAttachMenuKb(_had);
             }}
             onCamera={() => handlePickAttachment('camera')}
+            attachPanelItems={_attachPanelItemsFor() /* [2026-10-20 attach-inputview] */}
+            onAttachPanel={_onAttachPanel}
             onEmoji={() => {
               if (showNativeEmoji) { closeNativeEmojiToKeyboard(); return; } // [2026-10-15 native-emoji]
               if (showStickerPicker) { setShowStickerPicker(false); return; }
@@ -39833,6 +39956,20 @@ function ChatConversationInnerBody() {
           onSendAsPhoto={(fs) => setMediaPreview(prev => prev?.visible ? { visible: true, files: [...(prev.files || []), ...fs] } : { visible: true, files: fs })}
         />
       ) : null}
+
+      {/* [2026-10-20 attach-inputview] Android: painel de anexos no lugar do teclado */}
+      {Platform.OS === 'android' && (
+        <AttachInputPanel
+          visible={showAttachPanelA}
+          items={showAttachPanelA ? (_attachPanelItemsFor() || []) : []}
+          onPick={_onAttachPanelPickA}
+          onShown={_onAttachPanelShownA}
+          isDark={isDark}
+          insetBottom={insets.bottom}
+          composerPad={composerBottomPad}
+          windowHeight={Dimensions.get('window').height}
+        />
+      )}
 
       {/* [2026-10-15 native-emoji] Painel nativo Emoji | Figurinhas | GIF */}
       {_nativeEmojiOn && (

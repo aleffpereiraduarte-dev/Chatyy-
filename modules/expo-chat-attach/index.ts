@@ -62,6 +62,8 @@ export type AttachOptions = {
   statusModes?: boolean;
   /** [apiVersion 3] Duração do boomerang em segundos (padrão 1.5). */
   boomerangSec?: number;
+  /** [apiVersion 6, iOS] folha numa janela ACIMA do teclado (o teclado do composer fica aberto por baixo). */
+  overKeyboard?: boolean;
 };
 
 export type SheetResult =

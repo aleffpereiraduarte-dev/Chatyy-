@@ -37,8 +37,17 @@ public class ChatyyAttachModule: Module {
     // 5 = [2026-10-19 attach-close] fechar a folha sem engasgo: descida segue a
     //     velocidade do dedo (mola crítica) / ease-out no toque fora; câmera
     //     solta só depois de a folha sair da tela.
+    // 6 = [2026-10-19 attach-over-kb] openSheet({overKeyboard:true}): a folha
+    //     sobe numa UIWindow ACIMA da janela do teclado (o teclado do composer
+    //     fica aberto por baixo, nada na conversa se mexe); o composer (api 9)
+    //     só solta o teclado quando a folha fecha. Posta
+    //     ChatyyAttachSheetWillPresent {overKeyboard} antes de apresentar.
     Function("apiVersion") { () -> Int in
-      return 5
+      return 6
+    }
+
+    OnCreate {
+      AttachKeyboardTracker.shared.start()
     }
 
     Function("isVideoNoteSupported") { () -> Bool in
@@ -82,6 +91,19 @@ public class ChatyyAttachModule: Module {
         promise.resolve(result)
       }
       self.sheet = vc
+      // [2026-10-19 attach-over-kb] teclado aberto: folha numa janela acima da
+      // do teclado (sem present → o UIKit não "guarda" o first responder e o
+      // teclado não some num quadro só). Falhou → apresentação normal.
+      if (options["overKeyboard"] as? Bool) == true, AttachOverKeyboardHost.present(vc, over: presenter) {
+        NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": true])
+        vc.overKeyboardHost?.show()
+        NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+        DispatchQueue.main.async {
+          NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+        }
+        return
+      }
+      NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": false])
       vc.modalPresentationStyle = .overFullScreen
       vc.modalPresentationCapturesStatusBarAppearance = false
       // [2026-10-15 screen-protect-all] protege a tela nova já (camada segura; expo-chat-privacy)
@@ -155,6 +177,101 @@ public class ChatyyAttachModule: Module {
       if let v = self.videoNote { v.closeFromJS(); any = true }
       return any
     }.runOnQueue(.main)
+  }
+}
+
+// MARK: - Folha acima do teclado (attach-over-kb)
+
+// [2026-10-19 attach-over-kb] "+" com o teclado aberto (founder, vídeo 20/10):
+// o teclado sumia num quadro (present(animated:false) de um VC na janela do
+// app = o UIKit guarda e tira o first responder na hora), ficava um buraco
+// com o wallpaper e a conversa pulava enquanto o JS (hold/clamp/KC) brigava.
+// A janela do teclado (UIRemoteKeyboardWindow/UITextEffectsWindow) fica ACIMA
+// de qualquer VC da janela do app, então a folha nunca podia cobri-lo.
+// AGORA (WhatsApp/Telegram): a folha vive numa UIWindow com nível acima do
+// teclado, sem virar key window → o teclado do composer continua aberto POR
+// BAIXO (nenhum evento de teclado = conversa parada). Legenda da folha
+// precisa de teclado → a janela desce p/ baixo do teclado e vira key.
+// Fechar: a janela some (sem dismiss do UIKit); o composer solta o teclado
+// com a folha descendo (ChatyyAttachSheetWillClose).
+// Kill switch JS: globalThis.__chatyy_attach_over_kb = false.
+final class AttachOverKeyboardHost {
+  private var window: UIWindow?
+  private weak var previousKey: UIWindow?
+  private weak var sheet: AttachSheetController?
+
+  /// Monta a janela acima do teclado com a folha como raiz (ainda escondida).
+  static func present(_ vc: AttachSheetController, over presenter: UIViewController) -> Bool {
+    guard let base = presenter.view.window ?? presenter.viewIfLoaded?.window, let scene = base.windowScene else { return false }
+    let host = AttachOverKeyboardHost()
+    let w = UIWindow(windowScene: scene)
+    w.frame = base.frame
+    w.backgroundColor = .clear
+    w.windowLevel = AttachOverKeyboardHost.levelAboveKeyboard(scene)
+    w.rootViewController = vc
+    host.window = w
+    host.previousKey = scene.windows.first(where: { $0.isKeyWindow }) ?? base
+    host.sheet = vc
+    vc.overKeyboardHost = host
+    return true
+  }
+
+  static func levelAboveKeyboard(_ scene: UIWindowScene) -> UIWindow.Level {
+    var top: CGFloat = 10_000_000
+    for w in scene.windows {
+      let n = NSStringFromClass(type(of: w))
+      if n.contains("Keyboard") || n.contains("TextEffects") { top = max(top, w.windowLevel.rawValue) }
+    }
+    return UIWindow.Level(rawValue: top + 1)
+  }
+
+  /// Mostra SEM virar key (o teclado do composer continua aberto por baixo).
+  func show() {
+    guard let w = window else { return }
+    w.isHidden = false
+  }
+
+  /// Legenda da folha vai editar: janela abaixo do teclado (ele aparece por
+  /// cima da folha) e key (o campo pode virar first responder).
+  func prepareForTextInput() {
+    guard let w = window else { return }
+    w.windowLevel = UIWindow.Level(rawValue: UIWindow.Level.alert.rawValue + 1)
+    if !w.isKeyWindow { w.makeKey() }
+  }
+
+  /// Some com a janela (a folha já animou para fora da tela).
+  func tearDown(_ completion: @escaping () -> Void) {
+    guard let w = window else { completion(); return }
+    window = nil
+    let wasKey = w.isKeyWindow
+    w.isHidden = true
+    w.rootViewController = nil
+    if wasKey, let prev = previousKey, prev.windowScene != nil, !prev.isHidden { prev.makeKey() }
+    completion()
+  }
+}
+
+/// Último quadro do teclado (a folha acima do teclado nasce com ele já aberto
+/// e precisa dele quando a legenda assume o teclado sem notificação nova).
+final class AttachKeyboardTracker {
+  static let shared = AttachKeyboardTracker()
+  private(set) var endFrame: CGRect = .zero
+  private(set) var visible = false
+  private var started = false
+
+  func start() {
+    if started { return }
+    started = true
+    let nc = NotificationCenter.default
+    nc.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] n in
+      guard let self = self, let end = (n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
+      self.endFrame = end
+      let screenH = UIScreen.main.bounds.height
+      self.visible = end.height > 1 && end.minY < screenH - 1
+    }
+    nc.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.visible = false
+    }
   }
 }
 

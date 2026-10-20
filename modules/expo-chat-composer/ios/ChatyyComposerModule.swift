@@ -169,15 +169,23 @@ public class ChatyyComposerModule: Module {
     //     "+" com o teclado aberto manda onAttach{deferred:true} e só solta o
     //     teclado quando o JS armou o hold da conversa (rede 350 ms) — conversa
     //     parada enquanto a folha sobe; sync "attach-closed" ao fechar a folha.
+    // 9 = [2026-10-19 attach-over-kb] prop attachKeepKeyboard: "+" com o
+    //     teclado aberto manda onAttach{deferred:true, keep:true} e o teclado
+    //     fica aberto sob a folha (expo-chat-attach api 6, janela acima do
+    //     teclado) até ela fechar; rede 0,6 s / folha modal → api 8.
+    // 10 = [2026-10-20 attach-inputview] props attachPanel + attachPanelItems
+    //     [{key,label}] e evento onAttachPanel{key, keep?}: o "+" troca o
+    //     teclado pelo painel de anexos (inputView, mesma altura) e o "+" vira
+    //     ícone de teclado; Fotos (keep) abre a folha acima do painel.
     Function("apiVersion") { () -> Int in
-      return 8
+      return 10
     }
 
     View(ChatyyComposerView.self) {
       Events(
         "onChangeText", "onSend", "onAttach", "onCamera", "onEmoji", "onVideoNote",
         "onVoiceRecorded", "onVoiceState", "onHeightChange", "onSelectionChange",
-        "onPasteImage", "onFocusChange", "onReplyCancel", "onSendMenu", "onKeyboardFrame",
+        "onPasteImage", "onFocusChange", "onReplyCancel", "onSendMenu", "onKeyboardFrame", "onAttachPanel",
         "onKeyboardSync" // [2026-10-19 kb-native]
       )
 
@@ -211,6 +219,14 @@ public class ChatyyComposerModule: Module {
       Prop("attachRestore") { (view: ChatyyComposerView, v: String?) in view.attachRestore = v ?? "did" } // [2026-10-19 attach-instant] · [2026-10-19 kb-restore] padrão "did"
       Prop("restoreGuard") { (view: ChatyyComposerView, v: Bool?) in view.restoreGuard = v ?? true } // [2026-10-19 kb-restore]
       Prop("attachDeferResign") { (view: ChatyyComposerView, v: Bool?) in view.attachDeferResign = v ?? false } // [2026-10-19 attach-hold]
+      Prop("attachKeepKeyboard") { (view: ChatyyComposerView, v: Bool?) in view.attachKeepKeyboard = v ?? false } // [2026-10-19 attach-over-kb]
+      Prop("attachPanel") { (view: ChatyyComposerView, v: Bool?) in view.attachPanel = v ?? false } // [2026-10-20 attach-inputview]
+      Prop("attachPanelItems") { (view: ChatyyComposerView, v: [[String: Any]]?) in
+        view.attachPanelItems = (v ?? []).compactMap { d in
+          guard let k = d["key"] as? String, !k.isEmpty else { return nil }
+          return (key: k, label: (d["label"] as? String) ?? k)
+        }
+      }
 
       OnViewDidUpdateProps { (view: ChatyyComposerView) in
         view.didUpdateProps()
