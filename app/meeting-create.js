@@ -16,6 +16,7 @@ import {
   IconVideo, IconCopy, IconCheck, IconChevronDown, IconChevronUp,
 } from '../components/Icons';
 import { DateTimePickerModal } from '../components/ScheduleModals';
+import { RouteDragDismiss } from '../components/ui/RouteDragDismiss'; // [2026-10-20 tg-modal] arrastar p/ baixo fecha (iOS)
 import NativeSwitch from '../components/NativeSwitch'; // [2026-10-11 polish-secondary] P&B (Switch web = teal)
 
 let DateTimePicker = null;
@@ -280,6 +281,8 @@ export default function MeetingCreateScreen() {
   const s = styles(colors);
 
   return (
+    // [2026-10-20 tg-modal] arrastar o topo p/ baixo fecha (= seta voltar).
+    <RouteDragDismiss zone={insets.top + HEADER_HEIGHT} enabled={!!router.canGoBack?.()} onDismiss={() => router.back()}>
     <KeyboardAvoidingView
       style={[s.container, { paddingTop: insets.top }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -542,6 +545,7 @@ export default function MeetingCreateScreen() {
         </View>
       </Modal>
     </KeyboardAvoidingView>
+    </RouteDragDismiss>
   );
 }
 

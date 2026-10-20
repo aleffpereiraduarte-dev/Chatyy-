@@ -28,6 +28,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
+import { RouteDragDismiss } from '../components/ui/RouteDragDismiss'; // [2026-10-20 tg-modal] arrastar p/ baixo fecha (iOS)
 import {
   IconX, IconSearch, IconSend, IconImage, IconCamera, IconMessageSquare,
   IconPaperclip, IconFilm, IconCheck, IconRefresh, IconPlay, IconFileText,
@@ -842,6 +843,8 @@ export default function ShareReceiveScreen() {
   const selectedNames = selected.map(displayNameOf).join(', ');
 
   return (
+    // [2026-10-20 tg-modal] arrastar o topo p/ baixo fecha (= X). Só com tela atrás (aberta pela extensão a frio não tem).
+    <RouteDragDismiss zone={insets.top + 64} enabled={!!router.canGoBack?.()} onDismiss={() => { try { router.back(); } catch { router.replace('/chat'); } }}>
     <KeyboardAvoidingView
       style={[s.container, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -913,6 +916,7 @@ export default function ShareReceiveScreen() {
         </View>
       ) : null}
     </KeyboardAvoidingView>
+    </RouteDragDismiss>
   );
 }
 

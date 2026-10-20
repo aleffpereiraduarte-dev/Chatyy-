@@ -46,6 +46,7 @@ import {
 } from '../services/profilePostComposer';
 // [post-perfil 2026-10-20] Publicar = fila durável (fecha na hora; upload em 2º plano).
 import { enqueueProfilePost, isProfilePostQueueEnabled } from '../services/profilePostQueue';
+import { RouteDragDismiss } from '../components/ui/RouteDragDismiss'; // [2026-10-20 tg-modal] arrastar p/ baixo fecha (iOS)
 
 const MAX_CAPTION = 2200;
 const ASPECTS = [
@@ -509,6 +510,8 @@ function LegacyPhotoNew() {
   );
 
   return (
+    // [2026-10-20 tg-modal] arrastar o topo p/ baixo = mesmo caminho do X (pergunta "Descartar?" se houver fotos/legenda; publicando = não fecha).
+    <RouteDragDismiss zone={insets.top + 60} enabled={!!router.canGoBack?.()} onDismiss={close} shouldConfirm={() => busy || !!(items.length || caption.trim())} onDismissAttempt={close}>
     <View style={[s.root, { paddingTop: insets.top + 4 }]}>
       <View style={s.header}>
         <TouchableOpacity onPress={close} disabled={busy} style={s.headerBtn} accessibilityLabel={pcT('cancel')} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
@@ -681,5 +684,6 @@ function LegacyPhotoNew() {
         onClose={() => setEditorOpenForIdx(-1)}
       />
     </View>
+    </RouteDragDismiss>
   );
 }

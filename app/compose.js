@@ -83,6 +83,7 @@ import {
   isDraftLocalOn, newDraftSid, saveLocalDraft, markLocalDraftSynced, clearLocalDraft, recoverOrphanDrafts,
   DRAFT_IDLE_SYNC_MS, DRAFT_MAX_WAIT_MS,
 } from '../services/mailDraftLocal'; // [2026-10-18 email-draft-local]
+import { RouteDragDismiss } from '../components/ui/RouteDragDismiss'; // [2026-10-20 tg-modal] arrastar p/ baixo fecha (iOS)
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const DRAFT_SAVE_INTERVAL = 5000; // legado (__chatyy_mail_draft_local === false)
@@ -2320,6 +2321,8 @@ export default function ComposeScreen() {
     const origSubject = origMsg?.subject || subject;
 
     return (
+      // [2026-10-20 tg-modal] arrastar o topo p/ baixo fecha; o rascunho é salvo pelo flush da desmontagem.
+      <RouteDragDismiss zone={insets.top + HEADER_HEIGHT} enabled={!!router.canGoBack?.()} onDismiss={() => router.back()}>
       <KeyboardAvoidingView
         style={[s.flex, { backgroundColor: colors.background }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -2498,6 +2501,7 @@ export default function ComposeScreen() {
         <TemplatePickerModal visible={showTemplates} onClose={() => setShowTemplates(false)} onSelect={handleTemplateSelect} />
         <SendOptionsSheet />
       </KeyboardAvoidingView>
+      </RouteDragDismiss>
     );
   }
 
@@ -2505,6 +2509,8 @@ export default function ComposeScreen() {
   //  COMPOSE / FORWARD MODE — Modern Design
   // ════════════════════════════════════════════
   return (
+    // [2026-10-20 tg-modal] arrastar o topo p/ baixo fecha; o rascunho é salvo pelo flush da desmontagem.
+    <RouteDragDismiss zone={insets.top + HEADER_HEIGHT} enabled={!!router.canGoBack?.()} onDismiss={() => router.back()}>
     <KeyboardAvoidingView
       style={[s.flex, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -2791,6 +2797,7 @@ export default function ComposeScreen() {
         </View>
       )}
     </KeyboardAvoidingView>
+    </RouteDragDismiss>
   );
 }
 

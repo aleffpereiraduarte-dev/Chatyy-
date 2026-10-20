@@ -2159,6 +2159,14 @@ export default function RootLayout() {
   // (components/CallStatusBar ModalInsetRestore). Rascunho → usePreventRemove na
   // tela (folha volta + "Descartar?"). Só p/ telas que não empurram card por cima.
   const _SHEET_MODAL = Platform.OS === 'ios' ? { presentation: 'modal' } : _FULL_MODAL;
+  // [2026-10-20 tg-modal] Modal cheio que FECHA ARRASTANDO p/ baixo (iOS): overFullScreen
+  // ('transparentModal') tem a mesma geometria/insets do fullScreenModal (KAV com
+  // insets.top segue certo), mas a tela de baixo continua desenhada → o arrasto pelo
+  // topo (components/ui/RouteDragDismiss, envolvendo a tela) revela o que está atrás.
+  // Kill: globalThis.__chatyy_modal_drag = false → volta a ser _FULL_MODAL.
+  const _DRAG_MODAL = (Platform.OS === 'ios' && globalThis.__chatyy_modal_drag !== false)
+    ? { presentation: 'transparentModal', animation: _navAnim('slide_from_bottom') }
+    : _FULL_MODAL;
   // [2026-10-16 motion-telegram] Telas imersivas (ligação, live, câmera, reels)
   // pintam #000: o container da rota nascia na cor do tema (branco no claro) →
   // flash branco no fade/slide de entrada e no swipe de saída. Mesmo preto da tela.
@@ -2355,7 +2363,7 @@ export default function RootLayout() {
                   <Stack.Screen name="linked-phones" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="verify-phone-required" options={{ animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="inbox" options={{ animation: _PUSH, fullScreenGestureEnabled: false /* linhas do e-mail têm swipe (EmailRow) → voltar só pela borda */ }} />{/* [2026-10-14 nav-nativa] era fade 100ms + replace (desmontava /chat → lista re-montava ao voltar = piscada); agora push nativo a partir da aba Email */}
-                  <Stack.Screen name="compose" options={{ ..._FULL_MODAL }} />
+                  <Stack.Screen name="compose" options={{ ..._DRAG_MODAL }} />
                   <Stack.Screen name="read" options={{ presentation: 'card', animation: _PUSH, fullScreenGestureEnabled: false /* [2026-10-17 swipe-back] arrastar lateral no corpo troca de e-mail (read.js) → voltar pela BORDA */ }} />
                   <Stack.Screen name="profile" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="settings" options={({ route }) => ({ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED, ...(Platform.OS === 'ios' ? ((route?.params?.section || _nativeListLargeTitleOn()) ? _LARGE_TITLE_HDR : { headerStyle: { backgroundColor: _GROUPED_BG }, headerShadowVisible: false }) : {}), ...(_meHeroImmersive(route) ? { headerShown: false } : {}) })} />{/* [2026-10-19 me-cover] raiz "Você" imersiva (capa até o topo; voltar/buscar/QR/Editar no MeHeader) — mesmo gate do settings.js, antes do 1º frame */}{/* [2026-10-17 settings-light] raiz SEM título grande no iOS: lista nativa (UICollectionView) como content scroll view do título grande = loop de layout (watchdog 0x8BADF00D build 704). Categorias = rota leve /settings-section (abaixo) */}
@@ -2368,12 +2376,12 @@ export default function RootLayout() {
                   <Stack.Screen name="watch-catalog" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true }} />{/* [assistir-junto 2026-10-20] catálogo */}
                   <Stack.Screen name="watch-room" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_bottom', gestureEnabled: true, gestureDirection: 'vertical' }} />{/* [assistir-junto 2026-10-20] sala (desce = minimiza) */}
                   <Stack.Screen name="search" options={{ headerShown: false, animation: _PUSH }} />
-                  <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false, ..._DARK_BG }} />
+                  <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false, ..._DARK_BG }} />{/* [2026-10-20 tg-modal] revisado: SEM arrasto de propósito — sair da ligação = minimizar (PiP/barra de chamada) pelo botão; um arrasto acidental esconderia a chamada no meio da conversa, e a tela tem gesto próprio (arrastar o vídeo PiP local) */}
                   <Stack.Screen name="call/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />{/* [2026-10-14 nav-nativa] era fade 120ms (página de link de chamada, não é o player) */}
                   <Stack.Screen name="c/[code]" options={{ headerShown: false, animation: 'none' }} />{/* [call-link 2026-10-19] /c/<código> → /call/<código> */}
-                  <Stack.Screen name="voicemail-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false }} />
+                  <Stack.Screen name="voicemail-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false }} />{/* [2026-10-20 tg-modal] revisado: SEM arrasto de propósito — chega por router.replace da ligação e sair = replace('/chat') (não há tela de volta coerente p/ revelar); arrastar no meio da gravação a perderia. Sair = Descartar/Enviar */}
                   <Stack.Screen name="meetings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
-                  <Stack.Screen name="meeting-create" options={{ ..._FULL_MODAL }} />
+                  <Stack.Screen name="meeting-create" options={{ ..._DRAG_MODAL }} />
                   <Stack.Screen name="meeting-detail" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="meeting-recap" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="call-recap" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
@@ -2444,7 +2452,7 @@ export default function RootLayout() {
                   <Stack.Screen name="one" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="drive" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="photos" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
-                  <Stack.Screen name="photo-new" options={{ ..._FULL_MODAL }} />
+                  <Stack.Screen name="photo-new" options={{ ..._DRAG_MODAL }} />
                   <Stack.Screen name="live-broadcast" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="live-viewer" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="lives-saved" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
@@ -2467,7 +2475,7 @@ export default function RootLayout() {
                   <Stack.Screen name="notifications-feed" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="group-call" options={{ presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, headerShown: false, ..._DARK_BG }} />
                   <Stack.Screen name="one-memory" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
-                  <Stack.Screen name="share-receive" options={{ ..._FULL_MODAL }} />
+                  <Stack.Screen name="share-receive" options={{ ..._DRAG_MODAL }} />
                   <Stack.Screen name="parental" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED }} />
                   <Stack.Screen name="parental-monitor" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR_GROUPED }} />
                   <Stack.Screen name="parental-child-chat" options={{ presentation: 'card', animation: _PUSH }} />
@@ -2486,13 +2494,13 @@ export default function RootLayout() {
                   {/* [2026-10-13 video-studio] Câmera de criação em segmentos (→ /video-studio/editor). */}
                   <Stack.Screen name="video-studio/camera" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), gestureEnabled: false, freezeOnBlur: false /* desmontar a câmera ao ir pro editor */, ..._DARK_BG }} />
                   {/* [2026-10-13 video-studio] Editor (timeline/texto/sons/filtros/legendas/capa) → Publicar; Rascunhos. */}
-                  <Stack.Screen name="video-studio/editor" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('fade'), gestureEnabled: false }} />
+                  <Stack.Screen name="video-studio/editor" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('fade'), gestureEnabled: false }} />{/* [2026-10-20 tg-modal] revisado: SEM arrasto de propósito — timeline, alças de corte, texto/figurinhas arrastáveis em tela cheia conflitam; sair = X (salva o rascunho) */}
                   <Stack.Screen name="video-studio/publish" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="video-studio/drafts" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   {/* Reels drafts — grid of persisted drafts; tap to resume. */}
                   <Stack.Screen name="reels-drafts" options={{ headerShown: false, ..._FULL_MODAL }} />
                   {/* [2026-10-08 reels-publish] Reels composer — galeria/câmera → corte/capa/legenda → Publicar (2º plano). */}
-                  <Stack.Screen name="reels-compose" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), gestureEnabled: false, ..._DARK_BG }} />
+                  <Stack.Screen name="reels-compose" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), gestureEnabled: false, ..._DARK_BG }} />{/* [2026-10-20 tg-modal] revisado: SEM arrasto de propósito — corte (alças) e escolha de capa são arrastos horizontais/verticais na tela toda; o vídeo publicado em 2º plano não pode ser descartado por acidente */}
                   <Stack.Screen name="post-create" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), ..._DARK_BG }} />
                   <Stack.Screen name="community/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="community/create" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
