@@ -126,7 +126,7 @@ export function openComposer(opts = {}) {
   if (opts.from) q.push(`from=${encodeURIComponent(opts.from)}`);
   if (opts.text) q.push(`text=${encodeURIComponent(String(opts.text).slice(0, 1000))}`);
   if (opts.audience) q.push(`audience=${encodeURIComponent(opts.audience)}`);
-  try { r.push(`/photo-new?${q.join('&')}`); return true; } catch { return false; }
+  try { if (opts.replace) r.replace(`/photo-new?${q.join('&')}`); else r.push(`/photo-new?${q.join('&')}`); return true; } catch { return false; }
 }
 
 export function hasMuralImpl(name) {

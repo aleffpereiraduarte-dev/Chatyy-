@@ -255,13 +255,25 @@ export default function SpotlightScreen() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [activeIdx, setActiveIdx] = useState(0);
-  const [createVisible, setCreateVisible] = useState(() => params?.createPost === '1');
+  // [mural 2026-10-20] createPost=1 → compositor do mural (kill: __chatyy_mural_composer=false → CreatePostModal)
+  const _muralOn = (() => { try { return require('../services/muralNav').isMuralComposerOn(); } catch { return false; } })();
+  const [createVisible, setCreateVisible] = useState(() => params?.createPost === '1' && !_muralOn);
   const [likersPost, setLikersPost] = useState(null);
   const [commentsPost, setCommentsPost] = useState(null);
 
   // If routed here via UnifiedComposeFab with ?createPost=1, auto-open the composer.
   useEffect(() => {
     if (params?.createPost === '1') {
+      if (_muralOn) {
+        try {
+          const nav = require('../services/muralNav');
+          const uri = String(params?._shared_uri || '');
+          const kind = String(params?._shared_type || 'image');
+          const items = uri && (kind === 'image' || kind === 'video') ? [{ id: `sh_${Date.now()}`, uri, type: kind === 'video' ? 'video' : 'image', width: 0, height: 0, duration: 0, fileName: String(params?._shared_name || (kind === 'video' ? 'video.mp4' : 'photo.jpg')), mimeType: kind === 'video' ? 'video/mp4' : 'image/jpeg' }] : null;
+          nav.openComposer({ from: 'spotlight', router, items, text: String(params?._shared_text || '') });
+        } catch {}
+        return;
+      }
       setCreateVisible(true);
     }
   }, [params?.createPost]);

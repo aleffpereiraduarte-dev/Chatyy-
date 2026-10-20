@@ -1483,7 +1483,12 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         kind="feed"
         title={t('feed.empty')}
         subtitle={t('feed.emptySubtext')}
-        cta={{ label: t('feed.createPost') || 'Criar publicação', onPress: () => { try { haptic.light(); } catch {} setCreateVisible(true); } }}
+        cta={{ label: t('feed.createPost') || 'Criar publicação', onPress: () => {
+          try { haptic.light(); } catch {}
+          // [mural 2026-10-20] compositor do mural (kill: __chatyy_mural_composer=false → CreatePostModal)
+          try { const nav = require('../services/muralNav'); if (nav.isMuralComposerOn()) { nav.openComposer({ from: 'feed', router }); return; } } catch {}
+          setCreateVisible(true);
+        } }}
         secondary={algorithm === 'following' ? { label: t('feed.forYou') || 'Para você', onPress: () => setAlgorithm('fyp') } : { label: t('feed.findPeople') || 'Encontrar pessoas', onPress: () => { try { router?.push('/search?tab=people'); } catch {} } }}
       />
     );

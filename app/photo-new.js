@@ -149,7 +149,22 @@ function uploadWithProgress(formData, onProgress) {
 
 const newClientId = () => `pp${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 
+// [mural 2026-10-20] Compositor novo do "Perfil com Mural" (texto, fotos ou os dois;
+// Todos / Contatos / Só eu; prévia ao vivo) — components/mural/PostComposer.
+// Kill switch OTA: globalThis.__chatyy_mural_composer = false → este compositor antigo.
+// (edit=<id> só existe no novo.)
 export default function PhotoNew() {
+  const params = useLocalSearchParams();
+  let on = true;
+  try { on = require('../services/muralNav').isMuralComposerOn(); } catch { on = true; }
+  if (on || params?.edit) {
+    const PostComposer = require('../components/mural/PostComposer').default;
+    return <PostComposer />;
+  }
+  return <LegacyPhotoNew />;
+}
+
+function LegacyPhotoNew() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const pickParam = String(params?.pick || '');

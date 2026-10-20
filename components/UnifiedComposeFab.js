@@ -173,7 +173,13 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
           color={ink}
           iconColor={onInk}
           colors={colors}
-          onPress={() => go('/spotlight?createPost=1')}
+          onPress={() => {
+            // [mural 2026-10-20] "Publicação" abre o compositor do mural (texto/fotos); kill: __chatyy_mural_composer=false
+            let nav = null;
+            try { nav = require('../services/muralNav'); } catch { nav = null; }
+            if (nav && nav.isMuralComposerOn()) { close(); setTimeout(() => nav.openComposer({ from: 'fab', router }), 120); return; }
+            go('/spotlight?createPost=1');
+          }}
         />
 
         {/* Main FAB */}

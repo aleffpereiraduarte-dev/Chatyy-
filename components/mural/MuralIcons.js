@@ -24,9 +24,10 @@ const P = {
   trash: <><Path d="M4 7h16" /><Path d="M9 7V4.5h6V7" /><Path d="M6.5 7l1 13h9l1-13" /></>,
   check: <Path d="M5 12.5l4.5 4.5L19 7.5" />,
   play: <Path d="M7 4.5v15l12-7.5z" />,
+  pin: <><Path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z" /><Circle cx="12" cy="10" r="2.3" /></>,
 };
 
-export const AUD_ICON = { everyone: 'globe', contacts: 'users', only_me: 'lock' };
+export const AUD_ICON = { public: 'globe', everyone: 'globe', contacts: 'users', private: 'lock' };
 
 export default function MIcon({ name, size = 24, color = '#000', fill = 'none', strokeWidth = 1.8, style }) {
   const body = P[name];

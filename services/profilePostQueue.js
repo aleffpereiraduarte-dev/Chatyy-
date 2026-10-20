@@ -24,6 +24,11 @@
  *
  * Kill switch OTA: globalThis.__chatyy_post_queue = false → compositor antigo
  * (POST multipart único com progresso, sem fila).
+ *
+ * [mural 2026-10-20] Também post SÓ TEXTO (items vazio + caption): pula preparo/
+ * upload e vai direto à confirmação. Público public|contacts|private (contrato
+ * /root/mural-2026-10-20/API.md; "everyone" continua aceito) e media_meta (w/h/
+ * capa) para a grade/visualizador acertarem o formato sem baixar a foto.
  */
 import { Platform, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -79,6 +84,8 @@ function _snapshot(j) {
     error: j.error || null,
     waiting: j.status === 'queued' && !!j.error,
     caption: j.meta?.caption || '',
+    audience: j.meta?.audience || 'everyone',
+    kind: (j.items || []).length ? 'media' : 'text',
     coverUri: (j.items && j.items[0] && (j.items[0].posterUri || j.items[0].localUri)) || null,
     count: (j.items || []).length,
     post: j.post || null,
@@ -121,9 +128,12 @@ export function pendingGridPosts(email) {
       id: s.post?.id ? s.post.id : `pp:${s.id}`,
       thumbnail: first.posterUri || first.localUri || first.uri || '',
       media_urls: (s.post && Array.isArray(s.post.media_urls) && s.post.media_urls.length) ? s.post.media_urls : local,
-      media_type: first.type === 'video' ? 'video' : 'image',
-      type: first.type === 'video' ? 'video' : 'image',
-      caption: String(s.caption || '').slice(0, 120),
+      media_type: !items.length ? 'text' : first.type === 'video' ? 'video' : 'image',
+      type: !items.length ? 'text' : first.type === 'video' ? 'video' : 'image',
+      kind: !items.length ? 'text' : (s.caption ? 'media_text' : 'media'),
+      text: String(s.caption || '').slice(0, 1000),
+      audience: s.audience,
+      caption: String(s.caption || '').slice(0, items.length ? 120 : 1000),
       count: items.length,
       created_at: new Date(s.createdAt).toISOString(),
       // confirmado = post normal (abre no visualizador com as URLs do CDN); antes disso, otimista
@@ -299,7 +309,8 @@ export function enqueueProfilePost(input) {
     file: (Platform.OS === 'web' && typeof Blob !== 'undefined' && it.file instanceof Blob) ? it.file : null,
     localUri: null, posterUri: null, prepared: false, size: 0, cdnUrl: null, posterUrl: null, rustUploadId: null,
   }));
-  if (!items.length) throw new Error('no_items');
+  const caption0 = String(input?.caption || '').trim();
+  if (!items.length && !caption0) throw new Error('no_items');
   const job = {
     id,
     email: String(input?.email || '').toLowerCase(),
@@ -310,8 +321,10 @@ export function enqueueProfilePost(input) {
     error: null,
     meta: {
       caption: String(input?.caption || '').slice(0, 2200),
-      audience: input?.audience === 'contacts' ? 'contacts' : 'everyone',
+      audience: _aud(input?.audience),
       aspect: input?.aspect || '1:1',
+      allowComments: input?.allowComments !== false,
+      location: input?.location && input.location.name ? { name: String(input.location.name).slice(0, 120), latitude: input.location.latitude ?? null, longitude: input.location.longitude ?? null } : null,
     },
     items,
     t: { tap: Date.now() },
@@ -323,6 +336,14 @@ export function enqueueProfilePost(input) {
   // depois do 1º quadro (folha fechando) — não disputa o JS com a animação
   setTimeout(() => _kick(), 60);
   return _snapshot(job);
+}
+
+// público: contrato public|contacts|private; "everyone" = public (servidor antigo só conhece everyone/contacts)
+function _aud(a) {
+  const v = String(a || '').toLowerCase();
+  if (v === 'contacts' || v === 'followers' || v === 'close_friends') return 'contacts';
+  if (v === 'private' || v === 'only_me' || v === 'me') return 'private';
+  return 'everyone';
 }
 
 export function retryProfilePost(id) {
@@ -459,6 +480,12 @@ async function _run(job) {
   const bg = _beginBg();
   const tRun = Date.now();
   try {
+    // [mural 2026-10-20] só texto: nada a preparar/subir
+    if (!job.items.length) {
+      await _publish(job, false);
+      _diag(`ok id=${job.id} n=0 text=1 conf=${job.t.conf || 0} vis=${Date.now() - (job.t.tap || tRun)} att=${job.attempts || 0} net=${_net()}`);
+      return;
+    }
     // 1+2) preparo e upload em paralelo (3 itens de cada vez, ordem preservada)
     job.status = job.items.every((it) => it.prepared) ? 'uploading' : 'preparing';
     _emit(true);
@@ -539,17 +566,34 @@ async function _publish(job, multipart) {
   const fd = new FormData();
   fd.append('client_post_id', job.id);
   fd.append('caption', String(m.caption || '').trim());
-  fd.append('media_type', first.type === 'video' ? 'video' : 'image');
+  fd.append('text', String(m.caption || '').trim());
+  if (job.items.length) {
+    fd.append('media_type', first.type === 'video' ? 'video' : 'image');
+    fd.append('post_aspect', m.aspect || '1:1');
+  }
   fd.append('audience', m.audience || 'everyone');
-  fd.append('post_aspect', m.aspect || '1:1');
+  if (m.allowComments === false) fd.append('allow_comments', '0');
+  if (m.location && m.location.name) {
+    fd.append('location', m.location.name);
+    fd.append('location_name', m.location.name);
+    if (m.location.latitude != null && m.location.longitude != null) {
+      fd.append('location_lat', String(m.location.latitude));
+      fd.append('location_lon', String(m.location.longitude));
+    }
+  }
   if (multipart) {
     for (const it of job.items) {
       if (Platform.OS === 'web' && it.file) fd.append('media[]', it.file, it.fileName);
       else fd.append('media[]', { uri: it.localUri || it.uri, name: it.fileName, type: it.mimeType });
     }
   } else {
-    fd.append('media_urls', JSON.stringify(job.items.map((it) => it.cdnUrl)));
-    if (first.type === 'video' && first.posterUrl) fd.append('thumb_url', first.posterUrl);
+    if (job.items.length) {
+      fd.append('media_urls', JSON.stringify(job.items.map((it) => it.cdnUrl)));
+      try {
+        fd.append('media_meta', JSON.stringify(job.items.map((it) => ({ w: it.width || null, h: it.height || null, ...(it.posterUrl ? { thumb: it.posterUrl } : {}) }))));
+      } catch {}
+      if (first.type === 'video' && first.posterUrl) fd.append('thumb_url', first.posterUrl);
+    }
   }
   const tc = Date.now();
   const r = await api.feedCreatePost(fd);
@@ -587,6 +631,7 @@ async function _publish(job, multipart) {
 
 /** Caches do perfil/feed na hora (mesmo efeito para todos os compositores). */
 function _afterPublished(post) {
+  try { require('./muralStore').primePost(post); } catch {}
   try { require('./api').swrInvalidate?.('profile_get'); } catch {}
   try { require('../components/Profile').markProfileCacheStale?.(null); } catch {}
   try {
