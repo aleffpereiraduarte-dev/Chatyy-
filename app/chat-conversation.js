@@ -6528,16 +6528,21 @@ function _meetupWhenLabel(d, t) {
   return `${dayStr} · ${hm}`;
 }
 
-function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, replyToId = null, native = false }) {
+function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, replyToId = null, native = false, editMsg = null, onUpdated }) {
   const MP = require('../components/meetup/MeetupPlacePicker');
   const ML = require('../components/meetup/meetupLocation');
   const { WheelDateTimePicker } = require('../components/ScheduleModals');
+  // [encontro2 2026-10-20] editMsg = cartão do PRÓPRIO autor → mesma folha preenchida (Salvar / Cancelar encontro).
+  const editRef = useRef(null);
+  if (editMsg && !editRef.current) editRef.current = ML.meetupEditSeed(editMsg);
+  const seed = editRef.current;
+  const isEdit = !!seed;
   const [step, setStep] = useState('form'); // form | map
-  const [title, setTitle] = useState('');
-  const [when, setWhen] = useState(_meetupDefaultWhen);
+  const [title, setTitle] = useState(() => (seed ? seed.title : ''));
+  const [when, setWhen] = useState(() => (seed && seed.when ? seed.when : _meetupDefaultWhen()));
   const [whenOpen, setWhenOpen] = useState(false);
-  const [place, setPlace] = useState(null); // { title, address, lat, lng }
-  const [description, setDescription] = useState('');
+  const [place, setPlace] = useState(() => (seed ? seed.place : null)); // { title, address, lat, lng }
+  const [description, setDescription] = useState(() => (seed ? seed.description : ''));
   const [sending, setSending] = useState(false);
   const [locatingMe, setLocatingMe] = useState(false);
   const sessionRef = useRef(null);
@@ -6548,7 +6553,8 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
   const isDarkSheet = _PL.onInk(colors.surface || '#ffffff') === '#FFFFFF';
 
   const lang = (() => { try { return ((t && t('_locale')) || 'pt-BR').replace('_', '-'); } catch { return 'pt-BR'; } })();
-  const isFuture = when instanceof Date && when.getTime() > Date.now() - 60000;
+  const whenChanged = !seed || !seed.when || !(when instanceof Date) || Math.abs(when.getTime() - seed.when.getTime()) >= 60000;
+  const isFuture = (when instanceof Date && when.getTime() > Date.now() - 60000) || (isEdit && !whenChanged); // editar sem mexer na data passada = ok
 
   const pickMyLocation = async () => {
     if (mapOk) { setStep('map'); return; } // no mapa o usuário confirma/ajusta o ponto
@@ -6565,8 +6571,46 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
     setLocatingMe(false);
   };
 
+  const handleSaveEdit = async (cancel = false) => {
+    if (sending) return;
+    const fields = {};
+    if (cancel) fields.cancel = 1;
+    else {
+      if (title.trim() !== seed.title) fields.title = title.trim();
+      if (whenChanged) fields.datetime = ML.meetupDateIso(when);
+      const locStr = place ? ML.formatMeetupLocation(place) : '';
+      if (locStr !== seed.location) fields.location = locStr;
+      if (description.trim() !== seed.description) fields.description = description.trim();
+      if (!Object.keys(fields).length) { onClose(); return; }
+    }
+    setSending(true);
+    try {
+      const r = await api.chatUpdateMeetup(seed.id, fields);
+      if (r?.success && r.data && typeof r.data.content === 'string') {
+        onUpdated && onUpdated(seed.id, r.data.content);
+      } else {
+        const m = r?.data?.code === 'meetup_cancelled' ? _mt('chatConv.meetupCancelled', 'Encontro cancelado') : (r?.message || _mt('chatConv.meetupUpdateError', 'Não foi possível salvar o encontro'));
+        try { Platform.OS === 'web' ? window.alert(m) : Alert.alert(_mt('common.error', 'Erro'), m); } catch {}
+      }
+    } catch {
+      try { Alert.alert(_mt('common.error', 'Erro'), _mt('chatConv.meetupUpdateError', 'Não foi possível salvar o encontro')); } catch {}
+    }
+    setSending(false);
+  };
+  const confirmCancelMeetup = () => {
+    const go = () => handleSaveEdit(true);
+    const ttl = _mt('chatConv.meetupCancelTitle', 'Cancelar encontro?');
+    const msg = _mt('chatConv.meetupCancelMsg', 'Todos na conversa verão o encontro como cancelado.');
+    if (Platform.OS === 'web') { try { if (window.confirm(`${ttl}\n${msg}`)) go(); } catch {} return; }
+    Alert.alert(ttl, msg, [
+      { text: _mt('common.back', 'Voltar'), style: 'cancel' },
+      { text: _mt('chatConv.meetupCancelConfirm', 'Cancelar encontro'), style: 'destructive', onPress: go },
+    ]);
+  };
+
   const handleCreate = async () => {
     if (!title.trim() || !isFuture || sending) return;
+    if (isEdit) { handleSaveEdit(false); return; }
     setSending(true);
     try {
       const locStr = place ? ML.formatMeetupLocation(place) : '';
@@ -6615,7 +6659,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
         </View>
       )}
       <Text style={{ flex: 1, marginLeft: 14, fontSize: 21, fontWeight: '800', color: colors.text }} numberOfLines={1}>
-        {step === 'map' ? _mt('chatConv.meetupPickOnMap', 'Escolher local') : (t('chatConv.createMeetup') || 'Marcar encontro')}
+        {step === 'map' ? _mt('chatConv.meetupPickOnMap', 'Escolher local') : (isEdit ? _mt('chatConv.meetupEditTitle', 'Editar encontro') : (t('chatConv.createMeetup') || 'Marcar encontro'))}
       </Text>
       <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={onClose} hitSlop={8} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
         <IconX size={18} color={colors.textSecondary} />
@@ -6649,7 +6693,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
     >
       {sending
         ? <ActivityIndicator color={ON_ACCENT} />
-        : <Text style={{ color: canCreate ? ON_ACCENT : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{(t('chatConv.createMeetupBtn') || 'Marcar encontro').replace(/\s*\u{1F4CD}\s*/gu, '')}</Text>}
+        : <Text style={{ color: canCreate ? ON_ACCENT : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{isEdit ? _mt('common.save', 'Salvar') : (t('chatConv.createMeetupBtn') || 'Marcar encontro').replace(/\s*\u{1F4CD}\s*/gu, '')}</Text>}
     </TouchableOpacity>
   );
 
@@ -6693,11 +6737,13 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
         <View style={{ marginBottom: 16 }}>
           {place ? (
             <View style={{ borderRadius: 16, borderWidth: 1, borderColor: colors.border, overflow: 'hidden', backgroundColor: colors.surface }}>
+              {place.lat != null && place.lng != null ? (
               <TouchableOpacity activeOpacity={mapOk ? 0.85 : 1} disabled={!mapOk} onPress={() => setStep('map')} accessibilityRole="button" accessibilityLabel={_mt('chatConv.meetupAdjustOnMap', 'Ajustar no mapa')}>
                 <View style={{ height: 120 }}>
                   <LocationMapPreview lat={place.lat} lng={place.lng} isDark={isDarkSheet} zoom={16} />
                 </View>
               </TouchableOpacity>
+              ) : null}
               <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 10 }}>
                 <IconMapPin size={17} color={colors.text} />
                 <View style={{ flex: 1 }}>
@@ -6755,6 +6801,12 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
           onBlur={() => setFocusedField(null)}
           multiline
         />
+        {isEdit ? (
+          <TouchableOpacity onPress={confirmCancelMeetup} disabled={sending} activeOpacity={0.7} accessibilityRole="button"
+            style={{ marginTop: 12, paddingVertical: 12, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: colors.border }}>
+            <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>{_mt('chatConv.meetupCancelConfirm', 'Cancelar encontro')}</Text>
+          </TouchableOpacity>
+        ) : null}
     </CreatorSheetShell>
   );
 }
@@ -10885,6 +10937,7 @@ function ChatConversationInnerBody() {
     const _laBefore = (_o && _o.before) || 30; const _laAfter = (_o && _o.after) || 10;
     const spliceAndScroll = (slice) => {
       if (!Array.isArray(slice) || slice.length === 0) return false;
+      try { _jumpGapNote(slice); } catch {} // [2026-10-20 core-chat2] buraco entre a janela e o fim
       // Splice into messages by id; keep order ascending. Avoid duplicates.
       setMessages(prev => {
         const map = new Map();
@@ -10949,6 +11002,74 @@ function ChatConversationInnerBody() {
     }
     return _ok;
   }, [conversationId]);
+
+  // [2026-10-20 core-chat2] Pular p/ mensagem antiga (resposta/fixada/busca/data)
+  // emendava ~40 msgs soltas no histórico: ao rolar p/ baixo dali, a lista ia
+  // direto p/ as recentes e o MEIO sumia (buraco). Agora o salto anota o buraco
+  // (fim da janela → próxima já carregada) e, quando a última da janela aparece
+  // na tela, busca as 50 seguintes até emendar. Só conversas por id (as por data
+  // = histórico importado ficam como antes). Kill: global.__chatyy_jump_gap_fill = false.
+  const _jumpGapsRef = useRef([]); // [{ afterId, busy }]
+  const _jumpGapNote = (slice) => {
+    if (global.__chatyy_jump_gap_fill === false || !conversationId) return;
+    if (_chatOrder().isTimeOrdered(conversationId)) return;
+    const prevArr = messagesRef.current || [];
+    const have = new Set();
+    for (const m of prevArr) if (m && m.id != null) have.add(String(m.id));
+    let sMax = 0; let overlap = false;
+    for (const m of slice) {
+      if (!m || m.id == null) continue;
+      const n = Number(m.id);
+      if (Number.isFinite(n) && n > sMax) sMax = n;
+      if (have.has(String(m.id))) overlap = true;
+    }
+    if (overlap || !(sMax > 0)) return;
+    let hasNewer = false;
+    for (let i = prevArr.length - 1; i >= 0; i--) {
+      const n = Number(prevArr[i] && prevArr[i].id);
+      if (Number.isFinite(n) && n > sMax) { hasNewer = true; break; }
+    }
+    if (!hasNewer) return;
+    const gaps = _jumpGapsRef.current.filter(g => g.afterId !== sMax);
+    gaps.push({ afterId: sMax, busy: false });
+    _jumpGapsRef.current = gaps.slice(-5);
+  };
+  const _jumpGapFillRef = useRef(null);
+  _jumpGapFillRef.current = async (g) => {
+    if (!g || g.busy || !conversationId) return;
+    g.busy = true;
+    const _drop = () => { _jumpGapsRef.current = _jumpGapsRef.current.filter(x => x !== g); };
+    try {
+      const r = await api.chatLoadAround?.(conversationId, g.afterId, 1, 50);
+      const sl = (r && r.data && Array.isArray(r.data.messages)) ? r.data.messages : null;
+      if (!sl) return; // falha de rede: tenta de novo na próxima vez que aparecer
+      const have = new Set();
+      for (const m of (messagesRef.current || [])) if (m && m.id != null) have.add(String(m.id));
+      let sMax = 0; let overlap = false; let nAfter = 0;
+      const fresh = [];
+      for (const m of sl) {
+        if (!m || m.id == null) continue;
+        const n = Number(m.id);
+        if (!(n > g.afterId)) continue;
+        nAfter++;
+        if (n > sMax) sMax = n;
+        if (have.has(String(m.id))) overlap = true; else fresh.push(m);
+      }
+      if (fresh.length) {
+        setMessages(prev => {
+          const map = new Map();
+          for (const m of prev) if (m && m.id != null) map.set(String(m.id), m);
+          let added = 0;
+          for (const m of fresh) { const k = String(m.id); if (!map.has(k)) { map.set(k, m); added++; } }
+          if (!added) return prev;
+          const _vals = Array.from(map.values());
+          return _chatOrder().timeModeFor(conversationId, _vals) ? _vals.sort(_chatOrder().compareMsgs) : _vals.sort(_chatOrder().compareById);
+        });
+      }
+      if (overlap || nAfter < 50 || !(sMax > g.afterId)) _drop();
+      else g.afterId = sMax;
+    } catch {} finally { g.busy = false; }
+  };
 
   // [busca-conversa 2026-10-16] Ir para data: servidor acha a 1ª mensagem visível
   // do dia (chat_messages_by_date, mesmos filtros de visibilidade); se não estiver
@@ -13516,6 +13637,8 @@ function ChatConversationInnerBody() {
   const [showChatCamera, setShowChatCamera] = _useStateT(false);
   const [showPollCreator, setShowPollCreator] = _useStateT(false);
   const [showMeetupCreator, setShowMeetupCreator] = _useStateT(false);
+  const [meetupEditMsg, setMeetupEditMsg] = _useStateT(null); // [encontro2 2026-10-20] autor edita o encontro
+  try { globalThis.__chatyy_meetup_edit_open = (m) => { setMeetupEditMsg(m || null); setShowMeetupCreator(true); }; } catch {}
   const [showPlaylistCreator, setShowPlaylistCreator] = _useStateT(false);
   const [playlistEditor, setPlaylistEditor] = _useStateT(null); // { messageId, playlist }
   const [isRecording, setIsRecording] = _useStateT(false);
@@ -17483,6 +17606,9 @@ function ChatConversationInnerBody() {
   // Throttled to 4 inflight to keep OpenAI rate-limit / cost in check.
   const autoTranslateInflightRef = useRef(new Set());
   const autoTranslateFailedRef = useRef(new Set());
+  const autoTranslateResultQRef = useRef(new Map());
+  const autoTranslateFlushRef = useRef(null);
+  useEffect(() => () => { if (autoTranslateFlushRef.current) { clearTimeout(autoTranslateFlushRef.current); autoTranslateFlushRef.current = null; } }, []);
   useEffect(() => {
     if (!autoTranslateLocale) return;
     if (!Array.isArray(messages) || messages.length === 0) return;
@@ -17517,6 +17643,27 @@ function ChatConversationInnerBody() {
     // translatedMessages) re-disparava → laço infinito de requests em 400/429. Agora o id vai p/
     // autoTranslateFailedRef e não é tentado de novo nesta sessão. Voz: o servidor recusa message_id de áudio (400)
     // → manda a transcrição como texto direto (chat_translate_message aceita `text`).
+    // [2026-10-20 perf-js] marcas "loading" num setState só (era 1 por msg) e os
+    // resultados em lote a cada 250 ms: cada setTranslatedMessages re-roda este
+    // efeito (2 varreduras de messages) e troca o ctx da lista nativa (rebuild de
+    // TODAS as linhas) — traduzir 500 msgs = 1000 rebuilds seguidos.
+    const loadingIds = [];
+    const _queueResult = (mid, text) => {
+      const q = autoTranslateResultQRef.current;
+      q.set(mid, text);
+      if (autoTranslateFlushRef.current) return;
+      autoTranslateFlushRef.current = setTimeout(() => {
+        autoTranslateFlushRef.current = null;
+        const batch = autoTranslateResultQRef.current;
+        if (!batch.size || !mountedRef.current) { batch.clear(); return; }
+        autoTranslateResultQRef.current = new Map();
+        setTranslatedMessages(prev => {
+          const next = { ...prev };
+          for (const [id, txt] of batch) next[id] = { text: txt, loading: false, targetLang: targetShort, _auto: true };
+          return next;
+        });
+      }, 250);
+    };
     const fire = (mid, directText) => {
       autoTranslateInflightRef.current.add(mid);
       loadingIds.push(mid);
@@ -17562,6 +17709,13 @@ function ChatConversationInnerBody() {
       if (autoTranslateFailedRef.current.has(m.id)) continue;
       fire(m.id, m.type === 'text' ? null : String(m.transcript || '').trim());
     }
+    if (loadingIds.length) {
+      setTranslatedMessages(prev => {
+        const next = { ...prev };
+        for (const mid of loadingIds) next[mid] = { ...(prev[mid] || {}), loading: true, targetLang: targetShort, _auto: true };
+        return next;
+      });
+    }
   }, [messages, autoTranslateLocale, currentEmail, translatedMessages]);
   useEffect(() => () => {
     if (aiTypingTimerRef.current) {
@@ -17606,9 +17760,6 @@ function ChatConversationInnerBody() {
     // Last 50 — newest matter most for the "I just opened the chat" UX.
     const backlog = candidates.slice(-50);
 
-  const autoTranslateResultQRef = useRef(new Map());
-  const autoTranslateFlushRef = useRef(null);
-  useEffect(() => () => { if (autoTranslateFlushRef.current) { clearTimeout(autoTranslateFlushRef.current); autoTranslateFlushRef.current = null; } }, []);
     let cancelled = false;
     (async () => {
       let mc;
@@ -17643,27 +17794,6 @@ function ChatConversationInnerBody() {
   // registers a resolver. When a note ends, the player asks for the NEXT
   // voice/audio message from the SAME sender within 60 s (intervening
   // non-audio bubbles are skipped, a different sender / gap > 60 s breaks the
-    // [2026-10-20 perf-js] marcas "loading" num setState só (era 1 por msg) e os
-    // resultados em lote a cada 250 ms: cada setTranslatedMessages re-roda este
-    // efeito (2 varreduras de messages) e troca o ctx da lista nativa (rebuild de
-    // TODAS as linhas) — traduzir 500 msgs = 1000 rebuilds seguidos.
-    const loadingIds = [];
-    const _queueResult = (mid, text) => {
-      const q = autoTranslateResultQRef.current;
-      q.set(mid, text);
-      if (autoTranslateFlushRef.current) return;
-      autoTranslateFlushRef.current = setTimeout(() => {
-        autoTranslateFlushRef.current = null;
-        const batch = autoTranslateResultQRef.current;
-        if (!batch.size || !mountedRef.current) { batch.clear(); return; }
-        autoTranslateResultQRef.current = new Map();
-        setTranslatedMessages(prev => {
-          const next = { ...prev };
-          for (const [id, txt] of batch) next[id] = { text: txt, loading: false, targetLang: targetShort, _auto: true };
-          return next;
-        });
-      }, 250);
-    };
   // chain) and plays it itself — so the chain works even when the next bubble
   // isn't mounted (virtualised list) and keeps going after leaving the chat
   // (the registration is kept "detached" until the chain ends; mini bar).
@@ -17709,13 +17839,6 @@ function ChatConversationInnerBody() {
           durationMs: (Number(m.duration) || 0) * 1000,
           isOwn: m.sender_email === currentEmail,
           title: voiceTitleRef.current,
-    if (loadingIds.length) {
-      setTranslatedMessages(prev => {
-        const next = { ...prev };
-        for (const mid of loadingIds) next[mid] = { ...(prev[mid] || {}), loading: true, targetLang: targetShort, _auto: true };
-        return next;
-      });
-    }
         };
       }
       return null;
@@ -24740,9 +24863,28 @@ function ChatConversationInnerBody() {
   const handleCopySelected = useCallback(async () => {
     if (selectedIds.size === 0) return;
     const selectedMsgs = messages.filter(m => selectedIds.has(m.id));
-    const text = selectedMsgs.map(m => m.content || '').join('\n');
+    // [2026-10-20 core-chat2] WhatsApp: apagadas/sistema/vazias fora (antes: linhas
+    // em branco e texto de mensagem já apagada ia p/ a área de transferência);
+    // 2+ mensagens = "[dd/mm/aa hh:mm] Nome: texto"; sai da seleção ao copiar.
+    const _cpOk = (m) => m && !m.deleted_at && !m.is_deleted && !m.deleted_for_everyone && m.type !== 'system'
+      && !m.is_view_once && !m.isViewOnce && String(m.content || '').trim() !== '';
+    const _cp = global.__chatyy_copy_wa_fmt === false ? selectedMsgs : selectedMsgs.filter(_cpOk);
+    if (!_cp.length) return;
+    const _p2 = (n) => String(n).padStart(2, '0');
+    const _stamp = (c) => {
+      try {
+        const s = String(c || '');
+        const d = new Date(s.endsWith('Z') || s.includes('+') ? s : s + 'Z');
+        if (isNaN(d.getTime())) return '';
+        return `[${_p2(d.getDate())}/${_p2(d.getMonth() + 1)}/${String(d.getFullYear()).slice(-2)} ${_p2(d.getHours())}:${_p2(d.getMinutes())}] `;
+      } catch { return ''; }
+    };
+    const text = (_cp.length > 1 && global.__chatyy_copy_wa_fmt !== false)
+      ? _cp.map(m => `${_stamp(m.created_at)}${_friendlySenderName(m.sender_email, m.sender_name, '', t) || ''}: ${m.content || ''}`).join('\n')
+      : _cp.map(m => m.content || '').join('\n');
     try {
       await Clipboard.setStringAsync(text);
+      if (global.__chatyy_copy_wa_fmt !== false) { try { handleClearSelection(); } catch {} }
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // Confirm the copy with the standard toast (was silent before).
       setScheduleToast(t('common.copied') || 'Copiado');
@@ -24836,6 +24978,13 @@ function ChatConversationInnerBody() {
     const remainingMs = Math.max(0, deleteForAllWindowMs - elapsedMs);
     const isWithinWindow = createdMs > 0 && elapsedMs < deleteForAllWindowMs;
     const canDeleteForAll = isMine && isWithinWindow && !msg.deleted_at; // [2026-10-18 wa-parity] lápide: só "apagar para mim"
+    // [2026-10-20 core-chat2] WhatsApp: admin de grupo/canal apaga para todos a
+    // mensagem de OUTRO membro (o servidor já aceitava: role admin + group/channel,
+    // sem janela). Kill: global.__chatyy_admin_delete_all = false.
+    const adminCanDeleteForAll = !isMine && !msg.deleted_at && global.__chatyy_admin_delete_all !== false
+      && (conversationType === 'group' || conversationType === 'channel') && !!isGroupAdmin
+      && msg.type !== 'system' && typeof msg.id === 'number' && msg.id > 0
+      && !String(msg.client_message_id || '').startsWith('wai:');
     // Remaining time for the subtitle ("2 h 15 min" / "12 min" / "40 s").
     const remainingLabel = _fmtDeleteWindowLeft(remainingMs);
 
@@ -24969,7 +25118,7 @@ function ChatConversationInnerBody() {
       // "Apagar para todos" e cancelava achava que nada tinha acontecido).
       // WhatsApp: Cancelar nunca apaga. Agora a linha "Apagar para todos"
       // confirma só isso; o ícone "Apagar" genérico confirma "para mim".
-      if (canDeleteForAll && _wantForAll) {
+      if ((canDeleteForAll || adminCanDeleteForAll) && _wantForAll) {
         const _q = `${t('chatConv.deleteForEveryone') || 'Apagar para todos'}?`;
         if (window.confirm(_q)) deleteForEveryone();
       } else {
@@ -25015,6 +25164,12 @@ function ChatConversationInnerBody() {
           onPress: () => {},
         });
       }
+    } else if (adminCanDeleteForAll) {
+      buttons.push({
+        text: `${t('chatConv.deleteForEveryone') || 'Apagar para todos'}`,
+        style: 'destructive',
+        onPress: deleteForEveryone,
+      });
     }
     safeAlert(t('chat.deleteMessage'), confirmBody, buttons);
   };
@@ -25247,6 +25402,7 @@ function ChatConversationInnerBody() {
   };
 
   const handleEdit = (msg) => {
+    if (msg && msg.type === 'meetup') { setSelectedMsg(null); setMeetupEditMsg(msg); setShowMeetupCreator(true); return; } // [encontro2 2026-10-20]
     setEditingMsg(msg);
     setInputText(msg.content);
     setSelectedMsg(null);
@@ -28503,6 +28659,20 @@ function ChatConversationInnerBody() {
             if (!mm || mm._type || mm.type === 'system' || mm.sender_email === currentEmail) continue;
             _n++;
           }
+          // [2026-10-20 core-chat2] Divisor na 1ª recebida CARREGADA e a contagem
+          // da lista é maior (não-lidas além da página) → "120 não lidas" como
+          // no WhatsApp, não só as que couberam na página (antes: "30").
+          try {
+            const _cap = Number(unreadCapRef.current) || 0;
+            if (global.__chatyy_unread_sep_cap !== false && _cap > _n && hasMore) {
+              let _olderIncoming = false;
+              for (let j = 0; j < i; j++) {
+                const mm = messages[j];
+                if (mm && !mm._type && mm.type !== 'system' && mm.sender_email !== currentEmail) { _olderIncoming = true; break; }
+              }
+              if (!_olderIncoming) _n = _cap;
+            }
+          } catch {}
           unreadSepCountRef.current = { id: msg.id, n: _n };
         }
         result.push({ _type: 'unread_separator', _key: 'unread-sep', _count: unreadSepCountRef.current.n });
@@ -29752,6 +29922,50 @@ function ChatConversationInnerBody() {
       }
     } catch {}
 
+    // [2026-10-20 core-chat2] Buraco depois de um salto: a última da janela
+    // emendada apareceu → carrega as seguintes (ver _jumpGapsRef).
+    try {
+      const _gs = _jumpGapsRef.current;
+      if (_gs && _gs.length) {
+        for (const v of viewableItems) {
+          const it = v?.item;
+          if (!it) continue;
+          const ids = (it._type === 'album' && Array.isArray(it._items)) ? it._items.map(x => x && x.id) : [it.id];
+          for (const id of ids) {
+            const n = Number(id);
+            if (!Number.isFinite(n)) continue;
+            const g = _gs.find(x => x.afterId === n && !x.busy);
+            if (g) { try { _jumpGapFillRef.current?.(g); } catch {} }
+          }
+        }
+      }
+    } catch {}
+
+    // [2026-10-20 core-chat2] Botão ↓: o contador DESCE conforme as novas
+    // aparecem na tela (WhatsApp), não só zera ao chegar no fim. Só diminui.
+    try {
+      if (newMsgCountRef.current > 0 && global.__chatyy_fab_count_decay !== false) {
+        let mxv = 0;
+        for (const v of viewableItems) {
+          const m = v?.item;
+          if (m && !m._type && typeof m.id === 'number' && m.id > mxv) mxv = m.id;
+        }
+        if (mxv > 0) {
+          const arr = messagesRef.current || [];
+          const me = String(currentEmailRef.current || '').toLowerCase();
+          let below = 0;
+          for (let i = arr.length - 1; i >= 0; i--) {
+            const m = arr[i];
+            if (!m || m._type || typeof m.id !== 'number') continue;
+            if (m.id <= mxv) break;
+            if (m.type === 'system' || String(m.sender_email || '').toLowerCase() === me) continue;
+            below++;
+          }
+          if (below < newMsgCountRef.current) { newMsgCountRef.current = below; setNewMsgCount(below); }
+        }
+      }
+    } catch {}
+
     // ★ FIX #1: Send read receipts for visible messages.
     // Pick the MAX numeric id, not the array tail. viewableItems on an
     // inverted FlatList aren't guaranteed to be in any specific order, so
@@ -30223,6 +30437,10 @@ function ChatConversationInnerBody() {
                       const isMediaWithUrl = isMediaType && hasRemoteUrl;
                       const isLocalMedia = isMediaType && !hasRemoteUrl && !!localUriRaw;
                       if (!isText && !isMediaWithUrl && !isLocalMedia) return;
+                      // [2026-10-20 media-wa] mídia local: fila durável primeiro (retoma o upload
+                      // persistido, mesmo cmi) — antes subia os bytes de novo pelo offlineCache e
+                      // a linha 'failed' do outbox voltava vermelha ao reabrir.
+                      if (isLocalMedia && !msg._leafRejected) { try { await retryFailedMediaSend(msg); } catch {} return; }
                       setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _uploading: isLocalMedia ? true : false } : m));
                       // Caminho 1 — media local falhou no upload original.
                       // Re-enqueue via offlineCache (mesma chave que o catch
@@ -30429,10 +30647,6 @@ function ChatConversationInnerBody() {
               if (typeof url === 'string' && url.startsWith('file://')) return;
               try {
                 const _api = require('../services/api');
-                      // [2026-10-20 media-wa] mídia local: fila durável primeiro (retoma o upload
-                      // persistido, mesmo cmi) — antes subia os bytes de novo pelo offlineCache e
-                      // a linha 'failed' do outbox voltava vermelha ao reabrir.
-                      if (isLocalMedia && !msg._leafRejected) { try { await retryFailedMediaSend(msg); } catch {} return; }
                 const remote = _api?.getMediaUrl
                   ? _api.getMediaUrl(m.file_url)
                   : (m.file_url.startsWith('http') ? m.file_url : `https://chatyy.com.br${m.file_url}`);
@@ -31659,6 +31873,7 @@ function ChatConversationInnerBody() {
                 uri={sVUri}
                 meta={sVMeta}
                 messageId={msg.id}
+                isFocused={false /* [2026-10-20 media-wa] igual WhatsApp: vídeo na lista não toca sozinho — só ao abrir */}
                 durationMs={sVMeta?.short_duration_ms || (msg.duration ? msg.duration * 1000 : 0)}
                 onTapExpand={() => {
                   if (selectionMode) return toggleSelection(msg.id);
@@ -31865,7 +32080,6 @@ function ChatConversationInnerBody() {
                         const v = e.currentTarget;
                         if (!v) return;
                         clearTimeout(v.__previewTimer);
-                isFocused={false /* [2026-10-20 media-wa] igual WhatsApp: vídeo na lista não toca sozinho — só ao abrir */}
                         v.pause(); v.currentTime = 0.5;
                       } catch {}
                     }}
@@ -33463,7 +33677,9 @@ function ChatConversationInnerBody() {
           };
           const notGoingCount = Object.values(rsvpList).filter(v => v === 'not_going').length;
           const totalAttendees = goingCount + maybeCount;
-          const isPast = !isNaN(meetupDate.getTime()) && meetupDate.getTime() < Date.now();
+          const _mState = require('../components/meetup/meetupLocation').meetupState(meetup); // [encontro2 2026-10-20]
+          const isPast = _mState.cancelled || (!isNaN(meetupDate.getTime()) && meetupDate.getTime() < Date.now());
+          const _mCanEdit = isOwn && !_mState.cancelled && typeof msg.id === 'number' && !msg.deleted_at;
           return (
             <View style={{ minWidth: 240, maxWidth: 280, borderRadius: 12, overflow: 'hidden', marginVertical: 1 }}>
               {/* Colored header strip */}
@@ -33473,8 +33689,16 @@ function ChatConversationInnerBody() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontWeight: '700', fontSize: 14, color: '#fff' }} numberOfLines={2}>{meetup.title}</Text>
-                  {isPast && <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: '600' }}>{t('chatConv.eventPast') || 'Evento encerrado'}</Text>}
+                  {isPast && <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.75)', fontWeight: '600' }}>{_mState.cancelled ? _mt('chatConv.meetupCancelled', 'Encontro cancelado') : (t('chatConv.eventPast') || 'Evento encerrado')}</Text>}
+                  {!isPast && _mState.updated && <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.85)', fontWeight: '700', letterSpacing: 0.3 }}>{_mt('chatConv.meetupUpdatedBadge', 'ATUALIZADO')}</Text>}
                 </View>
+                {_mCanEdit ? (
+                  <TouchableOpacity onPress={() => { if (selectionMode) return toggleSelection(msg.id); try { globalThis.__chatyy_meetup_edit_open && globalThis.__chatyy_meetup_edit_open(msg); } catch {} }}
+                    hitSlop={8} accessibilityRole="button" accessibilityLabel={_mt('chatConv.meetupEditTitle', 'Editar encontro')}
+                    style={{ paddingHorizontal: 9, paddingVertical: 4, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.18)' }}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>{t('chatConv.edit') || 'Editar'}</Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
               {/* Body */}
               <View style={{ backgroundColor: isOwn ? 'rgba(255,255,255,0.08)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'), padding: 10 }}>
@@ -33544,15 +33768,17 @@ function ChatConversationInnerBody() {
                     return (
                       <TouchableOpacity
                         key={status}
+                        disabled={_mState.cancelled}
                         onPress={() => {
                           // [WAVE 43D] Multi-select sticky — let row toggle win over RSVP.
                           if (selectionMode) return toggleSelection(msg.id);
+                          if (_mState.cancelled) return; // [encontro2 2026-10-20]
                           handleRsvp(status);
                         }}
                         onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
                         delayLongPress={350}
                         style={{
-                          flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center',
+                          flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center', opacity: _mState.cancelled ? 0.4 : 1,
                           backgroundColor: btnColors[status],
                           borderWidth: active ? 0 : 1,
                           borderColor: isOwn ? 'rgba(255,255,255,0.15)' : (colors.border + '60'),
@@ -35691,6 +35917,7 @@ function ChatConversationInnerBody() {
         accent: (colors && (colors.primary || colors.accent)) || '#25D366',
         muted: (colors && (colors.textSecondary || colors.textTertiary)) || 'rgba(120,120,120,0.9)',
         primary: colors.primary || '#111111', errorColor: colors.error || '#EF4444',
+        readColor: _tickReadColor(), // [2026-10-20 media-wa] mic azul da nota ouvida
         contentMax: _WA_TEXT_AVAIL,
         t, label: tt,
         splitCustomEmoji: _splitCustomEmoji,
@@ -35909,7 +36136,6 @@ function ChatConversationInnerBody() {
     return false;
   };
   const _nlOpenMedia = useCallback((item, index) => {
-        readColor: _tickReadColor(), // [2026-10-20 media-wa] mic azul da nota ouvida
     const isAlbum = item && item._type === 'album';
     const its = isAlbum ? (item._items || []) : null;
     const m = isAlbum ? its[Math.max(0, Math.min(its.length - 1, index || 0))] : item;
@@ -36004,6 +36230,13 @@ function ChatConversationInnerBody() {
     const target = item._type === 'album' ? (item._items || [])[0] : item;
     if (!target) return;
     if (A.selectionMode) { if (target.type !== 'system') A.toggleSelection(target.id); return; }
+    // [2026-10-20 media-wa] álbum: _failed = "algum item falhou" — reenviar os itens
+    // que FALHARAM (antes reenviava o 1º, quase sempre já enviado).
+    const _albFail = item._type === 'album' ? (item._items || []).filter(m => m && m._failed && !m.deleted_at) : null;
+    if (_albFail && _albFail.length && (part === 'retry' || (part === 'action' && url === 'retry') || !['vnote', 'action', 'media', 'audio', 'file', 'xfer', 'reply', 'reaction', 'link'].includes(part))) {
+      if (_albFail.length === 1) A.promptFailed(_albFail[0]); else _albFail.forEach(m => { try { A.tapRetry(m); } catch {} });
+      return;
+    }
     switch (part) {
       case 'retry': if (!target.deleted_at) A.promptFailed(target); return;
       // nota de vídeo toca INLINE no nativo (play/pause/end) — JS só observa.
@@ -36222,13 +36455,6 @@ function ChatConversationInnerBody() {
     // abre o MESMO overlay de lift do caminho FlashList (MessageLiftOverlay).
     if (anchor && anchor.uri && LIFT_AVAILABLE && target.type !== 'system' && !liftPendingRef.current) {
       _ctxMenuDropKeyboard(); // [ctxmenu-kb]
-    // [2026-10-20 media-wa] álbum: _failed = "algum item falhou" — reenviar os itens
-    // que FALHARAM (antes reenviava o 1º, quase sempre já enviado).
-    const _albFail = item._type === 'album' ? (item._items || []).filter(m => m && m._failed && !m.deleted_at) : null;
-    if (_albFail && _albFail.length && (part === 'retry' || (part === 'action' && url === 'retry') || !['vnote', 'action', 'media', 'audio', 'file', 'xfer', 'reply', 'reaction', 'link'].includes(part))) {
-      if (_albFail.length === 1) A.promptFailed(_albFail[0]); else _albFail.forEach(m => { try { A.tapRetry(m); } catch {} });
-      return;
-    }
       const isOwnMsg = String(target.sender_email || '').toLowerCase() === String(currentEmail || '').toLowerCase();
       const a = { ...anchor, isOwn: isOwnMsg };
       if (ctxAnchorRef.current) { releaseBubbleAnchor(ctxAnchorRef.current); }
@@ -36522,7 +36748,16 @@ function ChatConversationInnerBody() {
           </View>
           <TouchableOpacity onPress={() => {
             const selected = messages.filter(m => selectedIds.has(m.id));
-            selected.forEach(m => handleStarMessage(m));
+            // [2026-10-20 core-chat2] WhatsApp: com alguma não favoritada, FAVORITA
+            // as que faltam (antes alternava cada uma → desfavoritava as já
+            // favoritadas); todas favoritadas → desfavorita. Pendentes ficam fora
+            // (antes: 1 alerta "Aguarde" por mensagem).
+            if (global.__chatyy_star_multi_wa !== false) {
+              const _real = selected.filter(m => !m.pending && Number.isInteger(Number(m.id)) && Number(m.id) > 0);
+              const _all = _real.length > 0 && _real.every(m => !!m.starred);
+              (_all ? _real : _real.filter(m => !m.starred)).forEach(m => handleStarMessage(m));
+              if (!_real.length && selected.length) handleStarMessage(selected[0]);
+            } else selected.forEach(m => handleStarMessage(m));
             setSelectedIds(new Set());
             setSelectionMode(false);
           }} style={styles.headerBtn} accessibilityLabel={t('chatConv.star') || 'Favoritar'}>
@@ -40348,14 +40583,16 @@ function ChatConversationInnerBody() {
 
       {/* Meetup Creator Modal — only mounted when open (lazy) */}
       {showMeetupCreator && (
-        <NativeSheetModal visible transparent animationType="slide" onRequestClose={() => setShowMeetupCreator(false)} detents={[1]} backgroundColor={colors.surface} disableNative={!_creatorNativeSheet() /* [2026-10-16 poll-wa] */}>
+        <NativeSheetModal visible transparent animationType="slide" onRequestClose={() => { setShowMeetupCreator(false); setMeetupEditMsg(null); }} detents={[1]} backgroundColor={colors.surface} disableNative={!_creatorNativeSheet() /* [2026-10-16 poll-wa] */}>
           <MeetupCreatorModal
             native={_creatorNativeSheet()}
             colors={colors}
             t={t}
             conversationId={conversationId}
-            replyToId={_resolveReplyTargetId(replyTo)}
-            onClose={() => setShowMeetupCreator(false)}
+            replyToId={meetupEditMsg ? null : _resolveReplyTargetId(replyTo)}
+            editMsg={meetupEditMsg}
+            onUpdated={(id, content) => { setMessages(prev => _mapKeep(prev, m => (String(m.id) === String(id) ? { ...m, content, meetup: { ...(m.meetup || {}), ...(_memoJSONSafe(content) || {}) }, edited_at: new Date().toISOString() } : m))); setShowMeetupCreator(false); setMeetupEditMsg(null); }}
+            onClose={() => { setShowMeetupCreator(false); setMeetupEditMsg(null); }}
             onCreated={(msg) => { if (replyTo) setReplyTo(null); const normalized = normalizeMessageTypes([msg])[0]; setMessages(prev => prev.some(m => m.id === normalized.id) ? prev : [...prev, normalized]); setShowMeetupCreator(false); setTimeout(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 200); }}
           />
         </NativeSheetModal>
@@ -41129,6 +41366,7 @@ function ChatConversationInnerBody() {
                   original da mídia não é). */}
               {selectedMsg?.sender_email === currentEmail && !selectedMsg?.deleted_at && typeof selectedMsg?.id === 'number' && (() => {
                 const _ek = _msgEditKind(selectedMsg);
+                if (selectedMsg?.type === 'meetup') return !(_memoJSONSafe(selectedMsg.content) || {}).cancelled; // [encontro2 2026-10-20] sem janela de 15 min
                 return _ek === 'text' || (_ek === 'caption' && !e2eEnabled);
               })() && (
                 (() => {
@@ -41136,7 +41374,7 @@ function ChatConversationInnerBody() {
                   // [2026-10-18 server-clock] relógio do SERVIDOR (offset do WS), não o do aparelho.
                   let _nowSrv = Date.now();
                   try { _nowSrv = require('../services/websocket').default?.serverNow?.() || _nowSrv; } catch {}
-                  const canEdit = createdAt ? (_nowSrv - new Date(String(createdAt).endsWith('Z') ? createdAt : createdAt + 'Z').getTime()) < 15 * 60 * 1000 : true;
+                  const canEdit = selectedMsg?.type === 'meetup' || (createdAt ? (_nowSrv - new Date(String(createdAt).endsWith('Z') ? createdAt : createdAt + 'Z').getTime()) < 15 * 60 * 1000 : true);
                   return canEdit ? (
                     <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                       style={ctxS.ctxSecondaryItem}
