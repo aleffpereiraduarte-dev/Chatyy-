@@ -590,7 +590,32 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
   // folha: cabeçalho fino = avatar do adversário + nome + vez + regras/mais + fechar
   const opp = view ? ((view.seats && view.seats.length ? view.seats : (view.players || []).map((p) => p.e)).find((e) => lc(e) !== me) || view.by) : null;
   const acc = view ? gameAccent(view.type) : pal.ink;
-  const header = embedded ? (
+  const header = docked ? (
+    // [2026-10-20 dock-imersivo] UMA linha: avatar pequeno · vez (ponto pulsando) · ícones soltos
+    <View style={[st.dHeader, { borderBottomColor: pal.line, backgroundColor: pal.bg }]}>
+      {opp ? <AvatarCircle email={opp} name={nameOf(view, opp, '', t)} size={22} /> : (view ? <GameTypeIcon type={view.type} size={18} color={pal.ink} /> : null)}
+      {myTurn ? <PulseDot color={pal.ink} on rm={rm} /> : null}
+      <Text style={{ flex: 1, color: myTurn ? pal.ink : pal.sub, fontSize: 13.5, fontWeight: myTurn ? '800' : '600' }} numberOfLines={1}>
+        {view ? (view.spectator && view.status === 'active' ? `${status} · ${tr(t, 'games.watching', 'assistindo')}` : status) : tr(t, 'games.menu', 'Jogos')}
+      </Text>
+      {view ? (
+        <Pressable onPress={() => { hTap(); setRulesOpen(true); }} hitSlop={8} style={st.dBtn} accessibilityRole="button" accessibilityLabel={tr(t, 'games.rules.button', 'Regras')}>
+          <RulesIcon color={pal.sub} size={18} />
+        </Pressable>
+      ) : null}
+      <Pressable onPress={() => { hTap(); setMoreOpen(true); }} hitSlop={8} style={st.dBtn} accessibilityRole="button" accessibilityLabel={tr(t, 'games.more', 'Mais opções')}>
+        <IconMore size={18} color={pal.sub} />
+      </Pressable>
+      {onCollapse ? (
+        <Pressable onPress={() => { hTap(); onCollapse(); }} hitSlop={8} style={st.dBtn} accessibilityRole="button" accessibilityLabel={tr(t, 'games.dock.collapse', 'Recolher')}>
+          <IconChevronDown size={19} color={pal.sub} />
+        </Pressable>
+      ) : null}
+      <Pressable onPress={back} hitSlop={8} style={st.dBtn} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')}>
+        <IconX size={15} color={pal.sub} />
+      </Pressable>
+    </View>
+  ) : embedded ? (
     // [2026-10-20 polish] cabeçalho limpo: avatar com anel na cor do jogo quando é a minha vez, nome do jogo,
     // vez com ponto pulsando, ações discretas (regras/mais/recolher/fechar em círculos pequenos)
     <View style={[st.sHeader, { borderBottomColor: pal.line, backgroundColor: pal.bg }]}>
@@ -708,11 +733,11 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
   // largo (tablet/web): tabuleiro no centro + painel lateral com jogadores e a conversa
   const wide = !embedded && winW >= 900;
   const colW = wide ? Math.min(winW - SIDE_W - 32, 820) : winW;
-  const fitH = docked && dockH > 0 ? Math.max(170, dockH - 56 - 48 - 18) : Math.max(300, winH - ins.top - ins.bottom - 230);
+  const fitH = docked && dockH > 0 ? Math.max(170, dockH - 40 - 36 - 12) : Math.max(300, winH - ins.top - ins.bottom - 230);
   let board = null;
   if (view.status === 'active' || view.status === 'finished') {
     const sq = view.type === 'damas' || view.type === 'velha';
-    const P = { view, onMove, pal, busy, t, me, offset: offRef.current, onTick, maxW: wide ? (sq ? Math.min(colW, fitH) : colW) : (docked ? (sq ? Math.min(winW - 24, fitH - 18) : winW - 24) : (sq ? Math.min(winW, fitH + 40) : (embedded ? winW : undefined))) };
+    const P = { view, onMove, pal, busy, t, me, offset: offRef.current, onTick, maxW: wide ? (sq ? Math.min(colW, fitH) : colW) : (docked ? (sq ? Math.min(winW - 8, fitH) : winW) : (sq ? Math.min(winW, fitH + 40) : (embedded ? winW : undefined))) };
     if (view.type === 'velha') board = <VelhaBoard {...P} />;
     else if (view.type === 'damas') board = <DamasBoard {...P} />;
     else if (view.type === 'cartas') board = <CartasBoard {...P} />;
@@ -729,7 +754,7 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
         {phase === 'waiting' ? <WaitingPanel view={view} me={me} pal={pal} t={t} busy={busy} rm={rm} onAct={onAct} wide={wide} /> : null}
         {phase === 'closed' ? <ClosedPanel view={view} me={me} pal={pal} t={t} busy={busy} rm={rm} onAct={onAct} wide={wide} /> : null}
         {phase === 'active' ? <DrawBanner view={view} me={me} pal={pal} t={t} busy={busy} rm={rm} onDraw={(op) => { hTap(); run('draw_' + op); }} /> : null}
-        {board && docked ? <View style={[st.boardCard, { backgroundColor: pal.card }]}>{board}</View> : board}
+        {board}
         {phase === 'finished' ? (
           <ResultPanel view={view} me={me} pal={pal} t={t} busy={busy} rm={rm} fresh={sawActive.current} onAct={onAct} wide={wide}
             onOpenRematch={() => openGame(view.rematch_id, view.conversation_id)} />
@@ -738,8 +763,8 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
     </ScrollView>
   );
   const quickChips = QUICK.map(([k, fb]) => (
-    <PressScale key={k} rm={rm} scaleTo={0.95} onPress={() => { hTap(); sendQuick(tr(t, k, fb)); }} style={[st.quick, { borderColor: pal.line }]} accessibilityRole="button">
-      <Text style={{ color: pal.ink, fontSize: 13, fontWeight: '600' }}>{tr(t, k, fb)}</Text>
+    <PressScale key={k} rm={rm} scaleTo={0.95} onPress={() => { hTap(); sendQuick(tr(t, k, fb)); }} style={[docked ? st.dQuick : st.quick, { borderColor: pal.line }]} accessibilityRole="button">
+      <Text style={{ color: docked ? pal.sub : pal.ink, fontSize: docked ? 12.5 : 13, fontWeight: '600' }}>{tr(t, k, fb)}</Text>
     </PressScale>
   ));
   const inputRow = (
@@ -794,7 +819,7 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
           {header}
           {showTable ? <View style={{ paddingTop: 8 }}><Table view={view} me={me} pal={pal} t={t} rm={rm} offset={offRef.current} /></View> : null}
           <View style={{ flex: 1 }} onLayout={(e) => { const w = Math.round(e.nativeEvent.layout.width); if (w > 0 && Math.abs(w - boxW) > 1) setBoxW(w); }}>{content}</View>
-          <View style={[st.chatStrip, { borderTopColor: pal.line, paddingBottom: docked ? 6 : (Platform.OS === 'ios' ? 10 : Math.max(ins.bottom, 8) + 4), backgroundColor: pal.bg }]}>
+          <View style={[docked ? st.dChips : st.chatStrip, { borderTopColor: pal.line, paddingBottom: docked ? 5 : (Platform.OS === 'ios' ? 10 : Math.max(ins.bottom, 8) + 4), backgroundColor: pal.bg }]}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingHorizontal: 12 }} keyboardShouldPersistTaps="handled">
               {quickChips}
             </ScrollView>
@@ -870,9 +895,11 @@ const st = StyleSheet.create({
   sAv: { borderWidth: 2, borderRadius: 22, padding: 1.5 },
   sAvIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   sAvBadge: { position: 'absolute', right: -3, bottom: -3, width: 17, height: 17, borderRadius: 9, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  dHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 12, paddingRight: 6, height: 40, borderBottomWidth: StyleSheet.hairlineWidth },
+  dBtn: { paddingHorizontal: 7, paddingVertical: 6 },
+  dChips: { paddingTop: 5, paddingBottom: 5 },
+  dQuick: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 13, paddingHorizontal: 10, paddingVertical: 4 },
   sBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  boardCard: { borderRadius: 20, marginHorizontal: 10, marginTop: 10, paddingVertical: 8, overflow: 'visible',
-    shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
   sTitle: { fontSize: 16, fontWeight: '800', letterSpacing: -0.2 },
   closeBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginLeft: 4 },
 });

@@ -1186,6 +1186,23 @@ function buildGame(m, row, ctx, C, own) {
   const sub = own ? C.ownMeta : (col.textSecondary || C.otherMeta || '#6b7280');
   const line = own ? 'rgba(255,255,255,0.18)' : (C.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
   const tf = (k, opts) => { try { return C.t ? C.t(k, opts) : (opts && opts.defaultValue) || k; } catch { return (opts && opts.defaultValue) || k; } };
+  // [2026-10-20 dock-imersivo] partida aberta no painel → 1 linha compacta (o jogo está logo abaixo)
+  try {
+    const GI = require('../../services/gamesInline');
+    _gameHookBump(C);
+    if (g.kind === 'game' && GI.gamesInlineOn() && GI.dockedGameId() === Number(g.g)) {
+      const w0 = 236;
+      row.bl = [hstack([
+        vstack([icon(_gameIconComp(g.type), { s: 13, c: '#FFFFFF' })], { w: 24, h: 24, r: 7, bg: '#0B0B0C', al: 'c', jc: 'c' }),
+        vstack([
+          text(G.tr(tf, 'games.dock.inProgress', 'Partida em andamento'), { fs: 13.5, fw: 700, c: ink, ml: 1 }),
+          text(G.gameTitle(tf, g.type) + ' · ' + G.tr(tf, 'games.dock.belowHint', 'aberta abaixo'), { fs: 11.5, c: sub, ml: 1 }),
+        ], { fl: 1 }),
+      ], { w: w0, g: 9, al: 'c', p: [7, 10, 7, 8], a: 'game:play' })];
+      row.cw = w0; row.pad = PAD; row.mp = 'below';
+      return;
+    }
+  } catch {}
   const me = ctx.myEmail || '';
   const isRes = g.kind === 'result';
   const w = 268;
@@ -1193,10 +1210,10 @@ function buildGame(m, row, ctx, C, own) {
   const openAct = acts.includes('play') ? 'play' : (acts.includes('watch') ? 'watch' : 'open');
   const myTurn = G.isMyTurn(g, me);
   const badge = G.gameEndBadge ? G.gameEndBadge(tf, g, me) : null; // [jogos 2026-10-19]
-  let acc = '#8E8E93'; try { acc = require('../games/fx').gameAccent(g.type); } catch {}
+  const acc = '#0B0B0C'; // [2026-10-20 dock-imersivo] P&B: cor do jogo só nas cartas/peças
   const BADGE_BG = { won: '#16A34A', resigned_other: '#16A34A', abandoned: '#B45309', draw: 'rgba(255,255,255,0.22)' };
   const head = hstack([
-    vstack([icon(isRes ? _IconGameTrophy : _gameIconComp(g.type), { s: 18, c: '#FFFFFF' })], { w: 34, h: 34, r: 10, bg: isRes ? 'rgba(255,255,255,0.14)' : acc, al: 'c', jc: 'c' }), // [2026-10-20 polish] cor do jogo
+    vstack([icon(isRes ? _IconGameTrophy : _gameIconComp(g.type), { s: 18, c: '#FFFFFF' })], { w: 34, h: 34, r: 10, bg: 'rgba(255,255,255,0.14)', al: 'c', jc: 'c' }),
     vstack([
       text(G.gameTitle(tf, g.type), { fs: 15, fw: 800, c: '#FFFFFF', ml: 1 }),
       text(isRes ? G.tr(tf, 'games.resultLabel', 'Resultado') : G.tr(tf, 'games.cardLabel', 'Jogo na conversa'), { fs: 11, c: 'rgba(255,255,255,0.7)', ml: 1 }),
@@ -1205,7 +1222,7 @@ function buildGame(m, row, ctx, C, own) {
     // [jogos 2026-10-19] estado final: Cancelado · Expirado · Recusado · Empate · Venceu · Perdeu · Abandonou
     (!myTurn && badge) ? vstack([text(badge.label, { fs: 11, fw: 800, c: '#FFFFFF' })], { bg: BADGE_BG[badge.kind] || 'rgba(255,255,255,0.16)', r: 10, p: [3, 8, 3, 8] }) : null,
   ], { w: -1, bg: isRes ? '#000000' : '#0B0B0C', p: [10, 12, 10, 12], g: 10, al: 'c', a: 'game:' + openAct });
-  const headBar = vstack([head, vstack([], { w: -1, h: 3, bg: acc })], { w: -1 }); // filete de acento
+  const headBar = head;
   const body = [];
   if (isRes) {
     body.push(text(G.resultHeadline(tf, g, me), { fs: 15, fw: 800, c: ink, lh: 20, m: [0, 0, 6, 0] }));

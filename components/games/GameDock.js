@@ -18,10 +18,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, Pressable, StyleSheet, Keyboard, Platform, BackHandler, useWindowDimensions } from 'react-native';
 import { IconChevronUp, IconX } from '../Icons';
 import { GameTypeIcon, IconGamepad } from './GameIcons';
-import { gamePalette, hTap, hOk, gameAccent } from './fx';
+import { gamePalette, hTap, hOk } from './fx';
 import GamePicker from './GamePicker';
 import GamePlay from './GamePlay';
-import { registerGameSheetHost, registerGamePickerHost, gamesDockOn, SHEET_TYPES } from '../../services/gamesInline';
+import { registerGameSheetHost, registerGamePickerHost, gamesDockOn, SHEET_TYPES, setDockedGame } from '../../services/gamesInline';
 import { getGameView, subscribeGame, onAnyGameView, gameTitle, gameStatusLine, isMyTurn, tr } from '../../services/games';
 
 const lc = (x) => String(x || '').toLowerCase();
@@ -35,7 +35,7 @@ function CollapsedBar({ mode, gid, pal, t, me, onExpand, onClose }) {
   return (
     <View style={[st.bar, { borderTopColor: pal.line, backgroundColor: pal.bg }]}>
       <Pressable onPress={onExpand} style={st.barMain} accessibilityRole="button" accessibilityLabel={`${title}. ${sub}. ${tr(t, 'games.dock.expand', 'Abrir o jogo')}`}>
-        <View style={[st.barIcon, { backgroundColor: v && mode !== 'pick' ? gameAccent(v.type) : pal.strong }]}>
+        <View style={[st.barIcon, { backgroundColor: pal.strong }]}>
           {mode === 'pick' || !v ? <IconGamepad size={15} color={pal.onStrong} /> : <GameTypeIcon type={v.type} size={15} color={pal.onStrong} />}
         </View>
         <View style={{ flex: 1 }}>
@@ -183,6 +183,10 @@ export default function GameDock({ conversationId, conversationType, members, cu
     return () => { try { sub.remove(); } catch {} };
   }, [mode, collapsed, close]);
 
+  // [2026-10-20 dock-imersivo] partida no painel expandido → o cartão dela na conversa vira 1 linha
+  useEffect(() => { setDockedGame(mode === 'play' && !collapsed ? gid : 0); }, [mode, gid, collapsed]);
+  useEffect(() => () => setDockedGame(0), []);
+
   // trocou de conversa (mesma tela) → fecha
   useEffect(() => { close(); lastSt.current = new Map(); }, [conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -195,8 +199,9 @@ export default function GameDock({ conversationId, conversationType, members, cu
     );
   }
 
+  // modo jogo: o painel toma a área da conversa até o composer (sobra uma tira da conversa em cima)
   const dockH = mode === 'play'
-    ? Math.round(Math.max(300, Math.min(winH * 0.58, winW + 150)))
+    ? Math.round(Math.max(300, Math.min(winH * 0.64, winH - 300)))
     : Math.round(Math.max(280, Math.min(winH * 0.5, 460)));
 
   return (
@@ -219,7 +224,7 @@ export default function GameDock({ conversationId, conversationType, members, cu
 const st = StyleSheet.create({
   dock: {
     width: '100%', overflow: 'hidden', borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    // integrado: sem cantos/cartão — só o filete de cima separa da conversa
     ...(Platform.OS === 'web' ? { maxWidth: 960, alignSelf: 'center' } : null),
   },
   bar: { flexDirection: 'row', alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, paddingLeft: 12, paddingRight: 10, paddingVertical: 6, gap: 8 },

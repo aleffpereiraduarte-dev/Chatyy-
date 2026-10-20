@@ -9,7 +9,7 @@ import {
   nameOf, playerStatusLabel, isMyTurn, tr, gameEndBadge,
 } from '../../services/games';
 import GameInlineBoard, { useInlineView, inlineHasBoard } from './GameInlineBoard';
-import { gamesInlineOn, isInlineType } from '../../services/gamesInline';
+import { gamesInlineOn, isInlineType, dockedGameId } from '../../services/gamesInline';
 import { gameAccent } from './fx';
 
 const PRIMARY = new Set(['accept', 'join', 'start', 'play', 'rematch']);
@@ -38,6 +38,18 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
   const iv = useInlineView(liveId, g && g.status, g && g.v);
   const hasBoard = !!liveId && inlineHasBoard(iv);
   if (!g) return <Text style={{ color: isOwn ? '#fff' : colors.text }}>{tr(t, 'games.preview', 'Jogo')}</Text>;
+  // [2026-10-20 dock-imersivo] partida aberta no painel → 1 linha compacta (o jogo está logo abaixo)
+  if (inlineOn && g.kind === 'game' && dockedGameId() === Number(g.g)) {
+    return (
+      <Pressable onPress={() => { try { onAction && onAction(msg, 'play', g); } catch {} }} style={st.mini} accessibilityRole="button">
+        <View style={st.miniIcon}><GameTypeIcon type={g.type} size={13} color="#fff" /></View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: isOwn ? '#fff' : (colors.text || '#111'), fontSize: 13.5, fontWeight: '700' }} numberOfLines={1}>{tr(t, 'games.dock.inProgress', 'Partida em andamento')}</Text>
+          <Text style={{ color: isOwn ? 'rgba(255,255,255,0.72)' : (colors.textSecondary || '#6b7280'), fontSize: 11.5 }} numberOfLines={1}>{`${gameTitle(t, g.type)} · ${tr(t, 'games.dock.belowHint', 'aberta abaixo')}`}</Text>
+        </View>
+      </Pressable>
+    );
+  }
   const ink = isOwn ? '#FFFFFF' : (colors.text || '#111');
   const sub = isOwn ? 'rgba(255,255,255,0.72)' : (colors.textSecondary || '#6b7280');
   const line = isOwn ? 'rgba(255,255,255,0.18)' : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
@@ -49,13 +61,14 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
   const myTurn = isMyTurn(g, currentEmail);
   // [jogos 2026-10-19] estado final sempre visível: Cancelado · Expirado · Recusado · Empate · Venceu · Perdeu · Abandonou
   const badge = gameEndBadge(t, g, currentEmail);
-  const acc = gameAccent(g.type);
+  // [2026-10-20 dock-imersivo] P&B: cor do jogo só nas cartas/peças (cartão sem acento colorido)
+  const acc = '#0B0B0C'; void gameAccent;
   const BADGE_BG = { won: '#16A34A', resigned_other: '#16A34A', lost: 'rgba(255,255,255,0.16)', draw: 'rgba(255,255,255,0.22)', abandoned: '#B45309', expired: 'rgba(255,255,255,0.16)', cancelled: 'rgba(255,255,255,0.16)', declined: 'rgba(255,255,255,0.16)' };
 
   const header = (
     // [2026-10-20 polish] P&B premium: ícone na cor do jogo + filete de acento sob o cabeçalho
-    <View style={[st.head, { backgroundColor: isResult ? '#000' : '#0B0B0C', borderBottomColor: acc }]}>
-      <View style={[st.headIcon, { backgroundColor: isResult ? 'rgba(255,255,255,0.14)' : acc }]}>
+    <View style={[st.head, { backgroundColor: isResult ? '#000' : '#0B0B0C', borderBottomColor: 'transparent' }]}>
+      <View style={[st.headIcon, { backgroundColor: 'rgba(255,255,255,0.14)' }]}>
         {isResult ? <IconTrophy size={18} color="#fff" /> : <GameTypeIcon type={g.type} size={18} color="#fff" />}
       </View>
       <View style={{ flex: 1 }}>
@@ -141,8 +154,10 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
 }
 
 const st = StyleSheet.create({
+  mini: { width: 236, flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 4, paddingHorizontal: 2 },
+  miniIcon: { width: 24, height: 24, borderRadius: 7, backgroundColor: '#0B0B0C', alignItems: 'center', justifyContent: 'center' },
   card: { width: 268, borderRadius: 16, overflow: 'hidden', marginVertical: 1, borderWidth: StyleSheet.hairlineWidth },
-  head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 10, borderBottomWidth: 3 },
+  head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 10 },
   headIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   headTitle: { color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: -0.2 },
   headSub: { color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 1 },

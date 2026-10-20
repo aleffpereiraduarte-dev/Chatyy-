@@ -197,6 +197,17 @@ export function registerGameSheetHost(fn) {
 // composer, conversa rolável e chat funcionando): seletor de jogo + partida de Damas/Cartas. Nada de folha.
 // Convite/espera/aceitar/cancelar = o próprio cartão (lobby) — o painel não abre para convite pendente nem
 // para Velha/Forca/Quiz (jogadas no cartão). Kill: globalThis.__chatyy_games_dock = false → folha (19/10).
+// partida aberta no painel (expandido) → o cartão dela na conversa vira 1 linha compacta (nada de "tela dentro de tela")
+let _dockGid = 0;
+export function dockedGameId() { return _dockGid; }
+export function setDockedGame(gid) {
+  const id = Number(gid) || 0;
+  if (id === _dockGid) return;
+  const prev = _dockGid;
+  _dockGid = id;
+  if (prev) _emit(prev);
+  if (id) _emit(id);
+}
 export function gamesDockOn() {
   try { if (globalThis.__chatyy_games_dock === false) return false; } catch {}
   return gamesInlineOn();
