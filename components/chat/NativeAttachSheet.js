@@ -91,6 +91,9 @@ export function nativeAttachLabels(t) {
     caption: tt(t, 'chatConv.addCaption', 'Adicionar legenda...'),
     send: tt(t, 'common.send', 'Enviar'),
     camera: tt(t, 'chatConv.camera', 'Câmera'),
+    photos: tt(t, 'chatConv.photos', 'Fotos'), // [2026-10-20 attach-freeze] galleryMode
+    albums: tt(t, 'chatConv.albums', 'Álbuns'),
+    allPhotos: tt(t, 'chatConv.recents', 'Recentes'),
     gallery: tt(t, 'chatConv.gallery', 'Galeria'),
     photo: tt(t, 'chat.nattach.photo', 'Foto'),
     video: tt(t, 'chat.nattach.video', 'Vídeo'),
@@ -209,6 +212,11 @@ export default function NativeAttachSheet({
           hdDefault: _hdDefault,
           allowCamera: true,
           ...(opts && opts.overKeyboard ? { overKeyboard: true } : null),
+          // [2026-10-20 attach-freeze] "Fotos" do painel = SÓ a galeria: sem
+          // barra de ações e sem tile de câmera (vale no 744 por OTA);
+          // attach api >= 7: galleryMode = cabeçalho X | Fotos/Álbuns | HD,
+          // altura grande e sem a faixa vazia embaixo.
+          ...(opts && opts.gallery ? { actions: [], allowCamera: false, galleryMode: true } : null),
           // [2026-10-16 motion-attach] botões em cascata; kill switch OTA
           // globalThis.__chatyy_motion_attach = false (chave ausente = ligado).
           ...((() => { try { return globalThis.__chatyy_motion_attach === false || globalThis.__chatyy_motion === false; } catch { return false; } })() ? { motion: false } : null),

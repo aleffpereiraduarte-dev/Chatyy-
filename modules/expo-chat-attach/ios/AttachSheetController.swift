@@ -73,6 +73,13 @@ final class AttachSheetController: UIViewController,
 
   private static let spacing: CGFloat = 2
   private static let headerH: CGFloat = 52
+  private var hdrH: CGFloat { return config.galleryMode ? 66 : AttachSheetController.headerH } // [2026-10-20 attach-freeze]
+  // [2026-10-20 attach-freeze] modo galeria
+  private let segment = UISegmentedControl()
+  private let hdButton = UIButton(type: .custom)
+  private let albumsTable = UITableView(frame: .zero, style: .plain)
+  private lazy var albumList = CAAlbumList(config: config)
+  private var bottomHeight: NSLayoutConstraint!
   private static let barH: CGFloat = 96
 
   init(config: AttachConfig) {
@@ -119,6 +126,7 @@ final class AttachSheetController: UIViewController,
     buildPermissionView()
     buildBottom()
     layoutContent()
+    if config.galleryMode { buildAlbums() } // [2026-10-20 attach-freeze]
 
     let pan = UIPanGestureRecognizer(target: self, action: #selector(onPan(_:)))
     pan.delegate = self
@@ -191,6 +199,8 @@ final class AttachSheetController: UIViewController,
   private var collapsedTop: CGFloat {
     let h = view.bounds.height
     let side = floor((view.bounds.width - AttachSheetController.spacing * 2) / 3)
+    // [2026-10-20 attach-freeze] galeria: topo logo abaixo do meio (WhatsApp).
+    if config.galleryMode { return max(expandedTop, floor(h * 0.40)) }
     let want = AttachSheetController.headerH + side * 2.3 + AttachSheetController.barH + max(view.safeAreaInsets.bottom, 12)
     return max(expandedTop, h - want)
   }
@@ -205,7 +215,7 @@ final class AttachSheetController: UIViewController,
     sheetView.transform = CGAffineTransform(translationX: 0, y: dismissOffset)
     let range = max(1, collapsedTop - expandedTop)
     let p = 1 - min(1, max(0, (top - expandedTop) / range)) // 0 recolhida … 1 expandida
-    closeButton.alpha = p
+    closeButton.alpha = config.galleryMode ? 1 : p
     grabber.alpha = 1 - p * 0.6
     sheetView.layer.cornerRadius = 14 * (1 - p * 0.6)
     collectionView.isScrollEnabled = isExpanded
@@ -236,6 +246,85 @@ final class AttachSheetController: UIViewController,
     closeButton.addTarget(self, action: #selector(onCloseTap), for: .touchUpInside)
     closeButton.translatesAutoresizingMaskIntoConstraints = false
     sheetView.addSubview(closeButton)
+    guard config.galleryMode else { return }
+    // [2026-10-20 attach-freeze] X (círculo) | Fotos/Álbuns | HD — P&B.
+    titleLabel.isHidden = true
+    closeButton.backgroundColor = config.chip
+    closeButton.layer.cornerRadius = 22
+    closeButton.setImage(CAFormat.symbol("xmark", 18, .medium), for: .normal)
+    segment.insertSegment(withTitle: config.t("photos", "Fotos"), at: 0, animated: false)
+    segment.insertSegment(withTitle: config.t("albums", "Álbuns"), at: 1, animated: false)
+    segment.selectedSegmentIndex = 0
+    segment.selectedSegmentTintColor = config.bg
+    segment.backgroundColor = config.chip
+    segment.setTitleTextAttributes([.foregroundColor: config.text, .font: UIFont.systemFont(ofSize: 15, weight: .semibold)], for: .selected)
+    segment.setTitleTextAttributes([.foregroundColor: config.textSecondary, .font: UIFont.systemFont(ofSize: 15, weight: .regular)], for: .normal)
+    segment.addTarget(self, action: #selector(onSegment), for: .valueChanged)
+    segment.translatesAutoresizingMaskIntoConstraints = false
+    sheetView.addSubview(segment)
+    hdButton.setTitle("HD", for: .normal)
+    hdButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .heavy)
+    hdButton.layer.cornerRadius = 22
+    hdButton.layer.borderWidth = 1.5
+    hdButton.accessibilityLabel = "HD"
+    hdButton.addTarget(self, action: #selector(onHdTap), for: .touchUpInside)
+    hdButton.translatesAutoresizingMaskIntoConstraints = false
+    sheetView.addSubview(hdButton)
+    refreshHdButton()
+  }
+
+  private func refreshHdButton() {
+    guard config.galleryMode else { return }
+    hdButton.backgroundColor = hd ? config.text : config.chip
+    hdButton.setTitleColor(hd ? config.bg : config.text, for: .normal)
+    hdButton.layer.borderColor = (hd ? config.text : config.border).cgColor
+    hdButton.accessibilityTraits = hd ? [.button, .selected] : .button
+  }
+
+  private func buildAlbums() {
+    albumsTable.isHidden = true
+    albumsTable.backgroundColor = config.bg
+    albumsTable.separatorColor = config.border
+    albumsTable.rowHeight = 72
+    albumsTable.dataSource = albumList
+    albumsTable.delegate = albumList
+    albumsTable.register(UITableViewCell.self, forCellReuseIdentifier: "a")
+    albumsTable.translatesAutoresizingMaskIntoConstraints = false
+    albumList.onPick = { [weak self] coll, title in self?.pickAlbum(coll, title: title) }
+    sheetView.addSubview(albumsTable)
+    NSLayoutConstraint.activate([
+      albumsTable.topAnchor.constraint(equalTo: collectionView.topAnchor),
+      albumsTable.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+      albumsTable.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+      albumsTable.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor),
+    ])
+  }
+
+  @objc private func onSegment() {
+    let showAlbums = segment.selectedSegmentIndex == 1
+    caHaptic("select")
+    if showAlbums {
+      if albumList.isEmpty { albumList.load(); albumsTable.reloadData() }
+      // álbuns pedem a folha alta
+      if !isExpanded { animateTo(top: expandedTop, dismiss: 0, velocity: 0) }
+    }
+    albumsTable.isHidden = !showAlbums
+  }
+
+  private func pickAlbum(_ coll: PHAssetCollection?, title: String) {
+    let opts = PHFetchOptions()
+    opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+    opts.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d", PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
+    if let c = coll {
+      fetchResult = PHAsset.fetchAssets(in: c, options: opts)
+    } else {
+      loadAssets()
+    }
+    collectionView.reloadData()
+    segment.setTitle(coll == nil ? config.t("photos", "Fotos") : title, forSegmentAt: 0)
+    segment.selectedSegmentIndex = 0
+    albumsTable.isHidden = true
+    if (fetchResult?.count ?? 0) > 0 { collectionView.setContentOffset(.zero, animated: false) }
   }
 
   private func buildBanner() {
@@ -438,6 +527,22 @@ final class AttachSheetController: UIViewController,
 
   private func layoutContent() {
     bannerHeight = banner.heightAnchor.constraint(equalToConstant: 0)
+    // [2026-10-20 attach-freeze] galeria sem seleção = sem faixa de ações.
+    bottomHeight = bottomContainer.heightAnchor.constraint(equalToConstant: config.galleryMode ? 0 : AttachSheetController.barH)
+    if config.galleryMode {
+      bottomContainer.clipsToBounds = true
+      actionsScroll.isHidden = true
+      NSLayoutConstraint.activate([
+        segment.centerXAnchor.constraint(equalTo: sheetView.centerXAnchor),
+        segment.centerYAnchor.constraint(equalTo: sheetView.topAnchor, constant: hdrH / 2 + 4),
+        segment.heightAnchor.constraint(equalToConstant: 40),
+        segment.widthAnchor.constraint(equalToConstant: 196),
+        hdButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -14),
+        hdButton.centerYAnchor.constraint(equalTo: segment.centerYAnchor),
+        hdButton.widthAnchor.constraint(equalToConstant: 44),
+        hdButton.heightAnchor.constraint(equalToConstant: 44),
+      ])
+    }
     bottomInset = bottomContainer.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor, constant: -12)
     bottomInset.priority = UILayoutPriority(999)
     // Sem permissão de fotos o cartão fica ABAIXO da 1ª linha (tile da câmera).
@@ -448,13 +553,15 @@ final class AttachSheetController: UIViewController,
       grabber.widthAnchor.constraint(equalToConstant: 36),
       grabber.heightAnchor.constraint(equalToConstant: 5),
       titleLabel.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
-      titleLabel.centerYAnchor.constraint(equalTo: sheetView.topAnchor, constant: AttachSheetController.headerH / 2 + 4),
+      titleLabel.centerYAnchor.constraint(equalTo: sheetView.topAnchor, constant: hdrH / 2 + 4),
       titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
-      closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -6),
+      config.galleryMode
+        ? closeButton.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 14)
+        : closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -6),
       closeButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
       closeButton.widthAnchor.constraint(equalToConstant: 44),
       closeButton.heightAnchor.constraint(equalToConstant: 44),
-      banner.topAnchor.constraint(equalTo: sheetView.topAnchor, constant: AttachSheetController.headerH),
+      banner.topAnchor.constraint(equalTo: sheetView.topAnchor, constant: hdrH),
       banner.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
       banner.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
       bannerHeight,
@@ -468,7 +575,7 @@ final class AttachSheetController: UIViewController,
       permView.bottomAnchor.constraint(equalTo: collectionView.bottomAnchor),
       bottomContainer.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
       bottomContainer.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
-      bottomContainer.heightAnchor.constraint(equalToConstant: AttachSheetController.barH),
+      bottomHeight,
       bottomInset,
       hairline.topAnchor.constraint(equalTo: bottomContainer.topAnchor),
       hairline.leadingAnchor.constraint(equalTo: bottomContainer.leadingAnchor),
@@ -729,7 +836,9 @@ final class AttachSheetController: UIViewController,
     countBadge.text = "\(n)"
     countBadge.isHidden = n < 2
     hdChip.isHidden = asFile
+    if config.galleryMode { bottomHeight.constant = showSel ? AttachSheetController.barH : 0 } // [2026-10-20 attach-freeze]
     let changes = {
+      if self.config.galleryMode { self.view.layoutIfNeeded() }
       self.actionsScroll.alpha = showSel ? 0 : 1
       self.actionsScroll.transform = showSel ? CGAffineTransform(translationX: 0, y: 14) : .identity
       self.selectionBar.alpha = showSel ? 1 : 0
@@ -748,6 +857,7 @@ final class AttachSheetController: UIViewController,
   @objc private func onHdTap() {
     hd.toggle()
     hdChip.on = hd
+    refreshHdButton() // [2026-10-20 attach-freeze]
     caHaptic("select")
   }
 
@@ -1044,5 +1154,89 @@ final class AttachSheetController: UIViewController,
       return
     }
     dismiss(animated: false, completion: completion)
+  }
+}
+
+
+// MARK: - Álbuns (attach-freeze, modo galeria)
+
+/// Lista de álbuns (Recentes + favoritos/vídeos/selfies/capturas + álbuns do usuário).
+final class CAAlbumList: NSObject, UITableViewDataSource, UITableViewDelegate {
+  var onPick: ((PHAssetCollection?, String) -> Void)?
+  private let config: AttachConfig
+  private var rows: [(coll: PHAssetCollection?, title: String, count: Int, cover: PHAsset?)] = []
+  private let imageManager = PHCachingImageManager()
+  var isEmpty: Bool { return rows.isEmpty }
+
+  init(config: AttachConfig) {
+    self.config = config
+    super.init()
+  }
+
+  private static func mediaOpts() -> PHFetchOptions {
+    let o = PHFetchOptions()
+    o.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+    o.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d", PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
+    return o
+  }
+
+  func load() {
+    var out: [(coll: PHAssetCollection?, title: String, count: Int, cover: PHAsset?)] = []
+    let all = PHAsset.fetchAssets(with: CAAlbumList.mediaOpts())
+    out.append((nil, config.t("allPhotos", "Recentes"), all.count, all.firstObject))
+    let smart: [PHAssetCollectionSubtype] = [.smartAlbumFavorites, .smartAlbumVideos, .smartAlbumSelfPortraits, .smartAlbumScreenshots, .smartAlbumLivePhotos]
+    for st in smart {
+      let r = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: st, options: nil)
+      r.enumerateObjects { c, _, _ in
+        let a = PHAsset.fetchAssets(in: c, options: CAAlbumList.mediaOpts())
+        if a.count > 0 { out.append((c, c.localizedTitle ?? "", a.count, a.firstObject)) }
+      }
+    }
+    let user = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
+    user.enumerateObjects { c, _, _ in
+      let a = PHAsset.fetchAssets(in: c, options: CAAlbumList.mediaOpts())
+      if a.count > 0 { out.append((c, c.localizedTitle ?? "", a.count, a.firstObject)) }
+    }
+    rows = out
+  }
+
+  func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { return rows.count }
+
+  func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+    let cell = tableView.dequeueReusableCell(withIdentifier: "a", for: indexPath)
+    let row = rows[indexPath.row]
+    var c = cell.defaultContentConfiguration()
+    c.text = row.title
+    c.secondaryText = "\(row.count)"
+    c.textProperties.color = config.text
+    c.secondaryTextProperties.color = config.textSecondary
+    c.imageProperties.maximumSize = CGSize(width: 56, height: 56)
+    c.imageProperties.reservedLayoutSize = CGSize(width: 56, height: 56)
+    c.imageProperties.cornerRadius = 6
+    c.image = UIImage(systemName: "photo")
+    cell.contentConfiguration = c
+    cell.backgroundColor = config.bg
+    cell.accessoryType = .disclosureIndicator
+    cell.tag = indexPath.row
+    if let cover = row.cover {
+      let s = 56 * UIScreen.main.scale
+      let o = PHImageRequestOptions()
+      o.deliveryMode = .opportunistic
+      o.isNetworkAccessAllowed = true
+      let tagNow = indexPath.row
+      imageManager.requestImage(for: cover, targetSize: CGSize(width: s, height: s), contentMode: .aspectFill, options: o) { [weak cell] img, _ in
+        guard let cell = cell, cell.tag == tagNow, let img = img, var cc = cell.contentConfiguration as? UIListContentConfiguration else { return }
+        cc.image = img
+        cell.contentConfiguration = cc
+      }
+    }
+    return cell
+  }
+
+  func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+    tableView.deselectRow(at: indexPath, animated: true)
+    let row = rows[indexPath.row]
+    caHaptic("select")
+    onPick?(row.coll, row.title)
   }
 }

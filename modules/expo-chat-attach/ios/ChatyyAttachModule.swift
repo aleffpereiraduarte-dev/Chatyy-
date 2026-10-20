@@ -42,8 +42,11 @@ public class ChatyyAttachModule: Module {
     //     fica aberto por baixo, nada na conversa se mexe); o composer (api 9)
     //     só solta o teclado quando a folha fecha. Posta
     //     ChatyyAttachSheetWillPresent {overKeyboard} antes de apresentar.
+    // 7 = [2026-10-20 attach-freeze] openSheet({galleryMode}) = só galeria
+    //     (X | Fotos/Álbuns | HD, altura grande, sem ações); WillPresent leva
+    //     kind ("sheet" | "camera") e openCamera também o posta.
     Function("apiVersion") { () -> Int in
-      return 6
+      return 7
     }
 
     OnCreate {
@@ -95,7 +98,7 @@ public class ChatyyAttachModule: Module {
       // do teclado (sem present → o UIKit não "guarda" o first responder e o
       // teclado não some num quadro só). Falhou → apresentação normal.
       if (options["overKeyboard"] as? Bool) == true, AttachOverKeyboardHost.present(vc, over: presenter) {
-        NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": true])
+        NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": true, "kind": "sheet"])
         vc.overKeyboardHost?.show()
         NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
         DispatchQueue.main.async {
@@ -103,7 +106,7 @@ public class ChatyyAttachModule: Module {
         }
         return
       }
-      NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": false])
+      NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": false, "kind": "sheet"])
       vc.modalPresentationStyle = .overFullScreen
       vc.modalPresentationCapturesStatusBarAppearance = false
       // [2026-10-15 screen-protect-all] protege a tela nova já (camada segura; expo-chat-privacy)
@@ -134,6 +137,8 @@ public class ChatyyAttachModule: Module {
       self.camera = vc
       vc.modalPresentationStyle = .fullScreen
       vc.modalTransitionStyle = .coverVertical
+      // [2026-10-20 attach-freeze] composer solta o painel/teclado segurado agora.
+      NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": false, "kind": "camera"])
       // [2026-10-15 screen-protect-all] protege a tela nova já (camada segura; expo-chat-privacy)
       presenter.present(vc, animated: true, completion: {
         NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
@@ -308,6 +313,9 @@ struct AttachConfig {
   let boomerangSec: Double
   // [2026-10-16 motion-attach] botões de ação entram em cascata (false = estático)
   let motion: Bool
+  // [2026-10-20 attach-freeze] api 7: folha SÓ galeria (WhatsApp): cabeçalho
+  // X | Fotos/Álbuns | HD, altura grande, sem barra de ações embaixo.
+  let galleryMode: Bool
 
   init(_ o: [String: Any]) {
     var l: [String: String] = [:]
@@ -340,6 +348,7 @@ struct AttachConfig {
     statusModes = (o["statusModes"] as? Bool) ?? false
     boomerangSec = min(4, max(0.8, AttachConfig.double(o["boomerangSec"]) ?? 1.5))
     motion = (o["motion"] as? Bool) ?? true
+    galleryMode = (o["galleryMode"] as? Bool) ?? false
   }
 
   func t(_ key: String, _ fallback: String) -> String {

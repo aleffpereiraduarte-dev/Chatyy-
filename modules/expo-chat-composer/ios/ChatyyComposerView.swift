@@ -1030,7 +1030,9 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     guard panelActive else { return }
     // Fotos → folha "Recentes" ACIMA do painel (expo-chat-attach api 6): o
     // painel fica por baixo; cancelar volta ao painel sem mexer em nada.
-    if (key == "gallery" || key == "photos") && attachKeepKeyboard && textView.isFirstResponder {
+    // [2026-10-20 attach-freeze] api 11: Câmera também (JS congela a conversa
+    // e a câmera em tela cheia cobre; cancelar → JS chama showAttachPanel()).
+    if (key == "gallery" || key == "photos" || key == "camera") && attachKeepKeyboard && textView.isFirstResponder {
       if focusGuard { attachGuard = true }
       attachRestorePending = false
       attachDeferPending = true
@@ -1246,7 +1248,60 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       attachDeferGen &+= 1
       return
     }
+    // [2026-10-20 attach-freeze] folha MODAL por cima do painel: retrato do
+    // painel na janela do app (o stash do UIKit tira o painel num quadro; o
+    // retrato fica no lugar por baixo da folha) e o painel volta ao cancelar.
+    let kind = (n.userInfo?["kind"] as? String) ?? "sheet"
+    if panelActive && attachKeepWaiting && kind != "camera" {
+      placePanelSnapshot()
+      panelReturnPending = true
+    }
     releaseForAttach() // folha do jeito antigo (modal) → comportamento da api 8
+  }
+
+  // MARK: Retrato do painel (attach-freeze)
+
+  private var panelSnapshot: UIView?
+
+  private func placePanelSnapshot() {
+    removePanelSnapshot(animated: false)
+    guard let panel = panelView, let kw = panel.window, let appWin = window else { return }
+    let r = panel.convert(panel.bounds, to: kw)
+    guard r.height > 1 else { return }
+    let full = CGRect(x: r.minX, y: r.minY, width: r.width, height: max(r.height, kw.bounds.maxY - r.minY))
+    guard let snap = kw.resizableSnapshotView(from: full, afterScreenUpdates: false, withCapInsets: .zero) else { return }
+    let inApp = appWin.convert(full, from: kw)
+    snap.frame = inApp
+    snap.isUserInteractionEnabled = false
+    appWin.addSubview(snap)
+    panelSnapshot = snap
+    // rede: nunca fica preso (folha aberta por muito tempo some sozinho só quando a tela voltar)
+  }
+
+  private func removePanelSnapshot(animated: Bool) {
+    guard let snap = panelSnapshot else { return }
+    panelSnapshot = nil
+    if !animated { snap.removeFromSuperview(); return }
+    UIView.animate(withDuration: 0.15, animations: { snap.alpha = 0 }, completion: { _ in snap.removeFromSuperview() })
+  }
+
+  /// Painel de volta SEM animação (o retrato/painel falso estava no lugar).
+  private func showAttachPanelInstant() {
+    guard attachPanel, attachInstant, window != nil, !panelActive, !voice.isActive, !disabled else {
+      removePanelSnapshot(animated: true)
+      return
+    }
+    UIView.performWithoutAnimation {
+      self.showAttachPanel()
+      self.window?.layoutIfNeeded()
+    }
+    // o painel real já cobre o retrato no próximo quadro
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in self?.removePanelSnapshot(animated: false) }
+  }
+
+  /// [2026-10-20 attach-freeze] JS (api 11): câmera do painel cancelada → painel volta.
+  func showAttachPanelFromJS() {
+    showAttachPanelInstant()
   }
 
   // MARK: Attach sheet (attach-instant)
@@ -1266,10 +1321,9 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
       if !final { return }
       panelReturnPending = false
       if action == "cancel" && byUser && attachPanel && attachInstant {
-        DispatchQueue.main.async { [weak self] in
-          guard let self = self, self.window != nil, !self.panelActive, !self.voice.isActive, !self.disabled else { return }
-          self.showAttachPanel()
-        }
+        DispatchQueue.main.async { [weak self] in self?.showAttachPanelInstant() }
+      } else {
+        removePanelSnapshot(animated: true)
       }
       return
     }

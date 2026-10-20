@@ -209,12 +209,35 @@ export function threadKbAttachBegin(hadKeyboard) {
 export function threadKbAttachEnd(immediate) {
   _attachFns.forEach((o) => { try { o.end(!!immediate); } catch {} });
 }
+// [2026-10-20 attach-freeze] "Fotos" do painel / "+" com teclado (founder,
+// vídeo 744): a apresentação MODAL da folha tira o painel/teclado num quadro
+// (stash do UIKit) → composer caía, lista re-layoutava e rolava, 1 quadro sem
+// folha. AGORA a conversa CONGELA na altura do painel/teclado (hold sem prazo)
+// e um "painel falso" (cor do teclado) ocupa o vão por baixo da folha até ela
+// fechar. Fechar: painel devolvido pelo nativo (composer api 11) = solta já,
+// sem pulo; senão desce animado junto com a folha saindo.
+// Kill switch OTA: globalThis.__chatyy_attach_freeze = false.
+export function threadKbAttachFreezeOn() {
+  try { if (globalThis.__chatyy_attach_freeze === false) return false; } catch {}
+  return Platform.OS === 'ios';
+}
+/** Congela a conversa na altura atual do teclado/painel (color = painel falso). */
+export function threadKbAttachFreeze(color) {
+  let any = false;
+  _attachFns.forEach((o) => { try { if (o.freeze(color)) any = true; } catch {} });
+  return any;
+}
+/** Solta o congelamento. waitKbMs > 0 = espera o painel/teclado voltar (até X ms) antes de decidir. */
+export function threadKbAttachThaw(waitKbMs) {
+  _attachFns.forEach((o) => { try { o.thaw(Number(waitKbMs) || 0); } catch {} });
+}
 /** Composer ganhou foco (toque/foco explícito) → trava solta na hora. */
 export function threadKbNoteComposerFocus() {
   _composerFocused = true;
   _attachFns.forEach((o) => { try { o.focus(); } catch {} });
 }
 const _clipStyle = { flex: 1, overflow: 'hidden' };
+const _fakePanelBase = { position: 'absolute', left: 0, right: 0, bottom: 0 }; // [2026-10-20 attach-freeze]
 const _flex1 = { flex: 1 };
 
 // Ref-count of mounted threads (chat → chat pushes) so unmounting one thread
@@ -253,6 +276,9 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
   // do "+"; clamp = 1 → lift 0 (nada levanta a barra sem teclado).
   const hold = Rea.useSharedValue(0);
   const clamp = Rea.useSharedValue(0);
+  // [2026-10-20 attach-freeze] painel falso no vão (altura = hold) enquanto congelado.
+  const fake = Rea.useSharedValue(0);
+  const fakeColor = Rea.useSharedValue('#d6d7dc');
   // [2026-10-13 android-kbd-flicker] bottomInset atual p/ o restore do Android
   // (o effect abaixo só depende de setEnabled).
   const insetRef = React.useRef(bottomInset || 0);
@@ -430,6 +456,8 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
     // [2026-10-19 attach-hold] ver threadKbAttachBegin (topo do arquivo).
     let lastOpenKh = 0; // última altura REAL do teclado aberto (didShow / sync nativa)
     let attachOn = false;
+    let frozen = false; // [2026-10-20 attach-freeze]
+    let thawTimer = null;
     let holdTimer = null;
     let clampTimer = null;
     const ATTACH_HOLD_MS = 400; // folha (mola 0,52 s) já cobre a barra
@@ -472,6 +500,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
         }, ATTACH_HOLD_MS);
       },
       end: (immediate) => {
+        if (frozen) return; // [2026-10-20 attach-freeze] quem solta é o thaw
         if (!attachOn) return;
         attachOn = false;
         if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
@@ -480,6 +509,66 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
         if (immediate || _composerFocused) { releaseClamp(); return; }
         if (clampTimer) clearTimeout(clampTimer);
         clampTimer = setTimeout(() => { clampTimer = null; releaseClamp(); }, ATTACH_CLAMP_TAIL_MS);
+      },
+      // [2026-10-20 attach-freeze] ver threadKbAttachFreeze (topo do arquivo).
+      freeze: (color) => {
+        const ins = insetRef.current || 0;
+        let kh = 0;
+        try { kh = settled.value === 1 ? 0 : -height.value; } catch {}
+        if (!(kh > ins + 1)) { try { if (Keyboard.isVisible()) kh = Number(Keyboard.metrics()?.height) || 0; } catch {} }
+        const h = Math.max(0, kh - ins);
+        if (h <= 1) return false;
+        attachOn = true;
+        frozen = true;
+        if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        if (clampTimer) { clearTimeout(clampTimer); clampTimer = null; }
+        if (thawTimer) { clearTimeout(thawTimer); thawTimer = null; }
+        try { if (color) fakeColor.value = String(color); } catch {}
+        try { hold.value = h; fake.value = 1; } catch {}
+        try { clamp.value = 1; } catch {}
+        return true;
+      },
+      thaw: (waitMs) => {
+        if (!frozen) return;
+        const finishKeep = () => {
+          frozen = false;
+          attachOn = false;
+          // Painel/teclado de volta (KC já com −altura): solta sem mexer.
+          try { clamp.value = 0; hold.value = 0; fake.value = 0; } catch {}
+          try { settled.value = 0; } catch {}
+        };
+        const finishDrop = () => {
+          frozen = false;
+          attachOn = false;
+          try {
+            if (Rea.withTiming) hold.value = Rea.withTiming(0, { duration: 260 });
+            else hold.value = 0;
+          } catch { try { hold.value = 0; } catch {} }
+          if (thawTimer) clearTimeout(thawTimer);
+          thawTimer = setTimeout(() => {
+            thawTimer = null;
+            try { fake.value = 0; } catch {}
+            if (frozen) return;
+            let vis = false;
+            try { vis = !!Keyboard.isVisible(); } catch {}
+            if (!vis) settle();
+            try { clamp.value = 0; } catch {}
+          }, 300);
+        };
+        let vis = false;
+        try { vis = !!Keyboard.isVisible(); } catch {}
+        if (vis) { finishKeep(); return; }
+        if (!(waitMs > 0)) { finishDrop(); return; }
+        let done = false;
+        let sub = null;
+        const go = (kb) => {
+          if (done) return;
+          done = true;
+          try { sub && sub.remove(); } catch {}
+          if (kb) finishKeep(); else finishDrop();
+        };
+        try { sub = Keyboard.addListener('keyboardDidShow', () => go(true)); } catch {}
+        setTimeout(() => { let v = false; try { v = !!Keyboard.isVisible(); } catch {} go(v); }, waitMs);
       },
       focus: () => {
         // Foco no composer = teclado dele vindo de verdade → segue o KC já.
@@ -655,6 +744,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
       _attachFns.delete(attachObj);
       if (holdTimer) clearTimeout(holdTimer);
       if (clampTimer) clearTimeout(clampTimer);
+      if (thawTimer) clearTimeout(thawTimer); // [2026-10-20 attach-freeze]
       _healFns.delete(healFn); // [2026-10-19 kb-heal]
       clearInterval(watchdog);
       if (healTimer) clearTimeout(healTimer);
@@ -707,8 +797,19 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, children }
   }, []);
   const kbCtx = React.useMemo(() => (kbBase ? { base: true, lift, tmode } : null), [kbBase, lift, tmode]);
 
+  // [2026-10-20 attach-freeze] painel falso no vão do lift congelado.
+  const fakeStyle = Rea.useAnimatedStyle(() => {
+    'worklet';
+    const on = fake.value === 1;
+    return { height: on ? Math.max(0, hold.value) : 0, opacity: on ? 1 : 0, backgroundColor: fakeColor.value };
+  }, []);
   const AnimatedView = Rea.default.View;
-  const body = <AnimatedView style={[style, animatedStyle]}>{children}</AnimatedView>;
+  const body = (
+    <AnimatedView style={[style, animatedStyle]}>
+      {children}
+      <AnimatedView pointerEvents="none" style={[_fakePanelBase, fakeStyle]} />
+    </AnimatedView>
+  );
   return kbCtx ? <ThreadKbCtx.Provider value={kbCtx}>{body}</ThreadKbCtx.Provider> : body;
 }
 

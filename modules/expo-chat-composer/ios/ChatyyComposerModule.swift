@@ -177,8 +177,12 @@ public class ChatyyComposerModule: Module {
     //     [{key,label}] e evento onAttachPanel{key, keep?}: o "+" troca o
     //     teclado pelo painel de anexos (inputView, mesma altura) e o "+" vira
     //     ícone de teclado; Fotos (keep) abre a folha acima do painel.
+    // 11 = [2026-10-20 attach-freeze] "Fotos"/"Câmera" do painel seguram o
+    //     painel até a folha/câmera ser apresentada (JS congela a conversa);
+    //     retrato do painel por baixo da folha; cancelar = painel de volta sem
+    //     animação; AsyncFunction showAttachPanel().
     Function("apiVersion") { () -> Int in
-      return 10
+      return 11
     }
 
     View(ChatyyComposerView.self) {
@@ -238,6 +242,11 @@ public class ChatyyComposerModule: Module {
 
       AsyncFunction("blur") { (view: ChatyyComposerView) in
         view.blurInput()
+      }.runOnQueue(.main)
+
+      // [2026-10-20 attach-freeze] painel de anexos de volta sem animação (api 11).
+      AsyncFunction("showAttachPanel") { (view: ChatyyComposerView) in
+        view.showAttachPanelFromJS()
       }.runOnQueue(.main)
 
       // [2026-10-19 attach-hold] solta o teclado adiado pelo "+" (api 8).

@@ -54,7 +54,7 @@ import { wasImageLoaded, seenAwareTransition, markImageLoaded } from '../utils/i
 import { peekOpenConversation, getCachedChatSettings, setCachedChatSettings, getCachedLocalPrefs, setCachedLocalPrefs, getCachedPresence, setCachedPresence } from '../utils/chatOpenHandoff'; // [2026-10-08 chat-open-flicker]
 // [2026-10-06 keyboard-controller] Keyboard glued to the composer on the UI
 // thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
-import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, ThreadKeyboardBar, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID, threadKbAttachBegin, threadKbAttachEnd } from '../utils/threadKeyboard';
+import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, ThreadKeyboardBar, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID, threadKbAttachBegin, threadKbAttachEnd, threadKbAttachFreezeOn, threadKbAttachFreeze, threadKbAttachThaw } from '../utils/threadKeyboard';
 import { isAppResuming, kbResumeGuardOn } from '../utils/kbResumeGuard'; // [2026-10-18 kb-resume]
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
 import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal, nativeSearchOn, nativeDragSelectOn, nativeOverlayOn, nativeQuickReactOn, tgBubblesOn, nativeTgStyleOn } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
@@ -13194,6 +13194,13 @@ function ChatConversationInnerBody() {
       setShowAttachMenu(true);
       return true;
     }
+    // [2026-10-20 attach-freeze] e.keep sem over-kb: conversa congelada + folha
+    // modal por cima; o nativo só solta o teclado quando a folha é apresentada.
+    if (e.keep === true) {
+      if (_openSheetFrozen(undefined, false)) return true;
+      release();
+      return false;
+    }
     _attachInstantRef.current = true;
     _attachKbRef.current = { had: false, at: 0 };
     try { threadKbAttachBegin(e.hadKeyboard === true); } catch {}
@@ -13262,20 +13269,82 @@ function ChatConversationInnerBody() {
       return out;
     } catch { return null; }
   };
+  // [2026-10-20 attach-freeze] Folha MODAL por cima com a conversa congelada
+  // (utils/threadKeyboard threadKbAttachFreeze): o stash do painel/teclado na
+  // apresentação não mexe em composer nem lista; um painel falso cobre o vão
+  // por baixo da folha. fromPanel = veio do painel (cancelar devolve o painel
+  // no composer api >= 11). Kill switch OTA: __chatyy_attach_freeze = false.
+  const _attachFrozenRef = useRef({ on: false, panel: false });
+  const _attachFreezeColor = () => (isDark ? '#2c2c2e' : '#d4d5da');
+  const _attachFreezeNow = (fromPanel) => {
+    let frozen = false;
+    try { if (threadKbAttachFreezeOn()) frozen = !!threadKbAttachFreeze(_attachFreezeColor()); } catch {}
+    _attachFrozenRef.current = { on: frozen, panel: !!fromPanel };
+    return frozen;
+  };
+  const _attachThawNow = (action) => {
+    const st = _attachFrozenRef.current;
+    if (!st.on) return;
+    _attachFrozenRef.current = { on: false, panel: false };
+    let api = 0;
+    try { api = require('../utils/kbNativeTransitions').nativeComposerApi(); } catch {}
+    const wait = (st.panel && action === 'cancel' && api >= 11) ? 500 : 0;
+    try { threadKbAttachThaw(wait); } catch {}
+  };
+  const _openSheetFrozen = (sheetOpts, fromPanel) => {
+    const open = _attachInstantOpenRef.current;
+    if (typeof open !== 'function' || !mountedRef.current || _kbLeavingRef.current) return false;
+    _attachInstantRef.current = true;
+    _attachKbRef.current = { had: false, at: 0 };
+    _attachFreezeNow(fromPanel);
+    let ok = false;
+    try { ok = !!open(sheetOpts); } catch { ok = false; }
+    if (!ok) {
+      _attachInstantRef.current = false;
+      _attachThawNow('fail');
+      return false;
+    }
+    setShowAttachMenu(true);
+    return true;
+  };
+  // [2026-10-20 attach-freeze] Câmera do painel (composer api 11 manda keep):
+  // câmera nativa em tela cheia por cima da conversa congelada; cancelar
+  // devolve o painel.
+  const _openCameraFrozen = async () => {
+    _attachFreezeNow(true);
+    let r = null;
+    try {
+      if (NativeAttachBridge && NativeAttachBridge.nativeCameraUsable()) r = await NativeAttachBridge.openNativeCamera(t);
+    } catch { r = null; }
+    if (!r) {
+      _attachThawNow('fail');
+      try { inputRef.current?.releaseForAttach?.(); } catch {}
+      try { handleCamera(); } catch {}
+      return;
+    }
+    if (r.action === 'cancel') {
+      try { inputRef.current?.showAttachPanel?.(); } catch {}
+      _attachThawNow('cancel');
+      return;
+    }
+    _attachThawNow(r.action);
+    if (r.action === 'gallery') { setTimeout(() => { try { handleGallery(); } catch {} }, 120); return; }
+    if ((r.action === 'capture' || r.action === 'pick') && r.files && r.files.length) {
+      const files = r.files;
+      setTimeout(() => setMediaPreview({ visible: true, files }), 120);
+    }
+  };
   const _onAttachPanel = (e) => {
     const key = e && e.key;
     if (!key) return;
+    if (key === 'camera' && e.keep === true && Platform.OS === 'ios') { _openCameraFrozen(); return; }
     if (key === 'gallery' || key === 'photos') {
-      // Fotos → folha "Recentes" (acima do painel quando o nativo segura o teclado).
+      // [2026-10-20 attach-freeze] Fotos = SÓ a galeria (sem barra de ações nem
+      // tile de câmera; attach api >= 7 = cabeçalho X | Fotos/Álbuns | HD e
+      // altura grande), por cima de tudo, conversa congelada.
+      const galleryOpts = { gallery: true };
       if (e.keep === true) {
-        const open = _attachInstantOpenRef.current;
-        let ok = false;
-        if (typeof open === 'function' && mountedRef.current && !_kbLeavingRef.current) {
-          _attachInstantRef.current = true;
-          _attachKbRef.current = { had: false, at: 0 };
-          try { ok = !!open({ overKeyboard: true }); } catch { ok = false; }
-        }
-        if (ok) { setShowAttachMenu(true); return; }
+        if (Platform.OS === 'ios' && _openSheetFrozen(galleryOpts, true)) return;
         _attachInstantRef.current = false;
         try { inputRef.current?.releaseForAttach?.(); } catch {}
       }
@@ -13287,7 +13356,7 @@ function ChatConversationInnerBody() {
         if (Platform.OS === 'ios' && typeof open === 'function' && mountedRef.current && !_kbLeavingRef.current) {
           _attachInstantRef.current = true;
           _attachKbRef.current = { had: false, at: 0 };
-          try { ok = !!open(); } catch { ok = false; }
+          try { ok = !!open({ gallery: true }); } catch { ok = false; }
           if (!ok) _attachInstantRef.current = false;
         }
       }
@@ -13374,6 +13443,7 @@ function ChatConversationInnerBody() {
     try {
       sub = require('react-native').DeviceEventEmitter.addListener('chatyy:attachSheetClosed', (e) => {
         _attachInstantRef.current = false; // [2026-10-19 attach-instant]
+        try { _attachThawNow(e && e.action); } catch {} // [2026-10-20 attach-freeze]
         try { threadKbAttachEnd(false); } catch {} // [2026-10-19 attach-hold]
         const st = _attachKbRef.current;
         _attachKbRef.current = { had: false, at: 0 };

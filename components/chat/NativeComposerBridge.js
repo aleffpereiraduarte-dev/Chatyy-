@@ -22,7 +22,7 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, processColor } from 'react-native';
 import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
-import { threadKbNoteComposerBlur, threadKbNoteComposerFocus } from '../../utils/threadKeyboard'; // [2026-10-19 kb-heal] · [2026-10-19 attach-hold]
+import { threadKbNoteComposerBlur, threadKbNoteComposerFocus, threadKbAttachFreezeOn } from '../../utils/threadKeyboard'; // [2026-10-19 kb-heal] · [2026-10-19 attach-hold]
 import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi, androidAttachInstantOn, attachLegacyNoneActive, attachHoldOn, attachOverKeyboardOn, attachInputPanelOn, androidAttachPanelOn } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
 
 let _failed = false;
@@ -71,7 +71,9 @@ function _attachInstantProps() {
     o.attachRestore = attachRestoreMode();
     if (api >= 8 && attachHoldOn()) o.attachDeferResign = true; // [2026-10-19 attach-hold]
     // [2026-10-19 attach-over-kb] api 9 + folha api 6: teclado fica sob a folha.
-    if (attachOverKeyboardOn()) o.attachKeepKeyboard = true;
+    // [2026-10-20 attach-freeze] api >= 9 também segura o teclado/painel até a
+    // folha ser apresentada (o JS congela a conversa antes) — vale no 744.
+    if (attachOverKeyboardOn() || (api >= 9 && threadKbAttachFreezeOn())) o.attachKeepKeyboard = true;
     // [2026-10-20 attach-inputview] api 10: painel no lugar do teclado.
     if (attachInputPanelOn()) o.attachPanel = true;
   }
@@ -220,6 +222,15 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
   useImperativeHandle(ref, () => ({
     focus: () => { try { nativeRef.current?.focus?.()?.catch?.(() => {}); } catch {} },
     blur: () => { try { nativeRef.current?.blur?.()?.catch?.(() => {}); } catch {} },
+    // [2026-10-20 attach-freeze] iOS api >= 11: painel de anexos de volta SEM animação.
+    showAttachPanel: () => {
+      try {
+        const f = nativeRef.current?.showAttachPanel;
+        if (typeof f !== 'function') return false;
+        f.call(nativeRef.current)?.catch?.(() => {});
+        return true;
+      } catch { return false; }
+    },
     // [2026-10-20 attach-inputview] Android api 7: desce o IME sem tirar o foco.
     hideImeKeepFocus: () => {
       try {

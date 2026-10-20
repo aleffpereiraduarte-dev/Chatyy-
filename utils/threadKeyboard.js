@@ -38,6 +38,9 @@ export function threadKbNoteComposerBlur() {}
 // [2026-10-19 attach-hold] mesmas exports do .native.js (web: no-op).
 export function threadKbAttachBegin() {}
 export function threadKbAttachEnd() {}
+export function threadKbAttachFreezeOn() { return false; } // [2026-10-20 attach-freeze]
+export function threadKbAttachFreeze() { return false; }
+export function threadKbAttachThaw() {}
 export function threadKbNoteComposerFocus() {}
 
 export const THREAD_LIST_KEYBOARD_DISMISS_MODE = 'on-drag';
