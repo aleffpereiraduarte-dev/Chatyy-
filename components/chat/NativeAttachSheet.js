@@ -195,9 +195,25 @@ export default function NativeAttachSheet({
     openRef.current = true;
     const p = propsRef.current;
     const th = themeFor(p.colors);
-    const actions = (Array.isArray(p.items) ? p.items : [])
+    let actions = (Array.isArray(p.items) ? p.items : [])
       .filter((it) => it && it.key)
       .map((it) => ({ key: String(it.key), label: String(it.label || it.key) }));
+    // [2026-10-20 attach-tg] Folha do "+" no estilo Telegram: abas Galeria,
+    // Arquivo, Localização, Contato, Enquete, Evento, Playlist, Jogos (câmera é
+    // o 1º quadrado da grade; GIF fica no painel de emoji). Kill switch OTA:
+    // globalThis.__chatyy_attach_tg = false (= ordem/rótulos antigos).
+    let _tg = !(opts && opts.gallery);
+    try { if (globalThis.__chatyy_attach_tg === false) _tg = false; } catch {}
+    if (_tg) {
+      const order = ['gallery', 'file', 'location', 'contact', 'poll', 'meetup', 'playlist', 'games'];
+      const rename = { meetup: tt(p.t, 'chatConv.event', 'Evento') };
+      const by = {};
+      actions.forEach((a) => { by[a.key] = a; });
+      const out = [];
+      order.forEach((k) => { if (by[k]) out.push({ key: k, label: rename[k] || by[k].label }); });
+      actions.forEach((a) => { if (!order.includes(a.key) && a.key !== 'gif' && a.key !== 'camera') out.push(a); });
+      actions = out;
+    }
     let _hdDefault = false;
     try { _hdDefault = require('../../services/mediaUploadQuality').defaultUploadLevel() !== 'standard'; } catch {}
     (async () => {
@@ -219,6 +235,7 @@ export default function NativeAttachSheet({
           // altura grande e sem a faixa vazia embaixo.
           ...(opts && opts.gallery ? { actions: [], allowCamera: false, galleryMode: true } : null),
           ...(opts && opts.inKeyboardWindow ? { inKeyboardWindow: true } : null), // [2026-10-20 attach-inwindow]
+          ...(_tg ? { tgHeader: true } : null), // [2026-10-20 attach-tg] attach api >= 9
           // [2026-10-16 motion-attach] botões em cascata; kill switch OTA
           // globalThis.__chatyy_motion_attach = false (chave ausente = ligado).
           ...((() => { try { return globalThis.__chatyy_motion_attach === false || globalThis.__chatyy_motion === false; } catch { return false; } })() ? { motion: false } : null),

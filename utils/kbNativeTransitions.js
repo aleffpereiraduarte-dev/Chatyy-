@@ -112,8 +112,12 @@ export function attachOverKeyboardOn() {
 // composer parado e focado; "+" vira ícone de teclado). Fotos abre a folha
 // "Recentes" acima do painel. Kill switch OTA:
 // globalThis.__chatyy_attach_inputview = false → "+" abre a folha (over-kb).
+// [2026-10-20 attach-tg] Founder: "igual ao Telegram" — "+" com teclado aberto
+// = teclado DESCE (composer grudado) e a folha de anexos sobe por cima; fechar
+// não reabre nada. O painel no lugar do teclado virou opt-in:
+// globalThis.__chatyy_attach_inputview = true.
 export function attachInputPanelOn() {
-  try { if (globalThis.__chatyy_attach_inputview === false) return false; } catch {}
+  try { if (globalThis.__chatyy_attach_inputview !== true) return false; } catch { return false; }
   if (!attachInstantOn()) return false;
   return nativeComposerApi() >= 10;
 }
@@ -132,7 +136,8 @@ export function attachInWindowOn() {
 // teclado e o IME só desce quando ele montou. Kill switch OTA (o mesmo do iOS):
 // globalThis.__chatyy_attach_inputview = false → folha do "+" como antes.
 export function androidAttachPanelOn() {
-  try { if (globalThis.__chatyy_attach_inputview === false) return false; } catch {}
+  // [2026-10-20 attach-tg] modelo Telegram também no Android: painel opt-in.
+  try { if (globalThis.__chatyy_attach_inputview !== true) return false; } catch { return false; }
   if (!androidAttachInstantOn()) return false;
   return nativeComposerApi() >= 7;
 }

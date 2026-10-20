@@ -49,8 +49,10 @@ public class ChatyyAttachModule: Module {
     //     a folha/câmera entra como subview da MESMA janela do painel de anexos
     //     (inputView do composer) — sem present, sem resign, nenhum evento de
     //     teclado: conversa, composer e lista parados.
+    // 9 = [2026-10-20 attach-tg] openSheet({tgHeader}): cabeçalho no estilo
+    //     Telegram (X à esquerda, "Recentes ▾" central abre os álbuns).
     Function("apiVersion") { () -> Int in
-      return 8
+      return 9
     }
 
     OnCreate {
@@ -425,6 +427,8 @@ struct AttachConfig {
   // [2026-10-20 attach-freeze] api 7: folha SÓ galeria (WhatsApp): cabeçalho
   // X | Fotos/Álbuns | HD, altura grande, sem barra de ações embaixo.
   let galleryMode: Bool
+  // [2026-10-20 attach-tg] api 9: cabeçalho Telegram (X à esquerda, "Recentes ▾" com álbuns).
+  let tgHeader: Bool
 
   init(_ o: [String: Any]) {
     var l: [String: String] = [:]
@@ -458,6 +462,7 @@ struct AttachConfig {
     boomerangSec = min(4, max(0.8, AttachConfig.double(o["boomerangSec"]) ?? 1.5))
     motion = (o["motion"] as? Bool) ?? true
     galleryMode = (o["galleryMode"] as? Bool) ?? false
+    tgHeader = ((o["tgHeader"] as? Bool) ?? false) && !galleryMode
   }
 
   func t(_ key: String, _ fallback: String) -> String {

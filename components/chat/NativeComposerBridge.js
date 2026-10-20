@@ -76,7 +76,8 @@ function _attachInstantProps() {
     // [2026-10-20 kb-glued] só segura o painel quando a folha entra NA janela
     // dele (api 12/8, nada se mexe) ou por opt-in; senão o painel/teclado desce
     // animado e o composer desce grudado (sem stash instantâneo do present).
-    if (attachOverKeyboardOn() || attachInWindowOn() || (api >= 9 && threadKbAttachFreezeOn())) o.attachKeepKeyboard = true;
+    // [2026-10-20 attach-tg] in-window só vale p/ Fotos/Câmera do painel (opt-in).
+    if (attachOverKeyboardOn() || (attachInputPanelOn() && attachInWindowOn()) || (api >= 9 && threadKbAttachFreezeOn())) o.attachKeepKeyboard = true;
     // [2026-10-20 attach-inputview] api 10: painel no lugar do teclado.
     if (attachInputPanelOn()) o.attachPanel = true;
   }

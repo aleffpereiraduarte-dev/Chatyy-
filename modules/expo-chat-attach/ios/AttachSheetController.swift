@@ -129,7 +129,8 @@ final class AttachSheetController: UIViewController,
     buildPermissionView()
     buildBottom()
     layoutContent()
-    if config.galleryMode { buildAlbums() } // [2026-10-20 attach-freeze]
+    if config.galleryMode || config.tgHeader { buildAlbums() } // [2026-10-20 attach-freeze] · [2026-10-20 attach-tg]
+    if config.tgHeader { setTgTitle(config.t("recents", "Recentes")) }
 
     let pan = UIPanGestureRecognizer(target: self, action: #selector(onPan(_:)))
     pan.delegate = self
@@ -218,7 +219,7 @@ final class AttachSheetController: UIViewController,
     sheetView.transform = CGAffineTransform(translationX: 0, y: dismissOffset)
     let range = max(1, collapsedTop - expandedTop)
     let p = 1 - min(1, max(0, (top - expandedTop) / range)) // 0 recolhida … 1 expandida
-    closeButton.alpha = config.galleryMode ? 1 : p
+    closeButton.alpha = (config.galleryMode || config.tgHeader) ? 1 : p
     grabber.alpha = 1 - p * 0.6
     sheetView.layer.cornerRadius = 14 * (1 - p * 0.6)
     collectionView.isScrollEnabled = isExpanded
@@ -249,6 +250,13 @@ final class AttachSheetController: UIViewController,
     closeButton.addTarget(self, action: #selector(onCloseTap), for: .touchUpInside)
     closeButton.translatesAutoresizingMaskIntoConstraints = false
     sheetView.addSubview(closeButton)
+    if config.tgHeader { // [2026-10-20 attach-tg] X à esquerda, título central com álbuns
+      closeButton.backgroundColor = config.chip
+      closeButton.layer.cornerRadius = 22
+      titleLabel.isUserInteractionEnabled = true
+      titleLabel.accessibilityTraits = [.header, .button]
+      titleLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(onTgTitleTap)))
+    }
     guard config.galleryMode else { return }
     // [2026-10-20 attach-freeze] X (círculo) | Fotos/Álbuns | HD — P&B.
     titleLabel.isHidden = true
@@ -303,6 +311,33 @@ final class AttachSheetController: UIViewController,
     ])
   }
 
+  // [2026-10-20 attach-tg] Telegram: "Recentes ▾" no centro abre os álbuns.
+  private lazy var tgAlbumTitle: String = config.t("recents", "Recentes")
+
+  private func setTgTitle(_ t: String) {
+    let a = NSMutableAttributedString(string: t + " ", attributes: [.font: UIFont.systemFont(ofSize: 17, weight: .semibold), .foregroundColor: config.text])
+    if let img = CAFormat.symbol("chevron.down", 12, .semibold)?.withTintColor(config.textSecondary, renderingMode: .alwaysOriginal) {
+      let att = NSTextAttachment()
+      att.image = img
+      att.bounds = CGRect(x: 0, y: 1, width: img.size.width, height: img.size.height)
+      a.append(NSAttributedString(attachment: att))
+    }
+    titleLabel.attributedText = a
+    titleLabel.accessibilityLabel = t
+    titleLabel.accessibilityHint = config.t("albums", "Álbuns")
+  }
+
+  @objc private func onTgTitleTap() {
+    guard selected.isEmpty else { return }
+    let show = albumsTable.isHidden
+    caHaptic("select")
+    if show {
+      if albumList.isEmpty { albumList.load(); albumsTable.reloadData() }
+      if !isExpanded { animateTo(top: expandedTop, dismiss: 0, velocity: 0) }
+    }
+    albumsTable.isHidden = !show
+  }
+
   @objc private func onSegment() {
     let showAlbums = segment.selectedSegmentIndex == 1
     caHaptic("select")
@@ -324,8 +359,14 @@ final class AttachSheetController: UIViewController,
       loadAssets()
     }
     collectionView.reloadData()
-    segment.setTitle(coll == nil ? config.t("photos", "Fotos") : title, forSegmentAt: 0)
-    segment.selectedSegmentIndex = 0
+    if config.galleryMode {
+      segment.setTitle(coll == nil ? config.t("photos", "Fotos") : title, forSegmentAt: 0)
+      segment.selectedSegmentIndex = 0
+    }
+    if config.tgHeader { // [2026-10-20 attach-tg]
+      tgAlbumTitle = coll == nil ? config.t("recents", "Recentes") : title
+      if selected.isEmpty { setTgTitle(tgAlbumTitle) }
+    }
     albumsTable.isHidden = true
     if (fetchResult?.count ?? 0) > 0 { collectionView.setContentOffset(.zero, animated: false) }
   }
@@ -555,10 +596,14 @@ final class AttachSheetController: UIViewController,
       grabber.centerXAnchor.constraint(equalTo: sheetView.centerXAnchor),
       grabber.widthAnchor.constraint(equalToConstant: 36),
       grabber.heightAnchor.constraint(equalToConstant: 5),
-      titleLabel.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
+      config.tgHeader
+        ? titleLabel.centerXAnchor.constraint(equalTo: sheetView.centerXAnchor)
+        : titleLabel.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
       titleLabel.centerYAnchor.constraint(equalTo: sheetView.topAnchor, constant: hdrH / 2 + 4),
-      titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
-      config.galleryMode
+      config.tgHeader
+        ? titleLabel.widthAnchor.constraint(lessThanOrEqualTo: sheetView.widthAnchor, constant: -120)
+        : titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
+      (config.galleryMode || config.tgHeader)
         ? closeButton.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 14)
         : closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -6),
       closeButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
@@ -833,9 +878,15 @@ final class AttachSheetController: UIViewController,
   private func refreshSelectionUI(animated: Bool) {
     let n = selected.count
     let showSel = n > 0
+    if config.tgHeader {
+      // [2026-10-20 attach-tg] "Recentes ▾" (álbum atual) ou "N selecionados".
+      if showSel { titleLabel.attributedText = nil; titleLabel.text = config.t("selectedCount", "{count} selecionados").replacingOccurrences(of: "{count}", with: "\(n)") }
+      else { setTgTitle(tgAlbumTitle) }
+    } else {
     titleLabel.text = showSel
       ? config.t("selectedCount", "{count} selecionados").replacingOccurrences(of: "{count}", with: "\(n)")
       : config.t("recents", "Recentes")
+    }
     countBadge.text = "\(n)"
     countBadge.isHidden = n < 2
     hdChip.isHidden = asFile
