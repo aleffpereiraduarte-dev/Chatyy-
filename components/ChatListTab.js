@@ -3152,6 +3152,14 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
     const _pins = Array.isArray(pinnedItems) ? pinnedItems : [];
     const _firstName = (s) => { const n = String(s || '').trim(); return n.split(/\s+/)[0] || n; };
     const _showSkel = statusLoading && otherStatuses.length === 0 && liveOnlyEntries.length === 0;
+    // [2026-10-20 pin-story] Story do contato fixado (WhatsApp): mesmo cálculo de
+    // "não visto" da faixa/aba Status (useStatuses → item.viewed). Atualiza ao vivo
+    // porque otherStatuses vem do hook (status novo chega / markViewed ao terminar).
+    const _pinStoryBy = new Map();
+    for (const g of otherStatuses) {
+      const k = String(g.email || '').toLowerCase();
+      if (k && (g.items || []).length > 0) _pinStoryBy.set(k, (g.items || []).some(it => it && !it.viewed) ? 'new' : 'seen');
+    }
     _carouselEl = (
       <ScrollView
         horizontal
@@ -3302,6 +3310,13 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
           const nm = nick || emailToDisplayName(item.display_name || item.name || '?');
           const unread = item.unread_count || 0;
           const sel = !!(selectedIds && selectedIds.has && selectedIds.has(item.id));
+          // [2026-10-20 pin-story] 'new' = anel tinta (igual "não visto" da aba Status),
+          // 'seen' = anel cinza fino, null = sem anel. Toque com story novo abre o
+          // visualizador no 1º não visto (openStatus → ChatStatusTab); segurar oferece
+          // "Abrir conversa" + o menu de sempre.
+          const story = (!isGroup && peerEmail) ? (_pinStoryBy.get(String(peerEmail).toLowerCase()) || null) : null;
+          const storyNew = story === 'new' && !(selectedIds && selectedIds.size > 0);
+          const _ringSz = HC.pinAvatar + 10;
           return (
             <CarouselSlot
               key={`pin-${item.id}`}
@@ -3309,15 +3324,35 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               labelSize={11}
               label={isGroup ? nm : _firstName(nm)}
               labelColor={_lc}
-              onPress={() => { try { _A().onPinPress?.(item); } catch {} }}
-              onLongPress={() => { try { _A().onPinLongPress?.(item); } catch {} }}
-              accessibilityLabel={`${nm}. ${_hcT(t, 'homeCarousel.pinned', 'Fixada')}${unread > 0 ? `. ${unread} ${_hcT(t, 'homeCarousel.unread', 'não lidas')}` : ''}`}
+              onPress={() => {
+                if (storyNew) { try { openStatus(peerEmail); } catch {} return; }
+                try { _A().onPinPress?.(item); } catch {}
+              }}
+              onLongPress={() => {
+                if (!storyNew) { try { _A().onPinLongPress?.(item); } catch {} return; }
+                try { haptic.select(); } catch {}
+                Alert.alert(nm, null, [
+                  { text: _hcT(t, 'homeCarousel.viewStatus', 'Ver status'), onPress: () => { try { openStatus(peerEmail); } catch {} } },
+                  { text: _hcT(t, 'homeCarousel.openChat', 'Abrir conversa'), onPress: () => { try { _A().onPinPress?.(item); } catch {} } },
+                  { text: _hcT(t, 'homeCarousel.chatOptions', 'Opções da conversa'), onPress: () => { try { _A().onPinLongPress?.(item); } catch {} } },
+                  { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                ]);
+              }}
+              accessibilityLabel={`${nm}. ${_hcT(t, 'homeCarousel.pinned', 'Fixada')}${story ? `. ${story === 'new' ? _hcT(t, 'homeCarousel.statusNew', 'Status novo') : _hcT(t, 'homeCarousel.statusSeen', 'Status visto')}` : ''}${unread > 0 ? `. ${unread} ${_hcT(t, 'homeCarousel.unread', 'não lidas')}` : ''}`}
+              accessibilityHint={storyNew ? _hcT(t, 'homeCarousel.pinStoryHint', 'Toque para ver o status. Toque e segure para abrir a conversa.') : undefined}
               testID={`home-carousel-pin-${item.id}`}
             >
               <View style={{ width: HC.pinAvatar, height: HC.pinAvatar }}>
                 {isGroup
                   ? <GroupAvatarStack conversation={item} size={HC.pinAvatar} isDark={isDark} />
                   : <AvatarCircle name={nm} email={peerEmail} size={HC.pinAvatar} />}
+                {story ? (
+                  <View pointerEvents="none" style={{
+                    position: 'absolute', left: -5, top: -5, width: _ringSz, height: _ringSz, borderRadius: _ringSz / 2,
+                    borderWidth: story === 'new' ? 2.5 : 1.5,
+                    borderColor: story === 'new' ? (isDark ? (colors.text || '#F5F5F7') : '#111111') : (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)'),
+                  }} testID={`home-carousel-pin-story-${story}`} />
+                ) : null}
                 {unread > 0 ? (
                   <View pointerEvents="none" style={{
                     position: 'absolute', top: -4, right: -6, minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5,

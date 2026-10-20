@@ -492,11 +492,23 @@ function SettingsScreenInner() {
   // Mesma lista para a lista JS e a nativa. type: 'r' rota · 'c' categoria.
   const _fmtNum = (n) => { try { return Number(n).toLocaleString(); } catch { return String(n); } };
   const _plan = (() => { try { return normalizePlanState(planSnap?.plan || null, planSnap?.usage || null); } catch { return null; } })();
-  const plusValue = _plan && _plan.isPaid ? (planDisplayName(_plan.planId, t) || '') : '';
+  // [2026-10-20 plan-row] Título = plano atual (Pro/Plus/Grátis c/ extra); à direita o
+  // espaço do plano ("2 TB") em vez do nome repetido. Grátis → "Chatyy Plus" + convite.
+  const _planPaid = !!(_plan && _plan.isPaid);
+  const plusTitle = _planPaid ? (planDisplayName(_plan.planId, t) || PLAN_NAME) : PLAN_NAME;
+  const plusSub = !_plan ? tr('me.plusSub', 'Assinaturas e armazenamento')
+    : (_planPaid ? tr('me.plusSubPaid', 'Assinatura e armazenamento') : tr('me.plusSubFree', 'Assine para ter mais espaço'));
+  const plusValue = (() => {
+    if (!_planPaid) return '';
+    const gb = Number(_plan.limitGb) || 0;
+    if (gb <= 0) return '';
+    if (gb >= 1000) { const tb = gb / 1024; return `${tb >= 10 || Math.abs(tb - Math.round(tb)) < 0.05 ? Math.round(tb) : tb.toFixed(1)} TB`; }
+    return `${gb} GB`;
+  })();
   const catRow = (key) => ({ key, type: 'c', cat: key, icon: CATEGORY_META[key].icon, Icon: CAT_ICONS[CATEGORY_META[key].icon], title: categoryTitle(t, key), sub: catSubtitle[key] || '' });
   const rootCards = [
     [
-      { key: 'plus', type: 'r', icon: PLUS_NATIVE_ICON(), Icon: IconPlusCircle, title: PLAN_NAME, sub: plusValue ? '' : tr('me.plusSub', 'Assinaturas e armazenamento'), value: plusValue, route: '/settings-one' },
+      { key: 'plus', type: 'r', icon: PLUS_NATIVE_ICON(), Icon: IconPlusCircle, title: plusTitle, sub: plusSub, value: plusValue, route: '/settings-one' },
       { key: 'public', type: 'r', icon: 'followers', Icon: IconUsers, title: tr('me.publicProfile', 'Perfil público'), sub: tr('me.publicProfileSub', 'Posts, seguidores e destaques'), go: openPublicProfile },
       // [perfil-fotos 2026-10-19] galeria de fotos do perfil (Telegram) + publicar no perfil.
       ProfilePhotos.isProfileGalleryEnabled() ? { key: 'ppAdd', type: 'r', icon: 'camera', Icon: IconCamera, title: ProfilePhotos.ppT(t, 'addPhoto'), sub: ProfilePhotos.ppT(t, 'addPhotoHint'), go: () => { ProfilePhotos.pickAndAddProfilePhoto({ t, email: user?.email || '' }); } } : null,
