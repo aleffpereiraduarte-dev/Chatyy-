@@ -29,6 +29,7 @@ const _sockets = new Map(); // sid → NativeTransportSocket
 let _sidSeq = 0;
 
 // Diagnóstico (lido por getNativeTransportStats / tela de diag).
+const SLICE_MS = 12; // [2026-10-20 perf-js] fatia do despacho de lotes (ver _drain)
 const _jsStats = {
   batches: 0,
   frames: 0,
@@ -204,6 +205,8 @@ class NativeTransportSocket {
 
   close(code = 1000, reason = '') {
     if (this.readyState >= 2) return;
+    try { if (!this._draining) this._flushQueue(); } catch {}
+    if (this.readyState >= 2) return;
     this.readyState = 3;
     _sockets.delete(this.sid);
     try { this._m.close(this.sid, Number(code) || 1000, String(reason || '')); } catch {}
@@ -246,21 +249,62 @@ class NativeTransportSocket {
         try { arr.push(JSON.parse(f)); } catch {}
       }
     }
-    for (let i = 0; i < arr.length; i++) {
-      if (this.readyState === 3) break;
-      const cb = this.onmessage;
-      if (!cb) break;
-      try { cb({ data: null, __obj: arr[i] }); } catch {}
-    }
-    const dt = Date.now() - t0;
     _jsStats.batches++;
     _jsStats.frames += arr.length;
     if (arr.length > _jsStats.maxBatch) _jsStats.maxBatch = arr.length;
-    _jsStats.jsMsTotal += dt;
-    if (dt > _jsStats.jsMsMax) _jsStats.jsMsMax = dt;
+    // [2026-10-20 perf-js] Lote grande (replay do resume: até 200 eventos, cada
+    // chat_message com 5–7 ouvintes) rodava inteiro num tick só → trava de
+    // centenas de ms a segundos na volta do 2º plano. Agora: fila FIFO, fatias
+    // de ~12 ms e o resto no próximo tick (toque/quadro passam no meio). Ordem
+    // preservada (lote novo entra no fim da fila). Fechar o socket drena a fila
+    // antes (nada se perde). Kill switch: globalThis.__chatyy_ws_slice = false.
+    let slice = true;
+    try { slice = globalThis.__chatyy_ws_slice !== false; } catch {}
+    if (!this._q) this._q = [];
+    for (let i = 0; i < arr.length; i++) this._q.push(arr[i]);
+    if (this._qTimer) return; // fatia já agendada consome o novo lote
+    this._drain(slice ? SLICE_MS : 0, t0);
+  }
+
+  // budgetMs 0 = tudo agora (sem fatiar).
+  _drain(budgetMs, t0) {
+    if (this._draining) return; // reentrante (handler que fecha/reabre): o laço de fora segue
+    this._draining = true;
+    const start = t0 || Date.now();
+    try {
+      const q = this._q || [];
+      let n = 0;
+      while (q.length) {
+        if (this.readyState === 3) { q.length = 0; break; }
+        const cb = this.onmessage;
+        if (!cb) { q.length = 0; break; }
+        const obj = q.shift();
+        n++;
+        try { cb({ data: null, __obj: obj }); } catch {}
+        if (budgetMs > 0 && q.length && Date.now() - start >= budgetMs) {
+          _jsStats.slices = (_jsStats.slices || 0) + 1;
+          this._qTimer = setTimeout(() => { this._qTimer = null; this._drain(budgetMs, 0); }, 0);
+          break;
+        }
+      }
+      const dt = Date.now() - start;
+      _jsStats.jsMsTotal += dt;
+      if (dt > _jsStats.jsMsMax) _jsStats.jsMsMax = dt;
+      if (n >= 30 || dt >= 30) { try { require('./perfTrace').traceSpan('nt:batch', dt); } catch {} }
+    } finally {
+      this._draining = false;
+    }
+  }
+
+  // Processa já o que estiver na fila (antes de fechar).
+  _flushQueue() {
+    if (this._qTimer) { clearTimeout(this._qTimer); this._qTimer = null; }
+    if (this._q && this._q.length && this.readyState !== 3) this._drain(0, 0);
   }
 
   _onState(ev) {
+    // [perf-js] estado nunca passa na frente de frames já recebidos
+    try { if (this._q && this._q.length && !this._draining) this._flushQueue(); } catch {}
     const st = ev.state;
     if (st === 'open' && this.readyState === 0) {
       this.readyState = 1;
@@ -268,6 +312,8 @@ class NativeTransportSocket {
       return;
     }
     if (st === 'closed' || st === 'failed') {
+      if (this.readyState === 3) return;
+      try { if (!this._draining) this._flushQueue(); } catch {}
       if (this.readyState === 3) return;
       this.readyState = 3;
       _sockets.delete(this.sid);
