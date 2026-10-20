@@ -14609,4 +14609,7 @@ export default {
   "groupAdd.add": "Adicionar",
   "groupAdd.alreadyMember": "Essa pessoa já está no grupo.",
   "groupAdd.onlyAdmins": "Só admins podem adicionar participantes.",
+  // [2026-10-20 wa2]
+  "chatConv.inviteRotateConfirm": "Redefinir o link? Quem tiver o link atual não vai mais conseguir entrar.",
+  "chatConv.inviteRevokeConfirm": "Revogar o link? Ninguém mais vai entrar por ele.",
 };

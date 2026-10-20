@@ -142,7 +142,10 @@ export default function NotificationPreferences() {
   // Optimistic single-field save. On failure roll back the UI to the
   // previous value so we never silently diverge from the server.
   const savePref = useCallback(async (patch) => {
-    const prev = prefs;
+    // [2026-10-20 wa2] desfaz só as chaves deste patch (a cópia inteira apagava outras
+    // mudanças feitas enquanto este salvamento estava em andamento).
+    const prevVals = {};
+    for (const k of Object.keys(patch || {})) prevVals[k] = prefs ? prefs[k] : undefined;
     setPrefs(p => ({ ...p, ...patch }));
     // [2026-10-13 settings-instant] commit otimista: snapshot local + fila
     // offline (sem rede não desfaz — reenvia ao reconectar).
@@ -150,7 +153,7 @@ export default function NotificationPreferences() {
       const res = await settingsCache.commit('notif', { patch, action: 'chat_user_notif_prefs_set', params: patch });
       if (res && res.ok === false) throw new Error(res.r?.error || 'failed');
     } catch (e) {
-      setPrefs(prev);
+      setPrefs(p => ({ ...p, ...prevVals }));
       Alert.alert(t('common.error'), t('notifPref.saveFailed'));
     }
   }, [prefs, t]);
@@ -185,7 +188,9 @@ export default function NotificationPreferences() {
 
   const removeKeyword = useCallback(async (id) => {
     try {
-      await apiCall('chat_user_keywords_remove', { id }, 'POST');
+      const r = await apiCall('chat_user_keywords_remove', { id }, 'POST');
+      // [2026-10-20 wa2] recusa do servidor sumia a palavra só na tela.
+      if (r?.success === false) { Alert.alert(t('common.error'), t('notifPref.genericFail')); return; }
       setKeywords(prev => prev.filter(k => k.id !== id));
     } catch (e) {
       Alert.alert(t('common.error'), e?.message || t('notifPref.connFailed'));
@@ -215,6 +220,8 @@ export default function NotificationPreferences() {
       if (r?.success) {
         setPrefs(p => ({ ...p, snooze_until: r.data?.snooze_until || null }));
         settingsCache.patch('notif', { snooze_until: r.data?.snooze_until || null });
+      } else {
+        Alert.alert(t('common.error'), t('notifPref.genericFail'));
       }
     } catch (e) {
       Alert.alert(t('common.error'), e?.message || t('notifPref.genericFail'));
@@ -222,11 +229,14 @@ export default function NotificationPreferences() {
   }, [t]);
   const clearSnooze = useCallback(async () => {
     try {
-      await apiCall('chat_user_snooze_clear', {}, 'POST');
+      const r = await apiCall('chat_user_snooze_clear', {}, 'POST');
+      if (r?.success === false) { Alert.alert(t('common.error'), t('notifPref.genericFail')); return; }
       setPrefs(p => ({ ...p, snooze_until: null }));
       settingsCache.patch('notif', { snooze_until: null });
-    } catch {}
-  }, []);
+    } catch {
+      Alert.alert(t('common.error'), t('notifPref.genericFail'));
+    }
+  }, [t]);
 
   // Live label for the active snooze (e.g. "ativo até 14:30").
   const snoozeLabel = useMemo(() => {

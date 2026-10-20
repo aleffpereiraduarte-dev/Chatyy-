@@ -202,6 +202,13 @@ export default function ChangePhone() {
       if (!mountedRef.current) return;
       if (r?.success) {
         goStep('done');
+        // [2026-10-20 wa2] Conta/Perfil seguiam mostrando o número antigo (cache).
+        try { api.swrInvalidate?.('profile_get'); api.swrInvalidate?.('get_settings'); } catch {}
+        try {
+          const sc = require('../services/settingsCache');
+          sc.revalidate?.('profile', { force: true });
+          sc.revalidate?.('settings', { force: true });
+        } catch {}
         // Auto-back after the success animation settles.
         setTimeout(() => {
           if (!mountedRef.current) return;

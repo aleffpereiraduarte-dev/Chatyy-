@@ -14531,4 +14531,7 @@ export default {
   "groupAdd.add": "Add",
   "groupAdd.alreadyMember": "This person is already in the group.",
   "groupAdd.onlyAdmins": "Only admins can add participants.",
+  // [2026-10-20 wa2]
+  "chatConv.inviteRotateConfirm": "Reset the link? Anyone with the current link won't be able to join anymore.",
+  "chatConv.inviteRevokeConfirm": "Revoke the link? Nobody will be able to join with it anymore.",
 };

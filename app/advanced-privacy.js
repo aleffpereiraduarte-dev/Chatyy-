@@ -11,7 +11,7 @@
  *   - VPN suggestion banner (auto-hidden when on VPN)
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useLanguage } from '../context/LanguageContext';
@@ -75,6 +75,26 @@ export default function AdvancedPrivacyScreen() {
     try { settingsCache.patch('adv_privacy', (prev) => ({ ...(prev || {}), proxy: { ...next, password: '' } })); } catch {}
     try { await proxyCfg.setProxyConfig(patch); } catch {}
   }
+  // [2026-10-20 wa2] Host/porta/usuário/senha: aplicar o proxy a CADA tecla derrubava
+  // a conexão no meio da digitação ("1", "12", "127."…). Agora espera 900 ms parado.
+  const _proxyTxtRef = useRef({ timer: null, pending: {} });
+  function saveProxyText(patch) {
+    const next = { ...proxy, ...patch };
+    setProxy(next);
+    const st = _proxyTxtRef.current;
+    st.pending = { ...st.pending, ...patch };
+    if (st.timer) clearTimeout(st.timer);
+    st.timer = setTimeout(() => {
+      const p = st.pending; st.pending = {}; st.timer = null;
+      try { settingsCache.patch('adv_privacy', (prev) => ({ ...(prev || {}), proxy: { ...((prev && prev.proxy) || {}), ...p, password: '' } })); } catch {}
+      try { proxyCfg.setProxyConfig(p).catch?.(() => {}); } catch {}
+    }, 900);
+  }
+  useEffect(() => () => {
+    // sair da tela com digitação pendente: aplica já
+    const st = _proxyTxtRef.current;
+    if (st.timer) { clearTimeout(st.timer); st.timer = null; try { proxyCfg.setProxyConfig(st.pending); } catch {} }
+  }, []);
   async function saveScreenBlock(v) {
     setScreenBlock(v);
     try { settingsCache.patch('adv_privacy', (prev) => ({ ...(prev || {}), screenBlock: !!v })); } catch {}
@@ -149,16 +169,16 @@ export default function AdvancedPrivacyScreen() {
             disabled={Platform.OS === 'web' || proxy.useTor}
           />
           {proxy.enabled && !proxy.useTor && (
-            <FieldRow label={t('privacy.proxyHost') || 'Host'} value={proxy.host} onChange={(v) => saveProxy({ host: v })} placeholder="127.0.0.1" />
+            <FieldRow label={t('privacy.proxyHost') || 'Host'} value={proxy.host} onChange={(v) => saveProxyText({ host: v })} placeholder="127.0.0.1" />
           )}
           {proxy.enabled && !proxy.useTor && (
-            <FieldRow label={t('privacy.proxyPort') || 'Porta'} value={String(proxy.port || '')} onChange={(v) => saveProxy({ port: v })} keyboardType="number-pad" placeholder="1080" />
+            <FieldRow label={t('privacy.proxyPort') || 'Porta'} value={String(proxy.port || '')} onChange={(v) => saveProxyText({ port: v })} keyboardType="number-pad" placeholder="1080" />
           )}
           {proxy.enabled && !proxy.useTor && (
-            <FieldRow label={t('privacy.proxyUser') || 'Usuário (opcional)'} value={proxy.username} onChange={(v) => saveProxy({ username: v })} />
+            <FieldRow label={t('privacy.proxyUser') || 'Usuário (opcional)'} value={proxy.username} onChange={(v) => saveProxyText({ username: v })} />
           )}
           {proxy.enabled && !proxy.useTor && (
-            <FieldRow label={t('privacy.proxyPass') || 'Senha (opcional)'} value={proxy.password} onChange={(v) => saveProxy({ password: v })} secureTextEntry />
+            <FieldRow label={t('privacy.proxyPass') || 'Senha (opcional)'} value={proxy.password} onChange={(v) => saveProxyText({ password: v })} secureTextEntry />
           )}
         </SettingsGroup>
         <SettingsGroup footer={t('privacy.useTorDesc') || 'Rota tudo por uma instância local do Tor. Pode deixar o app mais lento. Tem precedência sobre o proxy manual.'}>

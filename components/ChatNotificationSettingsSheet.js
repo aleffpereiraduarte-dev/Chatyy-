@@ -494,8 +494,12 @@ export default function ChatNotificationSettingsSheet({
               // checkmark on the row that matches their current state.
               value={(() => {
                 if (!settings.mute_until) return null;
-                if (settings.mute_until.startsWith('2099-')) return 'forever';
-                const ms = new Date(settings.mute_until).getTime() - Date.now();
+                const _mu = String(settings.mute_until);
+                if (_mu.startsWith('2099-')) return 'forever';
+                // [2026-10-20 wa2] coluna TIMESTAMP sem fuso volta "AAAA-MM-DD HH:MM:SS" (UTC):
+                // lido como hora local (UTC-3) um mudo de 30 min/1 h aparecia desligado.
+                const _iso = /[zZ]|[+-]\d\d:?\d\d$/.test(_mu) ? _mu : _mu.replace(' ', 'T') + 'Z';
+                const ms = new Date(_iso).getTime() - Date.now();
                 if (!Number.isFinite(ms) || ms <= 0) return null;
                 if (ms <= 45 * 60 * 1000) return '30m';
                 if (ms <= 90 * 60 * 1000) return '1h';

@@ -188,13 +188,18 @@ export function useChatPrivacy() {
 export function privacyValueLabel(t, privacy, field) {
   const v = privacy[field];
   if (field === 'story_privacy') {
+    // [2026-10-20 wa2] o servidor guarda "Exceto…" como everyone + status_except; sem
+    // isto a linha voltava a mostrar "Todos" depois de escolher "Exceto…".
+    const exN = Array.isArray(privacy.status_except) ? privacy.status_except.length : 0;
+    if ((v === 'all' || v === 'everyone' || v === 'except') && exN > 0) return `${t('settings.privacyStatusExcept')} (${exN})`;
     if (v === 'all' || v === 'everyone') return t('settings.privacyEveryone');
     if (v === 'contacts') return t('settings.privacyContacts');
     if (v === 'close_friends') return t('settings.privacyCloseFriends');
     if (v === 'except') return t('settings.privacyStatusExcept');
     return t('settings.privacyNobody');
   }
-  if (v === 'everyone') return t('settings.privacyEveryone');
+  // [2026-10-20 wa2] phone_visibility usa 'all' (não 'everyone') → aparecia "Ninguém".
+  if (v === 'everyone' || v === 'all') return t('settings.privacyEveryone');
   if (v === 'contacts') return t('settings.privacyContacts');
   return field === 'online' ? t('settings.privacyInvisible') : t('settings.privacyNobody');
 }

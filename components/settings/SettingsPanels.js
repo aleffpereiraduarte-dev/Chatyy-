@@ -302,7 +302,7 @@ export function BlockedContactsPanel() {
   // revalida em 2º plano. Spinner só na 1ª vez na vida (sem cache).
   const { data: cached, revalidating } = settingsCache.useSettingsSection('blocked');
   const list = Array.isArray(cached) ? cached : (revalidating ? null : []);
-  const unblock = (email) => {
+  const unblock = (email, displayName) => {
     const doIt = async () => {
       // Otimista: some da lista na hora; volta se o servidor recusar.
       settingsCache.patch('blocked', (prev) => (Array.isArray(prev) ? prev : []).filter(b => b.blocked_email !== email));
@@ -313,7 +313,8 @@ export function BlockedContactsPanel() {
       } catch { settingsCache.revalidate('blocked', { force: true }).catch(() => {}); }
     };
     const title = t('config.unblock');
-    const msg = String(t('config.unblockConfirm') || '').replace('{email}', email);
+    // [2026-10-20 wa2] confirma com o NOME (WhatsApp: "Desbloquear Fulano?"), não o e-mail.
+    const msg = String(t('config.unblockConfirm') || '').replace('{email}', displayName || email);
     if (Platform.OS === 'web') {
       let ok = false;
       try { ok = typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`); } catch {}
@@ -342,7 +343,7 @@ export function BlockedContactsPanel() {
           key={b.blocked_email}
           title={b.blocked_name || b.name || b.blocked_email}
           subtitle={(b.blocked_name || b.name) ? b.blocked_email : undefined}
-          onPress={() => unblock(b.blocked_email)}
+          onPress={() => unblock(b.blocked_email, b.blocked_name || b.name || '')}
           chevron={false}
           right={<SettingsValueText color={g.destructive}>{t('config.unblock')}</SettingsValueText>}
         />

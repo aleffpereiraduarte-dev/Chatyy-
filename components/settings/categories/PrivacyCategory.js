@@ -59,6 +59,12 @@ export default function PrivacyCategory() {
       { value: 'contacts', label: t('settings.privacyContacts') },
       { value: 'close_friends', label: t('settings.privacyCloseFriends') },
       { value: 'except', label: t('settings.privacyStatusExcept') },
+    ] : field === 'phone_visibility' ? [
+      // [2026-10-20 wa2] servidor só aceita all|contacts|nobody p/ o número: "everyone"
+      // virava "Meus contatos" ao salvar.
+      { value: 'all', label: t('settings.privacyEveryone') },
+      { value: 'contacts', label: t('settings.privacyContacts') },
+      { value: 'nobody', label: t('settings.privacyNobody') },
     ] : [
       { value: 'everyone', label: t('settings.privacyEveryone') },
       { value: 'contacts', label: t('settings.privacyContacts') },
@@ -158,11 +164,17 @@ export default function PrivacyCategory() {
           visible={!!picker}
           title={fieldTitle(picker)}
           options={optionsFor(picker)}
-          value={picker === 'story_privacy' && privacy.story_privacy === 'everyone' ? 'all' : privacy[picker]}
+          value={picker === 'story_privacy'
+            ? ((privacy.story_privacy === 'everyone' || privacy.story_privacy === 'all' || privacy.story_privacy === 'except')
+              ? (exceptN > 0 ? 'except' : 'all') : privacy.story_privacy)
+            : (picker === 'phone_visibility' && privacy.phone_visibility === 'everyone' ? 'all' : privacy[picker])}
           cancelLabel={t('common.cancel') || 'Cancelar'}
           onSelect={(v) => {
             const field = picker;
-            if (field) savePrivacy({ [field]: v });
+            // [2026-10-20 wa2] "Exceto…" = Todos + lista (o servidor não tem 'except'): só abre a lista.
+            if (field === 'story_privacy' && v === 'except') savePrivacy({ story_privacy: 'everyone' });
+            else if (field === 'story_privacy' && v === 'all' && exceptN > 0) savePrivacy({ story_privacy: 'everyone', status_except: [] });
+            else if (field) savePrivacy({ [field]: v });
             if (field === 'story_privacy' && v === 'close_friends') { try { router.push('/close-friends'); } catch {} }
             else if (field === 'story_privacy' && v === 'except') { try { router.push('/status-except'); } catch {} }
           }}

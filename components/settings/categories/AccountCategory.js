@@ -321,7 +321,7 @@ function DangerZone() {
                 try {
                   const { deleteAccount } = await import('../../../services/api');
                   const r = await deleteAccount(password);
-                  if (r.success) {
+                  if (r?.success) {
                     setOpen(false);
                     if (Platform.OS === 'web') window.alert(t('settings.accountDeletedMessage'));
                     else Alert.alert(t('settings.accountDeleted'), t('settings.accountDeletedMessage'));
