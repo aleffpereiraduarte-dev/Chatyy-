@@ -13639,6 +13639,8 @@ function ChatConversationInnerBody() {
   const [showMeetupCreator, setShowMeetupCreator] = _useStateT(false);
   const [meetupEditMsg, setMeetupEditMsg] = _useStateT(null); // [encontro2 2026-10-20] autor edita o encontro
   try { globalThis.__chatyy_meetup_edit_open = (m) => { setMeetupEditMsg(m || null); setShowMeetupCreator(true); }; } catch {}
+  const [meetupDetailsId, setMeetupDetailsId] = _useStateT(null); // [encontro3 2026-10-20] folha "quem vai"
+  try { globalThis.__chatyy_meetup_details_open = (m) => { if (m && m.id != null) setMeetupDetailsId(m.id); }; } catch {}
   const [showPlaylistCreator, setShowPlaylistCreator] = _useStateT(false);
   const [playlistEditor, setPlaylistEditor] = _useStateT(null); // { messageId, playlist }
   const [isRecording, setIsRecording] = _useStateT(false);
@@ -33682,8 +33684,11 @@ function ChatConversationInnerBody() {
           const _mCanEdit = isOwn && !_mState.cancelled && typeof msg.id === 'number' && !msg.deleted_at;
           return (
             <View style={{ minWidth: 240, maxWidth: 280, borderRadius: 12, overflow: 'hidden', marginVertical: 1 }}>
-              {/* Colored header strip */}
-              <View style={{ backgroundColor: isPast ? '#6b7280' : '#111111', paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {/* Colored header strip — [encontro3] toque abre os detalhes (quem vai) */}
+              <Pressable onPress={() => { if (selectionMode) return toggleSelection(msg.id); try { globalThis.__chatyy_meetup_details_open && globalThis.__chatyy_meetup_details_open(msg); } catch {} }}
+                onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }} delayLongPress={350}
+                accessibilityRole="button" accessibilityLabel={_mt('chatConv.meetupDetails', 'Ver detalhes do encontro')}
+                style={{ backgroundColor: isPast ? '#6b7280' : '#111111', paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
                   <IconCalendar size={18} color="#fff" />
                 </View>
@@ -33699,7 +33704,7 @@ function ChatConversationInnerBody() {
                     <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>{t('chatConv.edit') || 'Editar'}</Text>
                   </TouchableOpacity>
                 ) : null}
-              </View>
+              </Pressable>
               {/* Body */}
               <View style={{ backgroundColor: isOwn ? 'rgba(255,255,255,0.08)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'), padding: 10 }}>
                 {/* Date/time row */}
@@ -33738,7 +33743,7 @@ function ChatConversationInnerBody() {
                   <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textSecondary, marginTop: 2, marginBottom: 4 }} numberOfLines={3}>{meetup.description}</Text>
                 ) : null}
                 {/* Attendee summary */}
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 8, gap: 12 }}>
+                <Pressable onPress={() => { if (selectionMode) return toggleSelection(msg.id); try { globalThis.__chatyy_meetup_details_open && globalThis.__chatyy_meetup_details_open(msg); } catch {} }} accessibilityRole="button" accessibilityLabel={_mt('chatConv.meetupDetails', 'Ver detalhes do encontro')} hitSlop={4} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, marginBottom: 8, gap: 12 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     <IconCheckCircle size={12} color={isOwn ? ownTextColor : colors.text} />
                     <Text style={{ fontSize: 11, fontWeight: '700', color: isOwn ? ownTextColor : colors.text }}>{goingCount} {t('chatConv.going') || 'vão'}</Text>
@@ -33754,7 +33759,7 @@ function ChatConversationInnerBody() {
                       {totalAttendees} {totalAttendees === 1 ? (t('chatConv.attendee') || 'participante') : (t('chatConv.attendees') || 'participantes')}
                     </Text>
                   )}
-                </View>
+                </Pressable>
                 {/* RSVP buttons */}
                 <View style={{ flexDirection: 'row', gap: 6 }}>
                   {['going', 'maybe', 'not_going'].map(status => {
@@ -40581,6 +40586,21 @@ function ChatConversationInnerBody() {
         </NativeSheetModal>
       )}
 
+      {/* [encontro3 2026-10-20] Detalhes do encontro (quem vai/talvez/não vai) — ao vivo pela linha da lista */}
+      {meetupDetailsId != null && (() => {
+        const _mdMsg = messages.find(m => String(m.id) === String(meetupDetailsId));
+        if (!_mdMsg) return null;
+        const _MDS = require('../components/meetup/MeetupDetailsSheet').default;
+        return (
+          <NativeSheetModal visible transparent animationType="slide" onRequestClose={() => setMeetupDetailsId(null)} detents={[1]} backgroundColor={colors.surface} disableNative>
+            <_MDS msg={_mdMsg} members={members} currentEmail={currentEmail} isGroup={conversationType === 'group' || conversationType === 'channel'}
+              colors={colors} t={t} isDark={isDark} setMessages={setMessages}
+              onClose={() => setMeetupDetailsId(null)}
+              onOpenMap={(d) => setMapModalData(d)}
+              onEdit={(m) => { setMeetupEditMsg(m); setShowMeetupCreator(true); }} />
+          </NativeSheetModal>
+        );
+      })()}
       {/* Meetup Creator Modal — only mounted when open (lazy) */}
       {showMeetupCreator && (
         <NativeSheetModal visible transparent animationType="slide" onRequestClose={() => { setShowMeetupCreator(false); setMeetupEditMsg(null); }} detents={[1]} backgroundColor={colors.surface} disableNative={!_creatorNativeSheet() /* [2026-10-16 poll-wa] */}>

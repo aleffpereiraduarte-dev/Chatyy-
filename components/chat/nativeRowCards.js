@@ -25,7 +25,7 @@
 //
 // Ações (`a` dos nós → onRowPress part 'action', url = ação):
 //   loc · loc_stop · jloc · ct_msg · ct_inv · ct_save · ct_call · ct_open · poll:<i> ·
-//   rsvp:<going|maybe|not_going> · mt_map · mt_edit · pl_edit · pl_song:<i> · call_back:<v|a> ·
+//   rsvp:<going|maybe|not_going> · mt_map · mt_edit · mt_info · pl_edit · pl_song:<i> · call_back:<v|a> ·
 //   call_join · st_open · vn_open · gift_thank · lp:<url> · lr:<share|decline|cancel>
 import { Platform } from 'react-native';
 import {
@@ -726,7 +726,7 @@ function buildMeetup(m, row, ctx, C, own) {
     maybe > 0 ? text(`${maybe} ${_tr(C, 'chatConv.maybe', 'talvez')}`, { fs: 11, fw: 600, c: own ? C.ownMeta : col.textSecondary }) : null,
     total > 0 ? { t: 'sp', fl: 1 } : null,
     total > 0 ? text(`${total} ${total === 1 ? _tr(C, 'chatConv.attendee', 'participante') : _tr(C, 'chatConv.attendees', 'participantes')}`, { fs: 10, c: own ? C.ownMeta : C.otherMeta }) : null,
-  ], { m: [4, 0, 8, 0], g: 12, al: 'c', w: -1 }));
+  ], { m: [4, 0, 8, 0], g: 12, al: 'c', w: -1, a: 'mt_info' }));
   const labels = { going: _tr(C, 'chatConv.imGoing', 'Vou!'), maybe: _tr(C, 'chatConv.imMaybe', 'Talvez'), not_going: _tr(C, 'chatConv.imNotGoing', 'Não vou') };
   const act = { going: '#22c55e', maybe: '#f59e0b', not_going: '#ef4444' };
   body.push(hstack(['going', 'maybe', 'not_going'].map((s) => {
@@ -747,7 +747,7 @@ function buildMeetup(m, row, ctx, C, own) {
         !past && MS.updated ? text(_tr(C, 'chatConv.meetupUpdatedBadge', 'ATUALIZADO'), { fs: 10, c: 'rgba(255,255,255,0.85)', fw: 700, ls: 0.3 }) : null,
       ], { fl: 1 }),
       canEdit ? vstack([text(_tr(C, 'chatConv.edit', 'Editar'), { fs: 11, fw: 700, c: '#FFFFFF' })], { p: [4, 9, 4, 9], r: 8, bg: 'rgba(255,255,255,0.18)', a: 'mt_edit' }) : null,
-    ], { w: -1, bg: past ? '#6b7280' : '#111111', p: [8, 12, 8, 12], g: 8, al: 'c' }),
+    ], { w: -1, bg: past ? '#6b7280' : '#111111', p: [8, 12, 8, 12], g: 8, al: 'c', a: 'mt_info' }),
     vstack(body, { w: -1, p: 10, bg: own ? 'rgba(255,255,255,0.08)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)') }),
   ], { w, r: 12, m: [1, 0, 1, 0] })];
   row.cw = w; row.pad = PAD; row.mp = 'below';
@@ -1772,6 +1772,10 @@ export function runCardAction(item, action, D) {
             }));
           }
         })().catch(() => {});
+        return;
+      }
+      case 'mt_info': { // [encontro3 2026-10-20] detalhes: quem vai / talvez / não vai
+        try { globalThis.__chatyy_meetup_details_open && globalThis.__chatyy_meetup_details_open(m); } catch {}
         return;
       }
       case 'mt_edit': { // [encontro2 2026-10-20] autor abre a folha de edição
