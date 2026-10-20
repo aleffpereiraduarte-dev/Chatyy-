@@ -15,6 +15,7 @@ import { count } from './parts';
 import { CommentsBody, CommentBar, quickReplies, useReport } from './CommentsList';
 import * as store from '../../services/muralStore';
 import { registerCommentsHost } from '../../services/muralNav';
+import useKeyboardSpacer from './useKeyboardSpacer';
 import useDragToDismiss, { DragSheetRoot, DragPanel } from '../ui/useDragToDismiss';
 
 function SheetBody({ postId, onClose, native, focus }) {
@@ -24,6 +25,9 @@ function SheetBody({ postId, onClose, native, focus }) {
   const insets = useSafeAreaInsets();
   const post = store.usePost(postId);
   const barRef = useRef(null);
+  const barWrapRef = useRef(null);
+  // [kb-fix 20/10] campo sempre grudado no teclado (medida real; antes o teclado cobria o campo na folha grande)
+  const { pad: kbPad } = useKeyboardSpacer(barWrapRef);
   const scrollRef = useRef(null);
   const { report, reportNode } = useReport();
   const me = user?.email || '';
@@ -51,17 +55,18 @@ function SheetBody({ postId, onClose, native, focus }) {
       <ScrollView ref={scrollRef} style={{ flex: 1 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" contentContainerStyle={{ paddingBottom: 8 }}>
         <CommentsBody postId={postId} th={th} me={me} isPostOwner={isOwner} onReply={onReply} onReport={onReport} />
       </ScrollView>
-      <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.line, backgroundColor: th.card }}>
+      <View ref={barWrapRef} collapsable={false} style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.line, backgroundColor: th.card }}>
         <CommentBar ref={barRef} postId={postId} th={th} quick={post && post.allow_comments !== false ? quickReplies(post?.kind, t) : null}
           disabled={post ? post.allow_comments === false : false}
-          bottomPad={native ? nativeSheetBottomPad(insets, 0) : insets.bottom}
+          bottomPad={kbPad > 0 ? 0 : (native ? nativeSheetBottomPad(insets, 0) : insets.bottom)}
           onSent={() => setTimeout(() => { try { scrollRef.current?.scrollToEnd({ animated: true }); } catch {} }, 120)} />
       </View>
+      {kbPad > 0 ? <View style={{ height: kbPad }} /> : null}
       {reportNode}
     </>
   );
   if (native) {
-    return <NativeSheetKeyboardView style={{ flex: 1, backgroundColor: th.card, paddingTop: 8 }}>{body}</NativeSheetKeyboardView>;
+    return <NativeSheetKeyboardView enabled={false} style={{ flex: 1, backgroundColor: th.card, paddingTop: 8 }}>{body}</NativeSheetKeyboardView>;
   }
   return body;
 }
@@ -80,7 +85,7 @@ export default function CommentsSheet({ visible, postId, onClose, focus = false 
   }, [visible, postId]);
   if (USE_NATIVE_SHEETS) {
     return (
-      <NativeSheet visible={!!visible && !!postId} onClose={onClose} detents={[0.72, 1]} backgroundColor={th.card}>
+      <NativeSheet visible={!!visible && !!postId} onClose={onClose} detents={[0.72, 1]} initialDetent={focus ? 1 : 0} backgroundColor={th.card}>
         <SheetBody postId={postId} onClose={onClose} native focus={focus} />
       </NativeSheet>
     );

@@ -3,7 +3,7 @@
 // de quem curtiu, contadores, Curtir | Comentar | Compartilhar e os comentários
 // na MESMA tela, com o campo de comentar fixo acima do teclado.
 import React, { useCallback, useRef, useState, useEffect } from 'react';
-import { View, Text, Pressable, ScrollView, KeyboardAvoidingView, Platform, StatusBar, StyleSheet, Keyboard } from 'react-native';
+import { View, Text, Pressable, ScrollView, Platform, StatusBar, StyleSheet, Keyboard } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
@@ -12,6 +12,7 @@ import { useMuralTheme, LIKE } from './muralTheme';
 import { Avatar, AnimatedHeart, LikersStack, fullWhen, audienceIcon, count, displayName, handle, sharePost } from './parts';
 import { CommentsBody, CommentBar, quickReplies } from './CommentsList';
 import { usePostMenu } from './PostViewer';
+import useKeyboardSpacer from './useKeyboardSpacer';
 import * as store from '../../services/muralStore';
 
 export default function TextPostView({ postId, onBack, onEdit, onReport, onDeleted, onOpenLikers, focusComment = false }) {
@@ -21,6 +22,9 @@ export default function TextPostView({ postId, onBack, onEdit, onReport, onDelet
   const insets = useSafeAreaInsets();
   const post = store.usePost(postId);
   const barRef = useRef(null);
+  const barWrapRef = useRef(null);
+  // [kb-fix 20/10] campo grudado no teclado por medida real (iOS e Android edge-to-edge)
+  const { pad: kbPad } = useKeyboardSpacer(barWrapRef);
   const scrollRef = useRef(null);
   const { openMenu, mine } = usePostMenu(post, { onEdit, onDeleted, onReport });
   const onReply = useCallback((c) => barRef.current?.replyTo(c), []);
@@ -57,7 +61,7 @@ export default function TextPostView({ postId, onBack, onEdit, onReport, onDelet
           <MIcon name="more" size={24} color={th.text} />
         </Pressable>
       </View>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <View style={{ flex: 1 }}>
         <ScrollView ref={scrollRef} style={{ flex: 1 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" contentContainerStyle={{ paddingBottom: 16, maxWidth: 680, width: '100%', alignSelf: 'center' }}>
           <View style={{ backgroundColor: th.card, marginTop: 12, marginHorizontal: 12, borderRadius: 22, paddingTop: 18, paddingHorizontal: 18, paddingBottom: 8, ...(th.isDark ? {} : { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 1 }) }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -99,14 +103,15 @@ export default function TextPostView({ postId, onBack, onEdit, onReport, onDelet
           <Text style={{ color: th.text, paddingTop: 16, paddingHorizontal: 16, paddingBottom: 4, fontWeight: '700', fontSize: 16 }}>{t('mural.comments', 'Comentários')}</Text>
           <CommentsBody postId={postId} th={th} me={user?.email} isPostOwner={mine} onReply={onReply} onReport={onReportComment} />
         </ScrollView>
-        <View style={{ backgroundColor: th.card, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.line }}>
+        <View ref={barWrapRef} collapsable={false} style={{ backgroundColor: th.card, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: th.line }}>
           <CommentBar ref={barRef} postId={postId} th={th} disabled={post.allow_comments === false}
             quick={post.allow_comments !== false && !(post.comments > 0) ? quickReplies('text', t) : null}
             placeholder={t('mural.writeComment', 'Escreva um comentário...')}
-            bottomPad={kb && Platform.OS === 'ios' ? 0 : Math.max(insets.bottom, 8)}
+            bottomPad={kb || kbPad > 0 ? 0 : Math.max(insets.bottom, 8)}
             onSent={() => setTimeout(() => { try { scrollRef.current?.scrollToEnd({ animated: true }); } catch {} }, 150)} />
         </View>
-      </KeyboardAvoidingView>
+        {kbPad > 0 ? <View style={{ height: kbPad }} /> : null}
+      </View>
     </View>
   );
 }
