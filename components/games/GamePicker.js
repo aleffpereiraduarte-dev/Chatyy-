@@ -30,7 +30,10 @@ function XIcon({ color }) {
   );
 }
 
-export default function GamePicker({ visible, onClose, conversationId, conversationType, members, currentEmail, t, colors, isDark, onCreated, onOpenGame }) {
+// [jogos 2026-10-20 dock] panel = desenhado dentro do painel da conversa (GameDock), sem folha.
+function PanelWrap({ children, bg }) { return <View style={{ flex: 1, backgroundColor: bg, paddingTop: 10 }}>{children}</View>; }
+
+export default function GamePicker({ visible, onClose, conversationId, conversationType, members, currentEmail, t, colors, isDark, onCreated, onOpenGame, panel = false }) {
   const rm = useRM();
   const [step, setStep] = useState('pick'); // pick | players | score | rules
   const [type, setType] = useState(null);
@@ -144,8 +147,9 @@ export default function GamePicker({ visible, onClose, conversationId, conversat
     );
   };
 
+  const Wrap = panel ? PanelWrap : GameSheet;
   return (
-    <GameSheet visible onClose={onClose} bg={pal.bg} detents={[0.62, 0.95]}>
+    <Wrap visible onClose={onClose} bg={pal.bg} detents={[0.62, 0.95]}>
       <View style={st.headRow}>
         {step !== 'pick' ? (
           <Pressable onPress={back} hitSlop={10} style={st.backBtn} accessibilityRole="button" accessibilityLabel={tr(t, 'common.back', 'Voltar')}>
@@ -159,9 +163,14 @@ export default function GamePicker({ visible, onClose, conversationId, conversat
             <Text style={{ color: ink, fontSize: 12.5, fontWeight: '700' }}>{tr(t, 'games.score.short', 'Placar')}</Text>
           </PressScale>
         ) : null}
+        {panel ? (
+          <Pressable onPress={() => { hTap(); onClose && onClose(); }} hitSlop={10} style={[st.closeBtn, { backgroundColor: pal.card2 }]} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')}>
+            <XIcon color={ink} />
+          </Pressable>
+        ) : null}
       </View>
 
-      <ScrollView style={sheetScrollFill} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 10 }} keyboardShouldPersistTaps="handled">
+      <ScrollView style={panel ? { flex: 1 } : sheetScrollFill} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 10 }} keyboardShouldPersistTaps="handled">
         {step === 'pick' ? (
           <>
             {active.length ? (
@@ -255,7 +264,7 @@ export default function GamePicker({ visible, onClose, conversationId, conversat
           )}
         </PressScale>
       ) : null}
-    </GameSheet>
+    </Wrap>
   );
 }
 
@@ -277,9 +286,10 @@ const st = StyleSheet.create({
   miniIcon: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   badge: { borderRadius: 9, paddingHorizontal: 8, paddingVertical: 3 },
   xBtn: { paddingHorizontal: 12, paddingVertical: 12 },
+  closeBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   openRow: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 8 },
   memRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   check: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   err: { color: '#DC2626', marginTop: 10, fontSize: 13.5, textAlign: 'center' },
-  cta: { marginHorizontal: 16, marginTop: 8, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  cta: { marginHorizontal: 16, marginTop: 8, marginBottom: 8, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
 });

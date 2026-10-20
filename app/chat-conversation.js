@@ -208,6 +208,7 @@ import GameChatCard from '../components/games/GameChatCard';
 import GamePicker from '../components/games/GamePicker';
 import GameScoreboardSheet from '../components/games/GameScoreboard';
 import GamePlaySheetHost from '../components/games/GamePlaySheet'; // [jogos 2026-10-19 inline] partida em folha POR CIMA da conversa
+import GameDock from '../components/games/GameDock'; // [jogos 2026-10-20 dock] seletor + Damas/Cartas num painel acima do composer
 import { IconGamepad as _IconGamepad } from '../components/games/GameIcons';
 import MentionJumpFab from '../components/chat/MentionJumpFab'; // [2026-10-14 grupo-rajada]
 import * as api from '../services/api';
@@ -21964,10 +21965,10 @@ function ChatConversationInnerBody() {
     const g = G.parseGameContent(msg && msg.content);
     if (!g || !g.g) return;
     // [jogos 2026-10-19 inline] abre na folha por cima da conversa (kill __chatyy_games_inline=false → rota antiga)
-    const open = (id) => { try { require('../services/gamesInline').openGameInChat(id, conversationId, router); } catch { try { router.push({ pathname: '/game/[id]', params: { id: String(id), cid: String(conversationId) } }); } catch {} } };
-    if (act === 'open' || act === 'play' || act === 'watch') { open(g.g); return; }
+    const open = (id, hint) => { try { require('../services/gamesInline').openGameInChat(id, conversationId, router, hint); } catch { try { router.push({ pathname: '/game/[id]', params: { id: String(id), cid: String(conversationId) } }); } catch {} } };
+    if (act === 'open' || act === 'play' || act === 'watch') { open(g.g, g); return; } // [2026-10-20 dock] pendente/Velha/Forca/Quiz = no cartão
     const fn = { accept: G.gameAccept, join: G.gameJoin, decline: G.gameDecline, start: G.gameStart, cancel: G.gameCancel || G.gameResign, rematch: G.gameRematch }[act]; // [jogos 2026-10-19] cancelar = chat_game_cancel
-    if (!fn) { open(g.g); return; }
+    if (!fn) { open(g.g, g); return; }
     try { Haptics.selectionAsync(); } catch {}
     const r = await fn(g.g);
     if (!r || !r.success) {
@@ -21981,7 +21982,7 @@ function ChatConversationInnerBody() {
     if (gv && gv.message_id) { try { _gamePatchCardRef.current(gv.message_id, G.cardContentFromView(gv)); } catch {} }
     const nv = r.data && (r.data.rematch || r.data.game);
     if (act === 'rematch' && nv) { try { require('../services/gamesInline').afterGameCreated(nv, conversationId, router); } catch { open(nv.g); } return; }
-    if (nv && nv.status === 'active' && (act === 'accept' || act === 'join' || act === 'start')) open(nv.g);
+    if (nv && nv.status === 'active' && (act === 'accept' || act === 'join' || act === 'start')) open(nv.g, nv);
   };
   // [loc-pedido 2026-10-19] Pedido de localização na conversa (services/locationRequest.js):
   // envio pelo caminho normal (outbox), cartão Compartilhar/Recusar, WS + checagem de pendentes.
@@ -22105,7 +22106,7 @@ function ChatConversationInnerBody() {
       case 'meetup':       return setShowMeetupCreator(true);
       case 'playlist':     return setShowPlaylistCreator(true);
       case 'gift':         return setShowGiftSheet(true);
-      case 'games':        return setShowGamePicker(true); // [jogos 2026-10-18]
+      case 'games':        { try { if (require('../services/gamesInline').openPickerInChat(conversationId)) return; } catch {} return setShowGamePicker(true); } // [jogos 2026-10-20 dock] seletor no painel da conversa (kill → folha)
       // 2026-05-18: in-chat short video (Reels-style). Flag-gated — when off
       // the menu item isn't even rendered. The recorder orchestrates capture
       // → compress → upload → send via shortVideoRecord.js. We surface a
@@ -38999,6 +39000,11 @@ function ChatConversationInnerBody() {
           </View>
         )}
 
+        {/* [jogos 2026-10-20 dock] jogo DENTRO da conversa (MSN): seletor + Damas/Cartas num painel acima do composer */}
+        {gamesOn && conversationId && !isSavedMode ? (
+          <GameDock conversationId={conversationId} conversationType={conversationType} members={members}
+            currentEmail={currentEmail} t={t} colors={colors} isDark={isDark} />
+        ) : null}
         {/* [2026-10-05] Barra de formatação ACIMA do campo, estilo WhatsApp/iMessage:
             aparece SÓ ao SELECIONAR texto (some ao desmarcar) e 1 toque formata a
             seleção. Sem botão "Aa", sem barra embaixo. */}

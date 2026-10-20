@@ -8,6 +8,9 @@
 //    A conversa continua montada embaixo → fechar volta exatamente para a mesma posição.
 //  - A rota /game/[id] continua existindo (deep link / app antigo), mas o chat não navega mais para lá.
 //
+//  - [2026-10-20] com o PAINEL (GameDock, kill __chatyy_games_dock=false) nada disso é folha: seletor e
+//    Damas/Cartas abrem num painel acima do composer, dentro da própria tela da conversa.
+//
 // Kill switch (OTA): globalThis.__chatyy_games_inline = false → volta a navegação antiga para /game/[id].
 //
 // Estado: a visão de cada jogo vem do store de services/games.js (game_update do WS traz a visão do
@@ -190,24 +193,56 @@ export function registerGameSheetHost(fn) {
   _hosts.push(fn);
   return () => { const i = _hosts.lastIndexOf(fn); if (i >= 0) _hosts.splice(i, 1); };
 }
+// [jogos 2026-10-20 dock] Painel EMBUTIDO na tela da conversa (components/games/GameDock.js, acima do
+// composer, conversa rolável e chat funcionando): seletor de jogo + partida de Damas/Cartas. Nada de folha.
+// Convite/espera/aceitar/cancelar = o próprio cartão (lobby) — o painel não abre para convite pendente nem
+// para Velha/Forca/Quiz (jogadas no cartão). Kill: globalThis.__chatyy_games_dock = false → folha (19/10).
+export function gamesDockOn() {
+  try { if (globalThis.__chatyy_games_dock === false) return false; } catch {}
+  return gamesInlineOn();
+}
+const _pickHosts = [];
+/** GameDock registra aqui o "abrir seletor". */
+export function registerGamePickerHost(fn) {
+  _pickHosts.push(fn);
+  return () => { const i = _pickHosts.lastIndexOf(fn); if (i >= 0) _pickHosts.splice(i, 1); };
+}
+/** "Jogos" do "+": seletor no painel da conversa. false = sem painel (usa a folha antiga). */
+export function openPickerInChat(cid) {
+  if (!gamesDockOn()) return false;
+  const host = _pickHosts[_pickHosts.length - 1];
+  if (!host) return false;
+  try { return host(cid) !== false; } catch { return false; }
+}
+
 /**
- * Abre o jogo SEM sair da conversa (folha por cima). Sem host (tela fora do chat) ou kill switch →
- * navegação antiga para a rota.
+ * Abre o jogo SEM sair da conversa (painel embutido; com o kill do painel, folha por cima). Sem host
+ * (tela fora do chat) ou kill switch → navegação antiga para a rota.
+ * `hint` = cartão/visão ({status, type}); `hint.fromList` = escolhido na lista "Em andamento" (sempre abre).
  */
-export function openGameInChat(gid, cid, router) {
+export function openGameInChat(gid, cid, router, hint) {
   if (!gid) return;
   const host = _hosts[_hosts.length - 1];
-  if (gamesInlineOn() && host) { try { if (host(Number(gid), cid) !== false) return; } catch {} }
+  if (gamesInlineOn() && host) {
+    if (host.dock && hint && !hint.fromList) {
+      if (hint.status === 'pending') return;       // o cartão é o lobby (aceitar/recusar/cancelar ali)
+      if (isInlineType(hint.type)) { if (!getGameView(gid)) { try { gameState(Number(gid)).catch(() => {}); } catch {} } return; } // Velha/Forca/Quiz: joga no cartão
+    }
+    try { if (host(Number(gid), cid) !== false) return; } catch {}
+  }
   try { router && router.push({ pathname: '/game/[id]', params: { id: String(gid), cid: String(cid || '') } }); } catch {}
 }
 /**
- * Depois de criar no seletor: Velha/Forca/Quiz já ficam jogáveis no cartão (nada abre); Damas/Cartas
- * abrem a folha (o seletor é folha nativa → espera ele descer: nunca folha sobre folha no iOS).
+ * Depois de criar no seletor. Painel: nada abre — o cartão do convite aparece na conversa e o painel abre
+ * sozinho quando a partida de Damas/Cartas começa. Sem painel: Velha/Forca/Quiz ficam no cartão e
+ * Damas/Cartas abrem a folha (o seletor é folha nativa → espera ele descer: nunca folha sobre folha no iOS).
  */
 export function afterGameCreated(gv, cid, router) {
   if (!gv || !gv.g) return;
   if (!gamesInlineOn()) { openGameInChat(gv.g, cid, router); return; }
   if (isInlineType(gv.type)) return;
+  const host = _hosts[_hosts.length - 1];
+  if (host && host.dock) return;
   try { require('../components/NativeSheet').runAfterNativeSheet(() => openGameInChat(gv.g, cid, router)); }
   catch { openGameInChat(gv.g, cid, router); }
 }

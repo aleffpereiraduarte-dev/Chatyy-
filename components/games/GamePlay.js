@@ -29,7 +29,7 @@ import Svg, { Path, Circle } from 'react-native-svg';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
-import { IconChevronLeft, IconX } from '../../components/Icons';
+import { IconChevronLeft, IconChevronDown, IconX } from '../../components/Icons';
 import AvatarCircle from '../../components/AvatarCircle';
 import { GameTypeIcon, IconTrophy, IconRematch, IconFlagResign, IconDrawOffer, IconMore, IconBan, IconHourglass, IconCrown } from '../../components/games/GameIcons';
 import { gamePalette, hWin, hErr, hTurn, hEnd, hTap, hOk } from '../../components/games/fx';
@@ -369,7 +369,11 @@ const QUICK = [
   ['games.quick.gg', 'Boa partida!'], ['games.quick.rematch', 'Bora uma revanche?'],
 ];
 
-export default function GamePlay({ gid: gidProp, cid: cidProp, embedded = false, onClose, onOpenGame }) {
+// [jogos 2026-10-20 dock] docked = dentro do painel da conversa (components/games/GameDock: acima do composer,
+// conversa visível e rolável): altura dockH, sem faixa de assentos (o cabeçalho já mostra adversário/vez),
+// botão recolher (onCollapse) e frases rápidas mandadas pelo envio da conversa (onSendText).
+export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embeddedProp = false, onClose, onOpenGame, docked = false, dockH = 0, onCollapse, onSendText }) {
+  const embedded = embeddedProp || docked;
   const gid = Number(gidProp);
   const params = { cid: cidProp };
   const router = useRouter();
@@ -551,13 +555,15 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded = false,
     const cid = Number((view && view.conversation_id) || params.cid);
     const msg = String(text || '').trim();
     if (!cid || !msg) return;
+    if (onSendText) { try { if (onSendText(msg) !== false) { hTap(); return; } } catch {} }
     try {
       const api = require('../../services/api');
       const r = await api.chatSend(cid, msg, 'text');
       if (r && r.success) hTap(); else hErr();
-      say(r && r.success ? tr(t, 'games.quick.sent', 'Mensagem enviada') : tr(t, 'games.err.generic', 'Não deu certo. Tente de novo.'));
+      // docked: a conversa está visível logo acima — a mensagem aparece nela (sem aviso)
+      if (!(docked && r && r.success)) say(r && r.success ? tr(t, 'games.quick.sent', 'Mensagem enviada') : tr(t, 'games.err.generic', 'Não deu certo. Tente de novo.'));
     } catch { say(tr(t, 'games.err.generic', 'Não deu certo. Tente de novo.')); }
-  }, [view, params.cid, t, say]);
+  }, [view, params.cid, t, say, onSendText, docked]);
 
   const back = () => { hTap(); if (onClose) { try { onClose(); } catch {} return; } try { if (router.canGoBack()) { router.back(); return; } } catch {} router.replace('/chat'); };
   const isPlayer = !!view && view.me !== null && view.me !== undefined;
@@ -591,6 +597,11 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded = false,
       <Pressable onPress={() => { hTap(); setMoreOpen(true); }} hitSlop={8} style={st.iconBtn} accessibilityRole="button" accessibilityLabel={tr(t, 'games.more', 'Mais opções')}>
         <IconMore size={22} color={pal.ink} />
       </Pressable>
+      {onCollapse ? (
+        <Pressable onPress={() => { hTap(); onCollapse(); }} hitSlop={8} style={st.iconBtn} accessibilityRole="button" accessibilityLabel={tr(t, 'games.dock.collapse', 'Recolher')}>
+          <IconChevronDown size={22} color={pal.ink} />
+        </Pressable>
+      ) : null}
       <Pressable onPress={back} hitSlop={10} style={[st.closeBtn, { backgroundColor: pal.card2 }]} accessibilityRole="button" accessibilityLabel={tr(t, 'common.close', 'Fechar')}>
         <IconX size={16} color={pal.ink} />
       </Pressable>
@@ -673,11 +684,11 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded = false,
   // largo (tablet/web): tabuleiro no centro + painel lateral com jogadores e a conversa
   const wide = !embedded && winW >= 900;
   const colW = wide ? Math.min(winW - SIDE_W - 32, 820) : winW;
-  const fitH = Math.max(300, winH - ins.top - ins.bottom - 230);
+  const fitH = docked && dockH > 0 ? Math.max(170, dockH - 56 - 48 - 18) : Math.max(300, winH - ins.top - ins.bottom - 230);
   let board = null;
   if (view.status === 'active' || view.status === 'finished') {
     const sq = view.type === 'damas' || view.type === 'velha';
-    const P = { view, onMove, pal, busy, t, me, offset: offRef.current, onTick, maxW: wide ? (sq ? Math.min(colW, fitH) : colW) : (sq ? Math.min(winW, fitH + 40) : (embedded ? winW : undefined)) };
+    const P = { view, onMove, pal, busy, t, me, offset: offRef.current, onTick, maxW: wide ? (sq ? Math.min(colW, fitH) : colW) : (sq ? Math.min(winW, docked ? fitH : fitH + 40) : (embedded ? winW : undefined)) };
     if (view.type === 'velha') board = <VelhaBoard {...P} />;
     else if (view.type === 'damas') board = <DamasBoard {...P} />;
     else if (view.type === 'cartas') board = <CartasBoard {...P} />;
@@ -686,7 +697,7 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded = false,
   }
   const sendTyped = () => { const x = chatText; setChatText(''); sendQuick(x); };
   // Cartas: os adversários já sentam em volta da mesa dentro do tabuleiro (avatares + leque) → sem faixa duplicada
-  const showTable = (view.status === 'active' && view.type !== 'cartas') || view.status === 'finished';
+  const showTable = !docked && ((view.status === 'active' && view.type !== 'cartas') || view.status === 'finished');
 
   const content = (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ flexGrow: 1, paddingBottom: 12, width: '100%', maxWidth: wide ? colW : 680, alignSelf: 'center', justifyContent: wide || phase !== 'active' ? 'center' : undefined }} keyboardShouldPersistTaps="handled">
@@ -752,14 +763,14 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded = false,
 
   if (embedded) {
     // folha por cima da conversa: sem campo de texto (a conversa está logo embaixo) — só as frases rápidas
-    const Root = IS_WEB ? View : NativeSheetKeyboardView;
+    const Root = IS_WEB || docked ? View : NativeSheetKeyboardView;
     return (
       <GameSheetInlineProvider on>
         <Root style={[st.fill, { backgroundColor: pal.bg }]}>
           {header}
           {showTable ? <View style={{ paddingTop: 8 }}><Table view={view} me={me} pal={pal} t={t} rm={rm} offset={offRef.current} /></View> : null}
           <View style={{ flex: 1 }} onLayout={(e) => { const w = Math.round(e.nativeEvent.layout.width); if (w > 0 && Math.abs(w - boxW) > 1) setBoxW(w); }}>{content}</View>
-          <View style={[st.chatStrip, { borderTopColor: pal.line, paddingBottom: Platform.OS === 'ios' ? 10 : Math.max(ins.bottom, 8) + 4, backgroundColor: pal.bg }]}>
+          <View style={[st.chatStrip, { borderTopColor: pal.line, paddingBottom: docked ? 6 : (Platform.OS === 'ios' ? 10 : Math.max(ins.bottom, 8) + 4), backgroundColor: pal.bg }]}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingHorizontal: 12 }} keyboardShouldPersistTaps="handled">
               {quickChips}
             </ScrollView>

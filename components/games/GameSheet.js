@@ -34,7 +34,7 @@ export default function GameSheet({ visible, onClose, children, bg, detents = 'f
     return (
       <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
         <Pressable style={st.inScrim} onPress={onClose} accessibilityRole="button" accessibilityLabel="close" />
-        <View style={[st.inPanel, { backgroundColor: bg, maxHeight: Math.round(height * 0.8), paddingBottom: Platform.OS === 'ios' ? 14 : Math.max(ins.bottom, 12) + 6 }]}>
+        <View style={[st.inPanel, { backgroundColor: bg, maxHeight: '96%' /* [2026-10-20 dock] relativo ao painel/folha dono */, paddingBottom: Platform.OS === 'ios' ? 14 : Math.max(ins.bottom, 12) + 6 }]}>
           <View style={st.grab} />
           {children}
         </View>

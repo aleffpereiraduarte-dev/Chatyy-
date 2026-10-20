@@ -12,7 +12,7 @@ import { Modal, Pressable, StyleSheet, View, useWindowDimensions } from 'react-n
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetsOpenCount, runAfterNativeSheet } from '../NativeSheet';
 import { useTheme } from '../../context/ThemeContext';
-import { registerGameSheetHost } from '../../services/gamesInline';
+import { registerGameSheetHost, gamesDockOn } from '../../services/gamesInline';
 import { gamePalette } from './fx';
 import GamePlay from './GamePlay';
 
@@ -25,13 +25,14 @@ export function GamePlaySheetHost({ conversationId }) {
   const { height } = useWindowDimensions();
   const ins = useSafeAreaInsets();
 
-  useEffect(() => registerGameSheetHost((id, cid) => {
+  // [jogos 2026-10-20 dock] painel embutido ativo (components/games/GameDock) → esta folha fica só de reserva
+  useEffect(() => (gamesDockOn() ? undefined : registerGameSheetHost((id, cid) => {
     if (cid && cidRef.current && String(cid) !== String(cidRef.current)) return false; // jogo de outra conversa → rota
     // já há outra folha nativa aberta/descendo (seletor de jogos, menu) → espera ela sair: nunca folha sobre folha
     if (USE_NATIVE_SHEETS && nativeSheetsOpenCount() > 0) { runAfterNativeSheet(() => setGid(Number(id) || 0)); return true; }
     setGid(Number(id) || 0);
     return true;
-  }), []);
+  })), []);
   const close = useCallback(() => setGid(0), []);
   const swap = useCallback((id) => setGid(Number(id) || 0), []);
 
