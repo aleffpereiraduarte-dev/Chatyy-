@@ -113,11 +113,15 @@ export function isWifi() {
 export function getNetworkType() {
   if (!_currentState.isConnected) return 'none';
   if (Platform.OS === 'web') return 'wifi';
-  // Expensive flag wins — even Wi-Fi can be a personal hotspot the user is
-  // paying for, and we want to behave like roaming there.
-  if (_currentState.isExpensive) return 'roaming';
-  if (_currentState.isWifi) return 'wifi';
+  // [2026-10-20 media-wa] NetInfo marca TODO celular como isConnectionExpensive
+  // (iOS sempre; Android = medido) → antes todo 4G/5G virava 'roaming' e o
+  // download automático por "dados móveis" nunca valia no JS (a lista nativa
+  // já tratava celular como 'mobile' → os dois discordavam). Igual ao nativo:
+  // celular = 'mobile'; Wi-Fi caro (hotspot pessoal) = 'mobile'. Roaming de
+  // verdade precisa de API nativa (sem API pública no iOS).
+  if (_currentState.isWifi) return _currentState.isExpensive ? 'mobile' : 'wifi';
   if (_currentState.type === 'cellular') return 'mobile';
+  if (_currentState.isExpensive) return 'mobile';
   return 'unknown';
 }
 

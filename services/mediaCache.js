@@ -907,7 +907,10 @@ export function setMediaDownloadPrefs(patch) {
   // We start from the CURRENT matrix (so untouched buckets keep their cells)
   // and overlay the columns the enum/roaming flag imply, then push the result
   // through setAutoDownloadPolicy — the single source of truth for the gate.
-  _syncEnumPrefsToPolicy();
+  // [2026-10-20 media-wa] só os tipos que ESTE patch trouxe (antes reescrevia os 4
+  // a partir dos enums locais — padrão fotos/áudio Wi-Fi, vídeo/docs nunca — e
+  // mudar 1 linha/roaming desligava "dados móveis" dos outros até o servidor reaplicar).
+  _syncEnumPrefsToPolicy(Object.keys(patch));
 }
 
 // Bucket enum → matrix columns. wifi-only, wifi+mobile, or none. Roaming is
@@ -927,13 +930,14 @@ const _PREF_KEY_TO_BUCKET = {
   media_auto_dl_docs:   'documents',
 };
 
-function _syncEnumPrefsToPolicy() {
+function _syncEnumPrefsToPolicy(changedKeys) {
   // Clone the current matrix so untouched cells survive the merge.
   const next = JSON.parse(JSON.stringify(_autoDlPolicy || _defaultPolicy));
   const roamingOn = _mediaDlPrefs.media_auto_dl_roaming === true ? 1 : 0;
+  const only = Array.isArray(changedKeys) ? changedKeys : null;
   for (const [prefKey, bucket] of Object.entries(_PREF_KEY_TO_BUCKET)) {
-    const cols = _ENUM_TO_COLUMNS[_mediaDlPrefs[prefKey]];
     if (!next[bucket]) next[bucket] = { mobile: 0, wifi: 0, roaming: 0 };
+    const cols = (!only || only.includes(prefKey)) ? _ENUM_TO_COLUMNS[_mediaDlPrefs[prefKey]] : null;
     if (cols) {
       next[bucket].wifi = cols.wifi;
       next[bucket].mobile = cols.mobile;
@@ -941,7 +945,7 @@ function _syncEnumPrefsToPolicy() {
     // The roaming flag drives the roaming column across ALL buckets. We only
     // allow roaming where the bucket also permits mobile (roaming IS mobile,
     // just metered) — so a 'wifi'/'never' bucket stays off while roaming.
-    next[bucket].roaming = (roamingOn && cols && cols.mobile) ? 1 : 0;
+    next[bucket].roaming = (roamingOn && next[bucket].mobile) ? 1 : 0;
   }
   // Route through the single source of truth so the gate + persistence stay
   // consistent with direct setAutoDownloadPolicy() callers.
