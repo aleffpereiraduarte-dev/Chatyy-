@@ -989,6 +989,9 @@ final class ChatyyComposerView: ExpoView, UITextViewDelegate {
     // MESMO TOQUE (logo depois do resign animado: o teclado desce com o
     // composer grudado e a folha sobe por cima, já cobrindo a área dele).
     let token = NSMutableDictionary()
+    // [2026-10-20 attach-tgwin] a folha nasce do "+" e entra no fim da descida.
+    token["plusFrame"] = NSValue(cgRect: plusButton.convert(plusButton.bounds, to: nil))
+    token["hadKeyboard"] = had
     if attachInstant {
       NotificationCenter.default.post(name: Notification.Name("ChatyyComposerPlusTapped"), object: token)
     }

@@ -255,6 +255,14 @@ export function threadKbAttachFreeze(color) {
 export function threadKbAttachThaw(waitKbMs) {
   _attachFns.forEach((o) => { try { o.thaw(Number(waitKbMs) || 0); } catch {} });
 }
+// [2026-10-20 attach-tgwin] Telegram (ChatController withUpdatedInputHeight(nil)):
+// com a folha de anexos na tela o chat IGNORA o teclado (legenda/busca dentro
+// da folha não mexem em lista nem composer). Ligado pelo onArmedShown (a folha
+// só entra depois de o teclado descer ⇒ lift já é 0).
+const _ignoreFns = new Set();
+export function threadKbIgnoreKeyboard(on) {
+  _ignoreFns.forEach((fn) => { try { fn(!!on); } catch {} });
+}
 /** Composer ganhou foco (toque/foco explícito) → trava solta na hora. */
 export function threadKbNoteComposerFocus() {
   _composerFocused = true;
@@ -302,6 +310,12 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, dockable, 
   const clamp = Rea.useSharedValue(0);
   // [2026-10-20 attach-freeze] painel falso no vão (altura = hold) enquanto congelado.
   const fake = Rea.useSharedValue(0);
+  const ignoreKb = Rea.useSharedValue(0); // [2026-10-20 attach-tgwin]
+  React.useEffect(() => {
+    const fn = (on) => { try { ignoreKb.value = on ? 1 : 0; } catch {} };
+    _ignoreFns.add(fn);
+    return () => { _ignoreFns.delete(fn); };
+  }, [ignoreKb]);
   const fakeColor = Rea.useSharedValue('#d6d7dc');
   // [2026-10-13 android-kbd-flicker] bottomInset atual p/ o restore do Android
   // (o effect abaixo só depende de setEnabled).
@@ -804,6 +818,7 @@ function KCThreadKeyboardAvoider({ style, bottomInset, translateMode, dockable, 
   // [2026-10-19 kb-translate] lift = quanto a barra sobe (teclado − inset).
   const lift = Rea.useDerivedValue(() => {
     'worklet';
+    if (ignoreKb.value === 1) return 0; // [2026-10-20 attach-tgwin] folha na tela: chat ignora o teclado
     if (hold.value > 0.5) return hold.value; // [2026-10-19 attach-hold] conversa parada sob a folha
     if (settled.value === 1 || clamp.value === 1) return 0;
     return Math.max(0, -height.value - inset);

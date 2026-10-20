@@ -331,7 +331,12 @@ export default function NativeAttachSheet({
     try { if (require('../../utils/kbNativeTransitions').nativeComposerApi() < 14) on = false; } catch { on = false; }
     if (!on) return undefined;
     const id = armIdRef.current;
-    try { m.armSheet(id, buildOptions(null)); } catch {}
+    // [2026-10-20 attach-tgwin] attach api >= 11: folha na janela do app,
+    // nasce do "+" depois de o teclado descer (Telegram). Kill switch OTA:
+    // globalThis.__chatyy_attach_tgwin = false (= present da api 10).
+    let tgw = false;
+    try { tgw = m.apiVersion() >= 11 && globalThis.__chatyy_attach_tgwin !== false; } catch { tgw = false; }
+    try { m.armSheet(id, { ...buildOptions(null), ...(tgw ? { tgWindow: true } : null) }); } catch {}
     return () => { try { m.armSheet(id, null); } catch {} };
   }, [armKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -339,9 +344,25 @@ export default function NativeAttachSheet({
     if (!m || typeof m.addArmedListener !== 'function') return undefined;
     const sub = m.addArmedListener((e) => {
       if (!e || e.id !== armIdRef.current) return;
+      // [2026-10-20 attach-tgwin] chat volta a seguir o teclado só depois que
+      // ele (legenda da folha) terminou de descer.
+      const release = () => { try { require('../../utils/threadKeyboard').threadKbIgnoreKeyboard(false); } catch {} };
+      let vis = false;
+      try { vis = !!require('react-native').Keyboard.isVisible(); } catch {}
+      if (vis) {
+        let sub2 = null;
+        const tm = setTimeout(() => { try { sub2 && sub2.remove(); } catch {} release(); }, 700);
+        try { sub2 = require('react-native').Keyboard.addListener('keyboardDidHide', () => { clearTimeout(tm); try { sub2.remove(); } catch {} release(); }); } catch {}
+      } else {
+        release();
+      }
       try { handleResultRef.current && handleResultRef.current(e.result || null); } catch {}
     });
-    return () => { try { sub && sub.remove && sub.remove(); } catch {} };
+    const sub3 = typeof m.addArmedShownListener === 'function' ? m.addArmedShownListener((e) => {
+      if (!e || e.id !== armIdRef.current) return;
+      try { require('../../utils/threadKeyboard').threadKbIgnoreKeyboard(true); } catch {}
+    }) : null;
+    return () => { try { sub && sub.remove && sub.remove(); } catch {} try { sub3 && sub3.remove && sub3.remove(); } catch {} };
   }, []);
 
   useEffect(() => {

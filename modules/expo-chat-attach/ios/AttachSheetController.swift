@@ -20,6 +20,9 @@ final class AttachSheetController: UIViewController,
   var onFinish: (([String: Any]) -> Void)?
   /// [2026-10-19 attach-over-kb] folha numa janela acima do teclado (ChatyyAttachModule).
   var overKeyboardHost: AttachOverKeyboardHost?
+  /// [2026-10-20 attach-tgwin] frame do "+" (coords da janela): a folha nasce dele.
+  var sourceRect: CGRect?
+  private var dimLocked = false // dim desacoplado da geometria (entrada/saída tgwin)
   /// [2026-10-20 attach-inwindow] remoção sem dismiss (folha na janela do painel).
   var customRemove: ((@escaping () -> Void) -> Void)?
   var onCaptionEditing: ((Bool) -> Void)?
@@ -107,7 +110,8 @@ final class AttachSheetController: UIViewController,
     view.backgroundColor = .clear
     overrideUserInterfaceStyle = config.dark ? .dark : .light
 
-    dimView.backgroundColor = UIColor(white: 0, alpha: 0.42)
+    // [2026-10-20 attach-tgwin] véu mais leve (Telegram ~25-30%).
+    dimView.backgroundColor = UIColor(white: 0, alpha: config.tgWindow ? 0.28 : 0.42)
     dimView.alpha = 0
     dimView.frame = view.bounds
     dimView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -148,10 +152,10 @@ final class AttachSheetController: UIViewController,
     if !didInitialLayout && view.bounds.height > 0 {
       didInitialLayout = true
       top = collapsedTop
-      dismissOffset = view.bounds.height - top
+      dismissOffset = config.tgWindow ? 0 : view.bounds.height - top
       // [2026-10-20 attach-armed] teclado aberto/descendo: a folha NASCE com o
       // topo na altura do teclado (já cobre a área que ele libera) e sobe dali.
-      let cover = (overKeyboardHost == nil && customRemove == nil) ? AttachKeyboardTracker.shared.recentHeight() : 0
+      let cover = (overKeyboardHost == nil && customRemove == nil && !config.tgWindow) ? AttachKeyboardTracker.shared.recentHeight() : 0
       if cover > 40 { dismissOffset = max(0, view.bounds.height - cover - top) }
     }
     applyGeometry()
@@ -168,6 +172,12 @@ final class AttachSheetController: UIViewController,
     super.viewDidAppear(animated)
     view.layoutIfNeeded()
     caHaptic("select")
+    if config.tgWindow { // [2026-10-20 attach-tgwin]
+      animateInTg()
+      cascadeActions()
+      startCameraIfPossible()
+      return
+    }
     // [2026-10-20 attach-armed] mola curta (Telegram ~0,3 s) — antes 0,52 s.
     UIView.animate(withDuration: config.motion ? 0.34 : 0.52, delay: 0, usingSpringWithDamping: config.motion ? 0.92 : 0.86, initialSpringVelocity: 0.2, options: [.allowUserInteraction, .beginFromCurrentState]) {
       self.dismissOffset = 0
@@ -228,9 +238,58 @@ final class AttachSheetController: UIViewController,
     grabber.alpha = 1 - p * 0.6
     sheetView.layer.cornerRadius = 14 * (1 - p * 0.6)
     collectionView.isScrollEnabled = isExpanded
-    if h > 0 {
+    if h > 0 && !dimLocked {
       let travel = max(1, h - collapsedTop)
       dimView.alpha = max(0, 1 - dismissOffset / travel)
+    }
+  }
+
+  // [2026-10-20 attach-tgwin] Entrada igual ao AttachmentController.animateIn
+  // do Telegram: a folha nasce do botão "+" (bolha) e cresce até o tamanho
+  // final — posição mola 0,4 s (amortecimento 0,9), escala 0,45 s, cantos
+  // 0,2 s, conteúdo 0→1 em 0,2 s; véu 0→1 LINEAR em 0,3 s. Sem "+" conhecido:
+  // sobe de baixo com mola 0,4 s.
+  private func animateInTg() {
+    dimLocked = true
+    dismissOffset = 0
+    applyGeometry()
+    let finalCenter = sheetView.center
+    let finalBounds = sheetView.bounds
+    let content = sheetView.subviews
+    let alphas = content.map { $0.alpha }
+    dimView.alpha = 0
+    if let src = sourceRect, src.width > 1, src.height > 1, finalBounds.width > 1, finalBounds.height > 1 {
+      let local = view.convert(src, from: nil)
+      let sx = max(0.02, local.width / finalBounds.width)
+      let sy = max(0.02, local.height / finalBounds.height)
+      sheetView.center = CGPoint(x: local.midX, y: local.midY)
+      sheetView.transform = CGAffineTransform(scaleX: sx, y: sy)
+      sheetView.layer.cornerRadius = min(finalBounds.width, finalBounds.height) / 2
+      content.forEach { $0.alpha = 0 }
+      UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0, options: [.allowUserInteraction]) {
+        self.sheetView.center = finalCenter
+      }
+      UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 1.0, initialSpringVelocity: 0, options: [.allowUserInteraction]) {
+        self.sheetView.transform = .identity
+      }
+      UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
+        self.sheetView.layer.cornerRadius = 14
+      }
+      UIView.animate(withDuration: 0.2, delay: 0.05, options: [.curveEaseOut, .allowUserInteraction]) {
+        for (i, v) in content.enumerated() { v.alpha = i < alphas.count ? alphas[i] : 1 }
+      } completion: { _ in
+        self.applyGeometry() // alphas finais do cabeçalho (X/grabber) pela geometria
+      }
+    } else {
+      sheetView.transform = CGAffineTransform(translationX: 0, y: view.bounds.height - top)
+      UIView.animate(withDuration: 0.4, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0, options: [.allowUserInteraction]) {
+        self.sheetView.transform = .identity
+      }
+    }
+    UIView.animate(withDuration: 0.3, delay: 0, options: [.curveLinear, .allowUserInteraction]) {
+      self.dimView.alpha = 1
+    } completion: { _ in
+      self.dimLocked = false
     }
   }
 
@@ -1164,10 +1223,21 @@ final class AttachSheetController: UIViewController,
     postClose(AttachSheetController.willCloseNote, result, byUser: byUser)
     let h = view.bounds.height
     let target = max(h - self.top, 1)
+    // [2026-10-20 attach-tgwin] véu desacoplado: fade LINEAR proporcional ao
+    // que falta (nunca concentrado em 3 quadros), geometria em mola à parte.
+    if config.tgWindow {
+      dimLocked = true
+      let curDim = dimView.layer.presentation()?.opacity ?? Float(dimView.alpha)
+      dimView.alpha = CGFloat(curDim)
+      let frac = Double(max(0.25, min(1, curDim)))
+      UIView.animate(withDuration: max(0.16, 0.25 * frac), delay: 0, options: [.curveLinear, .beginFromCurrentState]) {
+        self.dimView.alpha = 0
+      }
+    }
     let changes = {
       self.dismissOffset = target
       self.applyGeometry()
-      self.dimView.alpha = 0
+      if !self.config.tgWindow { self.dimView.alpha = 0 }
     }
     let done: (Bool) -> Void = { _ in
       self.stopCamera()
@@ -1179,6 +1249,11 @@ final class AttachSheetController: UIViewController,
     }
     let remaining = max(1, target - dismissOffset)
     let v = max(0, velocity)
+    if config.tgWindow { // [2026-10-20 attach-tgwin] mola ~0,38 s a partir do dedo
+      UIView.animate(withDuration: 0.38, delay: 0, usingSpringWithDamping: 1.0, initialSpringVelocity: v / remaining,
+                     options: [.beginFromCurrentState, .allowUserInteraction], animations: changes, completion: done)
+      return
+    }
     if !config.motion {
       UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseIn, .beginFromCurrentState], animations: changes, completion: done)
     } else if v > 60 {

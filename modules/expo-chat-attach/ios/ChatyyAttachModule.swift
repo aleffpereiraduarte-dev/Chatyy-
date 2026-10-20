@@ -62,8 +62,13 @@ public class ChatyyAttachModule: Module {
     //     onArmedResult {id, result}: o "+" do composer (api 14) apresenta a
     //     folha no mesmo toque; folha nasce já cobrindo a área do teclado que
     //     desce e sobe com mola curta (~0,34 s).
+    // 11 = [2026-10-20 attach-tgwin] armSheet({tgWindow}): sem present —
+    //     a folha vira subview da janela do app (por cima de tudo), entra
+    //     ~(duração do keyboardWillHide − 0,05 s) depois do "+" nascendo do
+    //     botão; evento onArmedShown {id} quando entra (o chat passa a ignorar
+    //     o teclado); fechar = mola + véu linear, sem refocar.
     Function("apiVersion") { () -> Int in
-      return 10
+      return 11
     }
 
     OnCreate {
@@ -78,7 +83,7 @@ public class ChatyyAttachModule: Module {
       if let o = self.plusObserver { NotificationCenter.default.removeObserver(o) }
     }
 
-    Events("onArmedResult")
+    Events("onArmedResult", "onArmedShown")
 
     // [2026-10-20 attach-armed] JS deixa as opções prontas (id = dono). null/{} = desarma.
     AsyncFunction("armSheet") { (id: String, options: [String: Any]?) in
@@ -255,7 +260,8 @@ extension ChatyyAttachModule {
     guard let opts = armed, sheet == nil, camera == nil, videoNote == nil else { return }
     guard let presenter = appContext?.utilities?.currentViewController() else { return }
     let id = armedId
-    let vc = AttachSheetController(config: AttachConfig(opts))
+    let cfg = AttachConfig(opts)
+    let vc = AttachSheetController(config: cfg)
     var done = false
     vc.onFinish = { [weak self] result in
       if done { return }
@@ -265,6 +271,27 @@ extension ChatyyAttachModule {
     }
     sheet = vc
     token["handled"] = true
+    // [2026-10-20 attach-tgwin] Telegram: teclado desce pelo sistema (resign
+    // normal no composer, composer+lista juntos); a folha entra no fim da
+    // descida, na MESMA janela do app (sem present = sem troca de input views
+    // sem animação), nascendo do "+".
+    if cfg.tgWindow, let win = presenter.view.window ?? presenter.viewIfLoaded?.window {
+      if let r = (token["plusFrame"] as? NSValue)?.cgRectValue { vc.sourceRect = r }
+      let had = (token["hadKeyboard"] as? Bool) ?? false
+      let kd = AttachKeyboardTracker.shared.lastHideDuration
+      let delay: TimeInterval = had ? max(0.15, (kd > 0 ? kd : 0.25) - 0.05) : 0
+      let host = AttachInKeyboardWindowHost()
+      vc.customRemove = { done in host.tearDown(slide: false, done) }
+      let show = { [weak self, weak vc, weak win] in
+        guard let self = self, let vc = vc, self.sheet === vc else { return }
+        guard let win = win, !win.isHidden else { vc.onFinish?(["action": "cancel"]); return }
+        host.show(vc, in: win, slide: false, asChildOf: win.rootViewController)
+        NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
+        self.sendEvent("onArmedShown", ["id": id])
+      }
+      if delay > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: show) } else { show() }
+      return
+    }
     NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": false, "kind": "sheet"])
     vc.modalPresentationStyle = .overFullScreen
     vc.modalPresentationCapturesStatusBarAppearance = false
@@ -384,7 +411,12 @@ final class AttachInKeyboardWindowHost {
     return false
   }
 
-  func show(_ vc: UIViewController, in win: UIWindow, slide: Bool) {
+  private weak var parentVC: UIViewController?
+
+  func show(_ vc: UIViewController, in win: UIWindow, slide: Bool, asChildOf parent: UIViewController? = nil) {
+    // [2026-10-20 attach-tgwin] na janela do app: filho do VC raiz (hierarquia
+    // de VCs válida p/ apresentar o seletor de fotos limitado etc.).
+    if let p = parent { p.addChild(vc); parentVC = p }
     let c = UIView(frame: win.bounds)
     c.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     c.backgroundColor = .clear
@@ -404,6 +436,7 @@ final class AttachInKeyboardWindowHost {
     } else {
       vc.endAppearanceTransition()
     }
+    if parentVC != nil { vc.didMove(toParent: parentVC) }
   }
 
   /// Legenda editando: folha atrás do host do teclado (teclado visível por cima).
@@ -417,10 +450,13 @@ final class AttachInKeyboardWindowHost {
     guard let c = container else { completion(); return }
     container = nil
     let vc = self.vc
+    let isChild = parentVC != nil
     let finish = {
+      if isChild { vc?.willMove(toParent: nil) }
       vc?.beginAppearanceTransition(false, animated: false)
       c.removeFromSuperview()
       vc?.endAppearanceTransition()
+      if isChild { vc?.removeFromParent() }
       completion()
     }
     if slide {
@@ -443,6 +479,8 @@ final class AttachKeyboardTracker {
   // [2026-10-20 attach-armed] última altura ABERTA e quando começou a descer.
   private(set) var lastShownHeight: CGFloat = 0
   private var hideAt: CFTimeInterval = 0
+  /// [2026-10-20 attach-tgwin] duração da última descida (userInfo do keyboardWillHide).
+  private(set) var lastHideDuration: TimeInterval = 0
 
   /// Altura do teclado aberto agora, ou que acabou de começar a descer (< 0,6 s).
   func recentHeight() -> CGFloat {
@@ -464,8 +502,9 @@ final class AttachKeyboardTracker {
       else if self.visible { self.hideAt = CACurrentMediaTime() }
       self.visible = vis
     }
-    nc.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] _ in
+    nc.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] n in
       guard let self = self else { return }
+      if let d = (n.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue { self.lastHideDuration = d }
       if self.visible { self.hideAt = CACurrentMediaTime() }
       self.visible = false
     }
@@ -504,6 +543,9 @@ struct AttachConfig {
   let galleryMode: Bool
   // [2026-10-20 attach-tg] api 9: cabeçalho Telegram (X à esquerda, "Recentes ▾" com álbuns).
   let tgHeader: Bool
+  // [2026-10-20 attach-tgwin] api 11: folha na janela do app (sem present),
+  // nasce do "+" depois de o teclado descer (modelo exato do Telegram).
+  let tgWindow: Bool
 
   init(_ o: [String: Any]) {
     var l: [String: String] = [:]
@@ -538,6 +580,7 @@ struct AttachConfig {
     motion = (o["motion"] as? Bool) ?? true
     galleryMode = (o["galleryMode"] as? Bool) ?? false
     tgHeader = ((o["tgHeader"] as? Bool) ?? false) && !galleryMode
+    tgWindow = (o["tgWindow"] as? Bool) ?? false
   }
 
   func t(_ key: String, _ fallback: String) -> String {
