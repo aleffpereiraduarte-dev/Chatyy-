@@ -6148,19 +6148,14 @@ function buildAttachItems(t, opts = {}) {
     { key: 'meetup', icon: IconCalendar, label: t('chatConv.meetup') || 'Encontro', color: '#111111' },
     { key: 'playlist', icon: IconMusic || IconPlay, label: t('chatConv.playlist') || 'Playlist', color: '#111111' },
     // [2026-10-13 diamantes] Presente — só em conversa 1:1 (servidor recusa grupo).
-    ...(opts.gift ? [{ key: 'gift', icon: _IconGiftBox, label: t('gifts.attachLabel') || 'Presente', color: '#111111' }] : []),
+    // [2026-10-20 attach-enxuto] founder: "do + pode remover gift e vídeos curtos, já tem em outros lugares".
+    // Presente segue no perfil/conversa; Vídeo curto na aba Reels. opts.gift ignorado aqui.
     // [jogos 2026-10-18] "Jogos" — só com o servidor pronto (chat_game_types) e sem o kill switch __chatyy_games === false.
     ...(opts.games ? [{ key: 'games', icon: _IconGamepad, label: t('games.menu') || 'Jogos', color: '#111111' }] : []),
     // 2026-05-18: "Vídeo curto" — Reels-style 9:16 clip in-chat. Only renders
     // when the feature flag is on (isShortVideoInChatEnabled returns true).
     // Returns null otherwise so the grid silently drops the slot for users
     // not in the rollout. IconFilm + violet matches the Reels tab identity.
-    ...(_shortVideoConfig && _shortVideoConfig.isShortVideoInChatEnabled && _shortVideoConfig.isShortVideoInChatEnabled() ? [{
-      key: 'short_video',
-      icon: IconFilm,
-      label: t('chat.attach.shortVideo') || 'Vídeo curto',
-      color: '#111111',
-    }] : []),
   ];
 }
 
@@ -6290,7 +6285,7 @@ function _creatorNativeSheet() {
 // [2026-10-16 poll-wa] `header`/`footer` opcionais: cabeçalho fixo em cima,
 // rodapé (botão principal) fixo embaixo acima do teclado/safe area e só o meio
 // rola (com padding). Sem eles = layout antigo (children livres).
-function CreatorSheetShell({ native, kavEnabled, onClose, colors, insets, children, header, footer }) {
+function CreatorSheetShell({ native, kavEnabled, onClose, colors, insets, children, header, footer, scrollEnabled = true }) {
   const bottomInset = Math.max(0, (insets && insets.bottom) || 0);
   const framed = !!(header || footer);
   const body = framed ? (
@@ -6298,6 +6293,7 @@ function CreatorSheetShell({ native, kavEnabled, onClose, colors, insets, childr
       {header ? <View collapsable={false} style={{ paddingHorizontal: 20 }}>{header}</View> : null}
       <ScrollView
         style={{ flexGrow: 0, flexShrink: 1 }}
+        scrollEnabled={scrollEnabled /* [encontro 2026-10-19] passo mapa: o pan é do mapa */}
         contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 4, paddingBottom: 12 }}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
@@ -6491,80 +6487,81 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated, reply
 // ============================================================
 // MEETUP CREATOR MODAL
 // ============================================================
+// [encontro 2026-10-19] Nível WhatsApp/Apple: "Quando" = rodas de data/hora (nunca texto livre),
+// "Onde" = busca (proxy Google Places/OSM no servidor) + passo MAPA na mesma folha (pino central,
+// minha localização, endereço reverso) — sem Modal sobre Modal. Envia datetime ISO c/ fuso e
+// location "Lugar, Endereço|lat,lng" (cartão mostra o mapa e abre no Maps/Google Maps).
+function _meetupDefaultWhen() {
+  const d = new Date(Date.now() + 60 * 60000);
+  if (d.getMinutes() === 0 || d.getMinutes() === 30) d.setSeconds(0, 0);
+  else if (d.getMinutes() < 30) d.setMinutes(30, 0, 0);
+  else d.setMinutes(60, 0, 0);
+  return d;
+}
+
+function _meetupWhenLabel(d, t) {
+  if (!(d instanceof Date) || isNaN(d.getTime())) return '';
+  const loc = (t && t('_locale')) || undefined;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(d); day.setHours(0, 0, 0, 0);
+  const diff = Math.round((day - today) / 86400000);
+  let dayStr;
+  if (diff === 0) dayStr = _mt('chat.today', 'Hoje');
+  else if (diff === 1) dayStr = _mt('chat.tomorrow', 'Amanhã');
+  else {
+    try { dayStr = d.toLocaleDateString(loc, { weekday: 'long', day: 'numeric', month: 'long' }); }
+    catch { dayStr = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`; }
+    dayStr = dayStr.charAt(0).toUpperCase() + dayStr.slice(1);
+  }
+  let hm;
+  try { hm = d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' }); }
+  catch { hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+  return `${dayStr} · ${hm}`;
+}
+
 function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, replyToId = null, native = false }) {
+  const MP = require('../components/meetup/MeetupPlacePicker');
+  const ML = require('../components/meetup/meetupLocation');
+  const { WheelDateTimePicker } = require('../components/ScheduleModals');
+  const [step, setStep] = useState('form'); // form | map
   const [title, setTitle] = useState('');
-  const [location, setLocation] = useState('');
-  const [dateText, setDateText] = useState('');
+  const [when, setWhen] = useState(_meetupDefaultWhen);
+  const [whenOpen, setWhenOpen] = useState(false);
+  const [place, setPlace] = useState(null); // { title, address, lat, lng }
   const [description, setDescription] = useState('');
   const [sending, setSending] = useState(false);
-  const [addressSuggestions, setAddressSuggestions] = useState([]);
-  const [searchingAddress, setSearchingAddress] = useState(false);
-  const [pickedCoords, setPickedCoords] = useState(null); // { lat, lng }
-  const [pickedHasHouseNumber, setPickedHasHouseNumber] = useState(false);
-  const [houseNumber, setHouseNumber] = useState('');
-  const addrDebounceRef = useRef(null);
+  const [locatingMe, setLocatingMe] = useState(false);
+  const sessionRef = useRef(null);
+  if (!sessionRef.current) sessionRef.current = MP.newPlacesSession();
+  const mapOk = MP.meetupMapAvailable();
+  const { height: winH } = useWindowDimensions();
+  const _PL = require('../components/chat/pollLook');
+  const isDarkSheet = _PL.onInk(colors.surface || '#ffffff') === '#FFFFFF';
 
-  // Nominatim autocomplete (free OpenStreetMap geocoding)
-  useEffect(() => {
-    if (addrDebounceRef.current) clearTimeout(addrDebounceRef.current);
-    const q = location.trim();
-    if (q.length < 3 || pickedCoords) {
-      setAddressSuggestions([]);
-      return;
-    }
-    addrDebounceRef.current = setTimeout(async () => {
-      setSearchingAddress(true);
-      try {
-        const r = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5&addressdetails=1&accept-language=pt-BR`,
-          { headers: { 'User-Agent': 'Chatyy/1.0' } }
-        );
-        const data = await r.json();
-        setAddressSuggestions(Array.isArray(data) ? data : []);
-      } catch {
-        setAddressSuggestions([]);
-      } finally {
-        setSearchingAddress(false);
+  const lang = (() => { try { return ((t && t('_locale')) || 'pt-BR').replace('_', '-'); } catch { return 'pt-BR'; } })();
+  const isFuture = when instanceof Date && when.getTime() > Date.now() - 60000;
+
+  const pickMyLocation = async () => {
+    if (mapOk) { setStep('map'); return; } // no mapa o usuário confirma/ajusta o ponto
+    setLocatingMe(true);
+    try {
+      const Location = require('expo-location');
+      let perm = await Location.getForegroundPermissionsAsync();
+      if (perm?.status !== 'granted') perm = await Location.requestForegroundPermissionsAsync();
+      if (perm?.status === 'granted') {
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        if (pos?.coords) setPlace(await MP.placesReverse(pos.coords.latitude, pos.coords.longitude, { lang }));
       }
-    }, 400);
-    return () => { if (addrDebounceRef.current) clearTimeout(addrDebounceRef.current); };
-  }, [location, pickedCoords]);
-
-  const pickAddress = (item) => {
-    // Nominatim returns `address.house_number` only when the query already
-    // includes a number. Most users type just "Rua X, Cidade" so we surface
-    // a follow-up "Número" field to capture the house number explicitly —
-    // otherwise the meetup ends up with a vague street-only location.
-    const hn = item?.address?.house_number;
-    setLocation(item.display_name);
-    setPickedCoords({ lat: parseFloat(item.lat), lng: parseFloat(item.lon) });
-    setPickedHasHouseNumber(!!hn);
-    setHouseNumber(hn ? String(hn) : '');
-    setAddressSuggestions([]);
+    } catch {}
+    setLocatingMe(false);
   };
 
   const handleCreate = async () => {
-    if (!title.trim() || !dateText.trim()) return;
+    if (!title.trim() || !isFuture || sending) return;
     setSending(true);
     try {
-      // Inject the manually-entered house number into the address line if the
-      // picked suggestion didn't already include one (Nominatim drops it when
-      // user searches by street name only).
-      let addressLine = location.trim();
-      const hn = houseNumber.trim();
-      if (pickedCoords && !pickedHasHouseNumber && hn) {
-        // Splice the number right after the street name (first comma).
-        const comma = addressLine.indexOf(',');
-        if (comma > 0) {
-          addressLine = `${addressLine.slice(0, comma)}, ${hn}${addressLine.slice(comma)}`;
-        } else {
-          addressLine = `${addressLine}, ${hn}`;
-        }
-      }
-      const locStr = pickedCoords
-        ? `${addressLine}|${pickedCoords.lat},${pickedCoords.lng}`
-        : addressLine;
-      const r = await api.chatCreateMeetup(conversationId, title.trim(), dateText.trim(), locStr, description.trim(), replyToId); // [2026-10-12 reply-media]
+      const locStr = place ? ML.formatMeetupLocation(place) : '';
+      const r = await api.chatCreateMeetup(conversationId, title.trim(), ML.meetupDateIso(when), locStr, description.trim(), replyToId); // [2026-10-12 reply-media]
       if (r?.success && r.data) {
         const msg = r.data.message || r.data;
         onCreated({
@@ -6587,31 +6584,68 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
     setSending(false);
   };
 
-  // Visual-only presentation helpers (unified sheet language) — no logic change.
   const insets = useSafeAreaInsets();
   const [focusedField, setFocusedField] = useState(null);
-  const kavEnabled = useAndroidKavGate(focusedField != null);
-  const ACCENT = colors.text; // [2026-10-13 conv-pb] P&B (era verde #25D366) — igual à enquete
-  const ACCENT_TINT = colors.surfaceVariant;
+  const kavEnabled = useAndroidKavGate(focusedField != null || step === 'map');
+  const ACCENT = colors.text; // P&B
   const ON_ACCENT = colors.background || colors.surface;
   const inputBase = { backgroundColor: colors.surfaceVariant, borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.text };
   const labelStyle = { fontSize: 13, color: colors.textSecondary, fontWeight: '600', marginBottom: 8 };
-  const canCreate = !!title.trim() && !!dateText.trim();
+  const canCreate = !!title.trim() && isFuture;
+  const mapH = Math.round(Math.min(420, Math.max(220, (winH || 700) * 0.4)));
+
+  const header = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+      {step === 'map' ? (
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.back', 'Voltar')} onPress={() => setStep('form')} hitSlop={8} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
+          <IconChevronLeft size={22} color={ACCENT} />
+        </TouchableOpacity>
+      ) : (
+        <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
+          <IconCalendar size={21} color={ACCENT} />
+        </View>
+      )}
+      <Text style={{ flex: 1, marginLeft: 14, fontSize: 21, fontWeight: '800', color: colors.text }} numberOfLines={1}>
+        {step === 'map' ? _mt('chatConv.meetupPickOnMap', 'Escolher local') : (t('chatConv.createMeetup') || 'Marcar encontro')}
+      </Text>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={onClose} hitSlop={8} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
+        <IconX size={18} color={colors.textSecondary} />
+      </TouchableOpacity>
+    </View>
+  );
+
+  if (step === 'map') {
+    return (
+      <CreatorSheetShell native={native} kavEnabled={kavEnabled} onClose={onClose} colors={colors} insets={insets} header={header} scrollEnabled={false}>
+        <MP.MeetupMapStep
+          colors={colors}
+          t={t}
+          isDark={isDarkSheet}
+          initial={place}
+          session={sessionRef}
+          mapHeight={mapH}
+          onConfirm={(p) => { setPlace(p); setStep('form'); }}
+        />
+      </CreatorSheetShell>
+    );
+  }
+
+  const footer = (
+    <TouchableOpacity
+      onPress={handleCreate}
+      disabled={sending || !canCreate}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      style={{ backgroundColor: canCreate ? ACCENT : colors.border, borderRadius: 14, paddingVertical: 15, alignItems: 'center', opacity: sending ? 0.7 : 1 }}
+    >
+      {sending
+        ? <ActivityIndicator color={ON_ACCENT} />
+        : <Text style={{ color: canCreate ? ON_ACCENT : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{(t('chatConv.createMeetupBtn') || 'Marcar encontro').replace(/\s*\u{1F4CD}\s*/gu, '')}</Text>}
+    </TouchableOpacity>
+  );
 
   return (
-    <CreatorSheetShell native={native} kavEnabled={kavEnabled} onClose={onClose} colors={colors} insets={insets}>
-        {/* Header */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
-          <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: ACCENT_TINT, alignItems: 'center', justifyContent: 'center' }}>
-            <IconMapPin size={22} color={ACCENT} />
-          </View>
-          <Text style={{ flex: 1, marginLeft: 14, fontSize: 21, fontWeight: '800', color: colors.text }}>{t('chatConv.createMeetup') || 'Marcar Encontro'}</Text>
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={onClose} hitSlop={8} style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
-            <IconX size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
-        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-
+    <CreatorSheetShell native={native} kavEnabled={kavEnabled} onClose={onClose} colors={colors} insets={insets} header={header} footer={footer}>
         <Text style={labelStyle}>{t('chatConv.meetupTitle') || 'Título'} <Text style={{ color: ACCENT }}>*</Text></Text>
         <TextInput
           style={{ ...inputBase, borderColor: focusedField === 'title' ? ACCENT : colors.border, marginBottom: 16 }}
@@ -6619,107 +6653,99 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated, rep
           placeholderTextColor={colors.textTertiary}
           value={title}
           onChangeText={setTitle}
-          onFocus={() => setFocusedField('title')}
+          maxLength={200}
+          onFocus={() => { setFocusedField('title'); setWhenOpen(false); }}
           onBlur={() => setFocusedField(null)}
         />
 
         <Text style={labelStyle}>{t('chatConv.meetupWhen') || 'Quando'} <Text style={{ color: ACCENT }}>*</Text></Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', ...inputBase, paddingVertical: 0, borderColor: focusedField === 'when' ? ACCENT : colors.border, marginBottom: 16 }}>
+        <TouchableOpacity
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: whenOpen }}
+          accessibilityLabel={`${t('chatConv.meetupWhen') || 'Quando'}: ${_meetupWhenLabel(when, t)}`}
+          onPress={() => { try { Keyboard.dismiss(); } catch {} setWhenOpen((v) => !v); }}
+          style={{ flexDirection: 'row', alignItems: 'center', ...inputBase, borderColor: whenOpen ? ACCENT : colors.border, marginBottom: whenOpen ? 8 : 16 }}
+        >
           <IconClock size={17} color={colors.textSecondary} style={{ marginRight: 10 }} />
-          <TextInput
-            style={{ flex: 1, paddingVertical: 12, fontSize: 15, color: colors.text }}
-            placeholder={t('chatConv.meetupWhenPlaceholder') || 'Ex: Sábado 15h, 2026-03-15 15:00'}
-            placeholderTextColor={colors.textTertiary}
-            value={dateText}
-            onChangeText={setDateText}
-            onFocus={() => setFocusedField('when')}
-            onBlur={() => setFocusedField(null)}
-          />
-        </View>
+          <Text style={{ flex: 1, fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>{_meetupWhenLabel(when, t)}</Text>
+          {whenOpen ? <IconChevronUp size={18} color={colors.textSecondary} /> : <IconChevronDown size={18} color={colors.textSecondary} />}
+        </TouchableOpacity>
+        {whenOpen ? (
+          <View style={{ backgroundColor: colors.surfaceVariant, borderRadius: 14, paddingTop: 8, marginBottom: 16 }}>
+            <WheelDateTimePicker colors={colors} t={t} initial={when} dayCount={365} onChange={(d) => { if (d && !isNaN(d.getTime())) setWhen(d); }} />
+          </View>
+        ) : null}
+        {!isFuture ? (
+          <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginTop: -8, marginBottom: 14 }}>{_mt('chatConv.meetupPastTime', 'Escolha um horário que ainda não passou.')}</Text>
+        ) : null}
 
         <Text style={labelStyle}>{t('chatConv.meetupWhere') || 'Onde'}</Text>
         <View style={{ marginBottom: 16 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', ...inputBase, paddingVertical: 0, borderColor: focusedField === 'where' ? ACCENT : colors.border }}>
-            <IconMapPin size={17} color={colors.textSecondary} style={{ marginRight: 10 }} />
-            <TextInput
-              style={{ flex: 1, paddingVertical: 12, fontSize: 15, color: colors.text }}
-              placeholder={_mt('chatConv.searchAddressPh', 'Buscar endereço (rua, cidade, ponto turístico...)')}
-              placeholderTextColor={colors.textTertiary}
-              value={location}
-              onChangeText={(v) => { setLocation(v); setPickedCoords(null); }}
-              onFocus={() => setFocusedField('where')}
-              onBlur={() => setFocusedField(null)}
-              autoCapitalize="none"
-            />
-            {searchingAddress && <ActivityIndicator size="small" color={ACCENT} />}
-            {pickedCoords && <IconCheckCircle size={18} color={ACCENT} />}
-          </View>
-          {addressSuggestions.length > 0 && (
-            <View style={{ marginTop: 6, borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.surface, maxHeight: 200, overflow: 'hidden' }}>
-              <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled>
-                {addressSuggestions.map((s, idx) => (
-                  <TouchableOpacity
-                    key={s.place_id || idx}
-                    onPress={() => pickAddress(s)}
-                    style={{ paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: idx < addressSuggestions.length - 1 ? 1 : 0, borderBottomColor: colors.border + '60', flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}
-                    activeOpacity={0.6}
-                  >
-                    <IconMapPin size={15} color={colors.textSecondary} style={{ marginTop: 1 }} />
-                    <Text style={{ flex: 1, fontSize: 13, color: colors.text, lineHeight: 18 }} numberOfLines={2}>
-                      {s.display_name}
-                      {s.address?.house_number ? ` · nº ${s.address.house_number}` : ''}
-                    </Text>
+          {place ? (
+            <View style={{ borderRadius: 16, borderWidth: 1, borderColor: colors.border, overflow: 'hidden', backgroundColor: colors.surface }}>
+              <TouchableOpacity activeOpacity={mapOk ? 0.85 : 1} disabled={!mapOk} onPress={() => setStep('map')} accessibilityRole="button" accessibilityLabel={_mt('chatConv.meetupAdjustOnMap', 'Ajustar no mapa')}>
+                <View style={{ height: 120 }}>
+                  <LocationMapPreview lat={place.lat} lng={place.lng} isDark={isDarkSheet} zoom={16} />
+                </View>
+              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 10 }}>
+                <IconMapPin size={17} color={colors.text} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }} numberOfLines={1}>{place.title}</Text>
+                  {place.address ? <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginTop: 1 }} numberOfLines={2}>{place.address}</Text> : null}
+                </View>
+                {mapOk ? (
+                  <TouchableOpacity onPress={() => setStep('map')} hitSlop={8} accessibilityRole="button" style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: colors.surfaceVariant }}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>{_mt('chatConv.meetupChange', 'Alterar')}</Text>
                   </TouchableOpacity>
-                ))}
-              </ScrollView>
+                ) : null}
+                <TouchableOpacity onPress={() => setPlace(null)} hitSlop={8} accessibilityRole="button" accessibilityLabel={_mt('chatConv.meetupRemovePlace', 'Remover local')} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
+                  <IconX size={14} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
             </View>
-          )}
-          {pickedCoords && !pickedHasHouseNumber && (
-            <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', ...inputBase, paddingVertical: 0, borderColor: focusedField === 'num' ? ACCENT : colors.border }}>
-              <Text style={{ color: colors.textSecondary, fontWeight: '700', fontSize: 14, marginRight: 10 }}>Nº</Text>
-              <TextInput
-                style={{ flex: 1, paddingVertical: 12, fontSize: 15, color: colors.text }}
-                placeholder={_mt('chatConv.houseNumberPh', 'Número da casa/apto')}
-                placeholderTextColor={colors.textTertiary}
-                value={houseNumber}
-                onChangeText={setHouseNumber}
-                onFocus={() => setFocusedField('num')}
-                onBlur={() => setFocusedField(null)}
-                keyboardType="number-pad"
+          ) : (
+            <>
+              <MP.PlaceSearchField
+                colors={colors}
+                t={t}
+                session={sessionRef}
+                placeholder={_mt('chatConv.searchAddressPh', 'Buscar endereço (rua, cidade, ponto turístico...)')}
+                onResolved={(p) => setPlace(p)}
               />
-            </View>
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                {mapOk ? (
+                  <TouchableOpacity onPress={() => { try { Keyboard.dismiss(); } catch {} setWhenOpen(false); setStep('map'); }} activeOpacity={0.75} accessibilityRole="button"
+                    style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 11, borderRadius: 12, backgroundColor: colors.surfaceVariant }}>
+                    <IconMapPin size={16} color={colors.text} />
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }}>{_mt('chatConv.meetupChooseOnMap', 'Escolher no mapa')}</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {Platform.OS !== 'web' ? (
+                  <TouchableOpacity onPress={pickMyLocation} disabled={locatingMe} activeOpacity={0.75} accessibilityRole="button"
+                    style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 11, borderRadius: 12, backgroundColor: colors.surfaceVariant }}>
+                    {locatingMe ? <ActivityIndicator size="small" color={colors.text} /> : <IconNavigation size={15} color={colors.text} />}
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }} numberOfLines={1}>{_mt('chatConv.meetupUseMyLocation', 'Minha localização')}</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </>
           )}
         </View>
 
         <Text style={labelStyle}>{t('chatConv.meetupDescription') || 'Descrição'}</Text>
         <TextInput
-          style={{ ...inputBase, borderColor: focusedField === 'desc' ? ACCENT : colors.border, marginBottom: 20, minHeight: 64, textAlignVertical: 'top' }}
+          style={{ ...inputBase, borderColor: focusedField === 'desc' ? ACCENT : colors.border, marginBottom: 8, minHeight: 64, textAlignVertical: 'top' }}
           placeholder={t('chatConv.meetupDescPlaceholder') || 'Detalhes do encontro...'}
           placeholderTextColor={colors.textTertiary}
           value={description}
           onChangeText={setDescription}
-          onFocus={() => setFocusedField('desc')}
+          maxLength={500}
+          onFocus={() => { setFocusedField('desc'); setWhenOpen(false); }}
           onBlur={() => setFocusedField(null)}
           multiline
         />
-
-        <TouchableOpacity
-          onPress={handleCreate}
-          disabled={sending || !title.trim() || !dateText.trim()}
-          activeOpacity={0.85}
-          style={{ backgroundColor: canCreate ? ACCENT : colors.border, borderRadius: 14, paddingVertical: 15, alignItems: 'center', opacity: sending ? 0.7 : 1 }}
-        >
-          {sending
-            ? <ActivityIndicator color={ON_ACCENT} />
-            : (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <IconMapPin size={17} color={canCreate ? ON_ACCENT : colors.textTertiary} />
-                <Text style={{ color: canCreate ? ON_ACCENT : colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{(t('chatConv.createMeetupBtn') || 'Marcar Encontro').replace(/\s*\u{1F4CD}\s*/gu, '')}</Text>
-              </View>
-            )
-          }
-        </TouchableOpacity>
-        </ScrollView>
     </CreatorSheetShell>
   );
 }
@@ -33383,13 +33409,32 @@ function ChatConversationInnerBody() {
                   <IconClock size={14} color={isPast ? '#6b7280' : '#111111'} />
                   <Text style={{ fontSize: 12.5, fontWeight: '600', color: isOwn ? ownTextColor : colors.text }}>{dateStr}</Text>
                 </View>
-                {/* Location row */}
-                {meetup.location ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <IconMapPin size={14} color={isPast ? '#6b7280' : '#111111'} />
-                    <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textSecondary, flex: 1 }} numberOfLines={2}>{meetup.location}</Text>
-                  </View>
-                ) : null}
+                {/* Location row — [encontro 2026-10-19] "Lugar, Endereço|lat,lng": mapa estático c/ pino;
+                    toque abre o visualizador nativo (Como chegar: Apple Maps / Google Maps / Waze). */}
+                {meetup.location ? (() => {
+                  const _ml = require('../components/meetup/meetupLocation').parseMeetupLocation(meetup.location);
+                  const _hasC = _ml.lat != null && _ml.lng != null;
+                  const _openMap = () => {
+                    if (selectionMode) return toggleSelection(msg.id);
+                    if (_hasC) { setMapModalData({ lat: _ml.lat, lng: _ml.lng, label: _ml.text || meetup.title || '' }); return; }
+                    const _q = encodeURIComponent(_ml.text);
+                    Linking.openURL(Platform.OS === 'ios' ? `http://maps.apple.com/?q=${_q}` : `https://www.google.com/maps/search/?api=1&query=${_q}`).catch(() => {});
+                  };
+                  return (
+                    <TouchableOpacity activeOpacity={0.8} onPress={_openMap} onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }} delayLongPress={350}
+                      accessibilityRole="button" accessibilityLabel={`${t('chatConv.meetupWhere') || 'Onde'}: ${_ml.text}`} style={{ marginBottom: 4 }}>
+                      {_hasC ? (
+                        <View style={{ height: 112, borderRadius: 10, overflow: 'hidden', marginBottom: 6 }}>
+                          <LocationMapPreview lat={_ml.lat} lng={_ml.lng} isDark={isDark} zoom={15} />
+                        </View>
+                      ) : null}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <IconMapPin size={14} color={isPast ? '#6b7280' : (isOwn ? ownTextColor : colors.text)} />
+                        <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textSecondary, flex: 1, textDecorationLine: _hasC ? 'none' : 'underline' }} numberOfLines={2}>{_ml.text}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })() : null}
                 {/* Description */}
                 {meetup.description ? (
                   <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textSecondary, marginTop: 2, marginBottom: 4 }} numberOfLines={3}>{meetup.description}</Text>
