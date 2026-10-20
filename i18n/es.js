@@ -3721,6 +3721,7 @@ export default {
   'common.success': 'Exito',
   'common.networkError': 'Error de red. Intenta de nuevo.',
   'common.retry': 'Reintentar',
+  'chatConv.archiveFailed': 'No se pudo archivar el chat', // [2026-10-20 tg-ux]
   'common.signOut': 'Cerrar sesion',
   'profile.errSessionTitle': 'Sesion expirada',
   'profile.errSessionMsg': 'Tu sesion expiro. Inicia sesion de nuevo para ver el perfil.',

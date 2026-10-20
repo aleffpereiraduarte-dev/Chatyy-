@@ -58,6 +58,7 @@ import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, ThreadKeyboardBar, Th
 import { isAppResuming, kbResumeGuardOn } from '../utils/kbResumeGuard'; // [2026-10-18 kb-resume]
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
 import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal, nativeSearchOn, nativeDragSelectOn, nativeOverlayOn, nativeQuickReactOn, tgBubblesOn, nativeTgStyleOn } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
+import { useHeaderCollapse, HeaderCollapseBackdrop } from '../components/chat/useHeaderCollapse'; // [2026-10-20 tg-header]
 import { useConvOpenMetric, noteConvOpen, noteSendAck, sendSocketSnapshot, notePerfPhase } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open + [wave10-D] send_ack
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
@@ -8531,6 +8532,23 @@ function safeAlert(title, message, buttons) {
   } else {
     try { Alert.alert(title, message, buttons); } catch {}
   }
+}
+
+// [2026-10-20 ux2] Erro de ação repetível (fixar, traduzir, editar, arquivar...) → toast de
+// erro com "Tentar novamente" que chama a ação de novo (Telegram), em vez de Alert com OK.
+// Kill: __chatyy_err_toast=false → Alert com Cancelar / Tentar novamente.
+function errRetry(message, onRetry) {
+  const msg = String(message || _mt('common.genericError', 'Algo deu errado'));
+  const label = _mt('common.retry', 'Tentar novamente');
+  if (globalThis.__chatyy_err_toast !== false) {
+    try {
+      require('../components/ui/Toast').showErrorToast({ message: msg, retryLabel: label, onRetry: typeof onRetry === 'function' ? () => { try { onRetry(); } catch {} } : undefined });
+      return;
+    } catch {}
+  }
+  safeAlert(_mt('common.error', 'Erro'), msg, typeof onRetry === 'function'
+    ? [{ text: _mt('common.cancel', 'Cancelar'), style: 'cancel' }, { text: label, onPress: () => { try { onRetry(); } catch {} } }]
+    : undefined);
 }
 
 // ============================================================
@@ -20841,7 +20859,19 @@ function ChatConversationInnerBody() {
               } else if (/expired|15 ?min/i.test(reason)) {
                 safeAlert(t('common.error') || 'Error', _mt('chatConv.editWindowExpired', 'Só dá para editar até 15 minutos após o envio.'));
               } else {
-                safeAlert(t('common.error') || 'Error', t('chatConv.editFailed') || 'Failed to edit message');
+                // [2026-10-20 ux2] Tentar novamente = reenvia a mesma edição.
+                const _retryEdit = async () => {
+                  try {
+                    const rr = await api.chatEdit(_editId, editContent);
+                    if (rr?.success) {
+                      const _at = rr?.data?.edited_at || new Date().toISOString();
+                      let _row = null;
+                      setMessages(prev => _mapKeep(prev, m => { if (m.id !== _editId) return m; _row = { ...m, content: text, edited_at: _at }; return _row; }));
+                      if (_row) { try { _cacheOne(conversationId, _row); } catch {} }
+                    } else errRetry(t('chatConv.editFailed') || 'Failed to edit message', _retryEdit);
+                  } catch { errRetry(t('chatConv.editFailed') || 'Failed to edit message', _retryEdit); }
+                };
+                errRetry(t('chatConv.editFailed') || 'Failed to edit message', _retryEdit);
               }
             } else {
               // Transient soft failure — keep the optimistic edit, enqueue replay.
@@ -25238,7 +25268,7 @@ function ChatConversationInnerBody() {
           await require('../services/offlineCache').queueOfflineAction({ type: 'chat_delete', message_id: msgId, mode: 'for_me' });
         } catch {
           // Couldn't even queue — surface so the user knows it didn't stick.
-          safeAlert(t('common.error') || 'Error', t('chatConv.deleteFailed') || 'Failed to delete message');
+          errRetry(t('chatConv.deleteFailed') || 'Failed to delete message', () => { api.chatDelete(msgId, 'for_me').then(rr => { if (!rr?.success) errRetry(t('chatConv.deleteFailed') || 'Failed to delete message'); }).catch(() => errRetry(t('chatConv.deleteFailed') || 'Failed to delete message')); });
         }
       }
       animateDeleteThenRemove(msgId);
@@ -25951,13 +25981,13 @@ function ChatConversationInnerBody() {
         });
       } else {
         // Server rejected — don't leave the user thinking it pinned.
-        safeAlert(t('common.error') || 'Erro', t('chatConv.pinFailed') || 'Não foi possível fixar a mensagem. Tente de novo.');
+        errRetry(t('chatConv.pinFailed') || 'Não foi possível fixar a mensagem. Tente de novo.', () => _executePin(msg, durationSeconds));
       }
     } catch (e) {
       // Was silently swallowed: UI showed nothing but the pin never reached
       // the server (and never synced to other devices). Surface it.
       console.warn('Pin failed:', e?.message);
-      safeAlert(t('common.error') || 'Erro', t('chatConv.pinFailed') || 'Não foi possível fixar a mensagem. Tente de novo.');
+      errRetry(t('chatConv.pinFailed') || 'Não foi possível fixar a mensagem. Tente de novo.', () => _executePin(msg, durationSeconds));
     }
     setSelectedMsg(null);
   }, []);
@@ -26227,7 +26257,7 @@ function ChatConversationInnerBody() {
     try {
       const r = await api.chatUpdate(conversationId, { name: newName });
       if (!r?.success) {
-        safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao renomear grupo');
+        errRetry(r?.message || 'Falha ao renomear grupo', () => handleUpdateGroupName());
         return;
       }
       // [2026-10-14 grupo-nome] nome GRAVADO (servidor corta em 60) + avisa a lista deste
@@ -26393,10 +26423,10 @@ function ChatConversationInnerBody() {
           try { await Share.share({ message: link, title: t('chatConv.groupLink') || 'Link do grupo' }); } catch {}
         }
       } else {
-        safeAlert(t('common.error') || 'Erro', r?.message || t('chatConv.inviteLinkError') || 'Falha ao gerar link');
+        errRetry(r?.message || t('chatConv.inviteLinkError') || 'Falha ao gerar link', () => handleGenerateInviteLink(regenerate));
       }
     } catch (e) {
-      safeAlert(t('common.error') || 'Erro', String(e?.message || t('chatConv.inviteLinkError') || 'Falha ao gerar link'));
+      errRetry(String(e?.message || t('chatConv.inviteLinkError') || 'Falha ao gerar link'), () => handleGenerateInviteLink(regenerate));
     } finally {
       setInviteLinkLoading(false);
     }
@@ -26910,7 +26940,7 @@ function ChatConversationInnerBody() {
         ? await api.chatUpdate(conversationId, { name: value })
         : await api.chatUpdateGroup(conversationId, { description: value });
       if (!r?.success) {
-        safeAlert(t('common.error') || 'Erro', r?.message || _ciTr('chatInfo.saveFailed', 'Não foi possível salvar.'));
+        errRetry(r?.message || _ciTr('chatInfo.saveFailed', 'Não foi possível salvar.'), () => _ciSaveGroupField(field, value));
         return false;
       }
       if (field === 'name') {
@@ -26923,7 +26953,7 @@ function ChatConversationInnerBody() {
       }
       return true;
     } catch {
-      safeAlert(t('common.error') || 'Erro', _ciTr('chatInfo.saveFailed', 'Não foi possível salvar.'));
+      errRetry(_ciTr('chatInfo.saveFailed', 'Não foi possível salvar.'), () => _ciSaveGroupField(field, value));
       return false;
     }
   };
@@ -27338,10 +27368,10 @@ function ChatConversationInnerBody() {
         // Pop back to chat list — same UX as long-press archive there.
         try { router.back(); } catch {}
       } else {
-        safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao arquivar');
+        errRetry(r?.message || t('chatConv.archiveFailed') || 'Falha ao arquivar', () => archiveConversation());
       }
     } catch (e) {
-      safeAlert(t('common.error') || 'Error', e?.message || 'Falha ao arquivar');
+      errRetry(e?.message || t('chatConv.archiveFailed') || 'Falha ao arquivar', () => archiveConversation());
     }
   };
   const openWhatsAppImport = () => {
@@ -27994,7 +28024,7 @@ function ChatConversationInnerBody() {
       safeAlert(t('common.saved') || 'Salvo', t('chatConv.mediaSaved') || 'Salvo na galeria');
     } catch (e) {
       console.warn('[saveMedia]', e);
-      safeAlert(t('common.error') || 'Erro', String(e?.message || t('chatConv.saveMediaError') || 'Falha ao salvar'));
+      errRetry(String(e?.message || t('chatConv.saveMediaError') || 'Falha ao salvar'), () => handleSaveMedia(msg));
     }
   };
 
@@ -28187,7 +28217,7 @@ function ChatConversationInnerBody() {
         } catch {}
       }
       if (!textToTranslate.trim()) {
-        safeAlert(t('common.error'), t('chatConv.transcribeFailed') || 'Não foi possível transcrever este áudio.');
+        errRetry(t('chatConv.transcribeFailed') || 'Não foi possível transcrever este áudio.', () => handleTranslate(msg));
         return;
       }
     }
@@ -28234,7 +28264,7 @@ function ChatConversationInnerBody() {
           delete copy[msg.id];
           return copy;
         });
-        safeAlert(t('common.error'), t('chatConv.translateError'));
+        errRetry(t('chatConv.translateError'), () => handleTranslate(msg));
       }
     } catch {
       setTranslatedMessages(prev => {
@@ -28242,7 +28272,7 @@ function ChatConversationInnerBody() {
         delete copy[msg.id];
         return copy;
       });
-      safeAlert(t('common.error'), t('chatConv.translateError'));
+      errRetry(t('chatConv.translateError'), () => handleTranslate(msg));
     }
   };
 
@@ -28508,10 +28538,10 @@ function ChatConversationInnerBody() {
         setDisappearingTimer(timer);
       } else {
         // [2026-10-18 wa-parity] antes: falha muda (ex.: membro comum em grupo "só admins") → nada acontecia.
-        safeAlert(t('common.error') || 'Erro', (r && (r.message || r.error)) || (t('chatConv.disappearingFailed') || 'Não foi possível alterar as mensagens temporárias.'));
+        errRetry((r && (r.message || r.error)) || (t('chatConv.disappearingFailed') || 'Não foi possível alterar as mensagens temporárias.'), () => handleSetDisappearing(timer));
       }
     } catch (e) {
-      safeAlert(t('common.error') || 'Erro', (e && e.message) || (t('chatConv.disappearingFailed') || 'Não foi possível alterar as mensagens temporárias.'));
+      errRetry((e && e.message) || (t('chatConv.disappearingFailed') || 'Não foi possível alterar as mensagens temporárias.'), () => handleSetDisappearing(timer));
     }
   };
 
@@ -30238,6 +30268,10 @@ function ChatConversationInnerBody() {
     return () => { clearTimeout(tm); if (tm2) clearTimeout(tm2); };
   }, [enrichedMessages, floorRev]);
 
+  // [2026-10-20 tg-header] cabeçalho encolhe ao rolar (UI thread, sem re-render). Kill: __chatyy_header_collapse=false
+  const _hdrC = useHeaderCollapse(insets.top, isDark ? '#0b0b0b' : '#ffffff');
+  const _hdrCDist = _hdrC.onDist;
+  const _HdrBox = _hdrC.AnimatedView || View;
   // Optimized scroll handler - uses ref to avoid setState on every scroll event
   const showScrollDownRef = useRef(false);
   // [2026-10-19 perf-scroll] lista nativa com ↓/@ nativos (overlay api 11) e pílula de
@@ -30249,6 +30283,7 @@ function ChatConversationInnerBody() {
     // [2026-10-07 flashlist] distance from the NEWEST message, engine-agnostic
     // (inverted: contentOffset.y; oldest-first: contentH - viewportH - y).
     const _distLatest = threadScroll.distanceFromLatest(e);
+    _hdrCDist(_distLatest); // [2026-10-20 tg-header]
     notePerfPhase('scroll', 500); // [2026-10-19 perf-scroll] fase no contador nativo (barato; renova o ttl)
     _wpNotifyScroll(_distLatest); // [2026-10-15 native-wallpaper] rolagem → passo do gradiente (acumula ~420 pt)
     const _prevDistLatest = threadScrollStateRef.current.lastDistance || 0; // [2026-10-14 grupo-rajada]
@@ -36172,6 +36207,7 @@ function ChatConversationInnerBody() {
   const _shellHdrRef = useRef(null);
   const _onShellHdrLayout = useCallback(() => {
     if (Platform.OS === 'web' || !currentEmail || !conversationId) return;
+    if (_hdrC.isCompact()) return; // [2026-10-20 tg-header] casca guarda só a altura normal
     const v = _shellHdrRef.current;
     if (!v || typeof v.measureInWindow !== 'function') return;
     try {
@@ -36958,7 +36994,8 @@ function ChatConversationInnerBody() {
         </View>
       ) : (
       /* Header with presence — gradient on web for premium feel */
-      <View ref={_shellHdrRef} onLayout={_onShellHdrLayout} style={[styles.header, {
+      /* [2026-10-20 tg-header] Reanimated View: padding/fundo animam na UI thread ao rolar */
+      <_HdrBox ref={_shellHdrRef} onLayout={_onShellHdrLayout} style={[styles.header, {
         backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
@@ -36969,7 +37006,8 @@ function ChatConversationInnerBody() {
               boxShadow: 'none', // [2026-10-08 chat-beauty-chrome] só a hairline (era linha dupla)
             }
           : {}),
-      }]}>
+      }, _hdrC.hdrStyle]}>
+        <HeaderCollapseBackdrop hc={_hdrC} isDark={isDark} />
         <TouchableOpacity onPress={goBack} hitSlop={8} style={[styles.headerBtn, { width: 36 }, Platform.OS === 'ios' && { marginLeft: -4 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
           {/* [2026-10-07 app-feel-nav] iOS = chevron do sistema (WhatsApp/iMessage); Android/web = seta Material */}
           {/* [2026-10-08 chat-beauty-chrome] seta 24 (mesma grade dos ícones de ação) */}
@@ -37042,6 +37080,7 @@ function ChatConversationInnerBody() {
             }}
             style={{ position: 'relative', width: 38, height: 38 }}
           >
+            <_HdrBox style={[{ width: 38, height: 38 }, _hdrC.avatarStyle]}>{/* [2026-10-20 tg-header] foto encolhe */}
             {conversationType === 'direct' ? <HeaderStatusRing email={getContactPeerEmail()} isDark={isDark} /> : null}
             {/* Halo violeta respirando ao redor do avatar quando online —
                 "presence as ambient glow" (iOS Messages active-now feel). */}
@@ -37064,18 +37103,21 @@ function ChatConversationInnerBody() {
               // conversa → o toque abaixo abre o visualizador já nítido.
               prefetchFull
             />
+            </_HdrBox>
             {/* [2026-10-08 chat-fix-composer-location] bolinha verde do avatar
                 REMOVIDA: o header mostrava 2 bolinhas verdes (avatar + antes de
                 "online"). Igual ao WhatsApp, o status é só o TEXTO "online"
                 (P&B). PresencePulse segue definido p/ outros usos. */}
           </TouchableOpacity>
           {/* [2026-10-14 motion] linha de presença que chega depois desliza (sem salto do nome) */}
+          <_HdrBox style={[{ flex: 1, minWidth: 0 }, _hdrC.titleStyle]}>{/* [2026-10-20 tg-header] nome encolhe */}
           <ConvHeaderTitleStack
             typingStore={typingStore} conversationType={conversationType} presenceStore={presenceStore} members={members}
             t={t} wsConnected={wsConnected} currentEmail={currentEmail} presenceUpdatedAtRef={presenceUpdatedAtRef}
             colors={colors} conversationName={conversationName} e2eEnabled={e2eEnabled} advPrivEnabled={!!_advPriv.enabled}
             netReachable={netReachable} wsReconnecting={!wsConnected && hasEverConnectedRef.current}
           />
+          </_HdrBox>
         </TouchableOpacity>
         {/* Pin counter chip — only when there are pinned messages AND the
             banner is dismissed. Tap re-opens the banner so the user can
@@ -37150,7 +37192,7 @@ function ChatConversationInnerBody() {
           <IconMoreVert size={22} color={colors.text} />
         </TouchableOpacity>
         ) : null}
-      </View>
+      </_HdrBox>
       )}
 
       {/* WhatsApp-style sync/connecting bar */}

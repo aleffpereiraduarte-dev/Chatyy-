@@ -3720,6 +3720,7 @@ export default {
   'common.success': 'Success',
   'common.networkError': 'Network error. Try again.',
   'common.retry': 'Try again',
+  'chatConv.archiveFailed': 'Couldn\'t archive the chat', // [2026-10-20 tg-ux]
   'common.signOut': 'Sign out',
   'profile.errSessionTitle': 'Session expired',
   'profile.errSessionMsg': 'Your session expired. Sign in again to view this profile.',

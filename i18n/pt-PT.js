@@ -3263,6 +3263,7 @@ export default {
   'settings.autoDownload.documents': 'Documentos',
   'common.success': 'Sucesso',
   'common.retry': 'Tentar novamente',
+  'chatConv.archiveFailed': 'Não foi possível arquivar a conversa', // [2026-10-20 tg-ux]
   'common.signOut': 'Sair',
   'profile.errSessionTitle': 'Sessão expirada',
   'profile.errSessionMsg': 'A tua sessão expirou. Faz login de novo para ver o perfil.',
