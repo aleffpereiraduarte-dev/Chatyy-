@@ -39328,7 +39328,8 @@ function ChatConversationInnerBody() {
         {/* [jogos 2026-10-20 dock] jogo DENTRO da conversa (MSN): seletor + Damas/Cartas num painel acima do composer */}
         {gamesOn && conversationId && !isSavedMode ? (
           <GameDock conversationId={conversationId} conversationType={conversationType} members={members}
-            currentEmail={currentEmail} t={t} colors={colors} isDark={isDark} />
+            currentEmail={currentEmail} t={t} colors={colors} isDark={isDark}
+            composerFocused={!!inputFocused} onBlurComposer={() => { try { inputRef.current?.blur?.(); } catch {} }} />
         ) : null}
         {/* [2026-10-05] Barra de formatação ACIMA do campo, estilo WhatsApp/iMessage:
             aparece SÓ ao SELECIONAR texto (some ao desmarcar) e 1 toque formata a

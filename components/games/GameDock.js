@@ -51,7 +51,13 @@ function CollapsedBar({ mode, gid, pal, t, me, onExpand, onClose }) {
   );
 }
 
-export default function GameDock({ conversationId, conversationType, members, currentEmail, t, colors, isDark, onSendText }) {
+// [2026-10-20 dock-kb] nunca o painel inteiro + teclado juntos: teclado aberto (ou composer com foco) = faixa fina
+// logo acima do composer (que sobe grudado no teclado). Sinais: Keyboard will/did + foco do composer
+// (composerFocused) + estado na hora de abrir (o painel abre sozinho quando o outro aceita — com o teclado já
+// aberto não chega evento de "show": era o print de 20/10, Cartas por baixo do teclado e composer escondido).
+function _kbUp() { try { return !!(Keyboard.isVisible && Keyboard.isVisible()); } catch { return false; } }
+
+export default function GameDock({ conversationId, conversationType, members, currentEmail, t, colors, isDark, onSendText, composerFocused = false, onBlurComposer }) {
   const pal = useMemo(() => gamePalette(colors || {}, !!isDark), [colors, isDark]);
   const { width: winW, height: winH } = useWindowDimensions();
   const [mode, setMode] = useState(null); // null | 'pick' | 'play'
@@ -64,11 +70,22 @@ export default function GameDock({ conversationId, conversationType, members, cu
   modeRef.current = mode;
   const me = lc(currentEmail);
 
-  const dropKeyboard = () => { try { if (Keyboard.isVisible && Keyboard.isVisible()) Keyboard.dismiss(); } catch {} };
+  const focusRef = useRef(composerFocused);
+  focusRef.current = composerFocused;
+  const blurRef = useRef(onBlurComposer);
+  blurRef.current = onBlurComposer;
+  const expandTm = useRef(null);
+  // teclado no ar → abre RECOLHIDO e só expande quando ele descer (hide/blur)
+  const startState = () => { const up = _kbUp() || !!focusRef.current; kbCollapsed.current = up; setCollapsed(up); };
+  const dropKeyboard = () => {
+    if (!(_kbUp() || focusRef.current)) return;
+    try { blurRef.current && blurRef.current(); } catch {}
+    try { Keyboard.dismiss(); } catch {}
+  };
   const openPlay = useCallback((id) => {
     if (!id) return;
-    setGid(Number(id)); setMode('play'); setCollapsed(false); kbCollapsed.current = false;
-  }, []);
+    setGid(Number(id)); setMode('play'); startState();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const close = useCallback(() => { setMode(null); setGid(0); setCollapsed(false); kbCollapsed.current = false; }, []);
 
   // hosts: "abrir jogo" e "abrir seletor" vindos do cartão / do "+"
@@ -76,16 +93,16 @@ export default function GameDock({ conversationId, conversationType, members, cu
     if (!gamesDockOn()) return undefined;
     const host = (id, cid) => {
       if (cid && cidRef.current && String(cid) !== String(cidRef.current)) return false; // jogo de outra conversa → rota
-      dropKeyboard();
       openPlay(id);
+      dropKeyboard();
       return true;
     };
     host.dock = true;
     const offA = registerGameSheetHost(host);
     const offB = registerGamePickerHost((cid) => {
       if (cid && cidRef.current && String(cid) !== String(cidRef.current)) return false;
+      setMode('pick'); setGid(0); startState();
       dropKeyboard();
-      setMode('pick'); setGid(0); setCollapsed(false); kbCollapsed.current = false;
       return true;
     });
     return () => { offA(); offB(); };
@@ -121,10 +138,39 @@ export default function GameDock({ conversationId, conversationType, members, cu
     if (!mode) return undefined;
     const showEv = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEv = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const a = Keyboard.addListener(showEv, () => { setCollapsed((c) => { if (!c) kbCollapsed.current = true; return true; }); });
-    const b = Keyboard.addListener(hideEv, () => { if (kbCollapsed.current) { kbCollapsed.current = false; setCollapsed(false); } });
-    return () => { try { a.remove(); } catch {} try { b.remove(); } catch {} };
+    const up = () => { if (expandTm.current) { clearTimeout(expandTm.current); expandTm.current = null; } setCollapsed((c) => { if (!c) kbCollapsed.current = true; return true; }); };
+    // composer ainda com foco (painel de emoji no lugar do teclado) → segue recolhido até o blur
+    const down = () => { if (kbCollapsed.current && !focusRef.current) { kbCollapsed.current = false; setCollapsed(false); } };
+    const subs = [Keyboard.addListener(showEv, up), Keyboard.addListener(hideEv, down)];
+    if (Platform.OS === 'ios') { subs.push(Keyboard.addListener('keyboardDidShow', up)); subs.push(Keyboard.addListener('keyboardDidHide', down)); }
+    // rede de segurança: abriu/expandiu com o teclado já no ar (sem evento novo)
+    if (_kbUp()) up();
+    return () => { subs.forEach((x) => { try { x.remove(); } catch {} }); };
   }, [mode]);
+  // foco do composer (sinal do próprio campo, vale mesmo se o evento de teclado não chegar)
+  const prevFocus = useRef(composerFocused);
+  useEffect(() => {
+    const was = prevFocus.current;
+    prevFocus.current = composerFocused;
+    if (!mode || was === composerFocused) return;
+    if (composerFocused) { setCollapsed((c) => { if (!c) kbCollapsed.current = true; return true; }); return; }
+    if (kbCollapsed.current && !_kbUp()) { kbCollapsed.current = false; setCollapsed(false); }
+  }, [composerFocused, mode]);
+  useEffect(() => () => { if (expandTm.current) clearTimeout(expandTm.current); }, []);
+  // tocar na faixa: com teclado → desce o teclado e o jogo abre quando ele sair (nunca os dois juntos)
+  const expand = () => {
+    hTap();
+    if (_kbUp() || focusRef.current) {
+      kbCollapsed.current = true;
+      try { blurRef.current && blurRef.current(); } catch {}
+      try { Keyboard.dismiss(); } catch {}
+      if (expandTm.current) clearTimeout(expandTm.current);
+      expandTm.current = setTimeout(() => { expandTm.current = null; if (!_kbUp() && kbCollapsed.current) { kbCollapsed.current = false; setCollapsed(false); } }, 650);
+      return;
+    }
+    kbCollapsed.current = false;
+    setCollapsed(false);
+  };
 
   // Android: voltar fecha/recolhe o painel antes de sair da conversa
   useEffect(() => {
@@ -144,7 +190,7 @@ export default function GameDock({ conversationId, conversationType, members, cu
   if (collapsed) {
     return (
       <CollapsedBar mode={mode} gid={gid} pal={pal} t={t} me={me}
-        onExpand={() => { hTap(); kbCollapsed.current = false; try { Keyboard.dismiss(); } catch {} setCollapsed(false); }}
+        onExpand={expand}
         onClose={() => { hTap(); close(); }} />
     );
   }
