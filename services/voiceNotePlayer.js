@@ -541,10 +541,40 @@ function _onEnded() {
   });
   if (next && next.messageId != null && (next.url || next.uri)) {
     const conv = next.conversationId != null ? next.conversationId : it.conversationId;
-    playVoiceNote({ ...next, conversationId: conv }, { autoAdvanced: true }).catch(() => {});
+    const go = () => { playVoiceNote({ ...next, conversationId: conv }, { autoAdvanced: true }).catch(() => {}); };
+    if (_chainTone()) {
+      // [2026-10-20 media-wa] bipe curto entre notas encadeadas (WhatsApp). O
+      // próximo começa num prazo FIXO (não depende do fim do bipe); se outra
+      // coisa tocar/parar no meio (token mudou), não avança.
+      const tk = _token;
+      setTimeout(() => { if (tk === _token) go(); }, CHAIN_TONE_GAP_MS);
+      return;
+    }
+    go();
     return;
   }
   stopVoiceNote();
+}
+
+// [2026-10-20 media-wa] bipe entre notas em sequência. Só com o app em 1º plano e
+// no alto-falante/fone (no ouvido, não). Kill switch: globalThis.__chatyy_voice_chain_tone = false.
+const CHAIN_TONE_GAP_MS = 380;
+let _tonePlayer = null;
+function _chainTone() {
+  try {
+    if (globalThis.__chatyy_voice_chain_tone === false) return false;
+    if (_state.earpiece) return false;
+    const { AppState } = require('react-native');
+    if (AppState.currentState !== 'active') return false;
+    if (!_tonePlayer) {
+      const { createAudioPlayer } = require('expo-audio');
+      _tonePlayer = createAudioPlayer(require('../assets/sounds/voice_next.wav'));
+      try { _tonePlayer.volume = 0.5; } catch {}
+    }
+    try { _tonePlayer.seekTo(0); } catch {}
+    _tonePlayer.play();
+    return true;
+  } catch { return false; }
 }
 
 // ── [2026-10-19 voz-play] Recuperação + telemetria ─────────────────────
