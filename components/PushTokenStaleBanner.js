@@ -241,7 +241,7 @@ export default function PushTokenStaleBanner() {
 //   • senão (iOS negado, Android bloqueado/<13) → Linking.openSettings().
 // Mesmo limitador do aviso antigo (1× a cada 7 dias, teto por aparelho);
 // "fechar" some na sessão. Sem emoji (ícone SVG).
-export function NotifPermissionCard() {
+export function NotifPermissionCard({ always = false } = {}) {
   const { t } = useLanguage();
   const { colors, isDark } = useTheme();
   const [visible, setVisible] = useState(false);
@@ -254,7 +254,8 @@ export function NotifPermissionCard() {
     const tick = () => {
       if (!mounted) return;
       let on = false;
-      try { on = !!globalThis.__chatyy_push_denied && _deniedAllowed(); } catch {}
+      // [entregue 2026-10-20] always = tela de Ajustes > Notificações (sem limitador).
+      try { on = !!globalThis.__chatyy_push_denied && (always || _deniedAllowed()); } catch {}
       setVisible((v) => (v === on ? v : on));
     };
     tick();
@@ -275,7 +276,7 @@ export function NotifPermissionCard() {
 
   useEffect(() => {
     if (!visible) return undefined;
-    _markDeniedShown();
+    if (!always) _markDeniedShown();
     let alive = true;
     (async () => {
       const r = await _healIfGranted();

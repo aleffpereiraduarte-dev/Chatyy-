@@ -26,7 +26,10 @@ import { getJSON, setJSON } from './mmkv';
 export const PUSH_PRIMER_ENABLED = true;
 
 const STATE_KEY = 'push_primer_v1';
-const BACKOFF_MS = [0, 24 * 3600e3, 3 * 24 * 3600e3, 7 * 24 * 3600e3];
+// [entregue 2026-10-20] 2ª oferta 15 min depois do "Agora não" das boas-vindas
+// (= ao abrir uma conversa já em uso), não 24 h: conta nova ficava o 1º dia
+// inteiro sem notificação. Depois 3 d / 7 d como antes.
+const BACKOFF_MS = [0, 15 * 60e3, 3 * 24 * 3600e3, 7 * 24 * 3600e3];
 const MAX_OFFERS = 4;
 
 let _needed = false;

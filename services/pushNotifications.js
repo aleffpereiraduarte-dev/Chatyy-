@@ -1235,7 +1235,17 @@ export async function registerForPushNotifications(opts = {}) {
       }
     }
     // Aviso persistente que leva aos Ajustes enquanto a permissão estiver negada.
-    try { globalThis.__chatyy_push_denied = (finalStatus !== 'granted' && (!_primerGate || _androidPrimerExhausted)); } catch {}
+    // [entregue 2026-10-20] Android: depois do 1º "Agora não" (boas-vindas ou
+    // primer) o cartão discreto "Notificações desativadas → Ativar" já aparece
+    // na lista (antes só após 4 recusas = dias sem notificação e sem saber).
+    let _androidDeclinedOnce = false;
+    if (Platform.OS === 'android' && _primerGate && !_androidPrimerExhausted) {
+      try {
+        const _ps2 = getJSON('push_primer_v1', null);
+        if (_ps2 && !_ps2.done && Number(_ps2.offers) >= 1) _androidDeclinedOnce = true;
+      } catch {}
+    }
+    try { globalThis.__chatyy_push_denied = (finalStatus !== 'granted' && (!_primerGate || _androidPrimerExhausted || _androidDeclinedOnce)); } catch {}
 
     _lastPermStatus = (Platform.OS === 'ios' && _primerGate) ? 'provisional' : String(finalStatus || '');
     _lastRegisterPerm = _lastPermStatus || String(finalStatus || '');
@@ -2438,6 +2448,23 @@ export async function flushPendingTokens() {
       payload.device_accounts = _pushDeviceAccounts(entry.email || _activeEmail);
       try { Object.assign(payload, await _iosPushMeta()); } catch {}
       if (!payload.device_id) payload.device_id = _pushDeviceId(null);
+      // [entregue 2026-10-20] A fila reenviava SEM caps → o servidor regravava a
+      // entrada (tokens.json + PG) sem "fcm_native*" e o Android voltava ao push
+      // Expo de NOTIFICAÇÃO: app em 2º plano/fechado = onMessageReceived nunca
+      // roda → sem ✓✓ cinza (ChatDeliveryReporter) e, sem POST_NOTIFICATIONS,
+      // sem banner (conta nova Paula 20/10: ✓ até abrir o app).
+      if (Platform.OS === 'android') {
+        let _caps = (typeof entry.caps === 'string') ? entry.caps : '';
+        if (!_caps) {
+          try {
+            const ck = _nativeChat();
+            if (ck && typeof ck.supportsNativePushRegistrar === 'function' && ck.supportsNativePushRegistrar()) {
+              _caps = (typeof ck.supportsExpoCallUnpack === 'function' && ck.supportsExpoCallUnpack()) ? 'fcm_native_v1,fcm_native_call' : 'fcm_native_v1';
+            }
+          } catch {}
+        }
+        if (_caps) payload.caps = _caps;
+      }
       const r = await apiCall('register_push_token', payload, 'POST');
       if (r?.success) {
         flushed++;

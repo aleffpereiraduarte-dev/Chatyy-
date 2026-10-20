@@ -24,6 +24,7 @@ import {
 } from 'react-native';
 import { IconTrash } from '../components/Icons';
 import FadeSlideIn from '../components/FadeSlideIn';
+import { NotifPermissionCard } from '../components/PushTokenStaleBanner'; // [entregue 2026-10-20]
 import { useLanguage } from '../context/LanguageContext';
 import { apiCall } from '../services/api';
 import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
@@ -269,6 +270,8 @@ export default function NotificationPreferences() {
   return (
     <SettingsScreen title={t('notifPref.title')}>
       <FadeSlideIn>
+        {/* [entregue 2026-10-20] notificações do SO desligadas → cartão com Ativar / Abrir ajustes */}
+        <NotifPermissionCard always />
         {/* ─── Conversas: só menções + soneca ─── */}
         <SettingsGroup header={t('notifPref.chatSection')}>
           <SettingsSwitchRow
