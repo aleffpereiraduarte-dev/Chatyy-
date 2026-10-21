@@ -730,6 +730,12 @@ export function AuthProvider({ children }) {
     return () => clearTimeout(tm);
   }, [user?.email]);
 
+  // [e2ee5 flag-conta 2026-10-21] E2EE v5 ligado por conta pelo servidor (e2ee5_client_flag);
+  // troca de conta/logout desliga. Conta fora da lista = nada muda.
+  useEffect(() => {
+    try { require('../services/e2ee/accountFlag').setAccount(user?.email || '').catch(() => {}); } catch {}
+  }, [user?.email]);
+
   // Sync the current bearer token + base URL into the App Group so the
   // native iOS ShareExtension UI can post on the user's behalf. Idempotent
   // and silent on failure (Android / web all no-op). Called whenever the
