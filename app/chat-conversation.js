@@ -34621,7 +34621,7 @@ function ChatConversationInnerBody() {
           const maybeCount = Object.values(rsvpList).filter(v => v === 'maybe').length;
           const myRsvp = rsvpList[currentEmail] || null;
           const meetupDate = new Date(meetup.datetime);
-          const dateStr = !isNaN(meetupDate.getTime()) ? meetupDate.toLocaleString(t('_locale') || undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : meetup.datetime;
+          const dateStr = !isNaN(meetupDate.getTime()) ? (() => { const _l = t('_locale'); try { return meetupDate.toLocaleString(_l && _l !== '_locale' ? _l : undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return meetupDate.toLocaleString(); } })() : meetup.datetime;
           const handleRsvp = async (status) => {
             // [2026-10-21 polish-conv] offline lança (apiCall) → rejeição sem aviso; success:false calado.
             let r = null;
