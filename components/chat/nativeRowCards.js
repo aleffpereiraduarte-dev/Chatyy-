@@ -585,7 +585,7 @@ function buildContact(m, row, ctx, C, own) {
   // + número → telefone do aparelho (com confirmação). tel: direto só c/ kill switch.
   const _pstnOn = _pstnEnabled();
   const _isMe = !!(ctx && ctx.myEmail) && String(chk.email || ct.email || '').toLowerCase() === String(ctx.myEmail).toLowerCase();
-  if (!_isMe && (_pstnOn ? !!ct.phone : (!chk.loading && (chk.has ? !!(chk.email || ct.email) : !!ct.phone)))) actions.push(vdiv(), btn([icon(IconPhone, { s: 14, c: accent }), text(_tr(C, 'chatConv.callContact', 'Ligar'), { fs: 13, fw: 600, c: accent })], 'ct_call'));
+  if (!_isMe && (_pstnOn ? !!ct.phone : (!chk.loading && chk.has && !!(chk.email || ct.email)))) actions.push(vdiv(), btn([icon(IconPhone, { s: 14, c: accent }), text(_tr(C, 'chatConv.callContact', 'Ligar'), { fs: 13, fw: 600, c: accent })], 'ct_call'));
   const w = _clampW(250, 300, 12 + 56 + 12 + 12 + Math.max(Math.min(_estW(ct.name, 16, true), 180), _estW(pretty, 13.5) + (flag ? 24 : 0), _estW(ct.email, 12.5)));
   row.bl = [vstack([
     hstack([_avatarNode(ct.name, ct.email, 56), vstack(info, { fl: 1 })], { g: 12, p: [12, 12, 10, 12], al: 'c', a: 'ct_open' }),

@@ -251,7 +251,7 @@ export function callContact(c, router, t, resolvedEmail, opts = {}) {
     });
     return;
   }
-  if (c.phone) {
+  if (c.phone && pstn) {
     const num = c.phone.replace(/[^+\d]/g, '');
     confirm(_tr(t, 'shareContact.callConfirmPhone', 'A ligação será feita pelo telefone do aparelho.'), () => { Linking.openURL(`tel:${num}`).catch(() => {}); });
     return;

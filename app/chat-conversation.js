@@ -6021,7 +6021,8 @@ function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat
   const _pstnOn = (() => { try { return require('../constants/featureFlags').isPstnEnabled(); } catch { return false; } })();
   // [2026-10-21 contato-msg] sem Chatyy + número → "Ligar" pelo telefone do aparelho (onCall, com confirmação).
   const _chatyyCall = !check.loading && check.has_chatyy && !!(check.resolvedEmail || email) && typeof onChatyyCall === 'function';
-  const showCall = _pstnOn ? hasPhone : (_chatyyCall || (!check.loading && !check.has_chatyy && hasPhone && typeof onCall === 'function'));
+  // [2026-10-21] nível WhatsApp: sem Chatyy = só Convidar (sem discador do aparelho)
+  const showCall = _pstnOn ? hasPhone : !!_chatyyCall;
   const _onCallPress = _pstnOn ? onCall : (_chatyyCall ? () => onChatyyCall?.(check.resolvedEmail || email) : onCall);
   const inviteAccent = accent; // [2026-10-10 conv-polish] P&B: era verde, destoava das outras ações do cartão
   return (
