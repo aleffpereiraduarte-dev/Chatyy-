@@ -1,0 +1,13 @@
+{
+  "generated_at": "2026-10-21T10:52:35.889Z",
+  "core_version": "chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.2; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0",
+  "wasm": {
+    "file": "chatyy_crypto_bg.wasm",
+    "bytes": 3007026,
+    "gzip_bytes": 1082707,
+    "sha256": "5c7980ec4e8f09251a37e4dd42a1d3cf4fb603bfbd2db7ddf2817e2cea4c694b"
+  },
+  "worker_source_bytes": 101468,
+  "wasm_bindgen": "0.2.129",
+  "target": "wasm32-unknown-unknown (no-modules glue, Web Worker dedicado)"
+}

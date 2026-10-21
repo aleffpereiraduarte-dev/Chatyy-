@@ -1,0 +1,249 @@
+{
+  "steps": [
+    {
+      "name": "T0 boot do app não baixa wasm do E2EE",
+      "ok": true,
+      "requests": 40,
+      "chatyy_crypto": 0
+    },
+    {
+      "name": "T0 flag off: isEnabled=false, isSupported.ok=false, chamadas rejeitam \"disabled\", sem worker/wasm",
+      "ok": true,
+      "en": false,
+      "sup": {
+        "ok": false,
+        "reason": "disabled"
+      },
+      "cv": "disabled",
+      "wasm": 0,
+      "workers": 0
+    },
+    {
+      "name": "T1 lazy: wasm só baixa na 1ª chamada",
+      "ok": true,
+      "before": 0,
+      "after": 1,
+      "init_ms": 79
+    },
+    {
+      "name": "T1 isSupported (Chromium)",
+      "ok": true,
+      "worker": true,
+      "wasm": true,
+      "subtle": true,
+      "locks": true,
+      "indexedDB": true
+    },
+    {
+      "name": "T1 coreVersion",
+      "ok": true,
+      "cv": "chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.2; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"
+    },
+    {
+      "name": "T1 worker dedicado criado",
+      "ok": true,
+      "workers": 1
+    },
+    {
+      "name": "T2 status (servidor real) A/B",
+      "ok": true,
+      "a": "1",
+      "b": "2",
+      "contract": "e2ee5-contrato/1.0",
+      "enabledA": true
+    },
+    {
+      "name": "T2 open cria aparelho X novo",
+      "ok": true,
+      "a": {
+        "uid": "1",
+        "deviceId": "XISIHJN7FRIIH",
+        "created": true
+      },
+      "b": {
+        "uid": "2",
+        "deviceId": "XX2OO6G67JENY",
+        "created": true
+      }
+    },
+    {
+      "name": "T2 sync + bootstrapIdentity + sync",
+      "ok": true,
+      "a_s1": "ok",
+      "a_bi": true,
+      "b_bi": true,
+      "a_s2": "ok"
+    },
+    {
+      "name": "T2 aparelho assinado pelo dono",
+      "ok": true,
+      "a": true,
+      "b": true
+    },
+    {
+      "name": "T2 fetch do worker passou pelo roteamento (transporte = fetch no worker)",
+      "ok": true,
+      "routedA": 10,
+      "fromWorkerA": 0,
+      "apiA": {
+        "e2ee5_status:200": 1,
+        "e2ee5_keys_upload:200": 2,
+        "e2ee5_keys_query:200": 5,
+        "e2ee5_sync:200": 4,
+        "e2ee5_signing_keys_upload:200": 1,
+        "e2ee5_signatures_upload:200": 1,
+        "e2ee5_keys_claim:200": 1,
+        "e2ee5_to_device_send:200": 1
+      }
+    },
+    {
+      "name": "T3 encrypt → envelope e2e:5 sem texto claro",
+      "ok": true,
+      "bytes": 530,
+      "keyShareRequests": 1,
+      "ms": 775
+    },
+    {
+      "name": "T3 B decifra a mensagem de A",
+      "ok": true,
+      "tries": 1,
+      "trust": "tofu",
+      "senderDevice": true,
+      "ms": 1013
+    },
+    {
+      "name": "T3 A decifra a resposta de B",
+      "ok": true
+    },
+    {
+      "name": "T3 cmid trocado → utd context_mismatch",
+      "ok": true,
+      "err": "utd",
+      "reason": "context_mismatch"
+    },
+    {
+      "name": "T3 envelope lixo → utd (não quebra o worker)",
+      "ok": true,
+      "err": "utd",
+      "reason": "bad_envelope"
+    },
+    {
+      "name": "T4 reload: mesmo aparelho e decifra de novo sem rede nova",
+      "ok": true,
+      "created": false,
+      "sameDevice": true
+    },
+    {
+      "name": "T5 2ª aba abre o MESMO aparelho",
+      "ok": true,
+      "created": false
+    },
+    {
+      "name": "T5 Web Lock exclusivo entre abas (nunca 2 donos ao mesmo tempo)",
+      "ok": true,
+      "maxHeld": 1,
+      "anyPending": true,
+      "samples": 40
+    },
+    {
+      "name": "T5 duas abas: sem corrupção (todas decifram nas duas abas, sem erro de store)",
+      "ok": true,
+      "okMsgs": [
+        true,
+        true,
+        true,
+        true
+      ],
+      "parErrs": []
+    },
+    {
+      "name": "T5 store íntegro após concorrência",
+      "ok": true
+    },
+    {
+      "name": "T7 mídia 300 KB ida e volta + adulteração rejeitada",
+      "ok": true,
+      "same": true,
+      "tamper": "media",
+      "ms": 39,
+      "ctBytes": 307200
+    },
+    {
+      "name": "T6 wipe → open = aparelho NOVO (device_id diferente)",
+      "ok": true,
+      "deleted": 3,
+      "created": true,
+      "differs": true,
+      "dbs": [
+        "chatyy-e2ee5-2::matrix-sdk-crypto",
+        "chatyy-e2ee5-2::matrix-sdk-crypto-meta",
+        "chatyy-e2ee5-meta"
+      ]
+    },
+    {
+      "name": "T6 aparelho novo não lê o passado sem chave (utd)",
+      "ok": true,
+      "err": "utd",
+      "reason": "missing_session"
+    }
+  ],
+  "ok": true,
+  "started": "2026-10-21T11:06:44.702Z",
+  "setup_ms": 11992,
+  "urlBeforeReload": "/login?next=%2Fe2ee5-qa",
+  "metricsB": {
+    "decryptOk": 6,
+    "droppedUntrusted": 0,
+    "encrypt": 0,
+    "storeReloads": 0,
+    "toDeviceIn": 0,
+    "toDeviceUtd": 0,
+    "utdJson": "{}",
+    "utdTotal": 0
+  },
+  "cleanup": [
+    {
+      "uid": "2",
+      "device": "B1",
+      "status": 200
+    },
+    {
+      "uid": "1",
+      "status": 200
+    },
+    {
+      "uid": "2",
+      "status": 400
+    }
+  ],
+  "statsA": {
+    "wasm": 1,
+    "routed": 16,
+    "routedFromWorker": 0,
+    "apiStatus": {
+      "e2ee5_status:200": 1,
+      "e2ee5_keys_upload:200": 2,
+      "e2ee5_keys_query:200": 5,
+      "e2ee5_sync:200": 4,
+      "e2ee5_signing_keys_upload:200": 1,
+      "e2ee5_signatures_upload:200": 1,
+      "e2ee5_keys_claim:200": 1,
+      "e2ee5_to_device_send:200": 1
+    }
+  },
+  "statsB": {
+    "wasm": 6,
+    "routed": 18,
+    "routedFromWorker": 0,
+    "apiStatus": {
+      "e2ee5_status:200": 1,
+      "e2ee5_keys_upload:200": 3,
+      "e2ee5_keys_query:200": 4,
+      "e2ee5_sync:200": 7,
+      "e2ee5_signing_keys_upload:200": 1,
+      "e2ee5_signatures_upload:200": 1,
+      "e2ee5_to_device_send:200": 1
+    }
+  },
+  "finished": "2026-10-21T11:07:14.306Z"
+}

@@ -1,0 +1,14 @@
+{
+  "exportMs": 172662,
+  "workerChunks": [
+    "client-d5e807387c05ca22141fc9a55f854390.js"
+  ],
+  "entryScripts": [
+    "__expo-metro-runtime-1f8f5d3ca6b7f58204d51e14506d73fb.js",
+    "__common-f464da174454062c120666acf42e0843.js",
+    "entry-29aca97f702f83e309dbf22e7143f9f3.js"
+  ],
+  "workerInEntry": false,
+  "wasm": "/assets/vendor/chatyy-crypto-wasm/chatyy_crypto_bg.463d63d37ddf42dfa3ddc599cb1c34ea.wasm",
+  "wasmBytes": 3007026
+}
