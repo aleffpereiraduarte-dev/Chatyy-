@@ -739,7 +739,7 @@ function buildMeetup(m, row, ctx, C, own) {
     const tc = MS.cancelled ? (own ? C.ownMeta : col.textTertiary || '#8E8E93') : (on ? '#FFFFFF' : (own ? C.ownText : col.text));
     return vstack([text(labels[s], { fs: 12, c: tc, fw: on ? 700 : 500 })], {
       fl: 1, p: [7, 0, 7, 0], r: 8, al: 'c', bg: on && !MS.cancelled ? act[s] : undefined,
-      bw: on && !MS.cancelled ? 0 : 1, bc: own ? 'rgba(255,255,255,0.15)' : inkAlpha(col.text || '#111111', 0.16), // [2026-10-21 polish-conv] border rgba+'60' virava PRETO no toArgb
+      bw: on && !MS.cancelled ? 0 : 1, bc: own ? inkAlpha(C.ownText || '#FFFFFF', 0.18) : inkAlpha(col.text || '#111111', 0.16), // [2026-10-21 contraste] destaque claro // [2026-10-21 polish-conv] border rgba+'60' virava PRETO no toArgb
       ...(MS.cancelled ? {} : { a: `rsvp:${s}` }),
     });
   }), { g: 6, w: -1 }));
@@ -753,7 +753,7 @@ function buildMeetup(m, row, ctx, C, own) {
       ], { fl: 1 }),
       canEdit ? vstack([text(_tr(C, 'chatConv.edit', 'Editar'), { fs: 11, fw: 700, c: '#FFFFFF' })], { p: [4, 9, 4, 9], r: 8, bg: 'rgba(255,255,255,0.18)', a: 'mt_edit' }) : null,
     ], { w: -1, bg: past ? '#6b7280' : '#111111', p: [8, 12, 8, 12], g: 8, al: 'c', a: 'mt_info' }),
-    vstack(body, { w: -1, p: 10, bg: own ? 'rgba(255,255,255,0.08)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)') }),
+    vstack(body, { w: -1, p: 10, bg: own ? inkAlpha(C.ownText || '#FFFFFF', 0.08) : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)') }),
   ], { w, r: 12, m: [1, 0, 1, 0] })];
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
@@ -856,7 +856,7 @@ function buildCallCard(m, row, ctx, C, own) {
   // recebido → glifo na tinta do texto em círculo cinza suave. Perdida = vermelho.
   const ink = own ? (C.ownText || '#FFFFFF') : (col.text || '#111111');
   const glyphC = missed && !own ? '#E5484D' : ink;
-  const circleBg = own ? 'rgba(255,255,255,0.16)' : (C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)');
+  const circleBg = own ? inkAlpha(C.ownText || '#FFFFFF', 0.16) : (C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)');
   const subC = missed && !own ? '#E5484D' : (own ? (C.ownMeta || 'rgba(255,255,255,0.62)') : (C.otherMeta || col.textTertiary));
   // Largura: título SEMPRE numa linha (estimativa folgada + ml:1 trunca se o
   // texto do usuário estiver grande) — nunca mais "Chamada de / voz".
@@ -892,7 +892,7 @@ function buildCallText(m, row, C, own) {
   const c = String(m.content || '');
   const isVideo = /^(Videochamada|Video Call)/i.test(c);
   row.bl = [hstack([
-    vstack([icon(isVideo ? IconVideo : IconPhone, { s: 16, c: own ? C.ownText : col.text })], { w: 32, h: 32, r: 16, bg: own ? 'rgba(255,255,255,0.15)' : (C.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'), al: 'c', jc: 'c' }),
+    vstack([icon(isVideo ? IconVideo : IconPhone, { s: 16, c: own ? C.ownText : col.text })], { w: 32, h: 32, r: 16, bg: own ? inkAlpha(C.ownText || '#FFFFFF', 0.15) : (C.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'), al: 'c', jc: 'c' }),
     vstack([
       text(isVideo ? _tr(C, 'call.videoCall', 'Videochamada') : _tr(C, 'call.audioCall', 'Chamada de voz'), { fs: 13, fw: 600, c: own ? C.ownText : col.text }),
       text(_tr(C, 'chatConv.tapToJoin', 'Toque para entrar'), { fs: 11, c: own ? C.ownMeta : C.otherMeta }),
@@ -912,7 +912,7 @@ function buildCallLinkCard(m, row, C, own) {
   const tr = (k, fb) => _tr(C, k, fb);
   const ink = own ? (C.ownText || '#FFFFFF') : (col.text || '#111111');
   const subC = own ? (C.ownMeta || 'rgba(255,255,255,0.62)') : (C.otherMeta || col.textTertiary);
-  const soft = own ? 'rgba(255,255,255,0.16)' : (C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)');
+  const soft = own ? inkAlpha(C.ownText || '#FFFFFF', 0.16) : (C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)');
   const title = p.title || tr('callLink.cardTitle', 'Link de chamada');
   const kind = p.isVideo ? tr('callLink.kindVideo', 'Chamada de vídeo do Chatyy') : tr('callLink.kindVoice', 'Chamada de voz do Chatyy');
   const act = 'clink:' + p.code;
@@ -1077,7 +1077,7 @@ function buildStatusReply(m, row, ctx, C, own) {
     hstack([
       vstack([], { w: 3, h: 72, bg: accent }),
       hstack([thumb, vstack(info, { fl: 1, jc: 'c' })], { fl: 1, p: 8, g: 10, al: 'c' }),
-    ], { w: -1, r: 10, bg: own ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'), m: [0, 0, 6, 0], a: 'st_open' }),
+    ], { w: -1, r: 10, bg: own ? inkAlpha(C.ownText || '#FFFFFF', 0.12) : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'), m: [0, 0, 6, 0], a: 'st_open' }),
     rt,
   ];
   row.cw = w; row.pad = PAD; row.mp = 'in';
@@ -1196,7 +1196,7 @@ function buildGame(m, row, ctx, C, own) {
   const P = _palette(own, C); const col = P.col;
   const ink = own ? C.ownText : (col.text || '#111111');
   const sub = own ? C.ownMeta : (col.textSecondary || C.otherMeta || '#6b7280');
-  const line = own ? 'rgba(255,255,255,0.18)' : (C.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
+  const line = own ? inkAlpha(C.ownText || '#FFFFFF', 0.18) : (C.isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'); // [2026-10-21 contraste]
   const tf = (k, opts) => { try { return C.t ? C.t(k, opts) : (opts && opts.defaultValue) || k; } catch { return (opts && opts.defaultValue) || k; } };
   // [2026-10-20 dock-imersivo] partida aberta no painel → 1 linha compacta (o jogo está logo abaixo)
   try {
@@ -1275,8 +1275,10 @@ function buildGame(m, row, ctx, C, own) {
     kids.push(vstack([], { w: -1, h: 0.5, bg: line }));
     kids.push(hstack(acts.slice(0, 3).map((a) => {
       const prim = !!primary[a];
-      const pbg = own || C.isDark ? '#FFFFFF' : '#111111';
-      return vstack([text(_gameActLabel(G, tf, a, g, me), { fs: 13.5, fw: 700, c: prim ? (own || C.isDark ? '#111111' : '#FFFFFF') : ink })], {
+      // [2026-10-21 contraste] balão próprio: botão na TINTA do balão (luminância), não branco fixo
+      const pbg = own ? (C.ownText || '#FFFFFF') : (C.isDark ? '#FFFFFF' : '#111111');
+      const pfg = own ? onInk(pbg) : (C.isDark ? '#111111' : '#FFFFFF');
+      return vstack([text(_gameActLabel(G, tf, a, g, me), { fs: 13.5, fw: 700, c: prim ? pfg : ink })], {
         fl: 1, p: [8, 0, 8, 0], r: 10, al: 'c', bg: prim ? pbg : undefined, bw: prim ? 0 : 1, bc: prim ? undefined : line, a: 'game:' + a,
       });
     }), { w: -1, g: 8, p: [9, 10, 9, 10] }));
@@ -1461,7 +1463,7 @@ function buildLocReq(m, row, ctx, C, own) {
   const col = C.colors || {};
   const textColor = own ? C.ownText : (col.text || '#111111');
   const subColor = own ? C.ownMeta : (col.textSecondary || C.otherMeta || '#6b7280');
-  const chipBg = own ? 'rgba(255,255,255,0.14)' : 'rgba(127,127,127,0.14)';
+  const chipBg = own ? inkAlpha(C.ownText || '#FFFFFF', 0.14) : 'rgba(127,127,127,0.14)';
   const W = L.MAP_W; const H = L.MAP_H;
   const street = 'rgba(255,255,255,0.09)';
   const ave = 'rgba(255,255,255,0.13)';

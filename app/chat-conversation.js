@@ -59,6 +59,7 @@ import { isAppResuming, kbResumeGuardOn } from '../utils/kbResumeGuard'; // [202
 import SwipeReplyRow, { SWIPE_REPLY_UI_THREAD } from '../components/SwipeReplyRow'; // [2026-10-07 native-polish]
 import { ChatyyMessageList, useNativeThreadList, nativeListApi, nativeCtxMenuAvailable, nativeMediaDlActive, voiceRateLabel, voiceRateDecimal, nativeSearchOn, nativeDragSelectOn, nativeOverlayOn, nativeQuickReactOn, tgBubblesOn, nativeTgStyleOn } from '../components/chat/nativeThreadList'; // [2026-10-14 native-list] · [2026-10-17 voz-wa] voiceRateLabel
 import { useHeaderCollapse, HeaderCollapseBackdrop } from '../components/chat/useHeaderCollapse'; // [2026-10-20 tg-header]
+import { groupErrorText as _gErr, groupNetErrorText as _gNetErr } from '../components/chat/groupErrors'; // [2026-10-21 conversa-grupo] erro do servidor nunca cru
 import { useConvOpenMetric, noteConvOpen, noteSendAck, sendSocketSnapshot, notePerfPhase } from '../services/nativeTelemetry'; // [wave7 telemetria] conv_open + [wave10-D] send_ack
 // ─────────────────────────────────────────────────────────────────────────────
 // [2026-10-07 flashlist] Lista de MENSAGENS em FlashList v2 (JS-only, ≥2.3.3).
@@ -1501,7 +1502,7 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
            na cor do texto, badge monocromático (preto/branco) com aro da
            superfície — era verde WhatsApp. */
         style={[styles.scrollDownFab, _FAB_INNER, {
-          backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
+          backgroundColor: colors?.surfaceElevated || (isDark ? '#1c1c1e' : '#ffffff'),
           borderWidth: StyleSheet.hairlineWidth,
           borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)',
         }]}
@@ -1515,11 +1516,12 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
         <IconChevronDown size={24} color={colors.text} />
         {newMsgCount > 0 && (
           <Animated.View style={[styles.scrollDownBadge, {
-            backgroundColor: isDark ? '#ffffff' : '#111111',
-            borderColor: isDark ? '#000000' : '#ffffff', // [2026-10-13 conv-pb] = fundo da conversa (era #f0f2f5 antigo)
+            // [2026-10-21 tema] aro = superfície do botão; badge = destaque ou tinta do tema (era preto/branco fixo)
+            backgroundColor: colors?.accentOn ? colors.accent : (colors?.text || (isDark ? '#ffffff' : '#111111')),
+            borderColor: colors?.surfaceElevated || (isDark ? '#1c1c1e' : '#ffffff'),
             transform: [{ scale: badgeScale }],
           }]}>
-            <RollingCount value={newMsgCount} lineHeight={14} style={[styles.scrollDownBadgeText, { color: isDark ? '#111111' : '#ffffff' }]} format={_fabCountFmt} />
+            <RollingCount value={newMsgCount} lineHeight={14} style={[styles.scrollDownBadgeText, { color: colors?.accentOn ? (colors.onAccent || '#ffffff') : (colors?.surfaceElevated || (isDark ? '#111111' : '#ffffff')) }]} format={_fabCountFmt} />
           </Animated.View>
         )}
       </TouchableOpacity>
@@ -15248,7 +15250,7 @@ function ChatConversationInnerBody() {
               try { require('../services/infoCache').purgeContact(email); } catch {} // [2026-10-19 info-cache] privacidade
               safeAlert(t('chat.userBlocked'));
             } catch (e) {
-              safeAlert(t('common.error'), e.message || 'Failed to block user');
+              safeAlert(t('common.error'), _gNetErr(t, e, 'chat.blockFailed', 'Não foi possível bloquear. Tente de novo.'));
             }
           },
         },
@@ -15268,10 +15270,12 @@ function ChatConversationInnerBody() {
           text: t('chat.unblockUser'),
           onPress: async () => {
             try {
-              await api.chatUnblockUser(email);
+              const ur = await api.chatUnblockUser(email);
+              // [2026-10-21 conversa-grupo] só desbloqueia na tela se o servidor aceitou
+              if (ur && ur.success === false) { safeAlert(t('common.error'), _gErr(t, ur, 'chat.unblockFailed', 'Não foi possível desbloquear. Tente de novo.')); return; }
               setIBlockedThem(false);
             } catch (e) {
-              safeAlert(t('common.error'), e.message || 'Failed to unblock user');
+              safeAlert(t('common.error'), _gNetErr(t, e, 'chat.unblockFailed', 'Não foi possível desbloquear. Tente de novo.'));
             }
           },
         },
@@ -15322,7 +15326,7 @@ function ChatConversationInnerBody() {
               safeAlert(t('chat.userReported') || 'Denúncia recebida');
               try { router.back(); } catch {}
             } catch (e) {
-              safeAlert(t('common.error'), e?.message || 'Failed to report');
+              safeAlert(t('common.error'), _gNetErr(t, e, 'chat.reportFailed', 'Não foi possível enviar a denúncia. Tente de novo.'));
             }
           },
         },
@@ -26508,10 +26512,10 @@ function ChatConversationInnerBody() {
           } catch {}
         }
       } else {
-        safeAlert(t('common.error') || 'Erro', r?.message || 'Falha');
+        safeAlert(t('common.error') || 'Erro', _gErr(t, r, 'group.err.requestFailed', 'Não foi possível responder ao pedido. Tente de novo.'));
       }
     } catch (e) {
-      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+      safeAlert(t('common.error') || 'Erro', _gNetErr(t, e, 'group.err.requestFailed', 'Não foi possível responder ao pedido. Tente de novo.'));
     } finally {
       setPendingActionEmail(null);
     }
@@ -26534,10 +26538,10 @@ function ChatConversationInnerBody() {
           (t('chatConv.inviteLinkReset') || 'Link resetado. O antigo não funciona mais.')
         );
       } else {
-        safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao resetar');
+        safeAlert(t('common.error') || 'Erro', _gErr(t, r, 'chatConv.inviteLinkError', 'Falha ao gerar link'));
       }
     } catch (e) {
-      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+      safeAlert(t('common.error') || 'Erro', _gNetErr(t, e, 'chatConv.inviteLinkError', 'Falha ao gerar link'));
     } finally {
       setInviteLinkLoading(false);
     }
@@ -26583,7 +26587,7 @@ function ChatConversationInnerBody() {
     try {
       const r = await api.chatUpdate(conversationId, { name: newName });
       if (!r?.success) {
-        errRetry(r?.message || 'Falha ao renomear grupo', () => handleUpdateGroupName());
+        errRetry(_gErr(t, r, 'chatConv.renameGroupFailed', 'Não foi possível renomear o grupo.'), () => handleUpdateGroupName());
         return;
       }
       // [2026-10-14 grupo-nome] nome GRAVADO (servidor corta em 60) + avisa a lista deste
@@ -26674,29 +26678,69 @@ function ChatConversationInnerBody() {
   // [2026-10-20 wa2] e-mail sem diferenciar maiúsculas (admin perdia a UI de admin).
   const myRole = members.find(m => String(m?.email || '').toLowerCase() === String(user?.email || '').toLowerCase())?.role;
   const isGroupAdmin = myRole === 'admin';
+  // [2026-10-21 pedidos-entrada] pedido novo chega ao vivo (chatNotifyJoinRequest → WS próprio do
+  // admin) → a fila na info do grupo atualiza sem reabrir a conversa.
+  const _refreshPendingRef = useRef(refreshPendingMembers);
+  _refreshPendingRef.current = refreshPendingMembers;
+  useEffect(() => {
+    if (!conversationId || conversationType !== 'group' || !isGroupAdmin) return undefined;
+    let unsub = null;
+    try {
+      const mailWs = require('../services/websocket').default;
+      unsub = mailWs.on('chat_group_join_request', (d) => {
+        try { if (d && Number(d.conversation_id) === Number(conversationId)) _refreshPendingRef.current?.(); } catch {}
+      });
+    } catch {}
+    return () => { try { typeof unsub === 'function' && unsub(); } catch {} };
+  }, [conversationId, conversationType, isGroupAdmin]);
   // [2026-10-14 adv-privacy] FLAG_SECURE/escudo/aviso de print/bloqueios — components/chat/useConversationPrivacy.js
   const _advPriv = useConversationPrivacy({ conversationId, conversationType, isAdmin: isGroupAdmin, currentEmail, colors, isDark, t, vanishActive: !!_vanish.active });
 
-  const handleLeaveGroup = async () => {
-    const ok = await confirm({
-      title: t('chatConv.leaveGroup') || 'Sair do grupo',
-      message: t('chatConv.leaveGroupConfirm') || 'Tem certeza que deseja sair deste grupo?',
-      confirmLabel: t('chatConv.leave') || 'Sair',
-      destructive: true,
-    });
-    if (!ok) return;
+  // [2026-10-21 sair-silencioso] WhatsApp: "Sair do grupo" com opção de sair SEM avisar o grupo —
+  // o servidor (chat_leave silent=1) grava "X saiu" visível só para os admins.
+  const _leaveSilentOn = () => { try { return globalThis.__chatyy_leave_silent !== false; } catch { return true; } };
+  const _askLeaveMode = () => new Promise((resolve) => {
+    let done = false; const fin = (v) => { if (!done) { done = true; resolve(v); } };
     try {
-      const r = await api.chatLeaveGroup(conversationId);
+      Alert.alert(
+        t('chatConv.leaveGroup') || 'Sair do grupo',
+        t('chatConv.leaveSilentlyHint') || 'Se sair silenciosamente, só os admins vão saber que você saiu.',
+        [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => fin(null) },
+          { text: t('chatConv.leaveSilently') || 'Sair silenciosamente', onPress: () => fin('silent') },
+          { text: t('chatConv.leaveGroup') || 'Sair do grupo', style: 'destructive', onPress: () => fin('normal') },
+        ],
+        { cancelable: true, onDismiss: () => fin(null) },
+      );
+    } catch { fin(null); }
+  });
+  const handleLeaveGroup = async () => {
+    let mode = null;
+    if (Platform.OS !== 'web' && _leaveSilentOn() && conversationType === 'group') {
+      mode = await _askLeaveMode();
+      if (!mode) return;
+    } else {
+      const ok = await confirm({
+        title: t('chatConv.leaveGroup') || 'Sair do grupo',
+        message: t('chatConv.leaveGroupConfirm') || 'Tem certeza que deseja sair deste grupo?',
+        confirmLabel: t('chatConv.leave') || 'Sair',
+        destructive: true,
+      });
+      if (!ok) return;
+      mode = 'normal';
+    }
+    try {
+      const r = await api.chatLeaveGroup(conversationId, mode === 'silent' ? { silent: true } : undefined);
       if (r.success) {
         if (!_ciPushGo('group', null, true)) { // [chat-info-push] info empurrada: sai info + conversa
           setShowGroupInfo(false);
           router.back();
         }
       } else {
-        safeAlert(t('common.error') || 'Erro', r?.message || t('chatConv.leaveGroupError') || 'Não foi possível sair do grupo');
+        safeAlert(t('common.error') || 'Erro', _gErr(t, r, 'chatConv.leaveGroupError', 'Não foi possível sair do grupo'));
       }
     } catch (e) {
-      safeAlert(t('common.error') || 'Erro', String(e?.message || t('chatConv.leaveGroupError') || 'Não foi possível sair do grupo'));
+      safeAlert(t('common.error') || 'Erro', _gNetErr(t, e, 'chatConv.leaveGroupError', 'Não foi possível sair do grupo'));
     }
   };
 
@@ -26711,7 +26755,7 @@ function ChatConversationInnerBody() {
         const r = await api.chatReportThread(conversationId, '', 'report');
         if (r && r.success === false) throw new Error(r.message || r.error || 'report_failed');
       } catch (e) {
-        safeAlert(t('common.error') || 'Erro', String(e?.message || t('w12e.reportFailed')));
+        safeAlert(t('common.error') || 'Erro', _gNetErr(t, e, 'w12e.reportFailed', 'Não foi possível enviar a denúncia.'));
         return;
       }
       if (leave) {
@@ -26749,10 +26793,10 @@ function ChatConversationInnerBody() {
           try { await Share.share({ message: link, title: t('chatConv.groupLink') || 'Link do grupo' }); } catch {}
         }
       } else {
-        errRetry(r?.message || t('chatConv.inviteLinkError') || 'Falha ao gerar link', () => handleGenerateInviteLink(regenerate));
+        errRetry(_gErr(t, r, 'chatConv.inviteLinkError', 'Falha ao gerar link'), () => handleGenerateInviteLink(regenerate));
       }
     } catch (e) {
-      errRetry(String(e?.message || t('chatConv.inviteLinkError') || 'Falha ao gerar link'), () => handleGenerateInviteLink(regenerate));
+      errRetry(_gNetErr(t, e, 'chatConv.inviteLinkError', 'Falha ao gerar link'), () => handleGenerateInviteLink(regenerate));
     } finally {
       setInviteLinkLoading(false);
     }
@@ -26894,7 +26938,7 @@ function ChatConversationInnerBody() {
       const name = String(it.file_name || it.content || t('chat.nprofile.files') || 'Arquivo');
       const ext = (name.match(/\.([a-z0-9]{1,5})$/i) || [])[1] || '';
       const kb = Number(it.file_size) || 0;
-      const size = kb > 0 ? (kb > 1048576 ? `${(kb / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(kb / 1024))} KB`) : '';
+      const size = kb > 0 ? (kb > 1048576 ? formatBytes(kb) : `${Math.max(1, Math.round(kb / 1024))} KB`) : ''; // [2026-10-21 locale] vírgula/ponto pelo idioma
       let when = '';
       try { when = it.created_at ? new Date(it.created_at).toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: '2-digit' }) : ''; } catch {}
       return { key: String(it.id || i), title: name, subtitle: [size, when].filter(Boolean).join(' · '), ext };
@@ -27266,7 +27310,7 @@ function ChatConversationInnerBody() {
         ? await api.chatUpdate(conversationId, { name: value })
         : await api.chatUpdateGroup(conversationId, { description: value });
       if (!r?.success) {
-        errRetry(r?.message || _ciTr('chatInfo.saveFailed', 'Não foi possível salvar.'), () => _ciSaveGroupField(field, value));
+        errRetry(_gErr(t, r, 'chatInfo.saveFailed', 'Não foi possível salvar.'), () => _ciSaveGroupField(field, value));
         return false;
       }
       if (field === 'name') {
@@ -27291,11 +27335,46 @@ function ChatConversationInnerBody() {
       if (!r?.success) setMembersEditInfo(!next);
     } catch { setMembersEditInfo(!next); }
   };
+  // [2026-10-21 convite] "Link de convite" abre UMA folha (estilo WhatsApp): QR + link + Copiar,
+  // Compartilhar, Redefinir e Revogar (antes: alerta com a URL crua e botões soltos).
+  const _ciOpenInviteSheet = async (go) => {
+    const open = () => setShowInviteQr(true);
+    if (typeof go === 'function') go(open, !_convSheetsOn()); else open();
+    if (inviteLink || inviteLinkLoading) return;
+    setInviteLinkLoading(true);
+    try {
+      const r = await api.chatGroupInviteLinkV2(conversationId, 'get');
+      const url = r?.data?.url || r?.data?.link || '';
+      if (r?.success && url) setInviteLink(url);
+      else { setShowInviteQr(false); safeAlert(t('common.error') || 'Erro', _gErr(t, r, 'chatConv.inviteLinkError', 'Falha ao gerar link')); }
+    } catch (e) {
+      setShowInviteQr(false);
+      safeAlert(t('common.error') || 'Erro', _gNetErr(t, e, 'chatConv.inviteLinkError', 'Falha ao gerar link'));
+    } finally { setInviteLinkLoading(false); }
+  };
+  const _inviteRotate = () => safeAlert('', t('chatConv.inviteRotateConfirm') || 'Redefinir o link? Quem tiver o link atual não vai mais conseguir entrar.', [
+    { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+    { text: t('chatConv.inviteRotate') || 'Gerar novo', style: 'destructive', onPress: async () => {
+      setInviteLinkLoading(true);
+      let rr = null; try { rr = await api.chatGroupInviteLinkV2(conversationId, 'rotate'); } catch {}
+      setInviteLinkLoading(false);
+      if (rr?.success) { setInviteLink(rr?.data?.url || rr?.data?.link || null); try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {} }
+      else safeAlert(t('common.error') || 'Erro', _gErr(t, rr, 'chatConv.inviteLinkError', 'Falha ao gerar link'));
+    } },
+  ]);
+  const _inviteRevoke = () => safeAlert('', t('chatConv.inviteRevokeConfirm') || 'Revogar o link? Ninguém mais vai entrar por ele.', [
+    { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+    { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: async () => {
+      let rv = null; try { rv = await api.chatGroupInviteLinkV2(conversationId, 'revoke'); } catch {}
+      if (rv?.success) { setInviteLink(null); setShowInviteQr(false); safeAlert(t('common.success') || 'OK', t('chatConv.inviteRevoked') || 'Link revogado. Ninguém mais entra por ele.'); }
+      else safeAlert(t('common.error') || 'Erro', _gErr(t, rv, 'common.genericError', 'Algo deu errado'));
+    } },
+  ]);
   const _ciGroupInviteMenu = async () => {
     try {
       const r = await api.chatGroupInviteLinkV2(conversationId, 'get');
       const url = r?.data?.url || '';
-      if (!url) { safeAlert(t('common.error'), r?.message || 'Falha ao gerar link'); return; }
+      if (!url) { safeAlert(t('common.error'), _gErr(t, r, 'chatConv.inviteLinkError', 'Falha ao gerar link')); return; }
       setInviteLink(url);
       safeAlert(t('chatConv.inviteLink') || 'Link de convite', url, [
         { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
@@ -27307,7 +27386,7 @@ function ChatConversationInnerBody() {
           { text: t('chatConv.inviteRotate') || 'Gerar novo', style: 'destructive', onPress: async () => {
             let rr = null; try { rr = await api.chatGroupInviteLinkV2(conversationId, 'rotate'); } catch {} // [2026-10-21 polish-conv] rede caída = rejeição sem aviso
             if (rr?.success) { setInviteLink(rr?.data?.url || null); safeAlert(t('common.success') || 'OK', t('chatConv.inviteRotated') || 'Link anterior invalidado'); }
-            else safeAlert(t('common.error') || 'Erro', rr?.message || _mt('common.genericError', 'Algo deu errado'));
+            else safeAlert(t('common.error') || 'Erro', _gErr(t, rr, 'common.genericError', 'Algo deu errado'));
           } },
         ]) },
         { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: () => safeAlert('', t('chatConv.inviteRevokeConfirm') || 'Revogar o link? Ninguém mais vai entrar por ele.', [
@@ -27315,7 +27394,7 @@ function ChatConversationInnerBody() {
           { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: async () => {
             let rv = null; try { rv = await api.chatGroupInviteLinkV2(conversationId, 'revoke'); } catch {} // [2026-10-21 polish-conv] rede caída = rejeição sem aviso
             if (rv?.success) { setInviteLink(null); safeAlert(t('common.success') || 'OK', t('chatConv.inviteRevoked') || 'Link revogado. Ninguém mais entra por ele.'); }
-            else safeAlert(t('common.error') || 'Erro', rv?.message || _mt('common.genericError', 'Algo deu errado'));
+            else safeAlert(t('common.error') || 'Erro', _gErr(t, rv, 'common.genericError', 'Algo deu errado'));
           } },
         ]) },
       ]);
@@ -27396,11 +27475,14 @@ function ChatConversationInnerBody() {
     rows.push({ id: 'media', k: 'media', sid: 'media', title: _ciTr('chatConv.mediaLinksDocs', 'Mídia, links e docs') });
     rows.push({ id: 'starred', sid: 'media', icon: 'star', title: _ciTr('chat.starredMessages', 'Mensagens favoritas'), onPress: () => { loadStarredMessages(); go(() => setShowStarredModal(true)); } });
     if (gamesOn) rows.push({ id: 'gameScore', sid: 'media', icon: 'chart', title: _ciTr('games.score.title', 'Placar do grupo'), onPress: () => go(() => setShowGameScore(true)) }); // [jogos 2026-10-18]
-    if (isGroupAdmin && !exMember && pendingMembers.length > 0) {
+    // [2026-10-21 pedidos-entrada] com "Aprovar novos membros" ligado a fila aparece mesmo vazia.
+    if (isGroupAdmin && !exMember && (pendingMembers.length > 0 || approvalRequired)) {
       rows.push({
         id: 'pending', sid: 'pending', icon: 'userPlus',
-        title: `${pendingMembers.length} ${pendingMembers.length === 1 ? (t('chatConv.pendingRequestSingular') || 'solicitação pendente') : (t('chatConv.pendingRequestsPlural') || 'solicitações pendentes')}`,
-        sub: t('chatConv.pendingTapToReview') || 'Toque para revisar',
+        title: pendingMembers.length > 0
+          ? `${pendingMembers.length} ${pendingMembers.length === 1 ? (t('chatConv.pendingRequestSingular') || 'solicitação pendente') : (t('chatConv.pendingRequestsPlural') || 'solicitações pendentes')}`
+          : _ciTr('group.requests.title', 'Pedidos para entrar'),
+        sub: pendingMembers.length > 0 ? (t('chatConv.pendingTapToReview') || 'Toque para revisar') : _ciTr('group.requests.none', 'Nenhum pedido pendente'),
         onPress: () => { refreshPendingMembers(); go(() => setShowPendingModal(true), !USE_NATIVE_SHEETS); },
       });
     }
@@ -27454,7 +27536,7 @@ function ChatConversationInnerBody() {
         val: slowModeSeconds === 0 ? _ciTr('common.off', 'Desativado') : slowModeSeconds < 60 ? `${slowModeSeconds}s` : slowModeSeconds < 3600 ? `${Math.round(slowModeSeconds / 60)}m` : `${Math.round(slowModeSeconds / 3600)}h`,
         onPress: () => go(() => setShowSlowModePicker(true), !USE_NATIVE_SHEETS),
       });
-      rows.push({ id: 'inviteLink', sid, icon: 'link', title: _ciTr('chatConv.inviteLink', 'Link de convite'), onPress: _ciGroupInviteMenu });
+      rows.push({ id: 'inviteLink', sid, icon: 'link', title: _ciTr('chatConv.inviteLink', 'Link de convite'), sub: _ciTr('chatConv.inviteLinkSheetSub', 'QR, compartilhar, redefinir ou revogar'), onPress: () => _ciOpenInviteSheet(go) });
       rows.push({
         id: 'inviteQr', sid, icon: 'qr', title: _ciTr('chat.showQr', 'Mostrar QR'), ft: _ciTr('chatInfo.settingsFooter', 'Só admins podem mudar estas configurações.'),
         onPress: async () => {
@@ -27679,9 +27761,9 @@ function ChatConversationInnerBody() {
               try { const ldb = require('../services/localDb'); if (typeof ldb.clearConversationMessages === 'function') await ldb.clearConversationMessages(conversationId); } catch {}
               try { SmartCache.clearConversation?.(conversationId); } catch {}
             } else {
-              safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao limpar histórico');
+              safeAlert(t('common.error') || 'Erro', _gErr(t, r, 'chatConv.clearHistoryFailed', 'Não foi possível limpar o histórico.'));
             }
-          } catch (e) { safeAlert(t('common.error') || 'Erro', String(e?.message || e)); }
+          } catch (e) { safeAlert(t('common.error') || 'Erro', _gNetErr(t, e, 'chatConv.clearHistoryFailed', 'Não foi possível limpar o histórico.')); }
         }},
       ]
     );
@@ -27869,11 +27951,11 @@ function ChatConversationInnerBody() {
                     if (info.success && info.data?.members) setMembers(info.data.members);
                   } catch {}
                 } else {
-                  safeAlert(t('common.error') || 'Error', msg || (t('chatConv.removeMemberFailed') || 'Falha ao remover membro'));
+                  safeAlert(t('common.error') || 'Erro', _gErr(t, r, 'chatConv.removeMemberFailed', 'Falha ao remover membro'));
                 }
               }
             } catch (e) {
-              safeAlert(t('common.error') || 'Error', e?.message || (t('chatConv.removeMemberFailed') || 'Falha ao remover membro'));
+              safeAlert(t('common.error') || 'Erro', _gNetErr(t, e, 'chatConv.removeMemberFailed', 'Falha ao remover membro'));
             } finally {
               memberActionRef.current.delete(memberEmail);
             }
@@ -28630,6 +28712,14 @@ function ChatConversationInnerBody() {
 
   // Start call from chat
   const [startingCall, setStartingCall] = _useStateT(false);
+  // [2026-10-21 grupo-call] timer de 2 s que destrava o botão depois de abrir a chamada em grupo:
+  // guardado e limpo ao desmontar (antes: setState em tela já fechada + timers empilhados).
+  const _startingCallTimerRef = useRef(null);
+  const _armStartingCallReset = () => {
+    try { if (_startingCallTimerRef.current) clearTimeout(_startingCallTimerRef.current); } catch {}
+    _startingCallTimerRef.current = setTimeout(() => { _startingCallTimerRef.current = null; setStartingCall(false); }, 2000);
+  };
+  useEffect(() => () => { try { if (_startingCallTimerRef.current) clearTimeout(_startingCallTimerRef.current); } catch {} _startingCallTimerRef.current = null; }, []);
 
   const startCall = async (videoEnabled) => {
     if (startingCall) return;
@@ -28688,12 +28778,12 @@ function ChatConversationInnerBody() {
             members,
             email: currentEmail,
           });
-          if (opened) { setTimeout(() => setStartingCall(false), 2000); return; }
+          if (opened) { _armStartingCallReset(); return; }
         }
       } catch {}
       try {
         router.push(`/call?callId=${encodeURIComponent(roomId)}&conversationId=${conversationId}&isVideo=${videoEnabled ? '1' : '0'}&isCaller=1&groupCall=1`);
-      } catch {} finally { setTimeout(() => setStartingCall(false), 2000); }
+      } catch {} finally { _armStartingCallReset(); }
       return;
     }
 
@@ -32601,6 +32691,7 @@ function ChatConversationInnerBody() {
                 meta={sVMeta}
                 messageId={msg.id}
                 isFocused={false /* [2026-10-20 media-wa] igual WhatsApp: vídeo na lista não toca sozinho — só ao abrir */}
+                screenFocused={!!isScreenFocused && !mediaViewer?.visible /* [2026-10-21 foco] nada por cima da conversa */}
                 durationMs={sVMeta?.short_duration_ms || (msg.duration ? msg.duration * 1000 : 0)}
                 onTapExpand={() => {
                   if (selectionMode) return toggleSelection(msg.id);
@@ -32823,7 +32914,7 @@ function ChatConversationInnerBody() {
                         </Text>
                       ) : (msg.file_size > 0 && (
                         <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 8, fontWeight: '500' }}>
-                          {((msg.file_size * vidProgress / 100) / 1048576).toFixed(1)} / {(msg.file_size / 1048576).toFixed(1)} MB
+                          {formatBytes(msg.file_size * vidProgress / 100)} / {formatBytes(msg.file_size) /* [2026-10-21 locale] */}
                         </Text>
                       ))}
                       <TouchableOpacity
@@ -39935,6 +40026,7 @@ function ChatConversationInnerBody() {
             members={members}
             currentEmail={currentEmail}
             visible={showMentionPopup}
+            canMentionEveryone={isGroupAdmin /* [2026-10-21 @todos] servidor só aceita @everyone de admin */}
             onSelect={(member) => {
               const { newText, mentionedEmail } = insertMention(inputText, member.email);
               setInputText(newText);
@@ -44727,7 +44819,7 @@ function ChatConversationInnerBody() {
                         try {
                           const r = await api.chatGroupInviteLinkV2(conversationId, 'get');
                           const url = r?.data?.url || '';
-                          if (!url) { safeAlert(t('common.error'), r?.message || 'Falha ao gerar link'); return; }
+                          if (!url) { safeAlert(t('common.error'), _gErr(t, r, 'chatConv.inviteLinkError', 'Falha ao gerar link')); return; }
                           setInviteLink(url);
                           safeAlert(
                             t('chatConv.inviteLink') || 'Link de convite',
@@ -44742,14 +44834,14 @@ function ChatConversationInnerBody() {
                                 if (rr?.success) {
                                   setInviteLink(rr?.data?.url || null);
                                   safeAlert(t('common.success') || 'OK', t('chatConv.inviteRotated') || 'Link anterior invalidado');
-                                } else safeAlert(t('common.error') || 'Erro', rr?.message || _mt('common.genericError', 'Algo deu errado'));
+                                } else safeAlert(t('common.error') || 'Erro', _gErr(t, rr, 'common.genericError', 'Algo deu errado'));
                               }},
                               { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: async () => {
                                 let rv = null; try { rv = await api.chatGroupInviteLinkV2(conversationId, 'revoke'); } catch {} // [2026-10-21 polish-conv] rede caída = rejeição sem aviso
                                 if (rv?.success) {
                                   setInviteLink(null);
                                   safeAlert(t('common.success') || 'OK', t('chatConv.inviteRevoked') || 'Link revogado. Ninguém mais entra por ele.');
-                                } else safeAlert(t('common.error') || 'Erro', rv?.message || _mt('common.genericError', 'Algo deu errado'));
+                                } else safeAlert(t('common.error') || 'Erro', _gErr(t, rv, 'common.genericError', 'Algo deu errado'));
                               }},
                             ]
                           );
@@ -45819,6 +45911,26 @@ function ChatConversationInnerBody() {
                 </Text>
               </TouchableOpacity>
             </View>
+            {/* [2026-10-21 convite] admin: copiar / redefinir / revogar na mesma folha (WhatsApp) */}
+            {isGroupAdmin && !!inviteLink && (
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, width: '100%' }}>
+                {[
+                  { k: 'copy', label: t('common.copy') || 'Copiar', on: async () => { try { await Clipboard.setStringAsync(inviteLink); try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {} setScheduleToast(t('common.copied') || 'Copiado'); } catch {} } },
+                  { k: 'rotate', label: t('chatConv.inviteRotate') || 'Gerar novo', on: _inviteRotate },
+                  { k: 'revoke', label: t('chatConv.inviteRevoke') || 'Revogar link', on: _inviteRevoke, danger: true },
+                ].map((b) => (
+                  <TouchableOpacity
+                    key={b.k}
+                    onPress={b.on}
+                    disabled={inviteLinkLoading}
+                    accessibilityRole="button"
+                    style={{ flex: 1, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: colors.border, alignItems: 'center', opacity: inviteLinkLoading ? 0.5 : 1 }}
+                  >
+                    <Text numberOfLines={1} style={{ color: b.danger ? (colors.error || colors.danger || '#E5484D') : colors.text, fontWeight: '600', fontSize: 13 }}>{b.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
       </NativeSheetDialog>)}</LazyMount>
 
       {showWallpaperPicker && (

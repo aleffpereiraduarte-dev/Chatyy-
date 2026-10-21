@@ -15400,4 +15400,17 @@ export default {
   "reels.recorder.discardTitle": "Descartar gravação?",
   "reels.recorder.discardBody": "Se sair agora, os clipes gravados serão perdidos.",
   "reels.compose.draftFailed": "Não foi possível salvar o rascunho",
+  // [2026-10-21 conversa-grupo]
+  "chat.unblockFailed": "Não foi possível desbloquear. Tente de novo.",
+  "chatConv.renameGroupFailed": "Não foi possível renomear o grupo.",
+  "chatConv.clearHistoryFailed": "Não foi possível limpar o histórico.",
+  "group.err.noPermission": "Só admins do grupo podem fazer isso.",
+  "group.err.notMember": "Você não participa mais deste grupo.",
+  "group.err.requestFailed": "Não foi possível responder ao pedido. Tente de novo.",
+  "chatConv.leaveSilently": "Sair silenciosamente",
+  "chatConv.leaveSilentlyHint": "Se sair silenciosamente, só os admins vão saber que você saiu.",
+  "chat.mentionEveryoneToken": "todos",
+  "chatConv.inviteLinkSheetSub": "QR, compartilhar, redefinir ou revogar",
+  "group.requests.title": "Pedidos para entrar",
+  "group.requests.none": "Nenhum pedido pendente",
 };

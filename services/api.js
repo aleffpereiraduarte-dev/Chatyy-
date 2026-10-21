@@ -8312,8 +8312,9 @@ export async function statusNotifyList() {
 }
 
 // Group management
-export async function chatLeaveGroup(conversationId) {
-  return apiCall('chat_leave_group', { conversation_id: conversationId }, 'POST');
+export async function chatLeaveGroup(conversationId, opts) {
+  // [2026-10-21 sair-silencioso] opts.silent → "X saiu" só para os admins (chat_leave silent=1)
+  return apiCall('chat_leave_group', { conversation_id: conversationId, ...(opts && opts.silent ? { silent: 1 } : {}) }, 'POST');
 }
 
 export async function chatGroupAdmin(conversationId, targetEmailOrFlags, action) {

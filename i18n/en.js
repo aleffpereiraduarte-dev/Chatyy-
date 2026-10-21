@@ -15322,4 +15322,17 @@ export default {
   "reels.recorder.discardTitle": "Discard recording?",
   "reels.recorder.discardBody": "If you leave now, your recorded clips will be lost.",
   "reels.compose.draftFailed": "Couldn't save the draft",
+  // [2026-10-21 conversa-grupo]
+  "chat.unblockFailed": "Couldn't unblock. Please try again.",
+  "chatConv.renameGroupFailed": "Couldn't rename the group.",
+  "chatConv.clearHistoryFailed": "Couldn't clear the chat history.",
+  "group.err.noPermission": "Only group admins can do this.",
+  "group.err.notMember": "You're no longer a member of this group.",
+  "group.err.requestFailed": "Couldn't answer the request. Please try again.",
+  "chatConv.leaveSilently": "Leave silently",
+  "chatConv.leaveSilentlyHint": "If you leave silently, only admins will know you left.",
+  "chat.mentionEveryoneToken": "everyone",
+  "chatConv.inviteLinkSheetSub": "QR, share, reset or revoke",
+  "group.requests.title": "Join requests",
+  "group.requests.none": "No pending requests",
 };

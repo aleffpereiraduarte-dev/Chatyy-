@@ -630,7 +630,7 @@ function _blocksFor(c, ctx, item, own) {
       const inner = m[0].slice(3, -3).replace(/^\n/, '').replace(/\n$/, '');
       nodes.push(N.vstack([
         N.text(inner, { ff: 'mono', fs: 13, lh, c: textColor }),
-      ], { bg: own ? 'rgba(255,255,255,0.10)' : (p2.codeBlockBg || 'rgba(0,0,0,0.06)'), r: 8, p: [6, 10, 6, 10], m: [4, 0, 4, 0], w: -1 }));
+      ], { bg: own ? _alphaOf(p2.ownText || '#FFFFFF', 0.10) : (p2.codeBlockBg || 'rgba(0,0,0,0.06)'), r: 8, p: [6, 10, 6, 10], m: [4, 0, 4, 0], w: -1 })); // [2026-10-21 contraste] tinta do balão (destaque claro)
       last = m.index + m[0].length;
     }
     pushText(c.slice(last));
@@ -724,11 +724,11 @@ function _translationNodes(tr, ctx, item, own) {
   const avail = _contentMax(ctx) - 18;
   const bh = tr.loading ? 16 : (_estLines(tr.text, fs, avail) * lh + (tr._auto ? 0 : 16));
   return N.hstack([
-    N.spacer({ w: 2, h: bh + 16, bg: own ? 'rgba(255,255,255,0.4)' : p2.otherInk }),
+    N.spacer({ w: 2, h: bh + 16, bg: own ? _alphaOf(p2.ownText || '#FFFFFF', 0.4) : p2.otherInk }), // [2026-10-21 contraste]
     N.vstack(inner, { p: 8, fl: 1 }),
   ], {
     al: 's', m: [6, 0, 0, 0], r: 10, w: -1,
-    bg: own ? 'rgba(255,255,255,0.13)' : (p2.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'),
+    bg: own ? _alphaOf(p2.ownText || '#FFFFFF', 0.13) : (p2.isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'),
   });
 }
 
@@ -957,7 +957,7 @@ function _voiceExtras(item, row, ctx, own) {
   const L = (k, fb) => { try { return p2.label ? p2.label(k, fb) : fb; } catch { return fb; } };
   const ink = own ? (p2.ownText || '#FFFFFF') : (p2.otherText || p2.otherInk || '#111111');
   const soft = own ? (p2.ownMeta || 'rgba(255,255,255,0.75)') : (p2.otherInk || p2.otherMeta || '#555555');
-  const chipBg = own ? 'rgba(255,255,255,0.16)' : (p2.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)');
+  const chipBg = own ? _alphaOf(ink, 0.16) : (p2.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)'); // [2026-10-21 contraste] chip da voz na tinta do balão
   const post = [];
   // tradução da voz (Traduzir no menu = transcrever → traduzir)
   try {
@@ -1038,7 +1038,9 @@ function _fmtSize(b) {
   if (n <= 0) return '';
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(n < 10 * 1024 * 1024 ? 1 : 0).replace('.', ',')} MB`;
+  // [2026-10-21 locale] separador decimal do idioma do app (era vírgula fixa: "1,5 MB" em inglês)
+  try { return require('../../services/format').formatBytes(n); } catch {}
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 function _isTmpId(id) { return typeof id === 'string' && id.startsWith('tmp'); }
 

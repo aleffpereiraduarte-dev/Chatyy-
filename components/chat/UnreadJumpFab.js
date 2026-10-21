@@ -31,10 +31,11 @@ function UnreadJumpFab({ count, onPress, isDark, colors, t, bottom = 142 }) {
         <IconChevronUp size={22} color={colors?.text || (isDark ? '#ffffff' : '#111111')} />
         {count > 0 ? (
           <Animated.View style={[styles.badge, {
-            backgroundColor: colors?.accentOn ? colors.accent : (isDark ? '#ffffff' : '#111111'),
-            borderColor: isDark ? '#000000' : '#ffffff',
+            // [2026-10-21 tema] aro = superfície do botão; badge = destaque ou tinta do tema (era preto/branco fixo)
+            backgroundColor: colors?.accentOn ? colors.accent : (colors?.text || (isDark ? '#ffffff' : '#111111')),
+            borderColor: colors?.surface || (isDark ? '#000000' : '#ffffff'),
           }]}>
-            <Text style={[styles.badgeText, { color: colors?.accentOn ? (colors.onAccent || '#ffffff') : (isDark ? '#111111' : '#ffffff') }]}>{count > 999 ? '999+' : count}</Text>
+            <Text style={[styles.badgeText, { color: colors?.accentOn ? (colors.onAccent || '#ffffff') : (colors?.surface || (isDark ? '#111111' : '#ffffff')) }]}>{count > 999 ? '999+' : count}</Text>
           </Animated.View>
         ) : null}
       </TouchableOpacity>

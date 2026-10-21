@@ -34,10 +34,11 @@ function MentionJumpFab({ count, onPress, isDark, colors, t, bottom = 142 }) {
         <IconAtSign size={22} color={colors?.text || (isDark ? '#ffffff' : '#111111')} />
         {count > 1 ? (
           <Animated.View style={[styles.badge, {
-            backgroundColor: isDark ? '#ffffff' : '#111111',
-            borderColor: isDark ? '#000000' : '#ffffff',
+            // [2026-10-21 tema] aro = superfície do botão; badge = destaque ou tinta do tema (era preto/branco fixo)
+            backgroundColor: colors?.accentOn ? colors.accent : (colors?.text || (isDark ? '#ffffff' : '#111111')),
+            borderColor: colors?.surface || (isDark ? '#000000' : '#ffffff'),
           }]}>
-            <Text style={[styles.badgeText, { color: isDark ? '#111111' : '#ffffff' }]}>{count > 99 ? '99+' : count}</Text>
+            <Text style={[styles.badgeText, { color: colors?.accentOn ? (colors.onAccent || '#ffffff') : (colors?.surface || (isDark ? '#111111' : '#ffffff')) }]}>{count > 99 ? '99+' : count}</Text>
           </Animated.View>
         ) : null}
       </TouchableOpacity>

@@ -28,7 +28,9 @@ import {
   StyleSheet,
   Platform,
   ActivityIndicator,
+  AppState,
 } from 'react-native';
+import { NavigationContext } from '@react-navigation/native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguageOptional } from '../context/LanguageContext';
 import { BorderRadius, Spacing, FontSize } from '../constants/theme';
@@ -102,6 +104,7 @@ export default function ShortVideoBubble({
   meta = null,
   durationMs = 0,
   isFocused,
+  screenFocused = true,
   onTapExpand,
   onLongPressShare,
   messageId,
@@ -122,7 +125,11 @@ export default function ShortVideoBubble({
   // viewability callback). If parent didn't pass anything, default to
   // playing — chat bubbles aren't virtualized aggressively enough for
   // that to be a problem (~50 bubbles in DOM max).
-  const shouldPlay = isFocused === undefined ? true : !!isFocused;
+  // [2026-10-21 foco] e SÓ com a conversa em 1º plano: outra tela por cima (perfil, visualizador,
+  // chamada), app em 2º plano ou `screenFocused` falso → pausa (antes seguia tocando mudo por baixo).
+  const navFocused = useNavFocusSafe();
+  const appActive = useAppActive();
+  const shouldPlay = (isFocused === undefined ? true : !!isFocused) && screenFocused !== false && navFocused && appActive;
 
   const handleTap = useCallback(() => {
     if (typeof onTapExpand === 'function') onTapExpand();
@@ -231,6 +238,32 @@ export default function ShortVideoBubble({
       )}
     </TouchableOpacity>
   );
+}
+
+// [2026-10-21 foco] foco da tela sem quebrar fora de um navigator (NavigationContext ausente → true).
+function useNavFocusSafe() {
+  const nav = React.useContext(NavigationContext);
+  const [focused, setFocused] = useState(() => { try { return nav && typeof nav.isFocused === 'function' ? nav.isFocused() : true; } catch { return true; } });
+  useEffect(() => {
+    if (!nav || typeof nav.addListener !== 'function') return undefined;
+    let a = null; let b = null;
+    try {
+      a = nav.addListener('focus', () => setFocused(true));
+      b = nav.addListener('blur', () => setFocused(false));
+      setFocused(typeof nav.isFocused === 'function' ? nav.isFocused() : true);
+    } catch {}
+    return () => { try { a && a(); } catch {} try { b && b(); } catch {} };
+  }, [nav]);
+  return focused;
+}
+function useAppActive() {
+  const [active, setActive] = useState(() => { try { return AppState.currentState !== 'background'; } catch { return true; } });
+  useEffect(() => {
+    let sub = null;
+    try { sub = AppState.addEventListener('change', (st) => setActive(st === 'active')); } catch {}
+    return () => { try { sub && sub.remove && sub.remove(); } catch {} };
+  }, []);
+  return active;
 }
 
 // ── expo-video sub-renderer (hooks-safe — extracted so the bubble's

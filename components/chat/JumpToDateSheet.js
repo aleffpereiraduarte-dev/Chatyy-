@@ -103,8 +103,9 @@ export default function JumpToDateSheet({ visible, onClose, onPick, conversation
   const loading = info === null;
   const fg = colors?.text || (isDark ? '#fff' : '#111');
   const sub = colors?.textTertiary || '#8e8e93';
-  const accent = isDark ? '#ffffff' : '#111111';
-  const accentInk = isDark ? '#000000' : '#ffffff';
+  // [2026-10-21 tema] dia escolhido/hoje na cor do destaque do usuário (era preto/branco fixo)
+  const accent = colors?.accentOn && colors?.accent ? colors.accent : (colors?.text || (isDark ? '#ffffff' : '#111111'));
+  const accentInk = colors?.accentOn && colors?.accent ? (colors.onAccent || '#ffffff') : (colors?.surface || (isDark ? '#000000' : '#ffffff'));
   const pick = (d) => { onClose && onClose(); setTimeout(() => { try { onPick && onPick(d); } catch {} }, Platform.OS === 'ios' ? 280 : 0); };
 
   if (!visible) return null;

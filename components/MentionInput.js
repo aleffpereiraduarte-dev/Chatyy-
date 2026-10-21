@@ -15,7 +15,7 @@ import SuggestPopIn from './chat/SuggestPopIn'; // [2026-10-16 motion-composer] 
  *   colors: object - theme colors
  *   t: function - i18n translation function
  */
-export function MentionAutocomplete({ inputText, members, currentEmail, visible, onSelect, colors, t }) {
+export function MentionAutocomplete({ inputText, members, currentEmail, visible, onSelect, colors, t, canMentionEveryone = true }) {
   if (!visible || !members || members.length === 0) return null;
 
   // Find the current @query from the input text
@@ -27,8 +27,12 @@ export function MentionAutocomplete({ inputText, members, currentEmail, visible,
   // Synthetic meta-mentions: surface @everyone / @admins as the first
   // entries so users discover them while typing. Backend (chat.php) and
   // the send-path expansion both honour these aliases.
+  // [2026-10-21 @todos] @everyone só para admin (o servidor descarta de quem não é admin:
+  // chatAuditEveryoneAllowed) → não oferece a quem não pode. Token no idioma do app
+  // ("@todos" em pt/es; o envio aceita everyone|all|todos e manda '@everyone' ao servidor).
+  const _tk = (() => { try { const v = t?.('chat.mentionEveryoneToken'); return v && v !== 'chat.mentionEveryoneToken' && /^[\w]+$/.test(v) ? v : 'todos'; } catch { return 'todos'; } })();
   const META = [
-    { email: '@everyone', meta: 'everyone', match: ['everyone', 'all', 'todos', 'todo'] },
+    ...(canMentionEveryone ? [{ email: '@' + _tk, meta: 'everyone', match: [_tk, 'everyone', 'all', 'todos', 'todo'] }] : []),
     { email: '@admins',   meta: 'admins',   match: ['admins', 'admin'] },
   ];
   const metaMatched = META.filter(m =>
@@ -64,8 +68,8 @@ export function MentionAutocomplete({ inputText, members, currentEmail, visible,
                 onPress={() => onSelect(item)}
                 activeOpacity={0.7}
               >
-                <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: isEveryone ? '#111111' : '#1a73e8', alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{isEveryone ? '@' : 'A'}</Text>
+                <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary || '#111111', opacity: isEveryone ? 1 : 0.75, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 14 }}>{isEveryone ? '@' : 'A'}</Text>
                 </View>
                 <View style={styles.itemText}>
                   <Text style={[styles.name, { color: colors.text }]} numberOfLines={1}>{item.email}</Text>

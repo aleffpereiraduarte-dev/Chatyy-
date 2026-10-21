@@ -58,6 +58,21 @@ function enablePlaybackAudioSession() {
   // [2026-10-07 android-native] expo-av fallback removed (package gone; metro stub).
 }
 
+// [2026-10-21 som-wa] Abrir a nota de vídeo JÁ com som (WhatsApp), mas respeitando a chave de
+// silencioso do iOS: na abertura a sessão fica em modo que o silencioso cala (playsInSilentMode
+// false). Só o toque explícito em "ativar som" força tocar mesmo no silencioso.
+function respectSilentAudioSession() {
+  try { if (require('../services/callAudioGuard').callAudioGuardActive()) return; } catch {}
+  if (Platform.OS !== 'ios') return;
+  try {
+    const expoAudio = require('expo-audio');
+    const fn = expoAudio?.setAudioModeAsync || expoAudio?.AudioModule?.setAudioModeAsync;
+    const r = fn?.({ playsInSilentMode: false });
+    if (r?.catch) r.catch(() => {});
+  } catch {}
+}
+function _roundSoundOn() { try { return globalThis.__chatyy_round_video_sound !== false; } catch { return true; } }
+
 // ── Inner player (extracted so hooks stay unconditional) ──────────────────
 function CircularPlayer({ uri, paused, muted, onReady }) {
   const { t } = useLanguage();
@@ -89,7 +104,8 @@ function CircularPlayer({ uri, paused, muted, onReady }) {
     try {
       player.muted = muted;
       if (!muted) {
-        enablePlaybackAudioSession();
+        // [2026-10-21 som-wa] a sessão "tocar no silencioso" só no toque explícito (handleToggleMute);
+        // ao abrir já com som, a chave de silencioso do iOS continua valendo.
         try { player.volume = 1; } catch {}
       }
     } catch {}
@@ -128,14 +144,16 @@ function CircularPlayer({ uri, paused, muted, onReady }) {
 // ── Main component ────────────────────────────────────────────────────────
 export default function RoundVideoViewer({ visible, uri, onClose }) {
   const { t } = useLanguage();
-  const [muted, setMuted] = useState(true);  // start muted (tap to unmute)
+  const [muted, setMuted] = useState(() => !_roundSoundOn());  // [2026-10-21 som-wa] abre com som (kill: __chatyy_round_video_sound=false)
   const [paused, setPaused] = useState(false);
   const [ready, setReady] = useState(false);
 
   // Reset state when the modal opens with a new URI
   useEffect(() => {
     if (visible) {
-      setMuted(true);
+      const snd = _roundSoundOn();
+      if (snd) respectSilentAudioSession();
+      setMuted(!snd);
       setPaused(false);
       setReady(false);
     }
