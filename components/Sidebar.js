@@ -360,7 +360,6 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
   if (collapsed) {
     const quickItems = [
       { label: t('sidebar.inbox'), icon: IconInbox, route: '/inbox', onPress: () => onFolderPress('INBOX') },
-      { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
       { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings' },
       { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar' },
       { label: t('sidebar.cloud', 'Cloud'), icon: IconFolder, route: '/drive' },
@@ -448,7 +447,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         const primary = [
           { label: t('sidebar.search') || 'Buscar', icon: IconSearch, route: '__search__' },
           { label: t('notifications.title') || 'Notificações', icon: IconBell, route: '__notifications__', badge: notifsUnread },
-          { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
+          // [2026-10-21] sem atalho "Chatyy" aqui (founder): o e-mail já fica dentro do app de chat.
         ];
         const secondary = [
           { label: 'Bia',                  icon: IconZap,        route: '/one' },
