@@ -2185,6 +2185,12 @@ class MailWebSocket {
     if (typeof apiMod.confirmDeadBearer !== 'function') return;
     const attempt = (n) => {
       apiMod.confirmDeadBearer(src).then((dead) => {
+        if (dead === 'healed') {
+          // [sessao-morta 2026-10-20] renovado em silêncio → reconecta com o bearer novo
+          this._deadConfirmTimer = null;
+          try { this.manualReconnect(); } catch {}
+          return;
+        }
         if (dead) {
           this._deadConfirmTimer = null;
           try { this._cleanup(); } catch {}

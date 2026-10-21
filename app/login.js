@@ -134,6 +134,25 @@ export default function LoginScreen() {
     }
   }, [isAddAccount, params?.email]);
 
+  // [sessao-morta 2026-10-20] Chegou aqui porque o servidor marcou a sessão como
+  // morta (AuthContext doLogout('dead_bearer')): aviso + conta já preenchida
+  // (telefone → formulário de telefone já preenchido pelo ?phone=; senão e-mail →
+  // passo da senha).
+  const _sessionExpired = params?.reason === 'session_expired';
+  useEffect(() => {
+    if (!_sessionExpired) return;
+    const msg = t('login.sessionExpired', 'Sua sessão expirou. Entre de novo.');
+    const pre = typeof params?.email === 'string' ? params.email : (Array.isArray(params?.email) ? params.email[0] : '');
+    const ph = typeof params?.phone === 'string' ? params.phone : '';
+    const tmr = setTimeout(() => {
+      if (pre && !ph) { try { goToPasswordRef.current?.(normalizeLoginEmail(pre)); } catch {} }
+      // depois do goToPassword (ele limpa o erro)
+      setTimeout(() => { try { setError(msg); } catch {} }, 50);
+    }, 0);
+    return () => clearTimeout(tmr);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_sessionExpired]);
+
   // Deep-link return path: if the user arrived here from a protected URL
   // (?next=/chat-conversation?id=X), bounce back there after login. Guard
   // against open-redirect by only honouring paths that start with '/'.

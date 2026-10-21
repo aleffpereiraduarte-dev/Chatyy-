@@ -885,7 +885,12 @@ export function AuthProvider({ children }) {
                     // Cache is stale and server says session is dead.
                     // Don't clear if token is within 90-day grace (transient
                     // edge issue) — let the auth-failure handler decide.
-                    if (api.isTokenWithinGracePeriod?.()) return;
+                    if (api.isTokenWithinGracePeriod?.()) {
+                      // [sessao-morta 2026-10-20] bearer marcado como morto na origem →
+                      // renova em silêncio ou vai ao login (não fica na lista "Conectando…").
+                      try { api.confirmDeadBearer?.('boot')?.catch?.(() => {}); } catch {}
+                      return;
+                    }
                     try { console.warn('[auth] hydrate guard: server rejected cached session, forcing logout'); } catch {}
                     AsyncStorage.removeItem('chatyy_offline_user').catch(() => {});
                     doLogout('hydrate_guard_rejected');
@@ -909,7 +914,7 @@ export function AuthProvider({ children }) {
                     } catch {}
                   }
                 });
-              }, 1500);
+              }, 600); // [sessao-morta 2026-10-20] 1500→600: sessão morta vai ao login antes de a lista assentar
               return true;
             }
           }
@@ -1168,6 +1173,10 @@ export function AuthProvider({ children }) {
         // ALSO consults the 90-day grace and refuses to logout. Only
         // a *truly* aged-out token actually kicks the user.
         if (serverRejectedAuth && api.isTokenWithinGracePeriod?.()) {
+          // [sessao-morta 2026-10-20] a graça só protege 401 GENÉRICO: se a origem
+          // marcar o bearer como morto (unknown/expired/revoked) e a renovação
+          // silenciosa falhar, confirmDeadBearer dispara o login direto.
+          try { api.confirmDeadBearer?.('boot')?.catch?.(() => {}); } catch {}
           try { api.recordLogoutAttempt?.('refused_within_grace', { source: 'checkauth_cold_start' }); } catch {}
           console.warn('[auth] checkAuth rejected on cold start but token <90d old — keeping session');
           if (await hydrateOffline()) return;
@@ -1908,7 +1917,19 @@ export function AuthProvider({ children }) {
     // não tem nada a proteger. A troca de conta (switchAccount) mantém o seu
     // próprio _forceBiometricLock().
     // 2. Redirect to login IMMEDIATELY
-    try { router.replace('/login'); } catch {}
+    // [sessao-morta 2026-10-20] sessão morta (servidor marcou) → login com aviso
+    // "Sua sessão expirou. Entre de novo." e e-mail/telefone preenchidos.
+    let _loginUrl = '/login';
+    if (reason === 'dead_bearer' || reason === 'session_expired') {
+      try {
+        const q = ['reason=session_expired'];
+        if (_outgoingEmail) q.push('email=' + encodeURIComponent(_outgoingEmail));
+        const ph = String(user?.phone || user?.phone_number || '').replace(/[^0-9+]/g, '');
+        if (ph && ph.replace(/\D/g, '').length >= 8) q.push('phone=' + encodeURIComponent(ph));
+        _loginUrl = '/login?' + q.join('&');
+      } catch {}
+    }
+    try { router.replace(_loginUrl); } catch {}
     // 3. Clear token (prevents auto-relogin on next open) — must happen
     //    AFTER the push-token revoke above so the API call had auth.
     //    AWAIT the async variant on native so SecureStore.deleteItemAsync

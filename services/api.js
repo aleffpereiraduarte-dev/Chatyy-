@@ -3334,7 +3334,11 @@ async function _probeCheckAuthOrigin(token, timeoutMs = 8000) {
     const e = (j && (j.error || (j.data && j.data.error) || j.message)) || '';
     // [conectando 2026-10-20] token_unknown = a ORIGEM (US: PG primário + arquivo)
     // respondeu e o bearer não existe em lugar nenhum → tão definitivo quanto revogado.
-    return { status: res.status, explicit: e === 'logged_out' || e === 'revoked' || e === 'token_unknown', unknown: e === 'token_unknown' };
+    // [sessao-morta 2026-10-20] + token_expired (bearer legado vencido) e reason
+    // token_revoked/token_unknown/token_expired do check_auth do US.
+    const rs = (j && ((j.data && j.data.reason) || j.reason)) || '';
+    const kind = rs || (e === 'logged_out' || e === 'revoked' ? 'token_revoked' : (e === 'token_unknown' || e === 'token_expired' ? e : ''));
+    return { status: res.status, explicit: !!kind, unknown: kind === 'token_unknown', kind };
   } catch { return { status: 0, explicit: false }; } finally { clearTimeout(to); }
 }
 // [conectando 2026-10-20] Bearer DESCONHECIDO pelo servidor, visto pelo WS.
@@ -3348,12 +3352,59 @@ async function _probeCheckAuthOrigin(token, timeoutMs = 8000) {
 // silencioso (sem refresh_token, sem senha guardada) e fora de ligação. Morto →
 // motivo 'dead_bearer' → AuthContext vai direto ao login (sem apagar dados).
 // Kill: o mesmo do caminho HTTP (dead_bearer_logout=false).
+// [sessao-morta 2026-10-20] Extensão (pedido do founder: "perdeu o token → o app
+// desloga sozinho e leva ao login"): vale p/ token_unknown, token_expired e
+// token_revoked. Com o marcador, ANTES de deslogar tenta renovar em silêncio
+// (refresh_token → senha guardada); só sem saída faz logout limpo e vai ao login
+// com "Sua sessão expirou. Entre de novo." e o e-mail/telefone preenchidos.
+// Em ligação: não desloga — re-confere quando a ligação acabar (até 3 h).
+// Retorno: true = morto (sinal enviado) | 'healed' = bearer novo em authToken | false.
+let _deadAfterCallTimer = null;
+function _deadRecheckAfterCall(src) {
+  if (_deadAfterCallTimer) return;
+  const t0 = Date.now();
+  const tick = () => {
+    _deadAfterCallTimer = null;
+    let inCall = false;
+    try { inCall = !!(globalThis.__chatyyCallActive || globalThis.__chatyyNativeCallActive); } catch {}
+    if (inCall && Date.now() - t0 < 3 * 3600 * 1000) { _deadAfterCallTimer = setTimeout(tick, 5000); return; }
+    _deadProbe.lastAt = 0;
+    confirmDeadBearer(src + '_postcall').then((r) => {
+      if (r === 'healed') { try { require('./websocket').default?.manualReconnect?.(); } catch {} }
+    }).catch(() => {});
+  };
+  _deadAfterCallTimer = setTimeout(tick, 5000);
+}
+async function _silentRenew(fp) {
+  // 1) refresh_token (180 d) → bearer novo sem senha
+  try {
+    const ok = await Promise.race([ensureFreshBearer(), new Promise((r) => setTimeout(() => r(false), 8000))]);
+    if (ok && authToken && _tokenFingerprint() !== fp) return true;
+  } catch {}
+  // 2) senha guardada em memória (login desta sessão)
+  try {
+    const c = savedCredentials;
+    if (c && c.email && c.password) {
+      const r = await Promise.race([
+        _rawApiCall('login', { email: c.email, password: c.password }, 'POST'),
+        new Promise((res) => setTimeout(() => res(null), 12000)),
+      ]);
+      const tok = r && r.data && (r.data.token || (r.data.data && r.data.data.token));
+      if (r && r.status >= 200 && r.status < 300 && tok) {
+        authToken = tok;
+        try { await storeToken(tok); } catch {}
+        try { _noteAuthOk(); } catch {}
+        return true;
+      }
+    }
+  } catch {}
+  return false;
+}
 export async function confirmDeadBearer(src = 'ws') {
   try {
     if (_deadBearerLogoutDisabled()) return false;
-    if (!authToken || refreshToken || (savedCredentials && savedCredentials.password)) return false;
+    if (!authToken) return false;
     if (_authFailureSignaled) return false;
-    try { if (globalThis.__chatyyCallActive || globalThis.__chatyyNativeCallActive) return false; } catch {}
     const fp = _tokenFingerprint();
     if (!fp) return false;
     if (_deadProbe.fp !== fp) _deadProbe = { fp, hits: 0, lastAt: 0, firstAt: 0 };
@@ -3369,17 +3420,28 @@ export async function confirmDeadBearer(src = 'ws') {
       return false;
     }
     if (pr.status !== 401) return false; // 0/5xx/timeout = inconclusivo
-    // Só com MARCADOR da origem (logged_out/revoked/token_unknown). 401 genérico
-    // (ex.: PG do US fora → PHP cai no 401 sem marcador) NUNCA desloga por aqui.
+    // Só com MARCADOR da origem (token_unknown/token_expired/token_revoked).
+    // 401 genérico (PG do US fora, edge, rede) NUNCA desloga por aqui.
     _deadProbe.hits += 1;
     if (!pr.explicit) return false;
+    // Renovação silenciosa primeiro (também durante ligação — não derruba nada).
+    if (await _silentRenew(fp)) {
+      try { require('./crashReporter').reportStep('dead_bearer_healed', `src=${src} kind=${pr.kind || '-'}`); } catch {}
+      _deadProbe = { fp: '', hits: 0, lastAt: 0, firstAt: 0 };
+      _deadRefreshFp = '';
+      return 'healed';
+    }
+    let inCall = false;
+    try { inCall = !!(globalThis.__chatyyCallActive || globalThis.__chatyyNativeCallActive); } catch {}
+    if (inCall) { _deadRecheckAfterCall(src); return false; }
     if (_authFailureSignaled) return false;
     _authFailureSignaled = true;
-    try { recordLogoutAttempt('dead_bearer_no_recovery', { source: src + (pr.unknown ? '_unknown' : '') }); } catch {}
-    try { require('./crashReporter').reportStep('dead_bearer_logout', `src=${src} probes=${_deadProbe.hits} unk=${pr.unknown ? 1 : 0}`); } catch {}
+    try { recordLogoutAttempt('dead_bearer_no_recovery', { source: src + '_' + (pr.kind || 'x') }); } catch {}
+    try { require('./crashReporter').reportStep('dead_bearer_logout', `src=${src} probes=${_deadProbe.hits} kind=${pr.kind || '-'}`); } catch {}
     try {
       globalThis.__chatyy_authFailure = Date.now();
       globalThis.__chatyy_authFailureReason = 'dead_bearer';
+      globalThis.__chatyy_authFailureKind = pr.kind || 'token_unknown';
       if (globalThis.dispatchEvent) globalThis.dispatchEvent(new Event('chatyy:authFailure'));
     } catch {}
     return true;

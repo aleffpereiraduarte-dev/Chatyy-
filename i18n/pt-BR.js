@@ -2276,6 +2276,7 @@ export default {
   'login.passkey': 'Passkey',
   'login.passkeyUnavailable': 'Passkey ainda não está disponível neste app.',
   'login.passkeyNone': 'Nenhuma passkey cadastrada nesta conta.',
+  'login.sessionExpired': 'Sua sessão expirou. Entre de novo.',
   'login.passkeyError': 'Falha no login com passkey',
   'login.createAccount': 'Criar conta',
   'login.showPassword': 'Mostrar senha',

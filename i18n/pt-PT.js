@@ -10022,6 +10022,7 @@ export default {
   "login.passkey": "Passkey",
   "login.passkeyUnavailable": "Passkeys ainda não estão disponíveis nesta app.",
   "login.passkeyNone": "Nenhuma Passkey registada nesta conta.",
+  "login.sessionExpired": "A sua sessão expirou. Inicie sessão novamente.",
   "login.passkeyError": "Falha no login com Passkey",
   "login.phoneCallMe": "Receber código por chamada",
   "login.loading": "A carregar...",
