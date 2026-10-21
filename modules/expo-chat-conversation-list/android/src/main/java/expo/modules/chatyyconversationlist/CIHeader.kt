@@ -204,6 +204,8 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
   private val coverTop = View(ctx)
   private val coverFadeBg = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x00000000, 0x00000000, 0xFF000000.toInt()))
   private var coverKey = ""
+  // [2026-10-21 foto-capa-studio] apiVersion 7: toque na capa (dono) → "a:__cover".
+  private var coverTap = false
   private var hasCover = false
   private var coverTarget: CustomTarget<Bitmap>? = null
   private val disc = View(ctx)
@@ -430,6 +432,7 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
     segments.visibility = if (list.size > 1) View.VISIBLE else View.GONE
 
     configureCover(h.cover, p)
+    coverTap = h.coverTap
     ringMode = if (h.ring == "seen" || h.ring == "unseen") h.ring else ""
     ring.visibility = if (ringMode.isEmpty()) View.GONE else View.VISIBLE
     if (ringMode == "seen") {
@@ -914,6 +917,10 @@ internal class CIHeaderOverlay(ctx: Context) : ViewGroup(ctx) {
         if (lx > w * 0.7f) return "p:1"
       }
       return "avatar"
+    }
+    if (coverTap && hasCover && cover.visibility == View.VISIBLE && cover.alpha > 0.5f && y > navH &&
+      x >= cover.left && x <= cover.right && y >= cover.top && y <= cover.bottom) {
+      return "a:__cover"
     }
     return null
   }

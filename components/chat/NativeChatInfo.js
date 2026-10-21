@@ -113,6 +113,17 @@ export function chatInfoV6() {
 }
 
 /**
+ * [2026-10-21 foto-capa-studio] api ≥ 7: edit.coverHero (capa grande no topo do
+ * editor nativo, toque → onEdit {type:'cover'}) e hero.coverTap (dono toca na
+ * capa → onAction {key:'__cover'} → hero.onCoverPress). Kill switch OTA:
+ * globalThis.__chatyy_native_cover_hero = false (binário 7 volta ao visual 6).
+ */
+export function chatInfoCoverV7() {
+  try { if (globalThis.__chatyy_native_cover_hero === false) return false; } catch {}
+  try { return chatInfoApiVersion() >= 7; } catch { return false; }
+}
+
+/**
  * [2026-10-18 profile-edit-native] "Editar perfil" NATIVO (Telegram) dentro da
  * mesma view: binário api ≥ 4 + perfil nativo ligado + kill switch OTA
  * globalThis.__chatyy_native_profile_edit = false (volta à folha JS).
@@ -283,6 +294,7 @@ function Inner(props) {
         try {
           const h = propsRef.current.hero || {};
           if (h.nav && String(h.nav.key) === key && typeof h.nav.onPress === 'function') { h.nav.onPress(); return; }
+          if (key === '__cover') { if (typeof h.onCoverPress === 'function') h.onCoverPress(); return; } // [2026-10-21 foto-capa-studio]
           const a = _withMuteAction(h.actions, propsRef.current.rows, tr).find((x) => x && String(x.key) === key);
           if (a && typeof a.onPress === 'function') a.onPress();
         } catch {}

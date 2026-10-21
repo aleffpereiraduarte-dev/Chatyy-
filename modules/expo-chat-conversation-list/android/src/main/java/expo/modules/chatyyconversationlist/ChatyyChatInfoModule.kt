@@ -22,7 +22,10 @@ class ChatyyChatInfoModule : Module() {
     // [perfil-fotos 2026-10-19] 6 = hero.swipe (deslizar entre as fotos na foto
     // expandida), até 20 fotos no carrossel e prop `gridMedia` (itens da grade
     // separados de `media`, usada em "Dados do contato").
-    Function("apiVersion") { 6 }
+    // [2026-10-21 foto-capa-studio] 7 = edit.coverHero (capa grande no topo do
+    // editor, toque → onEdit {type:"cover"}) + hero.coverTap (toque na capa do
+    // dono → onAction {key:"__cover"}).
+    Function("apiVersion") { 7 }
 
     View(ChatyyChatInfoView::class) {
       Events(

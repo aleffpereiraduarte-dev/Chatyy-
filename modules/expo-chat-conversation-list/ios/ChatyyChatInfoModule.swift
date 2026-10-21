@@ -33,12 +33,15 @@ import UIKit
 //         troca a foto na foto expandida), até 20 fotos no carrossel e prop
 //         `gridMedia` [{key,u,a,video}] = itens da grade k "grid" separados de
 //         `media` (faixa "Mídia, links e docs" de "Dados do contato").
+// [2026-10-21 foto-capa-studio] apiVersion 7: edit.coverHero (capa grande no
+//         topo do editor, toque → onEdit {type:"cover"}) e hero.coverTap (dono
+//         toca na capa → onAction {key:"__cover"}).
 public class ChatyyChatInfoModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyChatInfo")
 
     Function("apiVersion") { () -> Int in
-      return 6
+      return 7
     }
 
     View(ChatyyChatInfoView.self) {

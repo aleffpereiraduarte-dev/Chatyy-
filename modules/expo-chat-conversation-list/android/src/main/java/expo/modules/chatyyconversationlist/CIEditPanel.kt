@@ -5,6 +5,9 @@ package expo.modules.chatyyconversationlist
 // (ios/CIEditPanel.swift): prop `edit` {on, seq, backSeq, values, pic, cover,
 // busyAvatar, busyCover, saving, errors, uname, presets, groups, labels,
 // limits} → eventos onEdit {type: change|done|cancel|avatar|cover|coverRemove|row}.
+// [2026-10-21 foto-capa-studio] apiVersion 7: `coverHero` true = capa GRANDE no
+// topo (3:1 atrás do avatar; sem capa = degradê grafite) + selo "Alterar capa";
+// toque → onEdit {type:"cover"}; o cartão "Foto de capa" some.
 // Os campos são do NATIVO durante a edição (o JS só manda os valores iniciais
 // quando `seq` muda), então digitar não depende da ponte.
 
@@ -94,7 +97,8 @@ internal data class CIEditState(
   val presets: List<String> = emptyList(),
   val groups: List<CIEditGroup> = emptyList(),
   val labels: Map<String, String> = emptyMap(),
-  val limits: Map<String, Int> = emptyMap()
+  val limits: Map<String, Int> = emptyMap(),
+  val coverHero: Boolean = false
 ) {
   fun label(k: String, fb: String): String = labels[k] ?: fb
   fun limit(k: String, fb: Int): Int = limits[k] ?: fb
@@ -150,7 +154,8 @@ internal data class CIEditState(
         presets = presets,
         groups = groups,
         labels = labels,
-        limits = limits
+        limits = limits,
+        coverHero = CLVal.bool(m["coverHero"])
       )
     }
   }
@@ -243,6 +248,84 @@ internal class CIEditNavRow(ctx: Context) : LinearLayout(ctx) {
   }
 }
 
+/** [2026-10-21 foto-capa-studio] Capa grande do topo do editor (apiVersion 7):
+ * 3:1, cantos de 16 dp, degradê grafite sem capa, véu embaixo e selo "Alterar capa". */
+@SuppressLint("ViewConstructor")
+internal class CIEditCoverView(ctx: Context) : FrameLayout(ctx) {
+  private val dens = ctx.resources.displayMetrics.density
+  private fun dpx(v: Float): Int = (v * dens + 0.5f).toInt()
+  private val fallback = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFFDCDCD6.toInt(), 0xFFB9B9B3.toInt()))
+  private val image = ImageView(ctx)
+  private val shade = View(ctx)
+  private val chip = LinearLayout(ctx)
+  private val chipIcon = ImageView(ctx)
+  private val chipLabel = ceText(ctx, 13f, 600)
+  private val spin = ProgressBar(ctx)
+  private var url = ""
+
+  init {
+    fallback.cornerRadius = 16f * dens
+    background = fallback
+    clipToOutline = true
+    image.scaleType = ImageView.ScaleType.CENTER_CROP
+    image.visibility = GONE
+    image.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    addView(image, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    shade.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x00000000, 0x00000000, 0x4D000000))
+    shade.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    addView(shade, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    chip.orientation = LinearLayout.HORIZONTAL
+    chip.gravity = Gravity.CENTER_VERTICAL
+    chip.setPadding(dpx(10f), 0, dpx(12f), 0)
+    val cb = GradientDrawable()
+    cb.cornerRadius = 14f * dens
+    cb.setColor(0x6B000000)
+    chip.background = cb
+    chipIcon.setImageDrawable(tintedIcon(ctx, R.drawable.crl_ic_image, Color.WHITE))
+    chip.addView(chipIcon, LinearLayout.LayoutParams(dpx(14f), dpx(14f)))
+    chipLabel.setTextColor(Color.WHITE)
+    chip.addView(chipLabel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dpx(6f) })
+    addView(chip, LayoutParams(LayoutParams.WRAP_CONTENT, dpx(28f), Gravity.END or Gravity.BOTTOM).apply { marginEnd = dpx(10f); bottomMargin = dpx(10f) })
+    spin.isIndeterminate = true
+    spin.indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+    spin.visibility = GONE
+    addView(spin, LayoutParams(dpx(28f), dpx(28f), Gravity.CENTER))
+    isClickable = true
+    isFocusable = true
+  }
+
+  override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    val w = MeasureSpec.getSize(widthMeasureSpec)
+    super.onMeasure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(max(1, w / 3), MeasureSpec.EXACTLY))
+  }
+
+  fun bind(u: String, auth: Boolean, dark: Boolean, label: String, busy: Boolean) {
+    fallback.colors = if (dark) intArrayOf(0xFF34343B.toInt(), 0xFF1B1B1F.toInt()) else intArrayOf(0xFFDCDCD6.toInt(), 0xFFB9B9B3.toInt())
+    chipLabel.text = label
+    contentDescription = label
+    spin.visibility = if (busy) VISIBLE else GONE
+    if (u.isEmpty()) {
+      url = ""
+      try { Glide.with(context.applicationContext).clear(image) } catch (_: Throwable) {}
+      image.setImageDrawable(null)
+      image.visibility = GONE
+      return
+    }
+    image.visibility = VISIBLE
+    if (u == url) return
+    url = u
+    val model = CICard.glideModel(u, auth) ?: return
+    try {
+      Glide.with(context.applicationContext).load(model).centerCrop().into(image)
+    } catch (_: Throwable) {}
+  }
+
+  override fun setPressed(pressed: Boolean) {
+    super.setPressed(pressed)
+    alpha = if (pressed) 0.82f else 1f
+  }
+}
+
 @SuppressLint("ViewConstructor")
 internal class CIEditPanel(ctx: Context) : FrameLayout(ctx) {
   var onEvent: ((Map<String, Any>) -> Unit)? = null
@@ -280,6 +363,9 @@ internal class CIEditPanel(ctx: Context) : FrameLayout(ctx) {
   private val avatarSpin = ProgressBar(ctx)
   private val setPhotoBtn = ceText(ctx, 17f, 400)
   private val generalError = ceText(ctx, 13f, 400)
+  // [2026-10-21 foto-capa-studio] capa grande no topo (apiVersion 7, edit.coverHero).
+  private val coverHero = CIEditCoverView(ctx)
+  private var coverCardGroup: View? = null
 
   private val firstField = EditText(ctx)
   private val lastField = EditText(ctx)
@@ -498,6 +584,10 @@ internal class CIEditPanel(ctx: Context) : FrameLayout(ctx) {
     header.orientation = LinearLayout.VERTICAL
     header.gravity = Gravity.CENTER_HORIZONTAL
     val box = px(100f)
+    // [2026-10-21 foto-capa-studio] capa 3:1 atrás do avatar (GONE sem coverHero).
+    coverHero.visibility = GONE
+    clickOf(coverHero) { if (!state.busyCover) emit(mapOf("type" to "cover")) }
+    header.addView(coverHero, mlp(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = px(4f) })
     avatar.setBoxDp(100f)
     avatarFrame.addView(avatar, LayoutParams(box, box))
     val dim = GradientDrawable()
@@ -581,7 +671,9 @@ internal class CIEditPanel(ctx: Context) : FrameLayout(ctx) {
     clickOf(coverRemoveRow) { if (!state.busyCover) emit(mapOf("type" to "coverRemove")) }
     val coverCard = cardOf(listOf(coverRow, coverRemoveRow))
     if (coverCard.childCount == 3) coverRemoveSep = coverCard.getChildAt(1)
-    content.addView(groupOf(listOf(coverCard), true))
+    val coverGroup = groupOf(listOf(coverCard), true)
+    coverCardGroup = coverGroup
+    content.addView(coverGroup)
 
     // ── Grupos do JS ──
     groupsBox.orientation = LinearLayout.VERTICAL
@@ -844,6 +936,29 @@ internal class CIEditPanel(ctx: Context) : FrameLayout(ctx) {
     coverRemoveRow.visibility = if (hasCover) VISIBLE else GONE
     coverRemoveSep?.visibility = if (hasCover) VISIBLE else GONE
     coverRemoveRow.isEnabled = !s.busyCover && !s.saving
+
+    // [2026-10-21 foto-capa-studio] capa grande no topo (apiVersion 7).
+    val hero = s.coverHero
+    coverHero.visibility = if (hero) VISIBLE else GONE
+    (avatarFrame.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+      val tm = if (hero) -px(46f) else px(12f)
+      if (lp.topMargin != tm) {
+        lp.topMargin = tm
+        avatarFrame.layoutParams = lp
+      }
+    }
+    if (hero) {
+      val ring = GradientDrawable()
+      ring.shape = GradientDrawable.OVAL
+      ring.setColor(Color.TRANSPARENT)
+      ring.setStroke(px(4f), p.pageBg)
+      avatarFrame.foreground = ring
+    } else {
+      avatarFrame.foreground = null
+    }
+    coverHero.bind(s.coverUrl, s.coverAuth, p.dark, if (hasCover) s.label("coverChange", "Alterar capa") else s.label("coverAdd", "Adicionar capa"), s.busyCover)
+    coverHero.isEnabled = !s.busyCover && !s.saving
+    coverCardGroup?.visibility = if (hero) GONE else VISIBLE
   }
 
   private fun bindUsernameRow() {

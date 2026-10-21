@@ -22,6 +22,7 @@ import { initialsOf, gradientIndex } from '../chatlist/nativeAdapter';
 import { avatarRefForEmail } from '../chat/NativeProfileBridge';
 import { isNativeProfileEditEnabled } from '../chat/NativeChatInfo';
 import { isPhotoStudioEnabled } from './ProfileMediaStudio'; // [2026-10-21 foto-capa-studio]
+import { chatInfoCoverV7 } from '../chat/NativeChatInfo';
 
 export { isNativeProfileEditEnabled };
 
@@ -93,6 +94,8 @@ export function useNativeProfileEdit(ctx) {
   // [2026-10-21 foto-capa-studio] "Alterar foto" / "Foto de capa" abrem a tela de
   // foto/capa (prévia grande, galeria/câmera/remover, recorte com arrastar).
   const [studioKind, setStudioKind] = useState('');
+  // Estúdio aberto FORA da edição (toque na capa do perfil nativo, api ≥ 7).
+  const [studioFree, setStudioFree] = useState(false);
   const draftRef = useRef({});
   const initialRef = useRef({ values: {}, cover: '' });
   const checkTimer = useRef(null);
@@ -370,6 +373,8 @@ export function useNativeProfileEdit(ctx) {
       values,
       pic,
       cover: cu ? { u: cu, a: /\/api\//.test(cu) ? 1 : 0 } : null,
+      // [2026-10-21 foto-capa-studio] api ≥ 7: capa grande no topo (toque → estúdio).
+      coverHero: Platform.OS !== 'web' && isPhotoStudioEnabled() && chatInfoCoverV7() ? 1 : 0,
       busyAvatar,
       busyCover,
       saving,
@@ -428,15 +433,24 @@ export function useNativeProfileEdit(ctx) {
     initialRef.current = { ...initialRef.current, cover: u };
     try { ctxRef.current.onSaved?.({ cover_url: u }); } catch {}
   }, []);
-  const closeStudio = useCallback(() => { setStudioKind(''); }, []);
+  const closeStudio = useCallback(() => { setStudioKind(''); setStudioFree(false); }, []);
+  /** Abre o estúdio sem estar editando (ex.: toque na capa do perfil nativo). */
+  const openStudio = useCallback((kind) => {
+    if (!enabled || Platform.OS === 'web' || !isPhotoStudioEnabled()) return false;
+    const id = ctxRef.current.identity || {};
+    if (!on) setCover(normalizeCoverUrl(String(id.cover_url || id.coverUrl || '')));
+    setStudioFree(true);
+    setStudioKind(kind === 'avatar' ? 'avatar' : 'cover');
+    return true;
+  }, [enabled, on]);
   const studio = useMemo(() => {
-    if (!session) return null;
+    if (!session && !studioFree) return null;
     const id = identity || {};
     const email = String(id.email || '');
     const abs = typeof ctx.abs === 'function' ? ctx.abs : (u) => u;
     const cu = cover ? (/^(file|content|ph|assets-library):/i.test(cover) ? cover : abs(cover)) : '';
     return {
-      visible: on && !!studioKind,
+      visible: (on || studioFree) && !!studioKind,
       kind: studioKind || 'avatar',
       onClose: closeStudio,
       t,
@@ -448,7 +462,7 @@ export function useNativeProfileEdit(ctx) {
       onCoverChanged: onStudioCover,
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, on, studioKind, identity, cover, avatarUri, t, closeStudio, onStudioAvatar, onStudioCover]);
+  }, [session, on, studioKind, studioFree, identity, cover, avatarUri, t, closeStudio, onStudioAvatar, onStudioCover]);
 
-  return { active: on, start, edit, onEdit, back, close, studio };
+  return { active: on, start, edit, onEdit, back, close, studio, openStudio };
 }

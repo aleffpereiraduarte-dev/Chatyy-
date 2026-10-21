@@ -141,6 +141,11 @@ export function buildNativeProfileInfo(ctx) {
   // o fundo) + anel de status no avatar ('unseen' | 'seen').
   if (v5) {
     if (coverAbs) hero.cover = { u: coverAbs, a: /\/api\//.test(coverAbs) ? 1 : 0 };
+    // [2026-10-21 foto-capa-studio] api ≥ 7 (ctx.coverTap): dono toca na capa → estúdio da capa.
+    if (coverAbs && self && !loading && ctx.coverTap && typeof on.cover === 'function') {
+      hero.coverTap = 1;
+      hero.onCoverPress = () => on.cover();
+    }
     if (ctx.storyRing) hero.ring = String(ctx.storyRing);
   }
   if (ctx.v6 && photos.length > 0) hero.swipe = 1;

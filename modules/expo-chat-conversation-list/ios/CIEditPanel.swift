@@ -22,6 +22,9 @@ import UIKit
 //    uname {q, state: "checking"|"ok"|"bad"|"", text}, presets [..],
 //    groups [{header, footer, rows [{id, title, val, nav, dest}]}],
 //    labels {..}, limits {..}}
+// [2026-10-21 foto-capa-studio] apiVersion 7: `coverHero` true = capa GRANDE no
+//    topo (3:1, atrás do avatar; sem capa = degradê grafite) com selo
+//    "Alterar capa"; tocar → {type:"cover"}. O cartão "Foto de capa" some.
 // Mesmo contrato no Android (CIEditPanel.kt).
 
 struct CIEditRow: Equatable {
@@ -77,6 +80,7 @@ struct CIEditState: Equatable {
   var groups: [CIEditGroup] = []
   var labels: [String: String] = [:]
   var limits: [String: Int] = [:]
+  var coverHero = false
 
   init() {}
 
@@ -95,6 +99,7 @@ struct CIEditState: Equatable {
     }
     busyAvatar = CLVal.bool(d["busyAvatar"])
     busyCover = CLVal.bool(d["busyCover"])
+    coverHero = CLVal.bool(d["coverHero"])
     saving = CLVal.bool(d["saving"])
     if let e = d["errors"] as? [String: Any] {
       for (k, x) in e {
@@ -287,6 +292,122 @@ final class CIEditPill: UIControl {
   }
 }
 
+/// [2026-10-21 foto-capa-studio] Capa grande do topo do editor (apiVersion 7):
+/// imagem 3:1 com cantos arredondados, degradê grafite sem capa, véu embaixo e
+/// selo "Alterar capa". O controle inteiro é o alvo do toque.
+final class CIEditCoverView: UIControl {
+  private let imageView = UIImageView()
+  private let fallback = CAGradientLayer()
+  private let shade = CAGradientLayer()
+  private let chip = UIView()
+  private let chipIcon = UIImageView()
+  private let chipLabel = UILabel()
+  private let spinner = UIActivityIndicatorView(style: .medium)
+  private var url = ""
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    clipsToBounds = true
+    layer.cornerRadius = 16
+    layer.cornerCurve = .continuous
+    fallback.startPoint = CGPoint(x: 0, y: 0)
+    fallback.endPoint = CGPoint(x: 1, y: 1)
+    layer.addSublayer(fallback)
+    imageView.contentMode = .scaleAspectFill
+    imageView.clipsToBounds = true
+    imageView.isUserInteractionEnabled = false
+    imageView.isHidden = true
+    imageView.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(imageView)
+    shade.colors = [UIColor(white: 0, alpha: 0).cgColor, UIColor(white: 0, alpha: 0.3).cgColor]
+    shade.locations = [0.45, 1]
+    layer.addSublayer(shade)
+    chip.backgroundColor = UIColor(white: 0, alpha: 0.42)
+    chip.layer.cornerRadius = 14
+    chip.layer.cornerCurve = .continuous
+    chip.isUserInteractionEnabled = false
+    chip.translatesAutoresizingMaskIntoConstraints = false
+    chipIcon.image = UIImage(systemName: "photo", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
+    chipIcon.tintColor = .white
+    chipIcon.contentMode = .center
+    chipIcon.translatesAutoresizingMaskIntoConstraints = false
+    chipLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+    chipLabel.textColor = .white
+    chipLabel.translatesAutoresizingMaskIntoConstraints = false
+    chip.addSubview(chipIcon)
+    chip.addSubview(chipLabel)
+    addSubview(chip)
+    spinner.color = .white
+    spinner.hidesWhenStopped = true
+    spinner.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(spinner)
+    NSLayoutConstraint.activate([
+      imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      imageView.topAnchor.constraint(equalTo: topAnchor),
+      imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+      chip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+      chip.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+      chip.heightAnchor.constraint(equalToConstant: 28),
+      chipIcon.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 10),
+      chipIcon.centerYAnchor.constraint(equalTo: chip.centerYAnchor),
+      chipLabel.leadingAnchor.constraint(equalTo: chipIcon.trailingAnchor, constant: 6),
+      chipLabel.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -12),
+      chipLabel.centerYAnchor.constraint(equalTo: chip.centerYAnchor),
+      spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
+      spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
+    ])
+    isAccessibilityElement = true
+    accessibilityTraits = [.button, .image]
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    fallback.frame = bounds
+    shade.frame = bounds
+    CATransaction.commit()
+  }
+
+  private static func hex(_ v: UInt32) -> CGColor {
+    return UIColor(red: CGFloat((v >> 16) & 0xFF) / 255, green: CGFloat((v >> 8) & 0xFF) / 255, blue: CGFloat(v & 0xFF) / 255, alpha: 1).cgColor
+  }
+
+  func configure(url u: String, auth: Bool, dark: Bool, label: String, busy: Bool) {
+    fallback.colors = dark
+      ? [CIEditCoverView.hex(0x34343B), CIEditCoverView.hex(0x1B1B1F)]
+      : [CIEditCoverView.hex(0xDCDCD6), CIEditCoverView.hex(0xB9B9B3)]
+    chipLabel.text = label
+    accessibilityLabel = label
+    if busy { spinner.startAnimating() } else { spinner.stopAnimating() }
+    if u.isEmpty {
+      url = ""
+      imageView.image = nil
+      imageView.isHidden = true
+      return
+    }
+    imageView.isHidden = false
+    if u == url && imageView.image != nil { return }
+    url = u
+    if let img = CLImageLoader.shared.cachedImage(u, maxPixel: 1500) {
+      imageView.image = img
+      return
+    }
+    imageView.image = nil
+    CLImageLoader.shared.load(u, auth: auth, maxPixel: 1500) { [weak self] img in
+      guard let self = self, self.url == u else { return }
+      self.imageView.image = img
+    }
+  }
+
+  override var isHighlighted: Bool {
+    didSet { alpha = isHighlighted ? 0.82 : 1 }
+  }
+}
+
 final class CIEditPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
   var onEvent: (([String: Any]) -> Void)?
 
@@ -321,6 +442,11 @@ final class CIEditPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
   private let avatarSpinner = UIActivityIndicatorView(style: .medium)
   private let setPhotoButton = UIButton(type: .system)
   private let generalError = UILabel()
+  // [2026-10-21 foto-capa-studio] capa grande no topo (apiVersion 7, edit.coverHero).
+  private let coverHeroView = CIEditCoverView()
+  private var avatarTopPlain: NSLayoutConstraint?
+  private var avatarTopCover: NSLayoutConstraint?
+  private var coverCardView: UIView?
 
   // Nome
   private let firstField = UITextField()
@@ -634,8 +760,24 @@ final class CIEditPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
     setPhotoButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .regular)
     setPhotoButton.addTarget(self, action: #selector(avatarTapped), for: .touchUpInside)
     header.addSubview(setPhotoButton)
+    // [2026-10-21 foto-capa-studio] capa 3:1 atrás do avatar (escondida sem coverHero).
+    coverHeroView.translatesAutoresizingMaskIntoConstraints = false
+    coverHeroView.isHidden = true
+    coverHeroView.addTarget(self, action: #selector(coverTapped), for: .touchUpInside)
+    header.insertSubview(coverHeroView, at: 0)
+    avatarBox.layer.cornerRadius = 50
+    let topPlain = avatarBox.topAnchor.constraint(equalTo: header.topAnchor, constant: 12)
+    let topCover = avatarBox.centerYAnchor.constraint(equalTo: coverHeroView.bottomAnchor, constant: 4)
+    avatarTopPlain = topPlain
+    avatarTopCover = topCover
     NSLayoutConstraint.activate([
-      avatarBox.topAnchor.constraint(equalTo: header.topAnchor, constant: 12),
+      coverHeroView.topAnchor.constraint(equalTo: header.topAnchor, constant: 4),
+      coverHeroView.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+      coverHeroView.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+      coverHeroView.heightAnchor.constraint(equalTo: coverHeroView.widthAnchor, multiplier: 1.0 / 3.0),
+    ])
+    NSLayoutConstraint.activate([
+      topPlain,
       avatarBox.centerXAnchor.constraint(equalTo: header.centerXAnchor),
       avatarBox.widthAnchor.constraint(equalToConstant: 100),
       avatarBox.heightAnchor.constraint(equalToConstant: 100),
@@ -752,6 +894,7 @@ final class CIEditPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
     coverRow.addTarget(self, action: #selector(coverTapped), for: .touchUpInside)
     coverRemoveRow.addTarget(self, action: #selector(coverRemoveTapped), for: .touchUpInside)
     let coverCard = makeCard([coverRow, coverRemoveRow])
+    coverCardView = coverCard
     if let inner = coverCard.subviews.first as? UIStackView, inner.arrangedSubviews.count == 3 {
       coverRemoveSep = inner.arrangedSubviews[1]
     }
@@ -1055,6 +1198,22 @@ final class CIEditPanel: UIView, UITextFieldDelegate, UITextViewDelegate {
     coverRemoveRow.isHidden = !hasCover
     coverRemoveSep?.isHidden = !hasCover
     coverRemoveRow.isEnabled = !s.busyCover && !s.saving
+
+    // [2026-10-21 foto-capa-studio] capa grande no topo (apiVersion 7).
+    let hero = s.coverHero
+    coverHeroView.isHidden = !hero
+    if hero {
+      avatarTopPlain?.isActive = false
+      avatarTopCover?.isActive = true
+    } else {
+      avatarTopCover?.isActive = false
+      avatarTopPlain?.isActive = true
+    }
+    avatarBox.layer.borderWidth = hero ? 4 : 0
+    avatarBox.layer.borderColor = p.pageBg.cgColor
+    coverHeroView.configure(url: s.coverURL, auth: s.coverAuth, dark: p.dark, label: hasCover ? s.label("coverChange", "Alterar capa") : s.label("coverAdd", "Adicionar capa"), busy: s.busyCover)
+    coverHeroView.isEnabled = !s.busyCover && !s.saving
+    coverCardView?.isHidden = hero
   }
 
   private func refreshBio() {

@@ -1138,6 +1138,9 @@ final class CIHeaderOverlay: UIView {
   private let coverTopLayer = CAGradientLayer()
   private var coverURL = ""
   private var hasCover = false
+  /// [2026-10-21 foto-capa-studio] apiVersion 7: toque na capa (dono) → onAction "__cover".
+  static let coverActionKey = "__cover"
+  private var coverTap = false
   private let avatarDisc = UIView()
   private let ringView = UIView()
   private let ringGradient = CAGradientLayer()
@@ -1347,6 +1350,7 @@ final class CIHeaderOverlay: UIView {
     subFit = ceil(subLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 22)).width)
 
     configureCover(h.cover, palette: p)
+    coverTap = h.coverTap
     ringMode = h.ring == "seen" || h.ring == "unseen" ? h.ring : ""
     ringView.isHidden = ringMode.isEmpty
     if ringMode == "seen" {
@@ -1708,6 +1712,9 @@ final class CIHeaderOverlay: UIView {
         if x > w * 0.7 { return .photo(1) }
       }
       return .avatar
+    }
+    if coverTap && hasCover && !coverView.isHidden && coverView.alpha > 0.5 && p.y > CIHeaderOverlay.navH && coverView.frame.contains(p) {
+      return .action(CIHeaderOverlay.coverActionKey)
     }
     return .empty
   }

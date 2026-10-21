@@ -108,6 +108,8 @@ struct CIHero: Equatable {
   var ring: String = ""
   // [perfil-fotos 2026-10-19] apiVersion 6: deslizar entre as fotos na foto expandida.
   var swipe = false
+  // [2026-10-21 foto-capa-studio] apiVersion 7: dono toca na capa → onAction {key "__cover"}.
+  var coverTap = false
 
   init() {}
 
@@ -116,6 +118,7 @@ struct CIHero: Equatable {
     cover = CIPic(d["cover"])
     ring = CLVal.str(d["ring"])
     swipe = CLVal.bool(d["swipe"])
+    coverTap = CLVal.bool(d["coverTap"])
     title = CLVal.str(d["title"])
     sub = CLVal.str(d["sub"])
     pic = CIPic(d["tile"])

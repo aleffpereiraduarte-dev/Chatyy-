@@ -110,7 +110,9 @@ internal data class CIHero(
   val cover: CIPic = CIPic(),
   val ring: String = "",
   // [perfil-fotos 2026-10-19] apiVersion 6: deslizar entre as fotos na foto expandida.
-  val swipe: Boolean = false
+  val swipe: Boolean = false,
+  // [2026-10-21 foto-capa-studio] apiVersion 7: dono toca na capa → onAction {key "__cover"}.
+  val coverTap: Boolean = false
 ) {
   companion object {
     fun from(m: Map<String, Any?>?): CIHero {
@@ -145,7 +147,8 @@ internal data class CIHero(
         back = CLVal.bool(m["back"]),
         cover = CIPic.from(m["cover"]),
         ring = CLVal.str(m["ring"]),
-        swipe = CLVal.bool(m["swipe"])
+        swipe = CLVal.bool(m["swipe"]),
+        coverTap = CLVal.bool(m["coverTap"])
       )
     }
   }

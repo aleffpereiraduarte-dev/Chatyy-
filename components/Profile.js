@@ -65,7 +65,7 @@ import { humanizeCount as _humanizeDiamonds } from './gifts/giftCatalog';
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import HighlightEditSheet from './HighlightEditSheet';
 import ReportSheet from './ReportSheet'; // [central-moderacao 2026-10-14] motivos padronizados
-import NativeChatInfo, { isNativeProfileEnabled, isNativeProfileV5Enabled, chatInfoV6 } from './chat/NativeChatInfo'; // [2026-10-18 profile-native] + [2026-10-19 profile-grid-native] api 5
+import NativeChatInfo, { isNativeProfileEnabled, isNativeProfileV5Enabled, chatInfoV6, chatInfoCoverV7 } from './chat/NativeChatInfo'; // [2026-10-18 profile-native] + [2026-10-19 profile-grid-native] api 5
 import { buildNativeProfileInfo } from './profile/nativeProfileInfo'; // [2026-10-18 profile-native]
 import { ProfilePhotoGalleryHost } from './profile/ProfilePhotoGallery'; // [perfil-fotos 2026-10-19]
 import * as ProfilePhotos from '../services/profilePhotos'; // [perfil-fotos 2026-10-19] galeria + publicar no perfil
@@ -4560,6 +4560,7 @@ export default function Profile({
     v6: _npV5 && chatInfoV6(),
     // [2026-10-21 foto-capa-studio] sem a linha "Adicionar foto de perfil" (foto troca no Editar).
     ownerCta: actions?.is_self ? { photo: false, post: _ppPostsOn } : null,
+    coverTap: !!actions?.is_self && _npEditOn && chatInfoCoverV7(),
     storyRing: stories.length > 0 ? ((!actions?.is_self && _profileStatusRing?.allViewed) ? 'seen' : 'unseen') : '',
     postsHasMore: _canPageMore,
     presenceText,
@@ -4598,6 +4599,7 @@ export default function Profile({
       },
       morePosts: () => { try { loadMorePosts(); } catch {} },
       addPhoto: _ppAddPhoto,
+      cover: () => { _npEdit.openStudio('cover'); }, // [2026-10-21 foto-capa-studio] toque na capa (dono, api ≥ 7)
       publish: _ppPublish,
       group: (c) => { try { require('../services/openConversation').openConversation(`/chat-conversation?id=${c.id}`); } catch {} },
       menu: () => setMenuOpen(true),
