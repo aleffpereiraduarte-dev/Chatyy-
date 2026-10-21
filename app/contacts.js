@@ -567,13 +567,17 @@ function ContactsScreenInner() {
     extrasP.then((x) => { if (x && x.length) { setContacts((prev) => _mergePeople((prev || []).filter((c) => c && !c.auto), x)); setLoading(false); } });
     try {
       const r = await api.getContactsList();
-      if (r.success) {
+      if (r?.success) {
         const extras = await extrasP;
         setContacts(_mergePeople(r.data || [], extras));
         setCache('contacts', r, 7776000000).catch(() => {});
+      } else if (!cached && !_peopleExtras.length) {
+        // [2026-10-21] success:false sem cache: erro com Tentar de novo (antes: vazio "sem contatos")
+        setLoadError(true);
       }
     } catch {
-      if (!contacts.length && !_peopleExtras.length) setLoadError(true);
+      // cached (não o `contacts` do closure, que é o valor antigo)
+      if (!cached && !_peopleExtras.length) setLoadError(true);
     } finally { setLoading(false); }
   };
 
@@ -829,8 +833,8 @@ function ContactsScreenInner() {
               const phone = dc.phoneNumbers?.[0]?.number || '';
               if (!email) continue;
               try {
-                await api.saveContact({ name, email, phone, group: '' });
-                imported++;
+                const r = await api.saveContact({ name, email, phone, group: '' });
+                if (r?.success !== false) imported++; // [2026-10-21] não conta o que o servidor recusou
               } catch {}
             }
             setSyncing(false);
@@ -866,7 +870,7 @@ function ContactsScreenInner() {
     }
     let imported = 0;
     for (const c of parsed) {
-      try { await api.saveContact({ name: c.name, email: c.email, phone: c.phone, group: c.group }); imported++; } catch {}
+      try { const r = await api.saveContact({ name: c.name, email: c.email, phone: c.phone, group: c.group }); if (r?.success !== false) imported++; } catch {}
     }
     if (imported > 0) loadContacts();
     const msg = t('contacts.contactsImported', { count: imported });
@@ -915,7 +919,7 @@ function ContactsScreenInner() {
               onPress: async () => {
                 let imported = 0;
                 for (const c of newOnes) {
-                  try { await api.saveContact({ name: c.name || '', email: c.email, phone: '', group: '' }); imported++; } catch {}
+                  try { const r = await api.saveContact({ name: c.name || '', email: c.email, phone: '', group: '' }); if (r?.success !== false) imported++; } catch {}
                 }
                 if (imported > 0) loadContacts();
                 Alert.alert(t('common.success'), t('contacts.importedCount', { count: imported }));

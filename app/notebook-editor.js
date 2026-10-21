@@ -1293,6 +1293,9 @@ export default function NotebookEditorScreen() {
   const notebookId = parseInt(params.notebook_id) || 0;
   const notebookName = params.notebook_name ? decodeURIComponent(params.notebook_name) : t('notes.notebook');
   const notebookColor = params.notebook_color ? decodeURIComponent(params.notebook_color) : '#4285F4';
+  // [2026-10-21] capa clara (ex.: amarelo #FBBC04): texto/ícones escuros no cabeçalho (branco ficava sem contraste)
+  const onCover = (() => { try { const h = String(notebookColor).replace('#', ''); const f = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.slice(0, 6); const r = parseInt(f.slice(0, 2), 16), g = parseInt(f.slice(2, 4), 16), b = parseInt(f.slice(4, 6), 16); if ([r, g, b].some((x) => isNaN(x))) return '#fff'; return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.66 ? '#111111' : '#fff'; } catch { return '#fff'; } })();
+  const onCoverSoft = onCover === '#fff' ? 'rgba(255,255,255,0.8)' : 'rgba(17,17,17,0.72)';
 
   const [pages, setPages] = useState([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
@@ -1579,20 +1582,20 @@ export default function NotebookEditorScreen() {
         } : {}),
       }]}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={styles.headerBtn}>
-          <IconArrowLeft size={22} color="#fff" />
+          <IconArrowLeft size={22} color={onCover} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
+          <Text style={[styles.headerTitle, { color: onCover }]} numberOfLines={1}>
             {notebookName}
           </Text>
           {/* Save indicator */}
           <Animated.View style={[styles.saveIndicator, { opacity: saveIndicatorAnim }]}>
             {saveIndicator === 'saving' ? (
-              <Text style={styles.saveIndicatorText}>{t('notebook.saving')}</Text>
+              <Text style={[styles.saveIndicatorText, { color: onCoverSoft }]}>{t('notebook.saving')}</Text>
             ) : (
               <View style={styles.saveIndicatorRow}>
-                <IconCheck size={12} color="rgba(255,255,255,0.8)" />
-                <Text style={styles.saveIndicatorText}>{t('notebook.autoSaved')}</Text>
+                <IconCheck size={12} color={onCoverSoft} />
+                <Text style={[styles.saveIndicatorText, { color: onCoverSoft }]}>{t('notebook.autoSaved')}</Text>
               </View>
             )}
           </Animated.View>
@@ -1600,11 +1603,11 @@ export default function NotebookEditorScreen() {
         <View style={styles.headerActions}>
           {pages.length > 1 && (
             <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={deletePage} style={styles.headerBtn}>
-              <IconTrash size={18} color="rgba(255,255,255,0.8)" />
+              <IconTrash size={18} color={onCoverSoft} />
             </TouchableOpacity>
           )}
           <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.add', 'Adicionar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={addPage} style={[styles.headerBtn, styles.addPageBtn]}>
-            <IconPlus size={20} color="#fff" />
+            <IconPlus size={20} color={onCover} />
           </TouchableOpacity>
         </View>
       </View>

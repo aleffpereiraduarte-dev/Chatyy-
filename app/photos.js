@@ -2970,7 +2970,7 @@ function PhotosScreenInner() {
       let dateStr = '';
       try {
         const d = new Date(viewerPhoto.created_at || viewerPhoto.uploaded_at || viewerPhoto.modificationTime || Date.now());
-        dateStr = d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
+        dateStr = d.toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' });
       } catch {}
       const location = viewerPhoto.location || viewerPhoto.locationName || '';
       const dims = viewerPhoto.width && viewerPhoto.height ? `${viewerPhoto.width}x${viewerPhoto.height}` : '';
@@ -2980,7 +2980,7 @@ function PhotosScreenInner() {
     } catch {} finally {
       setAiCaptionLoading(false);
     }
-  }, [viewerPhoto, aiCaptionLoading]);
+  }, [viewerPhoto, aiCaptionLoading, locale]);
 
   const navigateViewer = useCallback((dir) => {
     const next = viewerIndex + dir;
@@ -3573,8 +3573,8 @@ function PhotosScreenInner() {
     try { loadCloudPhotos(1); } catch {}
     try {
       const msg = failed
-        ? `${done}/${assets.length} ${t('photos.uploadedShort') && t('photos.uploadedShort') !== 'photos.uploadedShort' ? t('photos.uploadedShort') : 'enviados'}`
-        : (done === 1 ? 'Enviado para o Chatyy' : `${done} itens enviados para o Chatyy`);
+        ? `${done}/${assets.length} ${t('photos.uploadedShort', 'enviados')}`
+        : (done === 1 ? t('photos.sentOne', 'Enviado para o Chatyy') : t('photos.sentMany', { n: done, defaultValue: '{n} itens enviados para o Chatyy' }));
       require('../components/ui/Toast').showToast({ message: msg, kind: failed ? 'error' : 'success' });
     } catch {}
   }, [t, loadCloudPhotos]);
@@ -4125,6 +4125,7 @@ function PhotosScreenInner() {
   const [viewingCluster, setViewingCluster] = useState(null);     // {cluster_id, person_name}
   const [clusterPhotos, setClusterPhotos] = useState([]);
   const [clusterLoading, setClusterLoading] = useState(false);
+  const [clusterError, setClusterError] = useState(false); // [2026-10-21] falha ≠ "sem fotos"
   const [renameClusterTarget, setRenameClusterTarget] = useState(null);
   const [renameValue, setRenameValue] = useState('');
 
@@ -4144,10 +4145,12 @@ function PhotosScreenInner() {
     setViewingCluster(cluster);
     setClusterLoading(true);
     setClusterPhotos([]);
+    setClusterError(false);
     try {
       const res = await api.photosFaceClusterPhotos(cluster.cluster_id);
       if (res?.success && res.data) setClusterPhotos(res.data.photos || []);
-    } catch {}
+      else setClusterError(true);
+    } catch { setClusterError(true); }
     setClusterLoading(false);
   }, []);
 
@@ -4202,6 +4205,14 @@ function PhotosScreenInner() {
               windowSize={10}
               maxToRenderPerBatch={15}
               initialNumToRender={18}
+              ListEmptyComponent={clusterError ? (
+                <View style={{ alignItems: 'center', padding: 32 }}>
+                  <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', textAlign: 'center' }}>{t('photos.clusterLoadError', 'Não foi possível carregar as fotos desta pessoa')}</Text>
+                  <TouchableOpacity onPress={() => openCluster(viewingCluster)} style={{ marginTop: 14, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.primary }}>
+                    <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.retry', 'Tentar de novo')}</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
             />
           )}
         </View>
@@ -4634,10 +4645,10 @@ function PhotosScreenInner() {
                 {t('photos.restorePhotosDesc')}
               </Text>
               <TouchableOpacity
-                style={[s.backupBtn, { backgroundColor: '#111111', alignSelf: 'flex-start' }]}
+                style={[s.backupBtn, { backgroundColor: colors.primary, alignSelf: 'flex-start' }]}
                 onPress={openPhotoRestore}
               >
-                <Text style={s.backupBtnText}>{t('photos.downloadFromCloud')}</Text>
+                <Text style={[s.backupBtnText, { color: colors.onPrimary || '#fff' }]}>{t('photos.downloadFromCloud')}</Text>
               </TouchableOpacity>
             </View>
 
@@ -5120,7 +5131,7 @@ function PhotosScreenInner() {
               <View style={s.infoRow}>
                 <Text style={s.infoLabel}>{t('photos.dateTaken')}</Text>
                 <Text style={s.infoValue}>
-                  {(() => { try { const d = new Date(viewerPhoto.created_at || viewerPhoto.uploaded_at || viewerPhoto.modificationTime); if (isNaN(d.getTime())) return ''; return d.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } })()}
+                  {(() => { try { const d = new Date(viewerPhoto.created_at || viewerPhoto.uploaded_at || viewerPhoto.modificationTime); if (isNaN(d.getTime())) return ''; return d.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) + ' ' + d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } })()}
                 </Text>
               </View>
               <View style={s.infoRow}>
@@ -5267,7 +5278,7 @@ function PhotosScreenInner() {
               <IconX size={24} color={colors.text} />
             </TouchableOpacity>
             <View style={s.selectCounterChip}>
-              <View style={[s.selectCounterDot, { backgroundColor: '#111111' }]} />
+              <View style={[s.selectCounterDot, { backgroundColor: colors.text }]} />
               <Text style={[s.selectCounterText, { color: colors.text }]}>
                 {selectedItems.size} {t('photos.selected') || 'selecionadas'}
               </Text>
@@ -6029,8 +6040,8 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
         <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
           {error}
         </Text>
-        <TouchableOpacity onPress={() => { require('../utils/userRetry').noteUserRetry(); loadClusters(); }} style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#111111' }}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.retry') || 'Tentar de novo'}</Text>
+        <TouchableOpacity onPress={() => { require('../utils/userRetry').noteUserRetry(); loadClusters(); }} style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: colors.primary }}>
+          <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('common.retry', 'Tentar de novo')}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -6048,11 +6059,11 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
         <TouchableOpacity
           onPress={runExtract}
           disabled={extracting}
-          style={{ marginTop: 18, paddingHorizontal: 22, paddingVertical: 12, borderRadius: 12, backgroundColor: '#111111', opacity: extracting ? 0.6 : 1 }}
+          style={{ marginTop: 18, paddingHorizontal: 22, paddingVertical: 12, borderRadius: 12, backgroundColor: colors.primary, opacity: extracting ? 0.6 : 1 }}
         >
           {extracting
-            ? <ActivityIndicator color="#fff" />
-            : <Text style={{ color: '#fff', fontWeight: '700' }}>{t('photos.mapExtractGps') || 'Extrair GPS das fotos'}</Text>}
+            ? <ActivityIndicator color={colors.onPrimary || '#fff'} />
+            : <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700' }}>{t('photos.mapExtractGps') || 'Extrair GPS das fotos'}</Text>}
         </TouchableOpacity>
       </View>
     );

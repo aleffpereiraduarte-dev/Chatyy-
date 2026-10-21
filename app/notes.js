@@ -17,6 +17,7 @@ import {
   IconStickyNote, IconPin, IconTrash, IconArchive, IconEdit, IconFolder,
   IconMail, IconCopy, IconDownload, IconSend, IconMenu, IconRotateCcw,
   IconBell, IconClock, IconGrid, IconSmile, IconLink, IconBrush, IconChevronLeft,
+  IconRefresh, IconImage,
 } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache, getCachedEntrySync, hasCacheUser } from '../services/cache';
@@ -1018,6 +1019,8 @@ const NotebookCardItem = React.memo(function NotebookCardItem({ notebook, index,
   } : {};
 
   const nbColor = notebook.color || '#4285F4';
+  // [2026-10-21] capa clara (amarelo #FBBC04): título/contagem escuros — branco ficava sem contraste
+  const nbInk = (() => { try { const h = String(nbColor).replace('#', ''); const f = h.length === 3 ? h.split('').map((c) => c + c).join('') : h.slice(0, 6); const r = parseInt(f.slice(0, 2), 16), g = parseInt(f.slice(2, 4), 16), b = parseInt(f.slice(4, 6), 16); if ([r, g, b].some((x) => isNaN(x))) return null; return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.66 ? '#111111' : null; } catch { return null; } })();
   const nbCount = notebook.note_count || 0;
   // Darken color for spine
   const darkenColor = (hex, amount) => {
@@ -1071,8 +1074,8 @@ const NotebookCardItem = React.memo(function NotebookCardItem({ notebook, index,
 
           {/* Title - elegant serif font */}
           <Text style={[s.notebookCoverTitle, {
-            color: '#fff',
-            textShadowColor: 'rgba(0,0,0,0.3)',
+            color: nbInk || '#fff',
+            textShadowColor: nbInk ? 'transparent' : 'rgba(0,0,0,0.3)',
             textShadowOffset: { width: 0, height: 1 },
             textShadowRadius: 3,
           }]} numberOfLines={2}>
@@ -1083,10 +1086,10 @@ const NotebookCardItem = React.memo(function NotebookCardItem({ notebook, index,
           <View style={[s.notebookPageCount, {
             borderColor: 'rgba(255,255,255,0.3)',
           }]}>
-            <Text style={s.notebookPageCountText}>
+            <Text style={[s.notebookPageCountText, nbInk ? { color: nbInk } : null]}>
               {nbCount}
             </Text>
-            <Text style={s.notebookPageCountLabel}>
+            <Text style={[s.notebookPageCountLabel, nbInk ? { color: 'rgba(17,17,17,0.7)' } : null]}>
               {nbCount === 1 ? t('notes.noteCount1') : t('notes.noteCountN')}
             </Text>
           </View>
@@ -1158,6 +1161,11 @@ export default function NotesScreen() {
   const [loading, setLoading] = useState(() => !_seedList('notes', 'notes'));
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  // [2026-10-21] busca com debounce real: a lista só recarrega com o termo
+  // assentado (antes: 1 requisição por tecla + timer com o termo antigo).
+  const [debouncedQ, setDebouncedQ] = useState('');
+  const notesReqRef = useRef(0);
+  const [notesLoadError, setNotesLoadError] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [activeTab, setActiveTab] = useState('all'); // all, notebooks, archived
   const [activeFilter, setActiveFilter] = useState('all'); // all, pinned, recent
@@ -1227,7 +1235,8 @@ export default function NotesScreen() {
 
   // Load notes
   const loadNotes = useCallback(async (showLoading = true) => {
-    const isDefaultView = activeTab !== 'archived' && !selectedNotebook && !searchQuery.trim();
+    const isDefaultView = activeTab !== 'archived' && !selectedNotebook && !debouncedQ.trim();
+    const rid = ++notesReqRef.current;
     const cacheKey = 'notes';
     // ALWAYS show cached data instantly (cache-first pattern)
     if (isDefaultView) {
@@ -1250,19 +1259,31 @@ export default function NotesScreen() {
       const filters = {};
       if (activeTab === 'archived') filters.archived = 1;
       if (selectedNotebook) filters.notebook_id = selectedNotebook;
-      if (searchQuery.trim()) filters.search = searchQuery.trim();
+      if (debouncedQ.trim()) filters.search = debouncedQ.trim();
       const res = await api.notesList(filters);
+      if (rid !== notesReqRef.current) return; // resposta de uma busca/aba antiga
       if (res?.success) {
+        setNotesLoadError(false);
         setNotes(res.data?.notes || []);
         if (isDefaultView) setCache(cacheKey, res, 7776000000).catch(() => {});
       }
+      else if (!isDefaultView || !_seedList(cacheKey, 'notes')) { setNotes([]); setNotesLoadError(true); }
     } catch (e) {
       console.warn('Failed to load notes:', e);
+      // Sem cache (ou aba/caderno/busca): não deixa a lista da tela anterior
+      // nem o vazio "Nenhuma nota" — mostra erro com Tentar de novo.
+      if (rid === notesReqRef.current) {
+        let hasCache = false;
+        try { hasCache = isDefaultView && !!_seedList(cacheKey, 'notes'); } catch {}
+        if (!hasCache) { setNotes([]); setNotesLoadError(true); }
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (rid === notesReqRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [activeTab, selectedNotebook, searchQuery]);
+  }, [activeTab, selectedNotebook, debouncedQ]);
 
   const loadNotebooks = useCallback(async () => {
     const cachedNb = _seedList('notebooks', 'notebooks');
@@ -1319,8 +1340,10 @@ export default function NotesScreen() {
   const handleSearch = useCallback((text) => {
     setSearchQuery(text);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => loadNotes(false), 400);
-  }, [loadNotes]);
+    if (!String(text || '').trim()) { setDebouncedQ(''); return; }
+    searchTimerRef.current = setTimeout(() => setDebouncedQ(text), 400);
+  }, []);
+  useEffect(() => () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); }, []);
 
   // Track recent searches
   const commitSearch = useCallback((q) => {
@@ -2292,11 +2315,11 @@ export default function NotesScreen() {
           <Text style={[s.emptyTitle, {
             color: colors.text, // [2026-10-10 P&B] sem gradiente âmbar no título
           }]}>
-            {t('notes.emptyTitle')}
+            {notesLoadError ? t('notes.loadErrorTitle', 'Não foi possível carregar as notas') : t('notes.emptyTitle')}
           </Text>
-          <Text style={[s.emptyDesc, { color: colors.textSecondary }]}>{t('notes.emptyDesc')}</Text>
+          <Text style={[s.emptyDesc, { color: colors.textSecondary }]}>{notesLoadError ? t('notes.loadErrorDesc', 'Verifique sua conexão e tente de novo.') : t('notes.emptyDesc')}</Text>
           <PressableScale
-            onPress={() => openEditor()}
+            onPress={() => { if (notesLoadError) { setNotesLoadError(false); loadNotes(); } else openEditor(); }}
             style={[s.emptyBtn, {
               backgroundColor: colors.primary,
               ...(Platform.OS === 'web' ? {
@@ -2305,8 +2328,8 @@ export default function NotesScreen() {
               } : {}),
             }]}
           >
-            <IconPlus size={18} color={colors.onPrimary || '#fff'} />
-            <Text style={[s.emptyBtnText, { color: colors.onPrimary }]}>{t('notes.newNote')}</Text>
+            {notesLoadError ? <IconRefresh size={18} color={colors.onPrimary || '#fff'} /> : <IconPlus size={18} color={colors.onPrimary || '#fff'} />}
+            <Text style={[s.emptyBtnText, { color: colors.onPrimary }]}>{notesLoadError ? t('common.tryAgain', 'Tentar de novo') : t('notes.newNote')}</Text>
           </PressableScale>
         </Animated.View>
       ) : viewMode === 'board' ? (
@@ -2731,8 +2754,9 @@ export default function NotesScreen() {
           <IconTrash size={18} color="#fff" />
           <Text style={{ flex: 1, color: '#fff', fontSize: 14 }}>{t('notes.deleted')}</Text>
           <TouchableOpacity onPress={undoDelete} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8 }}>
-            <IconRotateCcw size={16} color={colors.primary} />
-            <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 14 }}>{t('common.undo')}</Text>
+            {/* [2026-10-21] fundo do aviso é escuro nos 2 modos — colors.primary (#111 no claro) sumia */}
+            <IconRotateCcw size={16} color="#fff" />
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{t('common.undo')}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -3149,7 +3173,10 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
             backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
             borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
           }]}>
-            <Text style={[editorStyles.imageBlockText, { color: secondaryText }]}>{`\u{1F5BC} ${img[1] || 'image'}`}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <IconImage size={14} color={secondaryText} />
+              <Text style={[editorStyles.imageBlockText, { color: secondaryText }]}>{img[1] || t('notes.image', 'Imagem')}</Text>
+            </View>
           </View>
         );
       }

@@ -137,10 +137,11 @@ function uploadWithProgress(formData, onProgress) {
         let j = null;
         try { j = JSON.parse(xhr.responseText || ''); } catch { j = null; }
         if (j && typeof j === 'object') { finish(j); return; }
-        finish({ success: false, message: xhr.status === 413 ? 'Arquivo muito grande' : `HTTP ${xhr.status}` });
+        // [2026-10-21] códigos traduzidos na tela (antes: textos fixos em pt)
+        finish({ success: false, code: xhr.status === 413 ? 'too_big' : 'http', message: xhr.status === 413 ? '' : `HTTP ${xhr.status}` });
       };
-      xhr.onerror = () => finish({ success: false, message: 'Sem conexão' });
-      xhr.ontimeout = () => finish({ success: false, message: 'Tempo limite excedido' });
+      xhr.onerror = () => finish({ success: false, code: 'offline', message: '' });
+      xhr.ontimeout = () => finish({ success: false, code: 'timeout', message: '' });
       xhr.send(formData);
     } catch (e) {
       finish({ success: false, message: e?.message || '' });
@@ -373,7 +374,11 @@ function LegacyPhotoNew() {
       if (!mountedRef.current) return;
       if (!r || !r.success) {
         setPhase('error');
-        setErrorMsg(String((r && (r.message || r.error)) || ''));
+        const _code = r && r.code;
+        setErrorMsg(_code === 'offline' ? t('photoNew.errOffline', 'Sem conexão')
+          : _code === 'timeout' ? t('photoNew.errTimeout', 'Tempo limite excedido')
+          : _code === 'too_big' ? t('photoNew.errTooBig', 'Arquivo muito grande')
+          : String((r && (r.message || r.error)) || ''));
         return;
       }
       const newPost = r?.data?.post || null;
@@ -398,7 +403,7 @@ function LegacyPhotoNew() {
       setPhase('error');
       setErrorMsg(e?.message || '');
     }
-  }, [busy, items, aspect, caption, audience, router, fromParam, user?.email]);
+  }, [busy, items, aspect, caption, audience, router, fromParam, user?.email, t]);
 
   // ----- Estilos -----
   const ratio = (ASPECTS.find((a) => a.key === aspect) || ASPECTS[0]).ratio;

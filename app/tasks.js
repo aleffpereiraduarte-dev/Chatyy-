@@ -314,7 +314,10 @@ export default function TasksScreen() {
   }, [t, load]);
 
   const deleteListAsk = useCallback((l) => {
-    const go = async () => { try { await pim.deleteList(l.id); setFilter('all'); load(); } catch {} };
+    const go = async () => {
+      try { await pim.deleteList(l.id); setFilter('all'); load(); }
+      catch { try { Alert.alert(t('common.error', 'Erro'), t('tasks.deleteListFailed', 'Não foi possível apagar a lista. Tente de novo.')); } catch {} }
+    };
     const msg = t('tasks.deleteListMsg') || 'As tarefas desta lista também serão apagadas.';
     if (Platform.OS === 'web') { confirmAsync({ title: (t('tasks.deleteList') || 'Apagar lista') + ` "${l.name}"?`, message: msg, destructive: true }).then((ok) => ok && go()); return; }
     Alert.alert((t('tasks.deleteList') || 'Apagar lista') + ` "${l.name}"?`, msg, [

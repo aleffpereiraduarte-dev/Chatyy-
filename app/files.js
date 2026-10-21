@@ -1023,6 +1023,7 @@ function FilesScreenInner() {
   // [2026-10-08 apps-native] Falha de rede SEM cache caía no empty state
   // ("nenhum arquivo") — enganoso. Agora vira estado de erro com "tentar de novo".
   const [loadError, setLoadError] = useState(false);
+  const [tabReloadTick, setTabReloadTick] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [uploadingFile, setUploadingFile] = useState('');
   const [uploadProgress, setUploadProgress] = useState(0); // 0..100, 0 = indeterminate
@@ -1459,9 +1460,22 @@ function FilesScreenInner() {
     setSearchResults(null);
     if (tab === 'all') {
       loadAllFiles(false);
-    } else if (tab === 'trash') {
+      return undefined;
+    }
+    // [2026-10-21] Lixeira/Recentes/Favoritos: limpa a lista da aba anterior,
+    // mostra carregando, e em falha (offline/success:false) mostra erro com
+    // Tentar de novo — antes a lista de "Todos" ficava na tela e a promessa
+    // rejeitava sem tratamento.
+    let alive = true;
+    setLoadError(false);
+    setLoading(true);
+    const _fail = () => { if (alive) setLoadError(true); };
+    const _done = () => { if (alive) setLoading(false); };
+    if (tab === 'trash') {
+      setAllTrash([]);
       api.fileTrash().then(r => {
-        if (r.success) {
+        if (!alive) return;
+        if (r?.success) {
           const normalizeTrash = (f) => ({
             ...f,
             is_starred: f.is_starred ?? f.starred ?? 0,
@@ -1469,12 +1483,14 @@ function FilesScreenInner() {
             size_formatted: f.size_formatted || formatSize(f.size || 0),
           });
           setAllTrash((r.data?.files || []).map(normalizeTrash));
-        }
-      });
+        } else _fail();
+      }).catch(_fail).finally(_done);
     } else if (tab === 'recent') {
       // Use dedicated recent API that searches ALL folders, not just root
+      setAllFiles([]);
       api.fileRecent().then(r => {
-        if (r.success) {
+        if (!alive) return;
+        if (r?.success) {
           const normalize = (f) => ({
             ...f,
             is_starred: f.is_starred ?? f.starred ?? 0,
@@ -1482,15 +1498,17 @@ function FilesScreenInner() {
             size_formatted: f.size_formatted || formatSize(f.size || 0),
           });
           setAllFiles((r.data?.files || []).map(normalize));
-        }
-      });
+        } else _fail();
+      }).catch(_fail).finally(_done);
       setAllFolders([]);
       setCurrentFolderId(null);
     } else if (tab === 'starred') {
       // Use dedicated starred API that searches ALL folders, not just root
+      setAllFiles([]);
       api.fileStar(null).then(r => {
+        if (!alive) return;
         // fileStar with null id acts as list mode in the backend (drive_starred without id)
-        if (r.success) {
+        if (r?.success) {
           const normalize = (f) => ({
             ...f,
             is_starred: f.is_starred ?? f.starred ?? 0,
@@ -1498,12 +1516,15 @@ function FilesScreenInner() {
             size_formatted: f.size_formatted || formatSize(f.size || 0),
           });
           setAllFiles((r.data?.files || []).map(normalize));
-        }
-      });
+        } else _fail();
+      }).catch(_fail).finally(_done);
       setAllFolders([]);
       setCurrentFolderId(null);
+    } else {
+      _done();
     }
-  }, [tab]);
+    return () => { alive = false; };
+  }, [tab, tabReloadTick]);
 
   useEffect(() => {
     return () => {
@@ -2377,14 +2398,14 @@ function FilesScreenInner() {
 
   const renderEmpty = () => {
     if (loading) return null;
-    if (loadError && !searchMode && tab !== 'trash') {
+    if (loadError && !searchMode) {
       const tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
       return (
         <ScreenEmptyState
           kind="files"
           title={tr('files.loadErrorTitle', 'Não foi possível carregar')}
           subtitle={tr('files.loadErrorDesc', 'Verifique sua conexão e tente de novo.')}
-          cta={{ label: tr('common.retry', 'Tentar novamente'), onPress: () => { haptic.light(); setLoading(true); loadAllFiles(true); } }}
+          cta={{ label: tr('common.retry', 'Tentar novamente'), onPress: () => { haptic.light(); if (tab === 'all') { setLoading(true); loadAllFiles(true); } else setTabReloadTick(n => n + 1); } }}
         />
       );
     }

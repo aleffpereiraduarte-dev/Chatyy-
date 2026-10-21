@@ -2223,7 +2223,11 @@ function CalendarScreenInner() {
 
   const isMountedRef = useIsMounted();
   const eventsRequestIdRef = useRef(0); // Race condition guard for month changes
+  // [2026-10-21] falha ao carregar o mês sem cache: faixa "Não foi possível
+  // carregar · Tentar de novo" (antes o mês ficava vazio como se não houvesse eventos).
+  const [evError, setEvError] = useState(false);
   const loadEvents = useCallback(async (showLoader) => {
+    let hadCache = false;
     const cacheKey = `calendar_events_${currentYear}_${currentMonth}`;
     const requestId = ++eventsRequestIdRef.current;
     // ALWAYS show cached data instantly (cache-first pattern)
@@ -2231,6 +2235,7 @@ function CalendarScreenInner() {
       const cachedEv = _seedCalEvents(currentYear, currentMonth);
       if (cachedEv) {
         if (requestId !== eventsRequestIdRef.current) return;
+        hadCache = true;
         setEvents(cachedEv);
         setLoading(false);
         showLoader = false;
@@ -2246,12 +2251,15 @@ function CalendarScreenInner() {
       const end = new Date(currentYear, currentMonth + 2, 0);
       const r = await api.calEvents(formatDateForAPI(start), formatDateForAPI(end));
       if (requestId !== eventsRequestIdRef.current) return; // Stale request
-      if (r.success) {
+      if (r?.success) {
+        setEvError(false);
         setEvents(r.data?.events || []);
         setCache(cacheKey, r, 7776000000).catch(() => {});
         setCache('calendar_events', r, 7776000000).catch(() => {});
-      }
-    } catch {} finally {
+      } else if (!hadCache) setEvError(true);
+    } catch {
+      if (requestId === eventsRequestIdRef.current && !hadCache) setEvError(true);
+    } finally {
       if (requestId === eventsRequestIdRef.current) {
         setLoading(false);
         setRefreshing(false);
@@ -3101,6 +3109,16 @@ function CalendarScreenInner() {
   // e no calendário nativo (filho RN entre a grade e a agenda).
   const calListExtras = (
     <>
+      {evError ? (
+        <TouchableOpacity
+          accessibilityRole="button"
+          onPress={() => { setEvError(false); loadEvents(true); }}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginTop: 10, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: colors.surfaceVariant || colors.surface }}
+        >
+          <Text style={{ flex: 1, color: colors.text, fontSize: 14 }} numberOfLines={2}>{t('calendar.loadError', 'Não foi possível carregar os eventos')}</Text>
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }}>{t('common.tryAgain', 'Tentar de novo')}</Text>
+        </TouchableOpacity>
+      ) : null}
       {/* [2026-10-13] topo inteligente: resumo do dia, criar com a Bia, livres, sincronizar */}
       <CalendarSmartBar
         date={selectedDate || new Date()}

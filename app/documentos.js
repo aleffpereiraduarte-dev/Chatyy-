@@ -121,6 +121,10 @@ function DocumentosScreenInner() {
   const [folderStack, setFolderStack] = useState([]);
   const searchRef = useRef(null);
   const docsRequestIdRef = useRef(0); // Race condition guard
+  // [2026-10-21] tamanho da lista via ref: com documents.length nas deps o
+  // efeito refazia a busca sempre que a quantidade mudava (0 → N).
+  const docsLenRef = useRef(0);
+  docsLenRef.current = documents.length;
 
   // Fetch documents
   const fetchDocs = useCallback(async (isRefresh = false) => {
@@ -136,14 +140,19 @@ function DocumentosScreenInner() {
         if (cached) {
           setDocuments(cached.documents || []);
           setFolders(cached.folders || []);
+          docsLenRef.current = (cached.documents || []).length;
           setLoading(false);
         } else {
+          // Pasta sem cache: não mostra os documentos da pasta anterior.
+          setDocuments([]);
+          setFolders([]);
+          docsLenRef.current = 0;
           setLoading(true);
         }
       } catch {
         setLoading(true);
       }
-    } else if (!isRefresh && !documents.length) {
+    } else if (!isRefresh && !docsLenRef.current) {
       // [2026-10-08 apps-native] busca não apaga mais a lista atual com
       // loading de tela cheia — os resultados substituem quando chegam.
       setLoading(true);
@@ -166,17 +175,17 @@ function DocumentosScreenInner() {
         }
       } else {
         // Only show error if no cached data
-        if (!documents.length) setError(res?.message || t('docs.loadError'));
+        if (!docsLenRef.current) setError(res?.message || t('docs.loadError'));
       }
     } catch (e) {
-      if (!documents.length) setError(t('docs.loadError'));
+      if (!docsLenRef.current) setError(t('docs.loadError'));
     } finally {
       if (requestId === docsRequestIdRef.current) {
         setLoading(false);
         setRefreshing(false);
       }
     }
-  }, [searchQuery, currentFolder, t, documents.length]);
+  }, [searchQuery, currentFolder, t]);
 
   useEffect(() => { fetchDocs(); }, [fetchDocs]);
 

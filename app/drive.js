@@ -1002,8 +1002,9 @@ function DriveScreenInner() {
     for (const f of rootFiles) {
       const i = idx++;
       setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
-      const res = await api.fileUploadDirect({ _raw: f.file || f, name: f.name }, destFolder);
-      setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
+      // [2026-10-21] sem try, uma falha (offline na web) deixava o overlay de envio preso
+      let res = null; try { res = await api.fileUploadDirect({ _raw: f.file || f, name: f.name }, destFolder); } catch {}
+      setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res?.success } : p));
     }
 
     // Create folders and upload contents preserving hierarchy
@@ -1021,9 +1022,9 @@ function DriveScreenInner() {
           parentId = createdFolders[partialPath];
           continue;
         }
-        const folderRes = await api.fileCreateFolder(segments[s], parentId);
-        const folderData = folderRes.data || folderRes.folder;
-        if (folderRes.success && folderData) {
+        let folderRes = null; try { folderRes = await api.fileCreateFolder(segments[s], parentId); } catch {}
+        const folderData = folderRes?.data || folderRes?.folder;
+        if (folderRes?.success && folderData) {
           createdFolders[partialPath] = folderData.id;
           parentId = folderData.id;
         } else {
@@ -1038,12 +1039,12 @@ function DriveScreenInner() {
       for (const f of folderFiles) {
         const i = idx++;
         setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 50 } : p));
-        const res = await api.fileUploadDirect({ _raw: f, name: f.name }, parentId);
-        setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res.success } : p));
+        let res = null; try { res = await api.fileUploadDirect({ _raw: f, name: f.name }, parentId); } catch {}
+        setUploadProgress(prev => prev.map((p, j) => j === i ? { ...p, progress: 100, done: true, error: !res?.success } : p));
       }
     }
 
-    await loadFiles(destFolder);
+    try { await loadFiles(destFolder); } catch {}
     setTimeout(() => { setUploading(false); setUploadProgress([]); }, 1500);
   }, [currentFolderId, loadFiles]);
 
