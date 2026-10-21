@@ -35,6 +35,7 @@ import AvatarCircle from '../AvatarCircle';
 import { TextStatusThumb } from './textStatus'; // [status-texto 2026-10-14]
 import { IconPlus, IconReply, IconStarFilled } from '../Icons';
 import { THEME_V2, Grafite } from '../../constants/theme';
+import { listVivoOn, VivoSpinRing, vivoSeenRing } from '../chatlist/listVivo'; // [2026-10-21 lista-viva]
 
 // [2026-10-20 grafite] anel prateado: gradiente "cônico" aproximado (diagonal
 // com 5 paradas grafite↔prata, Grafite.ring). Só p/ o anel padrão (sem cor do
@@ -108,17 +109,20 @@ function StoryRingAvatar({
   const _cfInk = closeFriends ? (isDark ? '#F5F5F7' : '#111111') : null;
   const _cfOnInk = isDark ? '#111111' : '#FFFFFF';
   const _spinOn = !!loading && !isLive;
+  // [2026-10-21 lista-viva] status novo = anel prateado cônico girando devagar
+  // (sem o pulso de escala); visto = cinza claro. Kill: __chatyy_list_vivo=false.
+  const _vivoRing = _silver && !isLive && ringStyle === 'solid' && listVivoOn();
   const _showCfStar = closeFriends && !isLive && ringStyle !== 'none' && !allViewed;
 
   // Scale-based "live" pulse for unviewed rings. Native-driven (transform
   // scale is one of the few props that runs off-thread), so it costs nothing
   // even when 50 rings are visible at once.
   const pulseAnim = useRef(new Animated.Value(0)).current;
-  const _pulseOn = !(!pulse || (allViewed && !isLive) || (ringStyle === 'none' && !isLive));
+  const _pulseOn = !(!pulse || _vivoRing || (allViewed && !isLive) || (ringStyle === 'none' && !isLive));
   // [2026-10-15 web-idle] Web: pulso em CSS (o Animated.loop no RN-web commitava o React a 60 fps).
   const _webPulse = _pulseOn ? cssPulseScale(isLive ? 1.05 : 1.025, isLive ? 700 : 1300, { iterations: isLive ? 'infinite' : 6 }) : null;
   useEffect(() => {
-    if (!pulse || (allViewed && !isLive) || (ringStyle === 'none' && !isLive)) return undefined;
+    if (!pulse || _vivoRing || (allViewed && !isLive) || (ringStyle === 'none' && !isLive)) return undefined;
     if (IS_WEB) return undefined; // CSS cuida (ver _webPulse)
     // Live state pulses faster + harder to draw the eye (Instagram parity).
     const dur = isLive ? 700 : 1300;
@@ -130,7 +134,7 @@ function StoryRingAvatar({
     ]), isLive ? undefined : { iterations: 3 });
     loop.start();
     return () => { try { loop.stop(); } catch {} };
-  }, [pulse, allViewed, ringStyle, pulseAnim, isLive]);
+  }, [pulse, allViewed, ringStyle, pulseAnim, isLive, _vivoRing]);
   const pulseScale = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, isLive ? 1.05 : 1.025] });
 
   // Outer wrapper holds the ring (or no ring + padding placeholder so the
@@ -183,7 +187,8 @@ function StoryRingAvatar({
         alignItems: 'center', justifyContent: 'center',
         transform: [{ scale: pulseScale }],
       }, _webPulse]}>
-        {!allViewed && !_spinOn && (() => {
+        {!allViewed && !_spinOn && _vivoRing ? <VivoSpinRing size={ringSize} stroke={2.5} /> : null}
+        {!allViewed && !_spinOn && !_vivoRing && (() => {
           // Suffix the gradient id with the palette + size so we never get
           // an id collision between a close-friends green ring and a brand
           // purple ring on the same screen at the same size (only the LAST
@@ -220,7 +225,7 @@ function StoryRingAvatar({
           <View style={{
             position: 'absolute',
             width: ringSize, height: ringSize, borderRadius: ringSize / 2,
-            borderWidth: 2.5, borderColor: _dim,
+            borderWidth: (_vivoRing && !_spinOn) ? 2 : 2.5, borderColor: (_vivoRing && !_spinOn && !dimmedColor) ? vivoSeenRing(isDark) : _dim,
           }} />
         )}
         {_face}

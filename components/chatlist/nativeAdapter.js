@@ -15,6 +15,8 @@
 //     perdeu algum (nunca aplica fora de ordem).
 //   - order só vai quando a sequência de ids mudou.
 
+import { listVivoOn, warmIndex, lastMediaThumb, lastMediaKind } from './listVivoData'; // [2026-10-21 lista-viva]
+
 // ── avatar (mesmas regras do AvatarCircle.js) ────────────────────────────────
 
 // Mesmo hashInt + 8 gradientes do AvatarCircle (o nativo tem a mesma tabela).
@@ -59,6 +61,8 @@ function _tile(ctx, url, name, email) {
   }
   const tile = { u, i: initialsOf(name, email), g: gradientIndex(name || email || '') };
   if (a) tile.a = 1;
+  // [2026-10-21 lista-viva] índice 0..5 da paleta quente (listVivoData.WARM_GRADIENTS)
+  if (listVivoOn()) tile.w = warmIndex(name || email || '');
   return tile;
 }
 
@@ -304,6 +308,7 @@ export function buildRow(conv, ctx) {
           const url = (m && m.avatar_url) ? _canonical(ctx, m.avatar_url) : _directAvatarUrl(ctx, em, nm, _half);
           const tl = _tile(ctx, url, nm, em);
           tl.g = gradientIndex(nm || em);
+          if (tl.w != null) tl.w = warmIndex(nm || em);
           return tl;
         });
       } else {
@@ -313,6 +318,7 @@ export function buildRow(conv, ctx) {
   } else {
     tiles = [_tile(ctx, _directAvatarUrl(ctx, avatarEmail, title), title, avatarEmail)];
     tiles[0].g = gradientIndex(title || avatarEmail || '');
+    if (tiles[0].w != null) tiles[0].w = warmIndex(title || avatarEmail || '');
   }
 
   const noteText = (conv.type === 'direct' && presenceEmail && ctx.notesMap) ? (ctx.notesMap[presenceEmail] || '') : '';
@@ -394,6 +400,15 @@ export function buildRow(conv, ctx) {
   row.blockLabel = blockPeer
     ? `${_tx(t, 'chat.block', 'Bloquear')} ${String(title || blockPeer.split('@')[0]).split(' ')[0]}`.trim()
     : '';
+  // [2026-10-21 lista-viva] campos opcionais p/ o binário com a prop `vivo`
+  // (binários atuais ignoram chave extra). `typing` continua sendo o RÓTULO
+  // ("digitando..."); o tipo vai em `typingKind`.
+  if (listVivoOn()) {
+    row.typingKind = typingName ? (recording ? 'recording' : 'typing') : null;
+    const _tk = (!locked && !typingName && !draftText) ? lastMediaKind(lastMsg) : '';
+    row.thumbUrl = _tk ? (lastMediaThumb(lastMsg) || '') : '';
+    row.thumbKind = _tk || '';
+  }
   const meta = { conv, title, avatarEmail, ringEmail, hasRing: !!ring };
   return { row, meta };
 }
@@ -405,7 +420,7 @@ function _tilesEqual(a, b) {
   if (!a || !b || a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     const x = a[i]; const y = b[i];
-    if (x.u !== y.u || x.i !== y.i || x.g !== y.g || !!x.a !== !!y.a) return false;
+    if (x.u !== y.u || x.i !== y.i || x.g !== y.g || x.w !== y.w || !!x.a !== !!y.a) return false;
   }
   return true;
 }

@@ -22,6 +22,7 @@ import { useLanguageOptional } from '../../context/LanguageContext';
 import { useBiaDaily, biaGreetingKey } from '../../services/biaDaily';
 import { useReducedMotion, isReduceMotionEnabled } from '../reducedMotion';
 import { THEME_V2, Grafite } from '../../constants/theme'; // [2026-10-20 grafite]
+import { listVivoOn } from './listVivoData'; // [2026-10-21 lista-viva]
 
 export function homeCarouselOn() {
   try { return globalThis.__chatyy_home_carousel !== false; } catch { return true; }
@@ -56,7 +57,11 @@ export const HC = Object.freeze({
 // nao eh boah"). Regra: slot com balão ocupa no mínimo bubbleW de passo (largura
 // + gap + 2·margem ≥ bubbleW) e o balão fica centrado no próprio slot com
 // largura ≤ bubbleW → dois balões vizinhos nunca se cruzam.
-function _bubbleMargin(width) { return Math.max(0, Math.ceil((HC.bubbleW - width - HC.gap) / 2)); }
+// [2026-10-21 lista-viva] mockup: balão de altura FIXA (32) e no máx. 84 de largura
+// — menor que o passo do slot (74 + 14) → nunca cobre o vizinho, todos iguais.
+const VIVO_BUBBLE = Object.freeze({ w: 84, h: 32 });
+function _bubbleW() { return listVivoOn() ? VIVO_BUBBLE.w : HC.bubbleW; }
+function _bubbleMargin(width) { return Math.max(0, Math.ceil((_bubbleW() - width - HC.gap) / 2)); }
 
 /** Corta em ~40 caracteres (palavra inteira quando dá) com reticências. */
 export function shortNote(s, max = 40) {
@@ -97,10 +102,11 @@ export const ThoughtBubble = memo(function ThoughtBubble({ text, isDark, full = 
     web: { boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : '0 2px 10px rgba(0,0,0,0.12)' },
     default: {},
   });
+  const vivo = listVivoOn();
   return (
     <Animated.View pointerEvents="none" style={{ alignItems: 'center', opacity: op, transform: [{ translateY: ty }] }}>
-      <View style={[hs.bubble, full ? hs.bubbleFull : null, { backgroundColor: bg, borderColor: edge }, shadow]}>
-        <Text maxFontSizeMultiplier={1.15} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={full ? 0.62 : 0.8} ellipsizeMode="tail" style={[hs.bubbleText, { color: ink }]}>
+      <View style={[hs.bubble, full ? hs.bubbleFull : null, vivo && hs.bubbleVivo, { backgroundColor: bg, borderColor: edge }, shadow]}>
+        <Text maxFontSizeMultiplier={vivo ? 1 : 1.15} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={full ? 0.62 : 0.8} ellipsizeMode="tail" style={[hs.bubbleText, vivo && hs.bubbleTextVivo, { color: ink }]}>
           {full ? String(text || '').replace(/\s+/g, ' ').trim() : shortNote(text)}
         </Text>
       </View>
@@ -145,7 +151,7 @@ export function CarouselSlot({ bubble, onBubblePress, bubbleLabel, children, lab
       </Pressable>
       {bubble ? (onBubblePress ? (
         // [nota2] balão tocável (nota do contato) — o toque no avatar segue o de sempre.
-        <View pointerEvents="box-none" style={[hs.bubbleAnchor, { left: (width - HC.bubbleW) / 2, right: (width - HC.bubbleW) / 2 }]}>
+        <View pointerEvents="box-none" style={[hs.bubbleAnchor, { left: (width - _bubbleW()) / 2, right: (width - _bubbleW()) / 2 }]}>
           <Pressable
             onPress={() => { _haptic('light'); onBubblePress(); }}
             hitSlop={6}
@@ -156,7 +162,7 @@ export function CarouselSlot({ bubble, onBubblePress, bubbleLabel, children, lab
             {bubble}
           </Pressable>
         </View>
-      ) : <View pointerEvents="none" style={[hs.bubbleAnchor, { left: (width - HC.bubbleW) / 2, right: (width - HC.bubbleW) / 2 }]}>{bubble}</View>) : null}
+      ) : <View pointerEvents="none" style={[hs.bubbleAnchor, { left: (width - _bubbleW()) / 2, right: (width - _bubbleW()) / 2 }]}>{bubble}</View>) : null}
     </View>
   );
 }
@@ -326,6 +332,8 @@ const hs = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   bubbleFull: { maxWidth: HC.bubbleW, paddingHorizontal: 8 },
+  bubbleVivo: { maxWidth: VIVO_BUBBLE.w, height: VIVO_BUBBLE.h, paddingHorizontal: 8, paddingVertical: 0, justifyContent: 'center' },
+  bubbleTextVivo: { fontSize: 11, lineHeight: 13.5 },
   bubbleText: { fontSize: 11.5, lineHeight: 14, textAlign: 'center', fontWeight: '500', letterSpacing: -0.1 },
   tail1: { position: 'absolute', bottom: -5, left: '50%', marginLeft: -7, width: 8, height: 8, borderRadius: 4 },
   tail2: { position: 'absolute', bottom: -10, left: '50%', marginLeft: -10, width: 4, height: 4, borderRadius: 2 },

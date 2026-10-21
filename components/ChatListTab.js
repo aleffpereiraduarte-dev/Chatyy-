@@ -128,6 +128,8 @@ import ChatListSmartEmpty from './onboarding/ChatListSmartEmpty'; // [2026-10-07
 import { ChatListSkeleton } from './SkeletonLoader';
 import { SkeletonRow as SkeletonRowPrimitive } from './Skeleton';
 import PressableRow from './PressableRow';
+import { listVivoOn, VivoOnlineDot, VivoTyping, PopBadge, MentionSeal, RowThumb, VivoEnter, resetVivoEnter } from './chatlist/listVivo'; // [2026-10-21 lista-viva]
+import { lastMediaThumb, lastMediaKind } from './chatlist/listVivoData';
 import ListNamePromptModal from './ListNamePromptModal'; // [paridade-wa 2026-10-14]
 import { USE_NATIVE_SHEETS, NativeSheet, runAfterNativeSheet } from './NativeSheet'; // [2026-10-15 native-sheets-v2]
 import { BlurBackdrop } from './NativeBlur'; // [2026-10-07 native-ui-build]
@@ -1023,6 +1025,15 @@ function GroupAvatarStack({ conversation, size = 56, isDark }) {
 // Only shown for online state — the "X min atrás" lower-state was redundant
 // with the message timestamp on the right of the row and added visual noise.
 const _rowNameHug = { flexGrow: 0, flexShrink: 1, flexBasis: 'auto' };
+// [2026-10-21 lista-viva] não lida: nome peso 750 (RN '800'); linha no cartão "Fixadas": recuo 10.
+const _NAME_UNREAD_VIVO = { fontWeight: '800' };
+const _ROW_IN_CARD = { paddingHorizontal: 10 };
+// Rótulo "FIXADAS" (12/700, +0,6, caixa alta) e o cartão (folha, raio 22, sombra Grafite).
+const _SECTION_VIVO = { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 6 };
+const _SECTION_TEXT_VIVO = { fontWeight: '700' };
+const _PIN_CARD = { marginHorizontal: 12, marginBottom: 10, borderRadius: 22 };
+const _PIN_CARD_CLIP = { borderRadius: 22, overflow: 'hidden', paddingVertical: 4 };
+function _vivoCardShadow(isDark) { try { return require('../constants/theme').cardShadow(isDark); } catch { return null; } }
 function formatActivityStatus(isOnline, lastSeen, t) {
   if (isOnline) return { text: t?.('chat.online') || 'online', color: '#22c55e' };
   if (lastSeen) {
@@ -1446,6 +1457,8 @@ const ConversationRow = React.memo(function ConversationRow({
   // rest of the row still opens the conversation. Without this prop the
   // avatar stays a non-tappable visual element (legacy behavior).
   onAvatarPress,
+  // [2026-10-21 lista-viva] linha dentro do cartão "Fixadas" (fundo do cartão).
+  inCard = false,
 }) {
   // QA perf probe (Playwright sets globalThis.__chatyyListProbe); no-op otherwise.
   { const _pp = globalThis.__chatyyListProbe; if (_pp) _pp.row++; }
@@ -1482,6 +1495,8 @@ const ConversationRow = React.memo(function ConversationRow({
   const isMuted = !!conversation.muted;
   const [hovered, setHovered] = useState(false);
   const P = isDark ? LP_DARK : LP_LIGHT; // [2026-10-08 chat-beauty-list]
+  // [2026-10-21 lista-viva] mockup preview-2026/lista.html (kill __chatyy_list_vivo=false)
+  const _vv = listVivoOn();
 
   // Prefer server-provided other_email/contact_email — those are computed
   // authoritatively by chat.php:buildConversationData knowing exactly who
@@ -1545,6 +1560,12 @@ const ConversationRow = React.memo(function ConversationRow({
   // previewSender/statusType (the receipt icon only renders in the non-typing
   // branch), so deriving purely from lastMsg yields byte-identical output.
   const { preview, previewSender, statusType } = useMemo(() => _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, conversation.members), [lastMsg, isGroup, isChannel, _me, t, conversation.members]);
+  // [2026-10-21 lista-viva] miniatura 40×40 quando a última msg é foto/vídeo.
+  const _thumb = useMemo(() => {
+    if (!_vv) return null;
+    const k = lastMediaKind(lastMsg);
+    return k ? { kind: k, uri: lastMediaThumb(lastMsg) } : null;
+  }, [_vv, lastMsg]);
 
   // ── [perf 2026-10-06] FlashList v2 RECYCLES this component instance for a
   // different conversation. The "previous value" refs below (muted / mentions /
@@ -1803,7 +1824,9 @@ const ConversationRow = React.memo(function ConversationRow({
     // much lighter/cleaner. Pinned keeps a whisper of tint.
     // [2026-10-08 chat-beauty-list] tints were #111-on-#111 (invisible in dark)
     // → neutral palette values that actually read in both themes.
-    : isPinned
+    : inCard
+      ? 'transparent'
+      : (isPinned && !_vv)
       ? P.pinnedBg
       : colors.background;
 
@@ -1894,6 +1917,7 @@ const ConversationRow = React.memo(function ConversationRow({
           style={[
             s.row,
             _rowDensity(),
+            inCard && _ROW_IN_CARD,
             {
               backgroundColor: isSelected ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)') : rowBg,
               ...(isWeb ? { transition: 'background-color 0.2s ease' } : {}),
@@ -1985,7 +2009,9 @@ const ConversationRow = React.memo(function ConversationRow({
                 />
               </View>
             )}
-            {isOnline && <PulsingOnlineDot colors={colors} isDark={isDark} />}
+            {isOnline && (_vv
+              ? <VivoOnlineDot borderColor={inCard ? (isDark ? _GF.dark.surface : _GF.light.surface) : colors.background} />
+              : <PulsingOnlineDot colors={colors} isDark={isDark} />)}
             {/* Instagram-style note bubble above avatar */}
             {noteText ? (
               <View style={{
@@ -2010,7 +2036,7 @@ const ConversationRow = React.memo(function ConversationRow({
                     chat-conversation header onde é contexto correto. */}
                 {/* [2026-10-16 polish3] nome sem flex:1 aqui: empurrava o "online" p/ a
                     direita, colado na hora ("online 18:17" lia como 1 coisa). */}
-                <Text style={[s.rowName, _rowNameHug, { color: P.text }, unread && s.rowNameUnread]} numberOfLines={1} maxFontSizeMultiplier={1.35}>{displayName}</Text>
+                <Text style={[s.rowName, _rowNameHug, { color: P.text }, unread && s.rowNameUnread, unread && _vv && _NAME_UNREAD_VIVO]} numberOfLines={1} maxFontSizeMultiplier={1.35}>{displayName}</Text>
                 {!isGroup && !isChannel && (() => {
                   const activity = formatActivityStatus(isOnline, lastSeen, t);
                   if (!activity) return null;
@@ -2024,11 +2050,13 @@ const ConversationRow = React.memo(function ConversationRow({
                 })()}
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                {/* [2026-10-21 lista-viva] alfinete ao lado da hora (mockup) */}
+                {_vv && isPinned ? <IconPin size={13} color={P.sub} /> : null}
                 {isLocked && <IconLock size={12} color={P.icon} />}
                 <Text maxFontSizeMultiplier={1.3} style={[s.rowTime, (unread && !isMuted) ? {
                   // [2026-10-06 UX] muted chats keep the time grey (WhatsApp)
                   // [2026-10-08 chat-beauty-list] unread = bold in text colour (B&W)
-                  color: P.text, fontWeight: '700',
+                  color: P.text, fontWeight: _vv ? '600' : '700',
                 } : {
                   color: P.sub,
                 }]}>
@@ -2091,7 +2119,14 @@ const ConversationRow = React.memo(function ConversationRow({
                     ) : null}
                   </View>
                 );
-              })() : typingName ? (
+              })() : (typingName && _vv) ? (
+                <VivoTyping
+                  label={`${isGroup ? `${typingName} ` : ''}${typingRecording ? (t('chat.recordingAudio') || 'gravando áudio...') : ((isGroup && typingNames.length > 1) ? (t('chat.typingMultiple') || 'estão digitando...') : (t('chat.typing') || 'digitando...'))}`}
+                  recording={typingRecording}
+                  color={P.text}
+                  textStyle={[s.rowPreview, { fontWeight: '500' }]}
+                />
+              ) : typingName ? (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 10 }}>
                   <TypingDotsInline color={P.text} />
                   <Text style={[s.rowPreview, { color: P.text, fontWeight: '500', flex: 0 }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
@@ -2113,7 +2148,7 @@ const ConversationRow = React.memo(function ConversationRow({
                         // Unread preview reads a notch darker + a hair heavier so
                         // the whole row (name + preview) leans forward as "unread",
                         // while read rows stay quiet secondary text. WhatsApp/iMessage.
-                        color: unread ? P.subStrong : P.sub,
+                        color: unread ? (_vv ? P.text : P.subStrong) : P.sub,
                         fontWeight: '400',
                       },
                     ]}
@@ -2123,9 +2158,9 @@ const ConversationRow = React.memo(function ConversationRow({
                     {previewSender ? (
                       <>
                         <Text style={{ fontWeight: '500', color: unread ? P.text : P.sub }}>{previewSender}: </Text>
-                        {withPreviewIcon(preview, unread ? P.subStrong : P.sub)}
+                        {withPreviewIcon(preview, unread ? (_vv ? P.text : P.subStrong) : P.sub)}
                       </>
-                    ) : (withPreviewIcon(preview, unread ? P.subStrong : P.sub) || t('chat.noMessages'))}
+                    ) : (withPreviewIcon(preview, unread ? (_vv ? P.text : P.subStrong) : P.sub) || t('chat.noMessages'))}
                   </Text>
                 </View>
               )}
@@ -2145,7 +2180,7 @@ const ConversationRow = React.memo(function ConversationRow({
                     the status column (WhatsApp/Telegram) so name→time stays clean
                     and all row indicators (mute · pin · @ · count) share one
                     baseline. */}
-                {isPinned && (
+                {isPinned && !_vv && (
                   <View style={s.pinnedIconWrap}>
                     <IconPin size={15} color={P.icon} />
                   </View>
@@ -2156,12 +2191,26 @@ const ConversationRow = React.memo(function ConversationRow({
                     off the off-brand pink to the app's neutral accent (#111111)
                     — it's differentiated from the count pill by the @ glyph +
                     weight, not by a new hue. Spring-pops when the count rises. */}
-                {conversation.unread_mentions > 0 && (
+                {conversation.unread_mentions > 0 && _vv ? <MentionSeal isDark={isDark} /> : null}
+                {conversation.unread_mentions > 0 && !_vv && (
                   <Animated.View style={[s.unreadBadge, { backgroundColor: _accBg(P), minWidth: 22, transform: [{ scale: mentionScale }] }]}>
                     <Text maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: _accTx(P), fontSize: 13, fontWeight: '800' }]}>@</Text>
                   </Animated.View>
                 )}
-                {unread && (
+                {unread && _vv ? (
+                  <PopBadge
+                    value={conversation.unread_count}
+                    rowKey={conversation.id}
+                    style={[s.unreadBadge, { backgroundColor: (isMuted && !conversation.unread_mentions) ? P.mutedPillBg : _accBg(P) }]}
+                  >
+                    <RollingNumber maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: (isMuted && !conversation.unread_mentions) ? P.mutedPillTxt : _accTx(P) }]} value={conversation.unread_count > 99 ? '99+' : conversation.unread_count} />
+                  </PopBadge>
+                ) : null}
+                {/* [2026-10-21 lista-viva] miniatura da última foto/vídeo à direita */}
+                {_thumb && (_thumb.uri || _thumb.kind === 'video') && !isLocked && !typingName && !draftText ? (
+                  <RowThumb uri={_thumb.uri} kind={_thumb.kind} isDark={isDark} rowKey={conversation.id} />
+                ) : null}
+                {unread && !_vv && (
                   <Animated.View style={[
                     s.unreadBadge,
                     // [2026-10-08 chat-beauty-list] B&W pill: black/white
@@ -2252,6 +2301,7 @@ const ConversationRow = React.memo(function ConversationRow({
   // genuinely-needed repaint — it never skips one.
   if (prev.noteText !== next.noteText) return false;
   if (prev.currentEmail !== next.currentEmail) return false;
+  if (!!prev.inCard !== !!next.inCard) return false; // [2026-10-21 lista-viva]
 
   // Compare conversation properties, not reference
   const prevConv = prev.conversation;
@@ -2287,6 +2337,10 @@ const ConversationRow = React.memo(function ConversationRow({
   if ((prevConv.last_message?.type || '') !== (nextConv.last_message?.type || '')) return false;
   if ((prevConv.last_message?.caption || '') !== (nextConv.last_message?.caption || '')) return false;
   if ((prevConv.last_message?.duration || 0) !== (nextConv.last_message?.duration || 0)) return false;
+  // [2026-10-21 lista-viva] miniatura: a mesma msg ganha thumb/pôster/arquivo local depois.
+  { const a = prevConv.last_message; const b = nextConv.last_message;
+    if (a !== b && ((a?.file_url || '') !== (b?.file_url || '') || (a?.thumbnail_url || '') !== (b?.thumbnail_url || '')
+      || a?.image_variants !== b?.image_variants || !!a?.thumb_b64 !== !!b?.thumb_b64 || (a?._localUri || '') !== (b?._localUri || ''))) return false; }
   if (prev.t !== next.t || prev.language !== next.language || prev.colors !== next.colors) return false;
 
   // Compare typing only for THIS conversation, not all (comparing all caused every row to re-render when anyone typed)
@@ -3498,7 +3552,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   }
 
   return (
-    <View style={carousel ? { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' } : { paddingTop: stripHasContent ? _LMs.storyPadTop : 0, paddingBottom: stripHasContent ? _LMs.storyPadBottom : 0, borderBottomWidth: stripHasContent ? StyleSheet.hairlineWidth : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
+    <View style={carousel ? { borderBottomWidth: listVivoOn() ? 0 : StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' } : { paddingTop: stripHasContent ? _LMs.storyPadTop : 0, paddingBottom: stripHasContent ? _LMs.storyPadBottom : 0, borderBottomWidth: stripHasContent ? StyleSheet.hairlineWidth : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
       {noteView ? <ContactNoteSheet visible note={noteView} onClose={() => setNoteView(null)} t={t} isDark={isDark} router={router} /> : null}
       {/* Dedicated live bar — prepended above the story strip so contacts
           who are streaming RIGHT NOW are the very first thing the user
@@ -4380,6 +4434,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // paints (rows, chips, sheets): near-black #0b0b0b in dark instead of the
   // global navy, neutral greys instead of the bluish WhatsApp text tones.
   const P = isDark ? LP_DARK : LP_LIGHT;
+  // [2026-10-21 lista-viva] mockup preview-2026/lista.html: fixadas num cartão, sem
+  // linhas, entrada leve. Kill switch: globalThis.__chatyy_list_vivo = false.
+  const _vivo = listVivoOn();
+  useState(() => { try { resetVivoEnter(); } catch {} return 0; });
   const colors = useMemo(() => ({
     ..._themeColors,
     background: P.bg, surface: P.surface, text: P.text,
@@ -8627,11 +8685,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // iMessage avatar grid mode triggers when there's any pinned (manual or smart)
   // and the user is on the "all" filter without a search query.
   const pinnedAvatarsMode = useMemo(() => {
+    // [2026-10-21 lista-viva] fixadas viram linhas num cartão (fora do carrossel).
+    if (_vivo) return false;
     return filter === 'all'
       && !((searchQuery || '').trim())
       && pinnedConversations.length > 0
       && pinnedConversations.length <= 9;
-  }, [filter, searchQuery, pinnedConversations.length]);
+  }, [filter, searchQuery, pinnedConversations.length, _vivo]);
 
   // visibleConversations — derivado de filteredConversations, exclui as pinadas
   // quando o avatar grid tá ativo (pra não mostrar duplicado). Movido pra cá
@@ -8737,17 +8797,18 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         {count > 0 ? (
           <View style={[
             s.chipBadge,
-            { backgroundColor: active ? (isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.2)') : P.chipCount },
+            { backgroundColor: _vivo ? (active ? _accTx(P) : _accBg(P)) : (active ? (isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.2)') : P.chipCount) },
           ]}>
             {/* [2026-10-15 nav-motion] contador rola (odômetro) no nativo */}
+            {/* [2026-10-21 lista-viva] contador grafite (invertido no chip ativo) */}
             {isWeb
-              ? <Text maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: pillTxt }]}>{count > 99 ? '99+' : count}</Text>
-              : <RollingNumber maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: pillTxt }]} value={count > 99 ? '99+' : count} />}
+              ? <Text maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: _vivo ? (active ? _accBg(P) : _accTx(P)) : pillTxt }]}>{count > 99 ? '99+' : count}</Text>
+              : <RollingNumber maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: _vivo ? (active ? _accBg(P) : _accTx(P)) : pillTxt }]} value={count > 99 ? '99+' : count} />}
           </View>
         ) : null}
       </TouchableOpacity>
     );
-  }, [filter, isDark, P, handleDeleteFolderChip, _markTabRead]);
+  }, [filter, isDark, P, handleDeleteFolderChip, _markTabRead, _vivo]);
 
   // [2026-10-16 motion-nav] Filtros estilo Telegram: UMA pílula desliza com
   // mola (UI thread) até o chip tocado e o texto inverte conforme ela cobre
@@ -8780,10 +8841,10 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             {label}
           </Text>
           {count > 0 ? (
-            <View style={[s.chipBadge, { backgroundColor: on ? (isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.2)') : P.chipCount }]}>
+            <View style={[s.chipBadge, { backgroundColor: _vivo ? (on ? _accTx(P) : _accBg(P)) : (on ? (isDark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.2)') : P.chipCount) }]}>
               {isWeb
-                ? <Text maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: txt }]}>{count > 99 ? '99+' : count}</Text>
-                : <RollingNumber maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: txt }]} value={count > 99 ? '99+' : count} />}
+                ? <Text maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: _vivo ? (on ? _accBg(P) : _accTx(P)) : txt }]}>{count > 99 ? '99+' : count}</Text>
+                : <RollingNumber maxFontSizeMultiplier={1.15} style={[s.chipBadgeText, { color: _vivo ? (on ? _accBg(P) : _accTx(P)) : txt }]} value={count > 99 ? '99+' : count} />}
             </View>
           ) : null}
         </>
@@ -9175,12 +9236,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       );
     }
     return (
-      <View style={[s.sectionLabel, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
+      <View style={[s.sectionLabel, _vivo && _SECTION_VIVO, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
         {/* Small crisp pin glyph reads as a real section marker (thin-stroke SVG
             sized to match the caps). Neutral monochrome tint so the PINNED group
             reads as a first-class section, WhatsApp/Telegram-style. */}
         <IconPin size={12} color={P.sub} />
-        <Text maxFontSizeMultiplier={1.3} style={[s.sectionLabelText, { color: P.sub }]}>
+        <Text maxFontSizeMultiplier={1.3} style={[s.sectionLabelText, _vivo && _SECTION_TEXT_VIVO, { color: P.sub }]}>
           {(() => { const v = t('chat.pinned'); return v && v !== 'chat.pinned' ? v : 'FIXADAS'; })()}
         </Text>
       </View>
@@ -9315,7 +9376,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     toggleSelected(conv.id);
   }, [toggleSelected]);
 
-  const renderItem = useCallback(({ item, index }) => {
+  const renderItem = useCallback(({ item, index, inCard }) => {
     // Resolve the peer email ONCE per render (was three separate IIFEs walking
     // item.members + lowercasing currentEmail + scanning, called for every row
     // every render). On a list of 200 convs that's 600 array walks per scroll
@@ -9374,9 +9435,43 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         draftEditedAt={draftTimes[String(item.id)] || null}
         noteText={noteText}
         onAvatarPress={setAvatarLightbox}
+        inCard={!!inCard}
       />
     );
   }, [isDark, colors, t, language, handleConversationPress, rowPrefetch, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, handleEmailConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, showLongPressMenu, rowToggleSelect, drafts, draftTimes, notesMap, setAvatarLightbox, socketUp]);
+  // [2026-10-21 lista-viva] FlashList JS (web / reserva do nativo): as fixadas
+  // saem dos dados e vão num cartão no fim do header (raio 22, sombra Grafite);
+  // as demais linhas entram com a animação leve. A lista NATIVA continua
+  // recebendo visibleConversations inteiro (fixadas no topo, row.pinned) — o
+  // binário com `vivo` desenha o cartão ele mesmo; o rótulo "FIXADAS" vem do header.
+  const _vivoPinned = useMemo(() => {
+    if (!_vivo || filter !== 'all' || String(searchQuery || '').trim()) return null;
+    const pins = visibleConversations.filter(c => c && c.pinned);
+    return pins.length ? pins : null;
+  }, [_vivo, filter, searchQuery, visibleConversations]);
+  const _jsListData = useMemo(() => (
+    _vivoPinned ? visibleConversations.filter(c => !(c && c.pinned)) : visibleConversations
+  ), [_vivoPinned, visibleConversations]);
+  const _vivoPinOffset = _vivoPinned ? _vivoPinned.length : 0;
+  const renderItemJs = useCallback((info) => {
+    if (!_vivo) return renderItem(info);
+    return <VivoEnter index={(info?.index || 0) + _vivoPinOffset}>{renderItem(info)}</VivoEnter>;
+  }, [_vivo, renderItem, _vivoPinOffset]);
+  const _vivoPinCardEl = useMemo(() => {
+    if (!_vivoPinned) return null;
+    return (
+      <View style={[_PIN_CARD, { backgroundColor: isDark ? _GF.dark.surface : _GF.light.surface }, _vivoCardShadow(isDark)]} testID="chat-pinned-card">
+        <View style={_PIN_CARD_CLIP}>
+          {_vivoPinned.map((c, i) => (
+            <VivoEnter key={String(c.id)} index={i}>
+              {renderItem({ item: c, index: i, inCard: true })}
+            </VivoEnter>
+          ))}
+        </View>
+      </View>
+    );
+  // extraDataMemo: presença ao vivo / bloqueio / seleção repintam o cartão como as linhas
+  }, [_vivoPinned, renderItem, isDark, extraDataMemo]); // eslint-disable-line react-hooks/exhaustive-deps
   // NOTE: presenceVersion removed from deps to prevent 15s flicker cycle
   // isOnline calculated inside ConversationRow using presencesRef directly
 
@@ -9847,7 +9942,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   const ItemSeparatorComponent = useCallback(() => (
     <View style={[s.separator, { backgroundColor: P.hair, marginLeft: _sepInset(), marginRight: 0 }]} />
   ), [P]);
-  const _itemSeparator = Platform.OS === 'android' ? undefined : ItemSeparatorComponent;
+  // [2026-10-21 lista-viva] sem linhas entre as conversas.
+  const _itemSeparator = (Platform.OS === 'android' || _vivo) ? undefined : ItemSeparatorComponent;
 
   // [2026-10-07 native-ui-build] Topo da lista (notas + filtros) extraído p/
   // poder morar fixo (web/desktop) OU dentro do header da FlashList (nativo
@@ -9989,6 +10085,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       {ListHeaderComponent}
     </>
   )), [largeTitle, _largeTitleEl, _onLtLayout, selectionMode, _topChromeEl, ListHeaderComponent]);
+  // [2026-10-21 lista-viva] só a FlashList JS ganha o cartão das fixadas no header.
+  const _jsListHeaderEl = useMemo(() => (_vivoPinCardEl ? <>{_listHeaderEl}{_vivoPinCardEl}</> : _listHeaderEl), [_listHeaderEl, _vivoPinCardEl]);
   const _ltCollapsedRef = useRef(false);
   const _ltCbRef = useRef(onLargeTitleCollapsedChange);
   _ltCbRef.current = onLargeTitleCollapsedChange;
@@ -10300,13 +10398,13 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         <ListComponent
           onLoad={_jsReorderAnim ? _onJsListLoad : _onListLoad}
           {...(_jsReorderAnim ? { CellRendererComponent: ListReorderCell, maxItemsInRecyclePool: 0 } : null)}
-          data={visibleConversations}
+          data={_jsListData}
           keyExtractor={keyExtractor}
           estimatedItemSize={_rowEstimate()}
-          ListHeaderComponent={_listHeaderEl}
+          ListHeaderComponent={_jsListHeaderEl}
           ListFooterComponent={ListFooterComponent}
-          renderItem={renderItem}
-          ListEmptyComponent={ListEmptyComponent}
+          renderItem={renderItemJs}
+          ListEmptyComponent={(_vivoPinned && !_jsListData.length) ? null : ListEmptyComponent}
           contentContainerStyle={bottomInset ? [listContentContainerStyle, { paddingBottom: bottomInset }] : listContentContainerStyle}
           // [2026-10-07 native-ui-build] large title (scroll → título compacto
           // no header) + tab bar translúcida iOS (conteúdo rola por baixo).

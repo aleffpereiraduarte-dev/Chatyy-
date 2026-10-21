@@ -283,6 +283,13 @@ const TAB_PILL_LIGHT = _V2 ? _GF.light.tabActive : 'rgba(0,0,0,0.07)';
 const TAB_PILL_DARK = _V2 ? _GF.dark.tabActive : 'rgba(255,255,255,0.14)';
 const TAB_HAIR_LIGHT = _V2 ? 'rgba(24,24,27,0.07)' : 'rgba(0,0,0,0.12)';
 const TAB_HAIR_DARK = _V2 ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.10)';
+// [2026-10-21 lista-viva] botão redondo do topo da home (null = visual de antes).
+function _vivoHdr(dark) {
+  try {
+    const V = require('../components/chatlist/listVivo');
+    return V.listVivoOn() ? V.vivoHeaderBtn(dark) : null;
+  } catch { return null; }
+}
 // [2026-10-19 accent-real] aba ativa / badge na cor de destaque (Grafite = P&B de sempre).
 function _tabOn(dark) {
   try {
@@ -1431,6 +1438,9 @@ function ChatHub() {
     const headerBtnBg = 'transparent';
     const btnStyle = [styles.headerIconBtn, { backgroundColor: headerBtnBg, borderRadius: 20 }];
     if (activeTab === 'chats') {
+      // [2026-10-21 lista-viva] ícones do topo em círculos brancos com sombra (mockup lista.html).
+      const _vh = _vivoHdr(isDark);
+      if (_vh) btnStyle.push(_vh);
       return (
         <>
           <TouchableOpacity onPress={() => { try { router.push('/photos?camera=1'); } catch (e) { console.warn("[chat] router.push failed:", e); } }} activeOpacity={0.6}
@@ -1445,7 +1455,7 @@ function ChatHub() {
           {/* WhatsApp-parity: "new chat" is a filled GREEN circle (the one
               pop of color in the otherwise clean header). */}
           <TouchableOpacity onPress={() => router.push('/chat-new')} activeOpacity={0.75}
-            hitSlop={6} style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]} accessibilityLabel={t('a11y.newChat')}>
+            hitSlop={6} style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }, _vh]} accessibilityLabel={t('a11y.newChat')}>
             {/* [2026-10-06 founder] "+" do topo era VERDE (#25D366 + ícone branco) e
                 chamava atenção demais; WhatsApp usa ícones neutros no header.
                 Agora igual aos outros botões do topo: fundo cinza + ícone na cor
@@ -1812,7 +1822,7 @@ function ChatHub() {
             delayLongPress={350}
             activeOpacity={0.6}
             hitSlop={6}
-            style={[styles.headerIconBtn, { marginRight: 4, marginLeft: -6 }]}
+            style={[styles.headerIconBtn, { marginRight: 4, marginLeft: _vivoHdr(isDark) ? 0 : -6 }, _vivoHdr(isDark)]}
             accessibilityRole="button"
             accessibilityLabel={(t('chat.tabApps') || 'Apps') + (TABS_V2 && emailBadge > 0 ? ', ' + (t('apps.emailUnread', { count: emailBadge > 99 ? '99+' : String(emailBadge) }) || '') : '')}
             accessibilityHint={TABS_V2 ? (t('apps.longPressEmail') || undefined) : undefined}

@@ -6,6 +6,7 @@ import ChatyyOneAvatar from './ChatyyOneAvatar';
 import { useLanguageOptional } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import { THEME_V2 } from '../constants/theme';
+import { listVivoOn, warmGradient } from './chatlist/listVivoData'; // [2026-10-21 lista-viva]
 // Disk-persistent avatar cache (documentDirectory/avatar-saved). Survives
 // OS cache evictions so a contact's profile photo paints from disk on
 // cold-start / offline — even if expo-image's NSURLCache got purged.
@@ -196,6 +197,9 @@ function _useAvatarDark() {
   try { return !!useTheme().isDark; } catch { try { return !!globalThis.__chatyy_app_is_dark; } catch { return false; } }
 }
 function gradientFor(seed, isDark) {
+  // [2026-10-21 lista-viva] sem foto = gradiente quente estável por pessoa
+  // (areia/terracota/oliva/ardósia/malva/ocre) c/ iniciais brancas. Kill: __chatyy_list_vivo=false.
+  if (listVivoOn()) return warmGradient(seed);
   const _set = THEME_V2 ? (isDark ? AVATAR_GRADIENTS_V2_D : AVATAR_GRADIENTS_V2_L) : AVATAR_GRADIENTS;
   const [c1, c2] = _set[hashInt(seed) % _set.length];
   // id keyed by the colors → identical pairs dedup into one <Defs> (important
@@ -333,7 +337,7 @@ function _CollageTile({ member, size, width, height }) {
           edge and the pair read as one word ("APQA"). One letter per narrow
           tile, slightly smaller glyph. */}
       <Text
-        style={{ color: THEME_V2 ? AVATAR_INK_V2[_avDk ? 'd' : 'l'] : '#fff', fontWeight: '700', fontSize: Math.max(8, Math.min(w, h) * (w < h ? 0.6 : 0.36)), position: 'absolute' }}
+        style={{ color: (THEME_V2 && !listVivoOn()) ? AVATAR_INK_V2[_avDk ? 'd' : 'l'] : '#fff', fontWeight: '700', fontSize: Math.max(8, Math.min(w, h) * (w < h ? 0.6 : 0.36)), position: 'absolute' }}
         allowFontScaling={false}
         numberOfLines={1}
       >
@@ -672,7 +676,7 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
           blob with no initials" rendering for users without a profile photo
           (parental child cards, fresh signups, etc). */}
       <Text
-        style={[styles.initials, THEME_V2 && (_avDk2 ? _INK_V2_D : _INK_V2_L), { fontSize: size * 0.38, position: 'absolute' }]}
+        style={[styles.initials, THEME_V2 && !listVivoOn() && (_avDk2 ? _INK_V2_D : _INK_V2_L), { fontSize: size * 0.38, position: 'absolute' }]}
         allowFontScaling={false}
         accessibilityElementsHidden
       >
