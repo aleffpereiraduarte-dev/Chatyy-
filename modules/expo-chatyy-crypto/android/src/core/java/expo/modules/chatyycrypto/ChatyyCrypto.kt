@@ -133,6 +133,8 @@ object ChatyyCrypto {
       val flags = d.optJSONObject("flags")
       val on = flags?.optBoolean("e2ee5_native", false) == true && d.optBoolean("enabled", false) && !d.optBoolean("kill", false)
       ChatyyCryptoFlags.setNative(app, uid, auth?.account.orEmpty(), on)
+      // [WP-10] o serviço FCM só decifra com e2ee5_push_decrypt = true (lido sem rede).
+      ChatyyCryptoFlags.setPushDecrypt(app, uid, on && flags?.optBoolean("e2ee5_push_decrypt", false) == true)
       ChatyyCryptoAuth.bind(app, uid)
       emit("onNativeFlag", JSONObject().put("uid", uid).put("enabled", on))
     }

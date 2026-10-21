@@ -207,6 +207,18 @@ object ChatyyCryptoFlags {
     ChatyyCryptoFiles.writeText(file(ctx), o.toString())
   }
 
+  @Synchronized fun setPushDecrypt(ctx: Context, uid: String, enabled: Boolean) {
+    val o = ChatyyCryptoFiles.readJson(file(ctx))
+    val u = o.optJSONObject("pd") ?: JSONObject()
+    u.put(uid, enabled)
+    o.put("pd", u)
+    ChatyyCryptoFiles.writeText(file(ctx), o.toString())
+  }
+
+  /** `e2ee5_status.flags.e2ee5_push_decrypt` (com e2ee5_native) gravado; ausente = false. */
+  @Synchronized fun pushDecrypt(ctx: Context, uid: String): Boolean =
+    ChatyyCryptoFiles.readJson(file(ctx)).optJSONObject("pd")?.optBoolean(uid, false) ?: false
+
   @Synchronized fun native(ctx: Context, uid: String): Boolean =
     ChatyyCryptoFiles.readJson(file(ctx)).optJSONObject("u")?.optBoolean(uid, false) ?: false
 
@@ -254,6 +266,13 @@ object ChatyyCryptoSecrets {
     }
     if (!dir.mkdirs() && !dir.isDirectory) throw ChatyyCryptoHostException.of("store", "msg" to "mkdir_failed")
     return Secrets(nd, np, true)
+  }
+
+  /** Store + segredos já existem (o push NUNCA cria store/aparelho). Sem decifrar nada. */
+  @Synchronized fun exists(ctx: Context, uid: String): Boolean {
+    if (!ChatyyCryptoFiles.storeDir(ctx, uid).isDirectory) return false
+    val o = ChatyyCryptoFiles.readJson(file(ctx, uid))
+    return o.optString("d").isNotEmpty() && o.optString("p").isNotEmpty()
   }
 
   @Synchronized fun wipe(ctx: Context, uid: String): Int {

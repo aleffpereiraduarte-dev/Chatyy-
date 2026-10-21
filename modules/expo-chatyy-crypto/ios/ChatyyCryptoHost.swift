@@ -155,6 +155,9 @@ public actor ChatyyCrypto {
       let flags = d["flags"] as? [String: Any] ?? [:]
       let on = (flags["e2ee5_native"] as? Bool) == true && (d["enabled"] as? Bool) == true && (d["kill"] as? Bool) != true
       ChatyyCryptoFlags.setNative(uid: uid, account: auth?.account ?? "", enabled: on)
+      // [WP-10] a NSE só decifra com esta chave = true (lida do App Group, sem rede).
+      let pd = on && (flags["e2ee5_push_decrypt"] as? Bool) == true
+      UserDefaults(suiteName: ChatyyCryptoConst.appGroup)?.set(pd, forKey: "chatyy.e2ee5.push_decrypt.u." + uid)
       ChatyyCryptoAuth.bind(uid: uid)
       emit("onNativeFlag", ["uid": uid, "enabled": on])
     }

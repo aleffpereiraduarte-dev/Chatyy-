@@ -122,6 +122,10 @@ dependencies {
   // screenshare would create a cycle if it ever called back into callkit).
   implementation project(':expo-screen-share')
 
+  // [e2ee5 WP-03/WP-10] serviço FCM decifra a prévia pelo núcleo (ChatyyCryptoPush.decryptPreview).
+  // Sem o núcleo no binário o módulo é stub (devolve null) — zero comportamento novo.
+  implementation project(':expo-chatyy-crypto')
+
   // [2026-10-11 noise] SUPERSEDED: RNNoise is now vendored C built by this
   // module's CMakeLists.txt (libchatyyns.so) — no Maven/JitPack artifact.
   // [2026-05-18] RNNoise dep removed — `com.github.livekit:rnnoise-android`
