@@ -3098,6 +3098,14 @@ class MailWebSocket {
       case 'resume_full_sync':
         this._resumeInFlight = false;
         try {
+          // [2026-10-21 tg3] antes de adotar o high-water: busca SÓ os eventos de
+          // multi-aparelho (apagar p/ mim, limpar/apagar conversa, conv_state) desde o
+          // cursor antigo — o chat_sync/chat_list do full_sync não os cobre.
+          try {
+            const _prevEv = Number(this._lastEventId) || 0;
+            const _toEv = typeof msg.current_event_id === 'number' ? msg.current_event_id : 0;
+            if (_prevEv > 0) require('./selfSyncCatchup').catchUpSelfSync(_prevEv, _toEv, this);
+          } catch {}
           // [2026-10-05] Adota o high-water do servidor. Sem isto _lastEventId
           // ficava preso no valor velho e TODA reconexão repetia gap>cap →
           // full_sync (hub: gap=887 em cada auth do mesmo usuário) — sync

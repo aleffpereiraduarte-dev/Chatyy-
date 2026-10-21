@@ -6836,7 +6836,23 @@ export async function chatDeleteBulk(messageIds, mode = 'for_me') {
   if (Array.isArray(messageIds)) {
     for (const id of messageIds) await _localUpdateMessage(id, { deleted_at: deletedAt });
   }
-  return apiCall('chat_delete_message', { message_ids: messageIds, mode, client_action_id: _chatActionId() }, 'POST');
+  // [2026-10-21 tg3] o servidor (chat_delete_message) lê `message_id` (um por vez) —
+  // `message_ids` era ignorado → 400 "message_id required" e nada apagava no servidor.
+  // Um pedido por id (4 em paralelo), cada um com o próprio client_action_id.
+  const ids = (Array.isArray(messageIds) ? messageIds : [messageIds]).filter((x) => x != null && x !== '');
+  if (!ids.length) return { success: true, data: { deleted: 0, failed: [] } };
+  const results = new Array(ids.length);
+  let cur = 0;
+  const worker = async () => {
+    while (cur < ids.length) {
+      const i = cur++;
+      try { results[i] = await apiCall('chat_delete_message', { message_id: ids[i], mode, client_action_id: _chatActionId() }, 'POST'); }
+      catch (e) { results[i] = { success: false, message: e?.message }; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, ids.length) }, worker));
+  const failed = ids.filter((_, i) => !(results[i] && results[i].success));
+  return { success: failed.length === 0, data: { deleted: ids.length - failed.length, failed, results } };
 }
 
 // Small helper: call a Rust chat endpoint, fall back to PHP on any issue.

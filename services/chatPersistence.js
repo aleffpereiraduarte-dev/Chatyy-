@@ -247,7 +247,7 @@ function _onHidden(convId, mid) {
 }
 
 // [2026-10-20 tg2] limpar conversa / apagar conversa noutro aparelho.
-function _onClearedOrDeleted(convId, cleared) {
+function _onClearedOrDeleted(convId, cleared, clearedAtIso) {
   _safe(() => { require('./smartChatCache').clearConversation?.(convId); });
   _safe(async () => { try { await require('./localDb').clearConversationMessages?.(convId); } catch {} });
   _safe(async () => { try { await require('./chatCache').clearConversationMessages?.(convId); } catch {} });
@@ -256,7 +256,11 @@ function _onClearedOrDeleted(convId, cleared) {
   if (cleared) {
     _safe(async () => {
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-      await AsyncStorage.setItem(`cleared_at_${convId}`, String(Date.now()));
+      // [2026-10-21 tg3] usa a hora REAL do limpar (evento pode chegar atrasado no
+      // catch-up/resume) — Date.now() escondia as mensagens que vieram depois.
+      let _at = Date.now();
+      try { const _p = clearedAtIso ? Date.parse(clearedAtIso) : NaN; if (Number.isFinite(_p) && _p > 0 && _p < _at) _at = _p; } catch {}
+      await AsyncStorage.setItem(`cleared_at_${convId}`, String(_at));
     });
   }
 }
@@ -366,7 +370,7 @@ export function startChatPersistence() {
     _unsubs.push(mailWs.on('chat_cleared', (raw) => {
       const d = raw && raw.data && raw.data.conversation_id != null ? raw.data : raw;
       if (!d || d.conversation_id == null) return;
-      _onClearedOrDeleted(d.conversation_id, true);
+      _onClearedOrDeleted(d.conversation_id, true, d.cleared_at);
     }));
     _unsubs.push(mailWs.on('conversation_deleted', (raw) => {
       const d = raw && raw.data && raw.data.conversation_id != null ? raw.data : raw;

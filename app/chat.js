@@ -1662,7 +1662,7 @@ function ChatHub() {
               )}
             </View>
             {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
-              <ChatErrorBoundary><Suspense fallback={<CallListSkeleton />}><ChatCallsTab {...tabProps} /></Suspense></ChatErrorBoundary>
+              <ChatErrorBoundary><Suspense fallback={<CallListSkeleton />}><ChatCallsTab {...tabProps} tabActive={activeTab === 'calls'} /></Suspense></ChatErrorBoundary>
             </View>}
             {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
               <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...mediaTabProps} /></Suspense></ChatErrorBoundary>
@@ -1921,7 +1921,7 @@ function ChatHub() {
           /></ChatErrorBoundary>
         </View>
         {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
-          <ChatErrorBoundary><Suspense fallback={<CallListSkeleton />}><ChatCallsTab {...tabProps} largeTitle={LIST_LARGE_TITLE && !isKids ? titles.calls : undefined} onLargeTitleCollapsedChange={LIST_LARGE_TITLE && !isKids ? onCallsTitleCollapse : undefined} /></Suspense></ChatErrorBoundary>
+          <ChatErrorBoundary><Suspense fallback={<CallListSkeleton />}><ChatCallsTab {...tabProps} tabActive={activeTab === 'calls'} largeTitle={LIST_LARGE_TITLE && !isKids ? titles.calls : undefined} onLargeTitleCollapsedChange={LIST_LARGE_TITLE && !isKids ? onCallsTitleCollapse : undefined} /></Suspense></ChatErrorBoundary>
         </View>}
         {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
           <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...mediaTabProps} /></Suspense></ChatErrorBoundary>

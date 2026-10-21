@@ -54,6 +54,8 @@ import { useSharedNow } from '../hooks/useSharedNow';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
+import { setActiveInterval } from '../utils/activeInterval';
 import { triggerLocationRequestModal, onLocationRequestResolved } from '../components/LocationRequestModal';
 // [2026-10-12 mapa-amigos] envio da minha posição (razão do mapa), modo
 // fantasma no servidor, nome do lugar (cache) e rota no app de mapas.
@@ -1052,6 +1054,9 @@ function ActiveSessionsChip({ grantsData, isDark, colors, t, ghostMode, onOpen, 
 }
 
 export default function SnapMapScreen() {
+  const snapMapFocused = useIsFocused(); // [2026-10-21 tg3] poll só com o mapa na tela
+  const snapPollTickRef = useRef(null);
+  const snapPollLastRef = useRef(Date.now());
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
   const _drag3012 = useDragToDismiss({ onDismiss: () => { const f = () => setPickerOpen(false); f(); } });
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
@@ -1379,9 +1384,24 @@ export default function SnapMapScreen() {
     };
     loadFriends(false);
     locate();
-    const t1 = setInterval(() => { loadFriends(true); locate(); }, 30000); // 30s poll fallback
-    return () => { alive = false; clearInterval(t1); };
+    // [2026-10-21 tg3] bateria: o poll de 30 s (GPS + amigos) roda só com o app em
+    // 1º plano E o mapa na tela (efeito abaixo). Kill: __chatyy_snapmap_poll_gate=false.
+    let t1 = null;
+    let _gate = true;
+    try { _gate = globalThis.__chatyy_snapmap_poll_gate !== false; } catch {}
+    snapPollTickRef.current = () => { if (alive) { loadFriends(true); locate(); } };
+    if (!_gate) t1 = setInterval(() => { loadFriends(true); locate(); }, 30000); // 30s poll fallback
+    return () => { alive = false; snapPollTickRef.current = null; if (t1) clearInterval(t1); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let _gate = true;
+    try { _gate = globalThis.__chatyy_snapmap_poll_gate !== false; } catch {}
+    if (!_gate || !snapMapFocused) return undefined;
+    const _t = () => { snapPollLastRef.current = Date.now(); try { snapPollTickRef.current && snapPollTickRef.current(); } catch {} };
+    if (Date.now() - snapPollLastRef.current >= 30000) _t(); // voltou p/ o mapa depois de ≥30 s
+    const stop = setActiveInterval(_t, 30000);
+    return () => stop();
+  }, [snapMapFocused]);
 
   // ── WS live patches ────────────────────────────────────────────────
   // Subscribes to two events:

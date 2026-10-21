@@ -264,6 +264,9 @@ async function _runPass(reason, opts) {
   rows = rows.filter((m) => {
     const f = _dlFail && _dlFail[String(m.id)];
     if (f && f.next > nowMs && !opts.force) return false;
+    // [2026-10-21 tg3] "Limpar cache"/limpeza automática apagou → não re-baixa
+    // sozinho (só toque na bolha ou "Sincronizar agora" = force).
+    if (!opts.force) { try { if (mods.mc.wasMediaClearedForAutoSync?.(m)) return false; } catch {} }
     if (onWifi || opts.force) return true;
     if (HEAVY_TYPES.has(m.type)) return false;
     const u = m.file_url || '';

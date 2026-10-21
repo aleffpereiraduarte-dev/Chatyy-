@@ -2,6 +2,7 @@ import NativeSwitch from './NativeSwitch'; // [2026-10-07 app-feel-ui] themed na
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Dimensions, Modal, FlatList, TextInput, Switch, AppState, Share } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
@@ -2728,7 +2729,7 @@ function _seedCallHistorySync() {
   return Array.isArray(_preloadedCalls) ? _preloadedCalls : [];
 }
 
-function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitleCollapsedChange }) {
+function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitleCollapsedChange, tabActive }) {
   // [2026-10-15 nav-motion] Título grande "Ligações" que rola 1:1 com a lista
   // e colapsa no header compacto do /chat (mesmo padrão da aba Conversas).
   // Sem `largeTitle` (web/kids/desktop) o layout é o de antes.
@@ -2887,9 +2888,18 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
   }, []);
 
   // Refresh on interval — uses fingerprint dedup so unchanged data doesn't re-render.
+  // [2026-10-21 tg3] bateria: só com a aba Ligações VISÍVEL (o /chat mantém a aba
+  // montada e escondida) e a tela em foco; ao voltar p/ a aba depois de ≥30 s
+  // atualiza na hora. Kill: __chatyy_calls_poll_visible=false (poll de antes).
+  const _callsPollGate = (() => { try { return globalThis.__chatyy_calls_poll_visible !== false; } catch { return true; } })();
+  const _scrFocused = useIsFocused();
+  const _callsVisible = !_callsPollGate || ((tabActive === undefined || !!tabActive) && _scrFocused);
+  const _callsLastPollRef = useRef(Date.now());
   useEffect(() => {
+    if (!_callsVisible) return undefined;
     // [2026-10-10 perf-battery] paused while backgrounded (utils/activeInterval).
-    const interval = setActiveInterval(() => {
+    const _tick = () => {
+      _callsLastPollRef.current = Date.now();
       if (isPstnEnabled()) voipMinutesRemaining().then(r => {
         if (r?.success && r.data) {
           setMinutesInfo(r.data);
@@ -2908,9 +2918,11 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
           setString('chat_calls', JSON.stringify(h.slice(0, 200)));
         } catch {}
       }).catch(() => {});
-    }, 30000);
+    };
+    if (Date.now() - _callsLastPollRef.current >= 30000) _tick();
+    const interval = setActiveInterval(_tick, 30000);
     return () => interval();
-  }, []);
+  }, [_callsVisible]);
 
   const refreshData = useCallback(() => {
     if (isPstnEnabled()) voipMinutesRemaining().then(r => {

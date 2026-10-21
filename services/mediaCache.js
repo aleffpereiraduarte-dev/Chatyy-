@@ -635,6 +635,8 @@ export async function finishExternalDownload(url, local, opts = {}) {
     if (fin) fin(result || url);
   }
   if (result) _emitDlProgress(key, { url, messageId: opts.messageId != null ? opts.messageId : null, state: 'done', pct: 100, loaded: 0, total: 0, local: result });
+  // [2026-10-21 tg3] download nativo também respeita o limite do cache (debounce 5 min).
+  if (result) { try { evictIfNeeded(); } catch {} }
   return result;
 }
 
@@ -2693,6 +2695,31 @@ export async function cacheMedia(url, opts = {}) {
 }
 
 // Pre-cache an array of URLs (for batch caching when entering a conversation)
+// [2026-10-21 tg3] Filtro do pré-download ESPECULATIVO (abrir conversa):
+// tira (a) o que o "Limpar cache"/LRU apagou e (b) o ORIGINAL de foto que tem
+// versão de tela (image_variants.display) — a bolha pinta a de tela (cache do
+// expo-image) e o original só baixa em tela cheia/salvar.
+// msgs[i] ↔ urls[i]. Kill: __chatyy_bubble_display_only=false (só tira (a)).
+export function filterSpeculativeMediaUrls(msgs, urls) {
+  if (!Array.isArray(msgs) || !Array.isArray(urls)) return urls;
+  let dispOnly = true;
+  try { dispOnly = globalThis.__chatyy_bubble_display_only !== false; } catch {}
+  const out = [];
+  for (let i = 0; i < urls.length; i++) {
+    const m = msgs[i];
+    const u = urls[i];
+    if (!m) { out.push(u); continue; }
+    try { if (wasMediaClearedForAutoSync(m, u)) continue; } catch {}
+    if (dispOnly && m.type === 'image') {
+      let iv = m.image_variants;
+      if (typeof iv === 'string') { try { iv = JSON.parse(iv); } catch { iv = null; } }
+      if (iv && typeof iv.display === 'string' && iv.display) continue;
+    }
+    out.push(u);
+  }
+  return out;
+}
+
 export async function preCacheUrls(urls) {
   if (Platform.OS === 'web' || !urls?.length) return;
   // Cache em batches de 20 — antes só processava os 20 primeiros e
@@ -2736,6 +2763,8 @@ export async function saveMediaPermanent(url, opts = {}) {
     }
     return url;
   }
+  // [2026-10-21 tg3] limpeza automática também depois do download permanente.
+  if (r && r !== url && typeof r === 'string') { try { evictIfNeeded(); } catch {} }
   return r;
 }
 async function _saveMediaPermanentInner(url, opts = {}) {
@@ -3236,6 +3265,11 @@ export async function saveConversationMedia(messages, convIdHint) {
     // "baixar automaticamente" por tipo/rede (antes baixava tudo no 4G, inclusive
     // vídeo/documento). O toque na bolha continua forçando. Kill: __chatyy_conv_sweep_gate=false.
     try { if (globalThis.__chatyy_conv_sweep_gate !== false && !shouldAutoDownload(m.type)) return false; } catch {}
+    // [2026-10-21 tg3] apagada pelo "Limpar cache"/LRU → não re-baixa sozinha.
+    if (wasMediaClearedForAutoSync(m, pickUrl(m))) return false;
+    // [2026-10-21 tg3] foto com versão de tela: a bolha pinta a de tela; o original
+    // só baixa em tela cheia/salvar (kill __chatyy_bubble_display_only=false).
+    if (m.type === 'image' && filterSpeculativeMediaUrls([m], ['x']).length === 0) return false;
     return true;
   });
   const BATCH_SIZE = 20;
@@ -3297,6 +3331,105 @@ export async function getSavedSize() {
 // opts.force = true bypasses the 5-min debounce. Used by setMediaCacheCapMb
 // so lowering the cap (e.g. 10GB → 1GB) frees disk immediately instead of
 // waiting up to 5 minutes for the next download to trigger a sweep.
+// ── [2026-10-21 tg3] "Limpo em X" — a varredura automática não re-baixa ──────
+// o que o "Limpar cache"/limpeza de uma conversa/LRU apagou. Telegram: limpar
+// o cache libera espaço DE VERDADE; a mídia volta só quando a pessoa toca na
+// bolha (ou chega mensagem NOVA). Duas marcas (MMKV, por aparelho):
+//   - media_cleared_at_v1: ms do último "Limpar cache" geral → mensagens
+//     criadas até ali ficam fora da varredura automática;
+//   - media_evicted_keys_v1: chaves (urlToKey) apagadas pelo LRU/limpar
+//     conversa (máx. 4000, as mais antigas saem primeiro).
+// Toque/visualizador/"Baixar mídias faltantes" (force) continuam baixando.
+// Kill: globalThis.__chatyy_respect_cleared = false.
+const CLEARED_AT_KEY = 'media_cleared_at_v1';
+const EVICTED_KEYS_KEY = 'media_evicted_keys_v1';
+const EVICTED_KEYS_MAX = 4000;
+let _clearedAtMs = null;
+let _evictedKeys = null; // Set (ordem de inserção = antiguidade)
+let _evictedPersistT = null;
+function _hydrateClearMarks() {
+  if (_clearedAtMs !== null && _evictedKeys) return;
+  let mm = null;
+  try { mm = require('./mmkv'); } catch {}
+  if (_clearedAtMs === null) {
+    _clearedAtMs = 0;
+    try { const v = Number(mm?.getString?.(CLEARED_AT_KEY)); if (Number.isFinite(v) && v > 0) _clearedAtMs = v; } catch {}
+  }
+  if (!_evictedKeys) {
+    _evictedKeys = new Set();
+    try {
+      const raw = mm?.getString?.(EVICTED_KEYS_KEY);
+      const arr = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(arr)) for (const k of arr) if (typeof k === 'string' && k) _evictedKeys.add(k);
+    } catch {}
+  }
+}
+function _persistEvictedSoon() {
+  if (_evictedPersistT) return;
+  _evictedPersistT = setTimeout(() => {
+    _evictedPersistT = null;
+    try { require('./mmkv').setString?.(EVICTED_KEYS_KEY, JSON.stringify(Array.from(_evictedKeys || []))); } catch {}
+  }, 1500);
+}
+function _noteEvictedKeys(keys) {
+  if (!keys || !keys.length) return;
+  _hydrateClearMarks();
+  for (const k0 of keys) {
+    const k = typeof k0 === 'string' ? k0.split('/').pop() : null;
+    if (!k) continue;
+    _evictedKeys.delete(k);
+    _evictedKeys.add(k);
+  }
+  if (_evictedKeys.size > EVICTED_KEYS_MAX) {
+    let drop = _evictedKeys.size - EVICTED_KEYS_MAX;
+    for (const k of _evictedKeys) { if (drop-- <= 0) break; _evictedKeys.delete(k); }
+  }
+  _persistEvictedSoon();
+}
+function _markClearedNow() {
+  _hydrateClearMarks();
+  _clearedAtMs = Date.now();
+  try { require('./mmkv').setString?.(CLEARED_AT_KEY, String(_clearedAtMs)); } catch {}
+  // a marca geral cobre tudo o que existia → a lista por chave recomeça
+  _evictedKeys = new Set();
+  _persistEvictedSoon();
+}
+function _msgTimeMs(m) {
+  const v = m && (m.created_at != null ? m.created_at : m.createdAt);
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return v < 1e12 ? v * 1000 : v;
+  const t = Date.parse(String(v).replace(' ', 'T'));
+  return Number.isFinite(t) ? t : 0;
+}
+/** Ms do último "Limpar cache" geral (0 = nunca). */
+export function getMediaClearedAt() { _hydrateClearMarks(); return _clearedAtMs || 0; }
+/**
+ * true = a mídia desta mensagem foi apagada de propósito (limpar cache / LRU)
+ * → a sincronização AUTOMÁTICA não deve baixá-la de novo.
+ * m: { file_url | url, created_at } (linha do SQLite/servidor).
+ */
+export function wasMediaClearedForAutoSync(m, urlHint) {
+  try {
+    if (globalThis.__chatyy_respect_cleared === false) return false;
+  } catch {}
+  if (Platform.OS === 'web' || !m) return false;
+  _hydrateClearMarks();
+  if (_clearedAtMs > 0) {
+    const t = _msgTimeMs(m);
+    if (t > 0 && t <= _clearedAtMs) return true;
+  }
+  if (_evictedKeys && _evictedKeys.size) {
+    const raw = urlHint || m.file_url || m.url || ((m.type === 'gif' || m.type === 'sticker') ? m.content : null);
+    if (typeof raw === 'string' && raw) {
+      try {
+        const u = raw.startsWith('http') ? raw : `https://chatyy.com.br${raw}`;
+        if (_evictedKeys.has(urlToKey(u))) return true;
+      } catch {}
+    }
+  }
+  return false;
+}
+
 let _lastEvictAt = 0;
 let _evictInflight = null;
 export async function evictIfNeeded(opts) {
@@ -3335,6 +3468,7 @@ export async function evictIfNeeded(opts) {
               if (x.urlKey) syncIndex.delete(x.urlKey);
               if (x.abs) names.push(x.abs.split('/').slice(-2).join('/'));
             }
+            _noteEvictedKeys(r.removed.map((x) => x && x.urlKey).filter(Boolean)); // [tg3]
             try { const nativeDb = require('./db'); nativeDb.dbClearLocalPathByFilenames?.(names)?.catch?.(() => {}); } catch {}
           }
         }
@@ -3412,6 +3546,7 @@ export async function evictIfNeeded(opts) {
       // presence. Fire-and-forget — failure is non-fatal (next render
       // falls back to file existence check in resolvePlayUri).
       if (evictedNames.length > 0) {
+        _noteEvictedKeys(evictedNames); // [2026-10-21 tg3] varredura não re-baixa
         try {
           const nativeDb = require('./db');
           if (typeof nativeDb.dbClearLocalPathByFilenames === 'function') {
@@ -3448,6 +3583,7 @@ export async function clearMediaCache() {
   try {
     await fs.deleteAsync(dir, { idempotent: true });
   } catch {}
+  _noteEvictedKeys(wipedNames); // [2026-10-21 tg3]
   // HLS offline tree is OS-purgeable-style cache too — clear it here so the
   // "clear cache" path doesn't leave orphaned video-offline segments behind.
   try { require('./hlsOffline').clearAllHls?.(); } catch {}
@@ -3658,6 +3794,25 @@ export async function getStorageStats() {
   };
 }
 
+// [2026-10-21 tg3] Limpa os caches de mídia que vivem FORA de getCacheDir/store e
+// têm API exposta ao JS. Cada um é opcional (binário antigo/web = no-op). Nunca lança.
+export async function clearNativeImageCaches() {
+  if (Platform.OS === 'web') return;
+  try {
+    const ExpoImage = require('expo-image').Image;
+    if (ExpoImage?.clearMemoryCache) { try { await ExpoImage.clearMemoryCache(); } catch {} }
+    if (ExpoImage?.clearDiskCache) { try { await ExpoImage.clearDiskCache(); } catch {} }
+  } catch {}
+  // expo-video (cache LRU de vídeos) + ExpoShorts (ExoPlayer, Android).
+  try { await require('./videoCacheSource').clearVideoDiskCache?.(); } catch {}
+  // Cache nativo de mídia do chat (media_uris) — só quando o módulo está liberado.
+  try {
+    const nc = require('./nativeChatCacheGate').getNativeChatCache?.();
+    if (nc && typeof nc.clearMediaCache === 'function') await nc.clearMediaCache();
+  } catch {}
+  // Miniaturas base64 (LQIP) ficam: são do payload (KBs), pintam o borrado sem rede.
+}
+
 // Nuke both cache + saved media in one call. Used by the "Clear cache" button
 // in settings. Also clears the in-memory syncIndex so subsequent lookups
 // re-scan disk (finding nothing) and the bubbles re-download on demand.
@@ -3716,6 +3871,11 @@ export async function clearAllCache() {
     }
   } catch {}
   syncIndex.clear();
+  // [2026-10-21 tg3] "limpo em X": a varredura automática não re-baixa o que existia.
+  _markClearedNow();
+  // [2026-10-21 tg3] caches de imagem/vídeo fora da nossa pasta: expo-image (disco +
+  // memória), expo-video/ExpoShorts, cache nativo de mídia do chat (expo-chat-cache).
+  await clearNativeImageCaches();
   // Re-semeia entradas de OUTRAS contas? Não: o syncIndex é só um atalho; o
   // store de cada conta re-semeia ao ser ativado (subscribe abaixo).
   _schedulePersistIndex();
@@ -3736,6 +3896,7 @@ export async function clearConversationLocalMedia(conversationId) {
       const r = await st.clearConversation(conversationId);
       freed += r.freedBytes || 0;
       for (const k of r.urlKeys || []) syncIndex.delete(k);
+      _noteEvictedKeys(r.urlKeys || []); // [2026-10-21 tg3]
       relNames.push(...(r.relNames || []));
     }
   } catch {}
@@ -3748,7 +3909,7 @@ export async function clearConversationLocalMedia(conversationId) {
         if (!d) continue;
         try {
           const st2 = await fs.getInfoAsync(d + k);
-          if (st2.exists) { freed += st2.size || 0; await fs.deleteAsync(d + k, { idempotent: true }); relNames.push(k); }
+          if (st2.exists) { freed += st2.size || 0; await fs.deleteAsync(d + k, { idempotent: true }); relNames.push(k); _noteEvictedKeys([k]); }
         } catch {}
       }
       syncIndex.delete(k);

@@ -17085,7 +17085,11 @@ function ChatConversationInnerBody() {
               if (Object.keys(map).length > 0 && mountedRef.current) setCachedUris(prev => ({ ...prev, ...map }));
             }).catch(() => {});
             // Fire-and-forget background download for any not yet cached
-            preCacheUrls(remoteUrls).then(() => {
+            // [2026-10-21 tg3] sem o que o "Limpar cache" apagou e sem o ORIGINAL de foto
+            // que tem versão de tela (a bolha pinta a de tela; original só em tela cheia).
+            let _preUrls = remoteUrls;
+            try { const _f = require('../services/mediaCache').filterSpeculativeMediaUrls; if (_f) _preUrls = _f(mediaMsgs, remoteUrls); } catch {}
+            preCacheUrls(_preUrls).then(() => {
               Promise.allSettled(remoteUrls.map(url => getCachedUri(url).then(local => ({ url, local })))).then(results => {
                 const map = {};
                 results.forEach(r => { if (r.status === 'fulfilled' && r.value.local !== r.value.url) map[r.value.url] = r.value.local; });
@@ -24592,6 +24596,8 @@ function ChatConversationInnerBody() {
         // users ended up seeing a frozen dot even while walking.
         let liveFailCount = 0;
         liveLocIntervalRef.current = setInterval(async () => {
+          // [2026-10-21 tg3] bateria: só em 1º plano; bateria baixa = 30 s (services/liveLocTickGate).
+          try { if (!require('../services/liveLocTickGate').shouldRunLiveLocTick()) return; } catch {}
           try {
             // [WAVE 49 2026-05-21] Ghost mode honors the user's choice in
             // snap-map: when ON, we skip the heartbeat tick. The session
@@ -31347,6 +31353,8 @@ function ChatConversationInnerBody() {
           if (msg.image_variants) {
             try { imgVariants = typeof msg.image_variants === 'string' ? _memoJSON(msg.image_variants) : msg.image_variants; } catch {} // [2026-10-06 thread-tech] memo
           }
+          // [2026-10-21 tg3] blurhash do servidor vem no image_variants (camada 1 do Telegram).
+          if (imgVariants && !msg.blurhash && typeof imgVariants.blurhash === 'string' && imgVariants.blurhash && globalThis.__chatyy_img_layers !== false) { try { msg.blurhash = imgVariants.blurhash; } catch {} }
           const _w = Number(msg.width) || Number(imgVariants?.full_w) || 0;
           const _h = Number(msg.height) || Number(imgVariants?.full_h) || 0;
           let imgBoxW = 280, imgBoxH = 220;
@@ -31366,6 +31374,12 @@ function ChatConversationInnerBody() {
             ? (() => { try { return api.getMediaUrl(_dispRaw); } catch { return null; } })()
             : null;
           let bubbleUri = dispUri || fullUri;
+          // [2026-10-21 tg3] Telegram: com a versão de TELA a bolha nunca puxa o original
+          // (nem p/ o fundo borrado nem no download "eager"); o original só ao abrir em
+          // tela cheia/salvar. Camadas: blurhash/lqip → miniatura (~320) → tela.
+          // Kill: __chatyy_bubble_display_only=false / __chatyy_img_layers=false.
+          const _dispOnly = !!dispUri && (() => { try { return globalThis.__chatyy_bubble_display_only !== false; } catch { return true; } })();
+          const _imgLayers = (() => { try { return globalThis.__chatyy_img_layers !== false; } catch { return true; } })();
           // [2026-10-14 open-still] A linha do servidor (delta da abertura) pode
           // trazer OUTRA URL p/ a mesma foto (variante display × full, local ×
           // remota). Trocar a fonte de uma foto já pintada = recarrega e volta o
@@ -31436,7 +31450,7 @@ function ChatConversationInnerBody() {
           // branco" sem indicação. Aqui forçamos cacheMedia em background
           // logo na 1ª render do bubble se NÃO tem local file. Dedup
           // globalThis pra não disparar 2× a mesma URL entre re-renders.
-          if (Platform.OS !== 'web' && msg.file_url && !msg._uploading && !msg._localUri && !imgLocalPath && !(typeof fullUri === 'string' && fullUri.startsWith('file://'))) {
+          if (Platform.OS !== 'web' && !_dispOnly && msg.file_url && !msg._uploading && !msg._localUri && !imgLocalPath && !(typeof fullUri === 'string' && fullUri.startsWith('file://'))) {
             try {
               const _eagerKey = `__chatyy_eager_${msg.id}_${msg.file_url}`;
               if (!globalThis.__chatyy_eager_set) globalThis.__chatyy_eager_set = new Set();
@@ -31670,7 +31684,7 @@ function ChatConversationInnerBody() {
                     onError now sets a state flag so we KEEP the layer painted
                     (showing transparent over HSL) instead of disappearing —
                     fallback chain: blurhash → lqip → thumb → HSL wrapper bg. */}
-                {!msg.blurhash && !lqipUri && thumbUri && !msg._localUri && !imgLoaded && (
+                {(_imgLayers || (!msg.blurhash && !lqipUri)) && thumbUri && !msg._localUri && !imgLoaded && (
                   <ExpoImage
                     key={`thumb-${msg.id}-${thumbUri.split('?')[0]}`}
                     source={{ uri: thumbUri }}
@@ -31709,7 +31723,7 @@ function ChatConversationInnerBody() {
                 {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && !_imgIsLocal && msg.file_url && !imgLoaded && (
                   <ExpoImage
                     key={`remote-bd-${msg.id}`}
-                    source={{ uri: typeof fullUri === 'string' && fullUri.startsWith('http') ? fullUri : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`) }}
+                    source={{ uri: _dispOnly ? dispUri : (typeof fullUri === 'string' && fullUri.startsWith('http') ? fullUri : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`)) }}
                     style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', top: 0, left: 0, zIndex: 1 }}
                     contentFit="cover"
                     cachePolicy="memory-disk"
@@ -31734,10 +31748,10 @@ function ChatConversationInnerBody() {
                     above the remote blurred bg) so we never see only the
                     skeleton. Gated on no local file (file:// renders instantly
                     via ChatMedia, no backdrop needed) and no upload-in-flight. */}
-                {Platform.OS === 'ios' && !imgUploading && !imgFailed && !msg._localUri && !imgLocalPath && !_imgIsLocal && msg.file_url && (msg.blurhash || lqipUri || thumbUri) && !imgLoaded && (
+                {Platform.OS === 'ios' && !imgUploading && !imgFailed && !msg._localUri && !imgLocalPath && !_imgIsLocal && msg.file_url && (msg.blurhash || lqipUri || thumbUri) && !(_dispOnly && thumbUri) && !imgLoaded && (
                   <ExpoImage
                     key={`ios-bd-${msg.id}`}
-                    source={{ uri: typeof fullUri === 'string' && fullUri.startsWith('http') ? fullUri : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`) }}
+                    source={{ uri: _dispOnly ? dispUri : (typeof fullUri === 'string' && fullUri.startsWith('http') ? fullUri : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`)) }}
                     style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', top: 0, left: 0, zIndex: 1 }}
                     contentFit="cover"
                     cachePolicy="memory-disk"
