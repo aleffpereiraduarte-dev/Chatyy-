@@ -1250,7 +1250,7 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if (lib.uniffi_chatyy_crypto_checksum_func_core_version() != 31152.toShort()) {
+    if (lib.uniffi_chatyy_crypto_checksum_func_core_version() != 7793.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_chatyy_crypto_checksum_func_decrypt_bytes() != 41233.toShort()) {
@@ -5822,7 +5822,7 @@ public object FfiConverterSequenceTypeDeviceTarget: FfiConverterRustBuffer<List<
 
 
         /**
-         * `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.3; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"`.
+         * `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.5; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"`.
          */ fun `coreVersion`(): kotlin.String {
             return FfiConverterString.lift(
     uniffiRustCall() { _status ->
