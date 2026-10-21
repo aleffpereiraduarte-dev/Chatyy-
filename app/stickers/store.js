@@ -393,15 +393,17 @@ export default function StickerStoreScreen() {
     const q = search.trim();
     if (q.length < 2) { setSearchResults([]); setSearching(false); return undefined; }
     setSearching(true);
+    // [2026-10-21] resposta de termo antigo chegando depois não sobrescreve a atual.
+    let stale = false;
     const tid = setTimeout(async () => {
       try {
         const r = await api.stickerPackSearch(q);
-        setSearchResults(r?.items || r?.data?.items || []);
+        if (!stale) setSearchResults(r?.items || r?.data?.items || []);
       } catch {} finally {
-        setSearching(false);
+        if (!stale) setSearching(false);
       }
     }, 300);
-    return () => clearTimeout(tid);
+    return () => { stale = true; clearTimeout(tid); };
   }, [search]);
 
   const togglePack = useCallback(async (pack) => {

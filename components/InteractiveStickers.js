@@ -450,8 +450,14 @@ export function CountdownSticker({ sticker, stacked }) {
   const [timeLeft, setTimeLeft] = useState(calcTimeLeft(sticker.targetDate));
 
   useEffect(() => {
+    // [2026-10-21] para de tiquetaquear quando acaba (antes re-renderizava 1×/s para sempre).
+    const now0 = calcTimeLeft(sticker.targetDate);
+    setTimeLeft(now0);
+    if (now0.total <= 0) return undefined;
     const interval = setInterval(() => {
-      setTimeLeft(calcTimeLeft(sticker.targetDate));
+      const left = calcTimeLeft(sticker.targetDate);
+      setTimeLeft(left);
+      if (left.total <= 0) clearInterval(interval);
     }, 1000);
     return () => clearInterval(interval);
   }, [sticker.targetDate]);

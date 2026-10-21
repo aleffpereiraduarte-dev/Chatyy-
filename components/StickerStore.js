@@ -879,6 +879,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
 
 // ─── Missing StyleSheet import ─────────────────────────────────────────────────
 import { StyleSheet } from 'react-native';
+import { DarkColors } from '../constants/theme';
 
 import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // ─── Hero "Pack do dia" Card ──────────────────────────────────────────────────
@@ -899,7 +900,8 @@ function HeroPackCard({ pack, onPress, colors, installed }) {
       style={{
         marginHorizontal: 16, marginTop: 14, marginBottom: 4,
         borderRadius: 20, overflow: 'hidden',
-        backgroundColor: '#111111',
+        // [2026-10-21 grafite] #111 fixo sumia no fundo escuro (#0E0E10): no escuro usa o cartão grafite.
+        backgroundColor: colors?.background === DarkColors.background ? '#2B2B30' : '#111111',
         shadowColor: '#111111', shadowOpacity: 0.25,
         shadowRadius: 14, shadowOffset: { width: 0, height: 6 },
         elevation: 6,
@@ -1532,14 +1534,15 @@ export default function StickerStore({ visible, onClose, colors, t: _tProp, user
                   style={{
                     position: 'absolute', bottom: 20, right: 20,
                     width: 56, height: 56, borderRadius: 28,
-                    backgroundColor: '#111111',
+                    // [2026-10-21 grafite] tinta do tema (no escuro o #111 fixo sumia no fundo)
+                    backgroundColor: colors.primary || '#111111',
                     alignItems: 'center', justifyContent: 'center',
                     shadowColor: '#111111', shadowOpacity: 0.45,
                     shadowRadius: 12, shadowOffset: { width: 0, height: 6 },
                     elevation: 8,
                   }}
                 >
-                  <IconPlus size={26} color="#fff" />
+                  <IconPlus size={26} color={colors.onPrimary || '#fff'} />
                 </TouchableOpacity>
               </View>
             )}

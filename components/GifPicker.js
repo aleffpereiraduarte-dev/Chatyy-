@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
-  View, Text, TouchableOpacity, TextInput, FlatList, Platform, ActivityIndicator, StyleSheet,
+  View, Text, TouchableOpacity, TextInput, FlatList, Platform, ActivityIndicator, StyleSheet, ScrollView,
 } from 'react-native';
+import { haptic } from '../constants/theme';
 import { IconX, IconSearch, IconStarFilled } from './Icons';
 import * as api from '../services/api';
 import { cacheMedia, getLocalUriSyncJs, preCacheUrls } from '../services/mediaCache';
@@ -108,6 +109,10 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
   const [gifs, setGifs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [activeCategory, setActiveCategory] = useState(null);
+  // [2026-10-21 gif-empty] falha de rede sem cache deixava o painel em branco
+  // para sempre (sem aviso nem como tentar de novo); busca sem resultado idem.
+  const [loadError, setLoadError] = useState(false);
+  const lastQRef = useRef('');
   const searchTimeout = useRef(null);
   const inputRef = useRef(null);
   const aliveRef = useIsMounted();
@@ -132,6 +137,8 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
 
   const loadGifs = useCallback(async (q) => {
     const myId = ++reqIdRef.current;
+    lastQRef.current = q || '';
+    setLoadError(false);
     // Check cache first
     const cacheKey = q || '__trending__';
     if (gifCache.has(cacheKey)) {
@@ -194,8 +201,16 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
             }
           } catch {}
         }
+      } else if (!(_stale && _stale.gifs && _stale.gifs.length)) {
+        setGifs([]);
+        setLoadError(true);
       }
-    } catch {}
+    } catch {
+      if (aliveRef.current && myId === reqIdRef.current && !(_stale && _stale.gifs && _stale.gifs.length)) {
+        setGifs([]);
+        setLoadError(true);
+      }
+    }
     if (aliveRef.current && myId === reqIdRef.current) setLoading(false);
   }, []);
 
@@ -229,6 +244,7 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
   const handleLongPress = useCallback((item) => {
     try {
       stkCache.toggleGifFavorite(item);
+      try { haptic.medium(); } catch {}
       setFavIds(new Set(stkCache.getGifFavorites().map(g => String(g.id || g.medium || g.preview))));
       setPinned(stkCache.getGifPinnedList());
     } catch {}
@@ -274,7 +290,7 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
             autoCorrect={false}
           />
           {query ? (
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setQuery(''); loadGifs(''); setActiveCategory(null); }} hitSlop={8}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setQuery(''); loadGifs(''); setActiveCategory(null); }}>
               <IconX size={14} color={colors.textTertiary} />
             </TouchableOpacity>
           ) : null}
@@ -285,11 +301,15 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
       </View>
 
       {/* Category chips */}
-      <View style={{ flexDirection: 'row', paddingHorizontal: 8, paddingVertical: 4, gap: 4 }}>
+      {/* [2026-10-21] rolagem horizontal: 10 chips não cabiam em tela de 360 pt (os últimos sumiam). */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ flexGrow: 0 }} contentContainerStyle={{ flexDirection: 'row', paddingHorizontal: 8, paddingVertical: 4, gap: 4 }}>
         {CATEGORIES.map((cat) => (
           <TouchableOpacity
             key={cat.q}
             onPress={() => handleCategory(cat)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: activeCategory === cat.q }}
+            accessibilityLabel={cat.q}
             style={{
               paddingHorizontal: 8, paddingVertical: 4, borderRadius: 16,
               backgroundColor: activeCategory === cat.q ? colors.primary + '20' : 'transparent',
@@ -300,12 +320,29 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
             <Text style={{ fontSize: 18 }}>{cat.emoji}</Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
 
       {/* GIF grid */}
       {loading && gridData.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color={colors.primary} />
+        </View>
+      ) : gridData.length === 0 ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, gap: 10 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: 'center' }}>
+            {loadError
+              ? (t?.('chat.gifLoadFailed', 'Não foi possível carregar os GIFs') || 'Não foi possível carregar os GIFs')
+              : (t?.('chat.gifNoResults', 'Nenhum GIF encontrado') || 'Nenhum GIF encontrado')}
+          </Text>
+          {loadError ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={() => loadGifs(lastQRef.current)}
+              style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}
+            >
+              <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '600' }}>{t?.('common.retry', 'Tentar de novo') || 'Tentar de novo'}</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       ) : (
         <FlatList

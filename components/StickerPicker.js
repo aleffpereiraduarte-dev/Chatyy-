@@ -16,7 +16,7 @@ import { pickMedia } from '../services/stickerImagePicker';
 import Svg, { Path as SvgPath } from 'react-native-svg';
 import Sheet from './ui/Sheet';
 import ActionList from './ui/ActionList';
-import { Overlay, overlayColors } from '../constants/theme';
+import { Overlay, overlayColors, DarkColors } from '../constants/theme';
 
 import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 function _tr(t, key, fb) {
@@ -62,7 +62,7 @@ function ChoiceSheet({ visible, title, options, onClose, colors }) {
         <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
           <TouchableOpacity
             onPress={() => { onClose(); setTimeout(() => cancel.onPress && cancel.onPress(), 60); }}
-            style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: overlayColors(colors, colors.background === '#000000').neutralButton }}
+            style={{ height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: overlayColors(colors, colors.background === '#000000' || colors.background === DarkColors.background).neutralButton }}
             accessibilityRole="button"
             accessibilityLabel={cancel.label}
           >
@@ -392,20 +392,23 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
     // discovery search across every public pack (WhatsApp parity). Both run
     // in parallel — installed results render first, global underneath in
     // the "Mais resultados" rail.
+    // [2026-10-21] `stale`: resposta de uma busca antiga (digitação rápida)
+    // chegava depois da nova e trocava os resultados pelos do termo anterior.
+    let stale = false;
     const tid = setTimeout(async () => {
       if (q.length < 2) return;
       try {
         const r = await api.chatStickerSearch(q);
         const items = r?.items || r?.data?.items || [];
-        setSearchBackend(items.map(x => x.url).filter(Boolean));
+        if (!stale) setSearchBackend(items.map(x => x.url).filter(Boolean));
       } catch {}
       try {
         const gr = await api.chatStickerGlobalSearch(q);
         const gitems = gr?.items || gr?.data?.items || [];
-        setSearchGlobal(gitems.map(x => x.url).filter(Boolean));
+        if (!stale) setSearchGlobal(gitems.map(x => x.url).filter(Boolean));
       } catch {}
     }, 300);
-    return () => clearTimeout(tid);
+    return () => { stale = true; clearTimeout(tid); };
   }, [searchQuery, mineFull]);
 
   // Pick image → open sticker editor → upload result as sticker
@@ -1142,20 +1145,21 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
                 flexDirection: 'row', alignItems: 'center', gap: 6,
                 paddingHorizontal: 14, paddingVertical: 9,
                 borderRadius: 999,
+                // [2026-10-21] tinta do tema: '#111111' fixo sumia no cartão escuro (estado favoritado).
                 backgroundColor: previewItem != null && isFav(previewItem)
                   ? 'transparent'
-                  : '#111111',
+                  : colors.text,
                 borderWidth: previewItem != null && isFav(previewItem) ? 1.5 : 0,
-                borderColor: '#111111',
+                borderColor: colors.text,
               }}
             >
               <IconHeart
                 size={14}
-                color={previewItem != null && isFav(previewItem) ? '#111111' : '#fff'}
+                color={previewItem != null && isFav(previewItem) ? colors.text : colors.background}
               />
               <Text style={{
                 fontSize: 12, fontWeight: '800',
-                color: previewItem != null && isFav(previewItem) ? '#111111' : '#fff',
+                color: previewItem != null && isFav(previewItem) ? colors.text : colors.background,
               }}>
                 {previewItem != null && isFav(previewItem)
                   ? _tr(t, 'stickerMaker.unfavorite', 'Remover dos favoritos')
