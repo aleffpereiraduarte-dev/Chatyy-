@@ -26,9 +26,16 @@ const CATEGORIES = [
 // onPrimary): o #111111/#fff fixo sumia no fundo preto do modo escuro.
 function defaultBundleIcon() { return IconTag; }
 
+// [2026-10-21 naolidos] Número REAL (contagem do servidor), agrupado pelo
+// idioma ("3.251"), não mais "99+": o chip dizia 99+ e a lista abria vazia.
+function formatCount(n, language) {
+  const v = Math.max(0, Math.floor(Number(n) || 0));
+  try { return new Intl.NumberFormat(language || undefined).format(v); } catch { return String(v); }
+}
+
 export default function CategoryTabs({ activeCategory = 'all', onCategoryChange, counts = {}, bundles = [] }) {
   const { colors } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   // Merge in dynamic bundles supplied by the backend (email_bundles).
   // We dedupe against the static categories so primary/social/etc. don't
@@ -113,7 +120,7 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
                   s.badgeText,
                   { color: isActive ? activeInk : colors.textSecondary },
                 ]}>
-                  {count > 99 ? '99+' : count}
+                  {formatCount(count, language)}
                 </Text>
               </View>
             )}

@@ -104,6 +104,9 @@ export default function EmailList({
   onLoadMore,
   loadingMore,
   endOfList,
+  // [2026-10-21 naolidos] texto do vazio de um filtro (Não lidos/Importantes…)
+  emptyTitle,
+  emptySub,
 }) {
   const { colors, inboxType, isDark, densityConfig } = useTheme();
   const { t, language } = useLanguage();
@@ -339,7 +342,7 @@ export default function EmailList({
       {loading && emails.length === 0 ? (
         <EmailSkeleton count={8} />
       ) : emails.length === 0 ? (
-        <EmptyState search={search} folder={currentFolder} onRefresh={onRefresh} />
+        <EmptyState search={search} folder={currentFolder} onRefresh={onRefresh} title={emptyTitle} sub={emptySub} />
       ) : _useNativeInbox ? (
         <NativeEmailList
           data={sectionedData}

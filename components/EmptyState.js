@@ -32,7 +32,7 @@ function FolderIcon({ type, size, color }) {
   }
 }
 
-export default function EmptyState({ search, message, folder, onRefresh }) {
+export default function EmptyState({ search, message, folder, onRefresh, title, sub }) {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
@@ -97,8 +97,8 @@ export default function EmptyState({ search, message, folder, onRefresh }) {
           <FolderIcon type={config.icon} size={44} color={colors.primary} style={{ opacity: 0.8 }} />
         </Animated.View>
       </View>
-      <Text style={[s.text, { color: colors.text }]}>{t(config.titleKey)}</Text>
-      <Text style={[s.sub, { color: colors.textTertiary }]}>{t(config.subKey)}</Text>
+      <Text style={[s.text, { color: colors.text }]}>{title || t(config.titleKey)}</Text>
+      <Text style={[s.sub, { color: colors.textTertiary }]}>{sub || t(config.subKey)}</Text>
 
       <View style={s.ctaRow}>
         {config.cta === 'compose' && (

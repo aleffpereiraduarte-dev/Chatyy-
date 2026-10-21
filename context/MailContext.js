@@ -206,6 +206,17 @@ async function getAISummaryForNotification(email, Notifications) {
 
 const MailContext = createContext(null);
 
+// [2026-10-21 naolidos] Chave do "escopo" da lista (pasta + filtro do servidor).
+// O chip "Não lidos" filtrava SÓ as ~20 linhas já carregadas (todas lidas na
+// caixa do founder: 3251 não lidos no servidor, 0 na 1ª página) → "Caixa de
+// entrada vazia". Agora o filtro vai pro servidor (filter=unread / category /
+// label) e o escopo fica guardado aqui: paginar, puxar p/ atualizar, WS e
+// polls recarregam o MESMO filtro em vez da caixa inteira.
+export function mailListScopeKey(folder, scope) {
+  const sc = scope || {};
+  return `${folder || 'INBOX'}|${sc.category || ''}|${sc.label || ''}|${sc.filter || ''}`;
+}
+
 // Polling interval: 10s when WS down. [2026-10-18 battery] Com o WS autenticado
 // o new_email chega pelo socket → o poll de 30 s (120/h com o e-mail aberto)
 // virou rede de segurança de 5 min (lista e contadores de pasta).
@@ -349,6 +360,26 @@ export function MailProvider({ children }) {
   // switches, so changeFolder can paint instantly instead of showing the
   // previous folder's rows under the new header (instant folder switch fix).
   const folderRowsRef = useRef(new Map());
+  // [2026-10-21 naolidos] Escopo ativo da lista (ver mailListScopeKey) e o que
+  // está pintado agora: `listView.key` = escopo das linhas em `emails`,
+  // `confirmed` = o servidor respondeu ESTE escopo (só então "vazio" é
+  // verdade), `error` = a carga deste escopo falhou (sem rede etc.).
+  const listScopeRef = useRef({ folder: 'INBOX', category: '', label: '', filter: '' });
+  const scopedPaintRef = useRef(false);
+  const [listView, setListViewState] = useState({ key: 'INBOX|||', confirmed: false, error: false });
+  const listViewKeyRef = useRef('INBOX|||');
+  const setListView = useCallback((key, confirmed, error) => {
+    listViewKeyRef.current = key;
+    setListViewState(prev => (prev.key === key && prev.confirmed === confirmed && prev.error === error)
+      ? prev : { key, confirmed, error });
+  }, []);
+  const setListScope = useCallback((folder, scope) => {
+    const sc = scope || {};
+    listScopeRef.current = {
+      folder: folder || 'INBOX',
+      category: sc.category || '', label: sc.label || '', filter: sc.filter || '',
+    };
+  }, []);
   // [2026-10-11 email-qa] Linhas otimistas de Enviados (mais nova primeiro).
   const pendingSentRef = useRef([]);
   const mergePendingSent = useCallback((folder, list) => {
@@ -483,7 +514,9 @@ export function MailProvider({ children }) {
   // while a search is active — search results are not the folder's canonical
   // list. Covers every mutation path (network load, silent merge, WS prepend).
   useEffect(() => {
-    if (!search) folderRowsRef.current.set(currentFolder, emails);
+    // [2026-10-21 naolidos] Lista filtrada (Não lidos/categoria/marcador) não
+    // é a pasta: guardá-la fazia "Todos" voltar mostrando só os não lidos.
+    if (!search && !scopedPaintRef.current) folderRowsRef.current.set(currentFolder, emails);
   }, [emails, currentFolder, search]);
 
   // Reset all state (used when switching accounts)
@@ -500,6 +533,9 @@ export function MailProvider({ children }) {
     setUndoAction(null);
     foldersPaintedRef.current = false;
     folderMutAtRef.current = 0;
+    listScopeRef.current = { folder: 'INBOX', category: '', label: '', filter: '' };
+    scopedPaintRef.current = false;
+    setListView('INBOX|||', false, false);
     // NOTE: Do NOT clear recentlyReadRef here — it persists in localStorage
     // and must survive resets to prevent the read→unread revert bug
   }, []);
@@ -547,8 +583,18 @@ export function MailProvider({ children }) {
     } catch {}
   }, []);
 
-  const loadEmails = useCallback(async (folder, pg = 1, q = '', category = '', label = '', silent = false) => {
+  const loadEmails = useCallback(async (folder, pg = 1, q = '', category = '', label = '', silent = false, filter = '') => {
     const f = folder || currentFolder;
+    // [2026-10-21 naolidos] Sem filtro explícito → herda o escopo ativo da
+    // pasta (paginação/refresh/WS/poll continuam no "Não lidos").
+    {
+      const sc = listScopeRef.current;
+      if (!category && !label && !filter && sc.folder === f) {
+        category = sc.category; label = sc.label; filter = sc.filter;
+      }
+    }
+    const scoped = !!(category || label || filter);
+    const scopeKey = mailListScopeKey(f, { category, label, filter });
 
     // Pagination reset guard: if the folder or the search query differs from
     // the previous loadEmails call, force page 1. Otherwise switching from a
@@ -556,11 +602,12 @@ export function MailProvider({ children }) {
     // or starting/clearing a search — would request a non-existent page and
     // come back empty. (loadMore is the only legit path that keeps pg > 1, and
     // it always targets the same folder+query, so it's unaffected.)
-    if (pg > 1 && (f !== loadEmailsCtxRef.current.folder || q !== loadEmailsCtxRef.current.query)) {
+    if (pg > 1 && (f !== loadEmailsCtxRef.current.folder || q !== loadEmailsCtxRef.current.query
+        || scopeKey !== loadEmailsCtxRef.current.scope)) {
       pg = 1;
       setPage(1);
     }
-    loadEmailsCtxRef.current = { folder: f, query: q };
+    loadEmailsCtxRef.current = { folder: f, query: q, scope: scopeKey };
 
     // [account-epoch guard] Capture the active account NOW. A slow in-flight
     // getInbox for account A can resolve AFTER the user switched to B —
@@ -572,7 +619,7 @@ export function MailProvider({ children }) {
     const _acctEpoch = api.getActiveAccountEmail?.() ?? '';
 
     // Show cached data INSTANTLY on non-silent first-page loads (no spinner if cache exists)
-    if (!silent && pg === 1 && !q && !category && !label) {
+    if (!silent && pg === 1 && !q && !scoped) {
       // [2026-09-24 fix "Yesterday→Today pisca"] Se JÁ temos linhas em memória
       // desta sessão pra esta pasta (changeFolder acabou de pintá-las via
       // folderRowsRef), NÃO sobrescrever com o cache de DISCO — ele pode estar
@@ -582,10 +629,19 @@ export function MailProvider({ children }) {
       // buscamos fresco em silêncio. Cold start (sem memória) segue no cache.
       const remembered = folderRowsRef.current.get(f);
       if (remembered && remembered.length > 0) {
+        // [2026-10-21 naolidos] Voltando de um filtro (Não lidos → Todos): a
+        // tela ainda mostra a lista filtrada → repinta a pasta na hora.
+        if (scopedPaintRef.current) {
+          scopedPaintRef.current = false;
+          setEmails(mergePendingSent(f, remembered));
+          setListView(scopeKey, false, false);
+        }
         silent = true;
       } else {
         const cached = await getEmailsFromCache(f);
         if (cached && cached.length > 0) {
+          scopedPaintRef.current = false;
+          setListView(scopeKey, false, false);
           setEmails(mergePendingSent(f, cached));
           setTotal(cached.length);
           // Don't show loading spinner — we have cached data visible
@@ -597,10 +653,27 @@ export function MailProvider({ children }) {
       }
     } else if (!silent) {
       setLoadingList(true);
+      // [2026-10-21 naolidos] Entrou num filtro: pinta NA HORA só o que já se
+      // sabe dele (linhas da pasta em memória que batem) e o resto vem do
+      // servidor; sem nada local → lista vazia + skeleton (nunca "Caixa
+      // vazia" antes do servidor confirmar — ver listView.confirmed).
+      if (scoped && pg === 1 && !q && listViewKeyRef.current !== scopeKey) {
+        const base = folderRowsRef.current.get(f) || [];
+        let local = [];
+        if (!label) {
+          local = base.filter(e => e && (!filter || !e.seen) && (!category || e.category === category));
+        }
+        scopedPaintRef.current = true;
+        setEmails(local);
+        setListView(scopeKey, false, false);
+      }
     }
 
     try {
-      const r = await api.getInbox(f, pg, 20, q, category, label);
+      const r = await api.getInbox(f, pg, 20, q, category, label, filter);
+      // [2026-10-21 naolidos] Resposta de um escopo/pasta que já não é o atual
+      // (trocou de chip/pasta com a requisição em voo) não pinta por cima.
+      if (loadEmailsCtxRef.current.scope !== scopeKey) return;
       // Account switched while this request was in flight → this is account A's
       // data arriving after the user moved to B. Drop it: painting or caching
       // it now would leak A into B and poison B's persisted cache namespace.
@@ -640,6 +713,12 @@ export function MailProvider({ children }) {
 
         const _ls = localSearchRef.current;
         if (pg === 1 && q && _ls.q === q) searchServerDoneRef.current = true;
+        // [2026-10-21 naolidos] O servidor respondeu ESTE escopo: a partir
+        // daqui uma lista vazia é verdade (estado vazio liberado).
+        if (pg === 1) {
+          scopedPaintRef.current = scoped;
+          setListView(scopeKey, true, false);
+        }
         if (pg === 1 && q && silent === 'local' && _ls.q === q && _ls.folder === f) {
           // Local já está na tela: servidor por cima + achados locais que ele
           // não trouxe (corpo em cache, prévia), sem spinner nem pulo.
@@ -706,24 +785,28 @@ export function MailProvider({ children }) {
               const key = String(e.uid);
               if (serverUids.has(key)) return false; // reconciled above
               if (arrived.has(key)) return true; // just arrived, protect it
+              // [2026-10-21 naolidos] Filtro (Não lidos/categoria/marcador): o
+              // servidor é a verdade da pertença — com resposta vazia o
+              // fallback por data abaixo mantinha TODAS as linhas antigas.
+              if (scoped) return false;
               const uidN = Number(e.uid);
               if (Number.isFinite(uidN) && Number.isFinite(newestUid)) return uidN > newestUid;
               return _emailDateKey(e) > newestKey; // date fallback
             });
             const merged = survivors.length ? [...survivors, ...reconciled] : reconciled;
-            return (pg === 1 && !q && !category && !label) ? mergePendingSent(f, merged) : merged;
+            return (pg === 1 && !q && !scoped) ? mergePendingSent(f, merged) : merged;
           });
         } else {
           // Non-silent load: replace all, but still protect recently-read emails
           const fresh = applyRecentFlags(applyRecentlyRead(emailList));
           if (pg === 1 && q && _ls.q === q && _ls.folder === f) setEmails(mergeSearchResults(fresh, _ls.rows));
-          else setEmails((pg === 1 && !q && !category && !label) ? mergePendingSent(f, fresh) : fresh);
+          else setEmails((pg === 1 && !q && !scoped) ? mergePendingSent(f, fresh) : fresh);
         }
         setTotal(r.data?.total || 0);
         // Update label unread counts from server
         if (r.data?.label_counts) setLabelCounts(r.data.label_counts);
         // Cache first page results
-        if (pg === 1 && !q && !category && !label) {
+        if (pg === 1 && !q && !scoped) {
           saveEmailsToCache(f, emailList).catch(() => {});
           _nativeSaveEmails(f, emailList);
         }
@@ -732,10 +815,19 @@ export function MailProvider({ children }) {
           offlineQueueRef.current = false;
           replayOfflineQueue(api).catch(() => {});
         }
+      } else if (pg === 1 && scoped) {
+        throw new Error(r?.message || 'inbox_scope_failed'); // → catch: erro, não "vazio"
       }
     } catch {
+      // [2026-10-21 naolidos] Falha do filtro: não pinta a caixa inteira
+      // (cache) por baixo do chip, e avisa a tela (erro ≠ "vazio").
+      if (pg === 1 && scoped && loadEmailsCtxRef.current.scope === scopeKey) {
+        listViewKeyRef.current = scopeKey;
+        setListViewState(prev => (prev.key === scopeKey ? (prev.error ? prev : { ...prev, error: true })
+          : { key: scopeKey, confirmed: false, error: true }));
+      }
       // Fallback to cached data when offline (only if we didn't already show cache)
-      if (pg === 1 && !q) {
+      if (pg === 1 && !q && !scoped) {
         const cached = await getEmailsFromCache(f);
         if (cached) {
           setEmails(cached);
@@ -1006,6 +1098,9 @@ export function MailProvider({ children }) {
       // the PREVIOUS account's remembered rows, and pendingRemoval/arrived
       // windows filter or protect the new account's uids on collision.
       folderRowsRef.current = new Map();
+      listScopeRef.current = { folder: 'INBOX', category: '', label: '', filter: '' };
+      scopedPaintRef.current = false;
+      setListView('INBOX|||', false, false);
       pendingSentRef.current = [];
       pendingRemovalRef.current = new Map();
       recentlyArrivedRef.current = new Map();
@@ -1029,6 +1124,10 @@ export function MailProvider({ children }) {
   }, [user?.email]);
 
   const changeFolder = useCallback((folder) => {
+    // [2026-10-21 naolidos] Trocar de pasta sai do filtro (estilo Gmail).
+    listScopeRef.current = { folder, category: '', label: '', filter: '' };
+    scopedPaintRef.current = false;
+    setListView(mailListScopeKey(folder), false, false);
     setCurrentFolder(folder);
     setSelectedEmail(null);
     setPage(1);
@@ -1056,7 +1155,7 @@ export function MailProvider({ children }) {
       if (!pend.length) setLoadingList(true);
     }
     loadEmails(folder, 1, '');
-  }, [loadEmails, mergePendingSent]);
+  }, [loadEmails, mergePendingSent, setListView]);
 
   // [2026-10-11 email-qa] Enviou → linha em Enviados NA HORA; Desfazer remove.
   // Reconciliação: mergePendingSent em toda carga da pasta Enviados + recargas
@@ -1992,6 +2091,8 @@ export function MailProvider({ children }) {
     resetMailState,
     // Ready state
     recentlyReadLoaded,
+    // [2026-10-21 naolidos] filtro da lista no servidor
+    listView, setListScope, bumpFolderUnread,
   }), [
     emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
     page, total, search, wsStatus,
@@ -2005,6 +2106,7 @@ export function MailProvider({ children }) {
     snoozeEmail,
     resetMailState,
     recentlyReadLoaded,
+    listView, setListScope, bumpFolderUnread,
   ]);
 
   return (

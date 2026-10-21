@@ -10,7 +10,7 @@ import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 
 import { USE_NATIVE_SHEETS } from '../components/NativeSheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth, isChildAccount } from '../context/AuthContext';
-import { useMail } from '../context/MailContext';
+import { useMail, mailListScopeKey } from '../context/MailContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Shadow, BorderRadius, FontSize, Spacing, LetterSpacing, AnimTiming } from '../constants/theme';
@@ -97,6 +97,22 @@ const SIDE_PANEL_ROUTES = {
   '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes' },
 };
 
+// [2026-10-21 naolidos] Chip → escopo da lista NO SERVIDOR. "unread" =
+// filter=unread (IMAP UNSEEN); social/promoções/atualizações/principal =
+// category=; "important" fica sem filtro de servidor (classificação local).
+const SERVER_CATEGORIES = new Set(['primary', 'social', 'promotions', 'updates']);
+function inboxScopeFor(cat, label) {
+  return {
+    category: SERVER_CATEGORIES.has(cat) ? cat : '',
+    label: label || '',
+    filter: cat === 'unread' ? 'unread' : '',
+  };
+}
+// Importantes/categorias (filtro do aparelho por cima da página do servidor):
+// busca páginas seguintes sozinho até ter linhas suficientes p/ a tela.
+const AUTO_FILL_MIN_ROWS = 12;
+const AUTO_FILL_MAX_PAGES = 12;
+
 // Wrap the inner screen in an ErrorBoundary so that any crash inside
 // (e.g. a dynamic native-module require throwing synchronously on iOS,
 // a TDZ from a fast-refresh OTA mismatch, etc.) shows the friendly
@@ -143,6 +159,7 @@ function InboxScreenInner() {
     resetMailState,
     wsStatus,
     recentlyReadLoaded,
+    listView, setListScope, bumpFolderUnread,
   } = useMail();
   const { colors, isDark, toggle } = useTheme();
   const { t } = useLanguage();
@@ -452,22 +469,16 @@ function InboxScreenInner() {
   }, [folders]);
 
   // Compute category counts (uses AI categories if available, falls back to e.category)
+  // [2026-10-21 naolidos] Só número que o SERVIDOR conhece: "Não lidos" = não
+  // lidos da pasta (STATUS UNSEEN + ajustes otimistas). Importantes/categorias
+  // contavam as ~20 linhas carregadas (número de outra fonte, mudava ao trocar
+  // de chip) → sem número até existir contagem real no servidor.
   useEffect(() => {
-    if (currentFolder !== 'INBOX' || !emails?.length) return;
-    const counts = { unread: 0, important: 0, primary: 0, social: 0, promotions: 0, updates: 0 };
-    for (const e of emails) {
-      const aiBucket = aiCategoryBucket(aiCategories[e.uid]);
-      const cat = aiBucket || e.category || 'primary';
-      if (counts[cat] !== undefined) counts[cat]++;
-      if (!e.seen) counts.unread++;
-      if (isImportant(e)) counts.important++;
-    }
-    // [2026-10-11 email-qa] "Não lidos" = contador da PASTA (servidor +
-    // ajustes otimistas), não só as ~20 linhas carregadas — com mais de uma
-    // página o chip dizia 12 enquanto a barra lateral dizia 16.
-    if (inboxFolderUnread != null) counts.unread = Math.max(counts.unread, inboxFolderUnread);
-    setCategoryCounts(counts);
-  }, [emails, currentFolder, aiCategories, isImportant, inboxFolderUnread]);
+    if (currentFolder !== 'INBOX') return;
+    const loadedUnread = (listView?.key === mailListScopeKey('INBOX')) ? emails.filter(e => !e.seen).length : 0;
+    const n = inboxFolderUnread != null ? inboxFolderUnread : loadedUnread;
+    setCategoryCounts(prev => (prev.unread === n && Object.keys(prev).length === 1 ? prev : { unread: n }));
+  }, [emails, currentFolder, inboxFolderUnread, listView?.key]);
 
   // [2026-10-09 on-device-privacy] A importância agora é calculada NO
   // APARELHO (services/emailImportanceLocal: remetente/lista/promo/urgência/
@@ -540,7 +551,14 @@ function InboxScreenInner() {
   // existing api.bulkMarkRead endpoint (no per-uid loop).
   const handleMarkAllRead = useCallback(() => {
     const unreadUids = emails.filter(e => !e.seen).map(e => e.uid);
-    if (unreadUids.length === 0) return;
+    // [2026-10-21 naolidos] Contador da PASTA (servidor). Antes, com a 1ª
+    // página toda lida e 3251 não lidos no servidor, o ✓ não fazia NADA.
+    const fUnread = (() => {
+      const f = (folders || []).find(x => x && x.name === currentFolder);
+      const n = Number(f?.unread ?? f?.unseen);
+      return Number.isFinite(n) ? n : 0;
+    })();
+    if (unreadUids.length === 0 && fUnread <= 0) return;
     const doMark = async () => {
       try {
         // [2026-10-11 email-qa] Otimista: as linhas perdem o negrito e o
@@ -565,35 +583,46 @@ function InboxScreenInner() {
     // can see). Offer the folder-wide IMAP sweep as a second button so
     // they can pick the broader action without having to scroll.
     const doMarkFolder = async () => {
+      // [2026-10-21 naolidos] Otimista: linhas sem negrito, contador da pasta
+      // (cabeçalho, chip "Não lidos", barra lateral) vai a 0 NA HORA; no erro
+      // volta a verdade do servidor.
+      try { unreadUids.forEach(u => { try { ctxMarkAsRead(u, currentFolder, true); } catch {} }); } catch {}
+      try { bumpFolderUnread?.(currentFolder, -Math.max(fUnread, unreadUids.length) - 1); } catch {}
       try {
         const apiSvc = await import('../services/api');
-        await apiSvc.bulkMarkReadFolder(currentFolder);
+        const r = await apiSvc.bulkMarkReadFolder(currentFolder);
+        if (r && r.success === false) throw new Error(r.message || 'bulk_mark_read_folder');
         refresh();
         try { loadFolders(); } catch {}
         try { (await import('../services/pushNotifications')).refreshBadgeCount?.(); } catch {}
-      } catch (e) { console.warn('bulkMarkReadFolder failed', e); }
+      } catch (e) {
+        console.warn('bulkMarkReadFolder failed', e);
+        try { refresh(); } catch {}
+        try { loadFolders(); } catch {}
+      }
     };
+    const folderWide = fUnread > unreadUids.length;
     const title = t('contextMenu.markRead') || 'Marcar como lido';
     // [2026-10-12] As chaves já trazem {count} — o número saía duplicado ("6 6 não lidos?").
-    const msg = `${unreadUids.length > 1 ? t('inbox.unreadPlural', { count: unreadUids.length }) : t('inbox.unread', { count: unreadUids.length })}?`;
-    const buttons = [
-      { text: t('common.cancel'), style: 'cancel' },
-      { text: t('contextMenu.markRead') || 'Marcar', onPress: doMark },
-    ];
-    if (unreadUids.length >= 50) {
-      buttons.push({
-        text: t('inbox.markAllInFolder') || 'Marcar tudo na pasta',
-        onPress: doMarkFolder,
-      });
+    const nMsg = folderWide ? fUnread : unreadUids.length;
+    const msg = `${nMsg > 1 ? t('inbox.unreadPlural', { count: nMsg }) : t('inbox.unread', { count: nMsg })}?`;
+    const buttons = [{ text: t('common.cancel'), style: 'cancel' }];
+    // Só as carregadas faz sentido quando há algumas não lidas na tela e a
+    // pasta tem mais; a pasta inteira é a ação principal (Gmail "Marcar todas").
+    if (unreadUids.length > 0 && folderWide) {
+      buttons.push({ text: t('inbox.markLoadedOnly', 'Só as carregadas ({count})').replace('{count}', String(unreadUids.length)), onPress: doMark });
     }
+    buttons.push(folderWide || unreadUids.length >= 50
+      ? { text: t('inbox.markAllInFolder') || 'Marcar tudo na pasta', onPress: doMarkFolder }
+      : { text: t('contextMenu.markRead') || 'Marcar', onPress: doMark });
     try {
       Alert.alert(title, msg, buttons);
     } catch {
       if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) {
-        (unreadUids.length >= 50 ? doMarkFolder : doMark)();
+        (folderWide || unreadUids.length >= 50 ? doMarkFolder : doMark)();
       }
     }
-  }, [emails, currentFolder, refresh, t, ctxMarkAsRead, loadFolders]);
+  }, [emails, folders, currentFolder, refresh, t, ctxMarkAsRead, loadFolders, bumpFolderUnread]);
 
   // Bundles fetch (round-6 gap-closer). Only INBOX gets bundles — other
   // folders surface flat lists. Refreshed when the folder changes or the
@@ -790,18 +819,23 @@ function InboxScreenInner() {
     }
   }, [user?.email, recentlyReadLoaded]);
 
-  // Reload emails when activeCategory changes (unread is client-side filter)
+  // Reload emails when activeCategory changes.
+  // [2026-10-21 naolidos] "Não lidos" agora é filtro do SERVIDOR (IMAP SEARCH
+  // UNSEEN, ordenado por data, paginado): antes era só .filter(!seen) nas ~20
+  // linhas carregadas → caixa com 3251 não lidos mostrava "Caixa de entrada
+  // vazia" quando a 1ª página estava toda lida. Categorias → category= no
+  // servidor; Importantes = classificação NO APARELHO (privacidade) sobre a
+  // caixa inteira paginada (ver auto-preenchimento abaixo) — o servidor não
+  // conhece "important" e devolvia SEMPRE 0 linhas.
   // [2026-10-11 email-qa] Pula a 1ª execução (montagem) — era o 3º GET /inbox
   // idêntico na abertura da caixa.
   const categoryEffectRanRef = useRef(false);
   useEffect(() => {
     if (!categoryEffectRanRef.current) { categoryEffectRanRef.current = true; return; }
     if (currentFolder === 'INBOX') {
-      if (activeCategory === 'all' || activeCategory === 'unread') {
-        loadEmails('INBOX', 1, search);
-      } else {
-        loadEmails('INBOX', 1, search, activeCategory);
-      }
+      setListScope('INBOX', inboxScopeFor(activeCategory, activeLabel));
+      setPage(1);
+      loadEmails('INBOX', 1, search);
     }
   }, [activeCategory]);
 
@@ -1042,13 +1076,18 @@ function InboxScreenInner() {
       setActiveCategory('all');
       // Load emails with label filter — only call loadEmails, NOT changeFolder
       // changeFolder internally calls loadEmails without the label, which overwrites results
+      // [2026-10-21 naolidos] marcador vira escopo da lista (paginação/refresh mantêm).
+      setListScope('INBOX', { label });
+      setPage(1);
       loadEmails('INBOX', 1, '', '', label);
     } else {
       setActiveLabel(null);
+      // Trocar de pasta sai do filtro (o escopo é zerado no changeFolder).
+      setActiveCategory('all');
       changeFolder(name);
     }
     setShowSidebar(false);
-  }, [setSelectedEmail, changeFolder, loadEmails]);
+  }, [setSelectedEmail, changeFolder, loadEmails, setListScope, setPage]);
 
   // Listen for side panel close messages from iframes
   useEffect(() => {
@@ -1444,10 +1483,22 @@ function InboxScreenInner() {
   }, [loadingMore, page, endOfList, setPage, loadEmails, currentFolder, search]);
 
   // Memoize filtered emails — prevents inline IIFE creating new array every render
+  // [2026-10-21 naolidos] Escopo pedido pela tela × o que está pintado.
+  const isFilterView = currentFolder === 'INBOX' && activeCategory !== 'all';
+  const desiredScopeKey = currentFolder === 'INBOX'
+    ? mailListScopeKey('INBOX', inboxScopeFor(activeCategory, activeLabel))
+    : mailListScopeKey(currentFolder);
+  const scopeShown = listView?.key === desiredScopeKey;
+  const scopeConfirmed = scopeShown && !!listView?.confirmed;
+  const scopeError = scopeShown && !!listView?.error;
+  const selectedUidForFilter = selectedEmail?.uid;
+
   const filteredEmails = useMemo(() => {
     let list;
-    if (activeCategory === 'all') list = emails;
-    else if (activeCategory === 'unread') list = emails.filter(e => !e.seen);
+    if (activeCategory === 'all' || currentFolder !== 'INBOX') list = emails;
+    // Linhas vêm do servidor já filtradas (UNSEEN); o filtro local só tira as
+    // que o usuário leu agora (marcar todos/abriu) — a aberta fica visível.
+    else if (activeCategory === 'unread') list = emails.filter(e => !e.seen || (selectedUidForFilter != null && e.uid === selectedUidForFilter));
     else if (activeCategory === 'important') list = emails.filter(isImportant);
     else list = emails.filter(e => {
       const aiBucket = aiCategoryBucket(aiCategories[e.uid]);
@@ -1465,7 +1516,40 @@ function InboxScreenInner() {
     };
     for (const e of list) (isTop(e) ? top : rest).push(e);
     return [...top, ...rest];
-  }, [emails, activeCategory, aiCategories, inboxLayout, isImportant]);
+  }, [emails, activeCategory, aiCategories, inboxLayout, isImportant, currentFolder, selectedUidForFilter]);
+
+  // [2026-10-21 naolidos] Auto-preenchimento dos filtros + "vazio" honesto.
+  //  - Não lidos: lista local esvaziou (marcou/leu tudo) mas o servidor ainda
+  //    tinha mais (total > 0) → recarrega a pág. 1 do filtro (offset mudou).
+  //  - Importantes/categorias: filtro do aparelho por cima da página → busca
+  //    as páginas seguintes até ter AUTO_FILL_MIN_ROWS ou acabar (teto).
+  // Estado vazio só com o servidor confirmando; antes disso skeleton.
+  const autoFillKey = desiredScopeKey + '|' + activeCategory;
+  const [autoFill, setAutoFill] = useState({ key: '', n: 0 });
+  const autoFillLeft = (autoFill.key === autoFillKey ? autoFill.n : 0) < AUTO_FILL_MAX_PAGES;
+  const filterWantsMore = isFilterView && !search && scopeConfirmed && !scopeError && autoFillLeft && (
+    activeCategory === 'unread'
+      ? (filteredEmails.length === 0 && total > 0 && (inboxFolderUnread == null || inboxFolderUnread > 0))
+      : (filteredEmails.length < AUTO_FILL_MIN_ROWS && !endOfList)
+  );
+  useEffect(() => {
+    if (!filterWantsMore || loadingList || loadingMore) return undefined;
+    const tm = setTimeout(() => {
+      setAutoFill(prev => ({ key: autoFillKey, n: (prev.key === autoFillKey ? prev.n : 0) + 1 }));
+      if (activeCategory === 'unread') { try { refresh(); } catch {} }
+      else { handleLoadMore(); }
+    }, activeCategory === 'unread' ? 350 : 0);
+    return () => clearTimeout(tm);
+  }, [filterWantsMore, loadingList, loadingMore, activeCategory, autoFillKey, emails.length, total, page, refresh, handleLoadMore]);
+  const filterPending = isFilterView && !search && filteredEmails.length === 0 && !scopeError
+    && (!scopeConfirmed || filterWantsMore);
+  const filterEmpty = (() => {
+    if (!isFilterView || search) return null;
+    if (scopeError) return { title: t('inbox.filterError.title', 'Não foi possível carregar'), sub: t('inbox.filterError.sub', 'Verifique a conexão e toque em Atualizar.') };
+    if (activeCategory === 'unread') return { title: t('inbox.filterEmpty.unread', 'Nenhum e-mail não lido'), sub: t('inbox.filterEmpty.unreadSub', 'Tudo lido por aqui.') };
+    if (activeCategory === 'important') return { title: t('inbox.filterEmpty.important', 'Nenhum e-mail importante'), sub: t('inbox.filterEmpty.importantSub', 'Os marcados com estrela e os que o Chatyy julgar importantes aparecem aqui.') };
+    return { title: t('inbox.filterEmpty.category', 'Nada nesta categoria'), sub: t('inbox.filterEmpty.categorySub', 'Os e-mails desta categoria aparecem aqui.') };
+  })();
 
   // Stable select-all handler (was an inline closure recreated every render).
   // Scoped to the rendered (filtered) list — see onSelectAll usage below.
@@ -2124,7 +2208,9 @@ function InboxScreenInner() {
         <EmailOutboxBanner />
         <EmailList
           emails={filteredEmails}
-          loading={loadingList}
+          loading={loadingList || filterPending}
+          emptyTitle={filterEmpty?.title}
+          emptySub={filterEmpty?.sub}
           currentFolder={currentFolder}
           selectedUid={selectedEmail?.uid}
           search={search}

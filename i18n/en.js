@@ -15351,4 +15351,13 @@ export default {
   "chatConv.inviteLinkSheetSub": "QR, share, reset or revoke",
   "group.requests.title": "Join requests",
   "group.requests.none": "No pending requests",
+  "inbox.filterError.title": "Couldn't load",
+  "inbox.filterError.sub": "Check your connection and tap Refresh.",
+  "inbox.filterEmpty.unread": "No unread emails",
+  "inbox.filterEmpty.unreadSub": "You're all caught up.",
+  "inbox.filterEmpty.important": "No important emails",
+  "inbox.filterEmpty.importantSub": "Starred emails and the ones Chatyy considers important show up here.",
+  "inbox.filterEmpty.category": "Nothing in this category",
+  "inbox.filterEmpty.categorySub": "Emails in this category show up here.",
+  "inbox.markLoadedOnly": "Only loaded ones ({count})",
 };

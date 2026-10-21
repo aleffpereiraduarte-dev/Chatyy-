@@ -15429,4 +15429,13 @@ export default {
   "chatConv.inviteLinkSheetSub": "QR, compartilhar, redefinir ou revogar",
   "group.requests.title": "Pedidos para entrar",
   "group.requests.none": "Nenhum pedido pendente",
+  "inbox.filterError.title": "Não foi possível carregar",
+  "inbox.filterError.sub": "Verifique a conexão e toque em Atualizar.",
+  "inbox.filterEmpty.unread": "Nenhum e-mail não lido",
+  "inbox.filterEmpty.unreadSub": "Tudo lido por aqui.",
+  "inbox.filterEmpty.important": "Nenhum e-mail importante",
+  "inbox.filterEmpty.importantSub": "Os marcados com estrela e os que o Chatyy julgar importantes aparecem aqui.",
+  "inbox.filterEmpty.category": "Nada nesta categoria",
+  "inbox.filterEmpty.categorySub": "Os e-mails desta categoria aparecem aqui.",
+  "inbox.markLoadedOnly": "Só as carregadas ({count})",
 };
