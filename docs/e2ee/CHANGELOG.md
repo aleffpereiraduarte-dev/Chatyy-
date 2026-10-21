@@ -1,5 +1,14 @@
 # Contrato E2EE v5 — histórico
 
+## e2ee5-contrato/1.2 — 21/10/2026 (WP-00, a pedido do WP-06a/WP-15)
+- §5.3 caps de auth `e2ee5_ws`/`e2ee5_ns` (envelope pelo WS só com `e2ee5_ns`); frame WS de até
+  160 KiB para contas e2ee5.
+- §5.4 frame `chat_send_error {code, http, client_message_id, conversation_id, req_id}` com
+  `e2ee5_plaintext_refused` / `e2ee5_not_e2ee` / `e2ee5_bad_request`; cliente não reenvia por HTTP.
+- §5.5 avisos entregues no canal do e-mail canônico + alias `@onemundo.com.br`.
+- §10 i18n: chaves `e2ee5.*` nos arquivos de idioma atuais (bloco `[e2ee5]`), não em
+  `i18n/e2ee5/*.js` (incompatível com `build-i18n-json.js`).
+
 ## e2ee5-contrato/1.1 — 21/10/2026 (WP-00)
 - §6.11: API JS do host (`services/crypto`) normativa — `proposta-host-api.md` do WP-04 aceita,
   com senha do store web (HMAC com CryptoKey não-exportável), web só com bytes (sem

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Versão** | `e2ee5-contrato/1.1` (1.1.0) — 21/10/2026 (1.0 → 1.1: §6.11 API JS do host, aditivo) |
+| **Versão** | `e2ee5-contrato/1.2` (1.2.0) — 21/10/2026 (1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n nos arquivos de idioma) |
 | **Dono** | WP-00 (líder/arquiteto). Mudanças só por PR neste arquivo + entrada em `CHANGELOG.md`. |
 | **Implementação de referência** | `native/chatyy-crypto` (WP-01) e o servidor falso dos testes `native/chatyy-crypto/tests/common/fake_server.rs` (conformidade do WP-05). |
 | **Base** | `/root/e2ee-2026-10-21/PLANO.md` + DECISÕES DO FOUNDER (21/10: todas as recomendações aprovadas, "nível WhatsApp"). |
@@ -255,7 +255,7 @@ O aparelho atual nunca recebe o próprio evento.
 ### 4.2 Ações
 
 **4.2.1 `e2ee5_status`** — sempre disponível.
-Req `{}` → `{"uid":"42","user_id":"@u42:chatyy","contract":"e2ee5-contrato/1.1","enabled":true,
+Req `{}` → `{"uid":"42","user_id":"@u42:chatyy","contract":"e2ee5-contrato/1.2","enabled":true,
 "kill":false,"flags":{"e2ee5_native":true,"e2ee5_media":false,"e2ee5_calls":false,
 "e2ee5_link":false,"e2ee5_backup":false,"e2ee5_push_decrypt":false},"device_limit":5,
 "devices":[{"device_id":"P…","kind":"P","last_seen":1729500000000,"signed":true}],
@@ -449,6 +449,38 @@ O frame de auth ganha o campo **`e2ee5_device`** (string, `^[PWTX][A-Z2-7]{12}$`
 - Mensagens cifradas usam os eventos de mensagem atuais; o `content` é o envelope.
   O relay **não** monta `reply_to.content` para envelopes (manda só `reply_to.id`).
 
+### 5.3 Capacidades no auth (hub WP-06a, `HUB_E2EE5=1`)
+A resposta de auth do hub ganha caps extras:
+| Cap | Significado | Cliente faz |
+|---|---|---|
+| `e2ee5_ws` | o hub entende `e2ee5_device` e roteia `e2ee5_td`/`e2ee5_devices`/`conv_e2ee` | declara `e2ee5_device` |
+| `e2ee5_ns` | o `native_send` aceita envelope `{"e2e":5…}` e impõe `e2ee_mode` (conta na allowlist do hub) | **só então** manda envelope pelo WS; sem a cap, envelope vai por HTTP (`chat_send`) |
+
+Sockets de contas com `e2ee5_ws` aceitam frame WS de até **160 KiB** (o padrão de 64 KiB
+derrubava o socket com envelope grande). O envelope continua limitado a 96 KiB (§2.6);
+acima disso o hub responde o fallback atual `content_too_long`.
+
+### 5.4 Recusa de envio pelo WS: frame `chat_send_error`
+```json
+{"type":"chat_send_error","success":false,"code":"e2ee5_plaintext_refused","http":409,
+ "client_message_id":"…","conversation_id":"971","req_id":"…"}
+```
+| `code` | `http` | Quando |
+|---|---|---|
+| `e2ee5_plaintext_refused` | 409 | texto puro ou `{"e2e":N≠5}` em conversa `e2ee_mode=1` |
+| `e2ee5_not_e2ee` | 409 | envelope em conversa `e2ee_mode=0` (cliente re-busca `conversation_state`) |
+| `e2ee5_bad_request` | 400 | envelope com forma inválida |
+O cliente **não** reenvia por HTTP após `chat_send_error` (a recusa é definitiva para aquele
+conteúdo): marca a mensagem como falha e, em `e2ee5_not_e2ee`/`plaintext_refused`, atualiza o
+estado da conversa e recifra/reenvia se fizer sentido. Flag do hub desligada ou conta fora da
+allowlist ⇒ `chat_send_fallback` com `reason: "e2ee5_off"` (o cliente usa o HTTP, que impõe a mesma regra).
+
+### 5.5 Canal de entrega dos avisos
+O PHP publica `e2ee5_td`/`e2ee5_devices`/`conv_e2ee` em `chat_user_<e-mail canônico>` (§1.1).
+O hub entrega no canal canônico **e** no alias `@onemundo.com.br` correspondente (o socket pode
+estar inscrito em qualquer um dos dois). `e2ee5_td` com `device_id` pula sockets que declararam
+outro `e2ee5_device`; socket sem `e2ee5_device` recebe sempre. Não gravam `ws_event_log` nem fila offline.
+
 ---
 
 ## 6. API do núcleo `chatyy-crypto` (Rust → UniFFI / wasm)
@@ -484,7 +516,7 @@ Timeout recomendado: 15 s (NSE: 5 s).
 ### 6.3 Funções livres
 | Função | Retorno |
 |---|---|
-| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.1; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
+| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.2; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
 | `new_device_id(prefix: "P"\|"W"\|"T"\|"X")` | `String` |
 | `envelope_version(content)` | `Option<u64>` (5, ou outro N → placeholder "Atualize") |
 | `encrypt_bytes(plain: bytes) / decrypt_bytes(data: bytes, info_json)` | `EncryptedBytes{data, info_json}` / bytes |
@@ -693,9 +725,13 @@ Os clientes leem `e2ee5_status` no login, ao voltar ao 1º plano (máx. 1×/10 m
 
 ---
 
-## 10. i18n (`i18n/e2ee5/{pt-BR,pt-PT,en,es}.js`, dono WP-15)
+## 10. i18n (chaves `e2ee5.*` nos arquivos de idioma atuais, dono WP-15)
 
-Chaves planas no namespace `e2ee5.*`. Cada pacote **só acrescenta no seu sub-namespace**:
+As chaves ficam **nos arquivos de idioma existentes** (`i18n/pt-BR.js`, `i18n/en.js`, `i18n/es.js`,
+`i18n/pt-PT.js`…), num bloco contíguo marcado `// [e2ee5]`, porque o `scripts/build-i18n-json.js`
+gera os `.json` baixados pelo app a partir desses arquivos (um `i18n/e2ee5/*.js` importado não
+entraria nos JSON). Formato plano `"e2ee5.<sub>.<chave>": "texto"`.
+Cada pacote **só acrescenta no seu sub-namespace** (pedindo ao WP-15 ou no fim do bloco `[e2ee5]`):
 | Sub-namespace | Pacote | Exemplos |
 |---|---|---|
 | `e2ee5.msg.*` | WP-08c/09 | `e2ee5.msg.update_to_read`, `e2ee5.msg.waiting`, `e2ee5.msg.cannot_decrypt`, `e2ee5.msg.learn_more` |
