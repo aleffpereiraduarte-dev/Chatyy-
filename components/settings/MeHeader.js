@@ -21,14 +21,15 @@
 // buscar · QR · Editar numa LINHA só (antes o voltar ocupava uma linha
 // própria acima). Desligar por OTA: globalThis.__chatyy_me_hero_immersive = false.
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, Platform, Image as RNImage } from 'react-native';
+import { View, Text, StyleSheet, Platform, Pressable, Image as RNImage } from 'react-native';
 import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
 import PressableScale from '../PressableScale';
 import SilverRing from '../ui/SilverRing';
 import { THEME_V2 } from '../../constants/theme';
 import { useGroupedColors } from './SettingsKit';
-import { IconSearch, IconCamera, IconChevronDown, IconChevronLeft, IconArrowLeft } from '../Icons';
+import { IconSearch, IconCamera, IconChevronDown, IconChevronLeft, IconArrowLeft, IconImage } from '../Icons';
+import { CoverFallback, coverDefaultOn } from '../profile/ProfileMediaStudio'; // [2026-10-21 foto-capa-studio]
 import { getNativeBlurView } from '../NativeBlur';
 import { Spacing } from '../../constants/theme';
 
@@ -150,10 +151,16 @@ function CoverImage({ uri, onError }) {
   return <RNImage source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" onError={onError} accessible={false} />;
 }
 
-function CoverLayer({ uri, height, pageBg, onError }) {
+// [2026-10-21 foto-capa-studio] sem capa = degradê grafite padrão; dono (onPress) toca
+// na capa ou no selo "Alterar capa" para trocar.
+function CoverLayer({ uri, height, pageBg, onError, isDark, onPress, label, fg }) {
   return (
-    <View pointerEvents="none" style={[st.cover, { height }]} testID="settings-me-cover">
-      <CoverImage uri={uri} onError={onError} />
+    <View pointerEvents={onPress ? 'box-none' : 'none'} style={[st.cover, { height }]} testID="settings-me-cover">
+      {onPress ? (
+        <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={StyleSheet.absoluteFill} testID="settings-me-cover-tap" />
+      ) : null}
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {uri ? <CoverImage uri={uri} onError={onError} /> : <CoverFallback isDark={isDark} />}
       {/* Véu no topo (status bar + botões) e degradê até o fundo da página em
           baixo (nome/telefone sempre legíveis, claro e escuro). */}
       <Svg width="100%" height="100%" style={StyleSheet.absoluteFill} preserveAspectRatio="none">
@@ -171,6 +178,22 @@ function CoverLayer({ uri, height, pageBg, onError }) {
         <Rect x="0" y="0" width="100%" height="28%" fill="url(#meCoverTop)" />
         <Rect x="0" y="45%" width="100%" height="55%" fill="url(#meCoverBottom)" />
       </Svg>
+      </View>
+      {onPress ? (
+        <PressableScale
+          onPress={onPress}
+          haptic="light"
+          scaleTo={0.92}
+          hitSlop={SLOP}
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          testID="settings-me-cover-edit"
+          style={[st.coverChip, { bottom: AVATAR_IN_COVER - 34 }]}
+        >
+          <BtnBg glass radius={16} />
+          <IconImage size={16} color={fg} />
+        </PressableScale>
+      ) : null}
     </View>
   );
 }
@@ -218,7 +241,7 @@ export function meDisplay(user, profile) {
 export default function MeHeader({
   user, profile, avatarKey, multiAccount, t,
   onSearch, onQr, onEdit, onAvatar, onChangePhoto, onSwitch, onAbout,
-  coverUrl, topInset = 0, onBack, note, onNote,
+  coverUrl, topInset = 0, onBack, note, onNote, onCover,
 }) {
   const g = useGroupedColors();
   const tr = (k, fb) => { try { const v = t(k); return v && v !== k ? v : fb; } catch { return fb; } };
@@ -231,8 +254,10 @@ export default function MeHeader({
 
   // Capa que falhou (404/rede) some até a URL mudar → volta ao visual sem capa.
   const [failedCover, setFailedCover] = useState('');
-  const cover = coverUrl && coverUrl !== failedCover ? coverUrl : '';
+  const realCover = coverUrl && coverUrl !== failedCover ? coverUrl : '';
   const onCoverError = useCallback(() => { setFailedCover(coverUrl || ''); }, [coverUrl]);
+  // [2026-10-21 foto-capa-studio] sem capa → faixa com degradê padrão (mesmo layout da capa).
+  const cover = realCover || (coverDefaultOn() ? 'default' : '');
   const glass = !!cover;
   const bleed = !!cover || topInset > 0;
   const padTop = Spacing.md;
@@ -252,32 +277,43 @@ export default function MeHeader({
       style={[st.wrap, bleed ? { marginHorizontal: -16, paddingHorizontal: 16, marginTop: -padTop, paddingTop: padTop + topInset } : null]}
       testID="settings-me-header"
     >
-      {cover ? <CoverLayer uri={cover} height={coverH} pageBg={g.pageBg} onError={onCoverError} /> : null}
-      <View onLayout={onTopLayout}>
-      <View style={st.bar}>
+      {cover ? (
+        <CoverLayer
+          uri={realCover}
+          height={coverH}
+          pageBg={g.pageBg}
+          isDark={g.isDark}
+          onError={onCoverError}
+          onPress={onCover}
+          fg={g.text}
+          label={realCover ? tr('photoStudio.changeCover', 'Alterar capa') : tr('photoStudio.addCover', 'Adicionar capa')}
+        />
+      ) : null}
+      <View onLayout={onTopLayout} pointerEvents="box-none">
+      <View style={st.bar} pointerEvents="box-none">
         {onBack ? (
           <>
             <BarButton onPress={onBack} label={tr('common.back', 'Voltar')} testID="settings-me-back" glass={glass}>
               <BackIcon size={Platform.OS === 'ios' ? 22 : 20} color={g.text} />
             </BarButton>
-            <View style={{ flex: 1 }} />
+            <View style={{ flex: 1 }} pointerEvents="none" />
             <BarButton onPress={onSearch} label={tr('me.search', 'Buscar nas configurações')} testID="settings-me-search" glass={glass}>
               <IconSearch size={18} color={g.text} />
             </BarButton>
-            <View style={{ width: 10 }} />
+            <View style={{ width: 10 }} pointerEvents="none" />
           </>
         ) : (
           <>
             <BarButton onPress={onSearch} label={tr('me.search', 'Buscar nas configurações')} testID="settings-me-search" glass={glass}>
               <IconSearch size={18} color={g.text} />
             </BarButton>
-            <View style={{ flex: 1 }} />
+            <View style={{ flex: 1 }} pointerEvents="none" />
           </>
         )}
         <BarButton onPress={onQr} label={tr('profile.qrCode', 'QR code')} testID="settings-me-qr" glass={glass}>
           <QrGlyph size={18} color={g.text} />
         </BarButton>
-        <View style={{ width: 10 }} />
+        <View style={{ width: 10 }} pointerEvents="none" />
         {_tgHeader() ? (
           // [2026-10-19 tg-settings] Telegram: botão de TEXTO "Editar" (pílula) no lugar do lápis.
           <PressableScale
@@ -300,7 +336,7 @@ export default function MeHeader({
         )}
       </View>
 
-      <View style={st.center}>
+      <View style={st.center} pointerEvents="box-none">
         {/* Balão do recado (nota) — acima do avatar, com "rabinho" de bolinhas. */}
         <PressableScale
           onPress={noteMode ? onNote : (onAbout || onEdit)}
@@ -315,13 +351,13 @@ export default function MeHeader({
             {about || tr('me.addNote', 'Adicionar nota')}
           </Text>
         </PressableScale>
-        <View style={[st.dot1, { backgroundColor: g.cardBg, borderColor: g.separator }]} />
-        <View style={[st.dot2, { backgroundColor: g.cardBg, borderColor: g.separator }]} />
+        <View pointerEvents="none" style={[st.dot1, { backgroundColor: g.cardBg, borderColor: g.separator }]} />
+        <View pointerEvents="none" style={[st.dot2, { backgroundColor: g.cardBg, borderColor: g.separator }]} />
       </View>
       </View>
 
-      <View style={st.center}>
-        <View style={[st.avatarBox, cover ? st.avatarBoxRing : null]}>
+      <View style={st.center} pointerEvents="box-none">
+        <View pointerEvents="box-none" style={[st.avatarBox, cover ? st.avatarBoxRing : null]}>
           <PressableScale
             onPress={onAvatar}
             haptic="light"
@@ -405,5 +441,9 @@ const st = StyleSheet.create({
   nameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 12, maxWidth: '100%' },
   name: { fontSize: 26, fontWeight: '700', letterSpacing: -0.6, textAlign: 'center' },
   switchBtn: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  coverChip: {
+    position: 'absolute', right: 16, width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
+    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+  },
   idLine: { fontSize: 15, marginTop: 4, letterSpacing: -0.1, textAlign: 'center' },
 });

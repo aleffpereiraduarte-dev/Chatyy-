@@ -21,6 +21,7 @@ import { normalizeCoverUrl, prepareCoverFile } from '../../services/profileCover
 import { initialsOf, gradientIndex } from '../chatlist/nativeAdapter';
 import { avatarRefForEmail } from '../chat/NativeProfileBridge';
 import { isNativeProfileEditEnabled } from '../chat/NativeChatInfo';
+import { isPhotoStudioEnabled } from './ProfileMediaStudio'; // [2026-10-21 foto-capa-studio]
 
 export { isNativeProfileEditEnabled };
 
@@ -89,6 +90,9 @@ export function useNativeProfileEdit(ctx) {
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [uname, setUname] = useState({ q: '', state: '', text: '' });
+  // [2026-10-21 foto-capa-studio] "Alterar foto" / "Foto de capa" abrem a tela de
+  // foto/capa (prévia grande, galeria/câmera/remover, recorte com arrastar).
+  const [studioKind, setStudioKind] = useState('');
   const draftRef = useRef({});
   const initialRef = useRef({ values: {}, cover: '' });
   const checkTimer = useRef(null);
@@ -304,9 +308,11 @@ export function useNativeProfileEdit(ctx) {
         return;
       }
       case 'avatar':
+        if (Platform.OS !== 'web' && isPhotoStudioEnabled()) { setStudioKind('avatar'); return; }
         pickAvatar();
         return;
       case 'cover':
+        if (Platform.OS !== 'web' && isPhotoStudioEnabled()) { setStudioKind('cover'); return; }
         pickCover();
         return;
       case 'coverRemove':
@@ -349,13 +355,13 @@ export function useNativeProfileEdit(ctx) {
       },
       { header: '', footer: '', rows: [{ id: 'more', title: tr('profileEdit.moreOptions', 'Links extras e tipo de conta'), val: '', nav: true }] },
     ];
-    // [perfil-fotos 2026-10-19] galeria de fotos (Telegram) + publicar no perfil → ctx.onRow.
+    // [perfil-fotos 2026-10-19] publicar no perfil → ctx.onRow. [2026-10-21 foto-capa-studio]
+    // "Adicionar foto de perfil" saiu: a foto troca no topo do editor ("Alterar foto").
     try {
       const PP = require('../../services/profilePhotos');
-      const ppRows = [];
-      if (PP.isProfileGalleryEnabled()) ppRows.push({ id: 'pp_add', title: PP.ppT(t, 'addPhoto'), val: '', nav: true });
-      if (PP.isProfilePostsCiEnabled()) ppRows.push({ id: 'pp_publish', title: PP.ppT(t, 'publish'), val: '', nav: true });
-      if (ppRows.length) groups.splice(0, 0, { header: PP.ppT(t, 'photos'), footer: PP.ppT(t, 'addPhotoHint'), rows: ppRows });
+      if (PP.isProfilePostsCiEnabled()) {
+        groups.splice(0, 0, { header: PP.ppT(t, 'photos'), footer: PP.ppT(t, 'publishHint'), rows: [{ id: 'pp_publish', title: PP.ppT(t, 'publish'), val: '', nav: true }] });
+      }
     } catch {}
     return {
       on,
@@ -381,7 +387,7 @@ export function useNativeProfileEdit(ctx) {
         cancel: tr('common.cancel', 'Cancelar'),
         done: tr('common.done', 'Concluído'),
         title: '',
-        setPhoto: tr('profileEdit.setPhoto', 'Definir nova foto'),
+        setPhoto: tr('photoStudio.changePhoto', 'Alterar foto'),
         firstPh: tr('profileEdit.firstPh', 'Nome (obrigatório)'),
         lastPh: tr('profileEdit.lastPh', 'Sobrenome (opcional)'),
         nameFooter: tr('profileEdit.nameFooter', 'Insira seu nome e adicione uma foto de perfil.'),
@@ -403,8 +409,8 @@ export function useNativeProfileEdit(ctx) {
         aboutPh: tr('profile.aboutPh', 'Disponível'),
         aboutHint: tr('profileEdit.aboutHint', 'Uma frase curta que aparece junto do seu nome.'),
         cover: tr('profileEdit.cover', 'Foto de capa'),
-        coverChange: tr('profileEdit.coverChange', 'Alterar'),
-        coverAdd: tr('profileEdit.coverAdd', 'Adicionar'),
+        coverChange: tr('photoStudio.changeCover', 'Alterar capa'),
+        coverAdd: tr('photoStudio.addCover', 'Adicionar capa'),
         coverRemove: tr('profileEdit.coverRemove', 'Remover foto de capa'),
         errName: tr('profileEdit.errName', 'Informe seu nome.'),
       },
@@ -412,5 +418,37 @@ export function useNativeProfileEdit(ctx) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, on, seq, backSeq, values, avatarUri, cover, busyAvatar, busyCover, saving, errors, uname, identity, tr]);
 
-  return { active: on, start, edit, onEdit, back, close };
+  const onStudioAvatar = useCallback((r, localUri) => {
+    setAvatarUri(localUri || '');
+    try { ctxRef.current.onAvatarChanged?.(r); } catch {}
+  }, []);
+  const onStudioCover = useCallback((url) => {
+    const u = url ? normalizeCoverUrl(String(url)) : '';
+    setCover(u);
+    initialRef.current = { ...initialRef.current, cover: u };
+    try { ctxRef.current.onSaved?.({ cover_url: u }); } catch {}
+  }, []);
+  const closeStudio = useCallback(() => { setStudioKind(''); }, []);
+  const studio = useMemo(() => {
+    if (!session) return null;
+    const id = identity || {};
+    const email = String(id.email || '');
+    const abs = typeof ctx.abs === 'function' ? ctx.abs : (u) => u;
+    const cu = cover ? (/^(file|content|ph|assets-library):/i.test(cover) ? cover : abs(cover)) : '';
+    return {
+      visible: on && !!studioKind,
+      kind: studioKind || 'avatar',
+      onClose: closeStudio,
+      t,
+      email,
+      name: String(id.name || id.username || email.split('@')[0] || ''),
+      avatarUri: avatarUri || undefined,
+      coverUrl: cu,
+      onAvatarChanged: onStudioAvatar,
+      onCoverChanged: onStudioCover,
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, on, studioKind, identity, cover, avatarUri, t, closeStudio, onStudioAvatar, onStudioCover]);
+
+  return { active: on, start, edit, onEdit, back, close, studio };
 }

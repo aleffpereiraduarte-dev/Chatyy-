@@ -48,7 +48,8 @@ import { SettingsGroup, SettingsRow, SettingsSearchContext, useGroupedColors } f
 import MeHeader, { MeStatusScrim } from '../components/settings/MeHeader';
 import ProfileNoteSheet from '../components/settings/ProfileNoteSheet'; // [2026-10-20 nota-perfil]
 import { useProfileNote, refreshNote, profileNoteSheetOn } from '../services/profileNote';
-import { normalizeCoverUrl, meHeroImmersiveOn, prefetchCover } from '../services/profileCover'; // [2026-10-19 me-cover]
+import { normalizeCoverUrl, meHeroImmersiveOn, prefetchCover, patchMyProfileCache } from '../services/profileCover'; // [2026-10-19 me-cover]
+import ProfileMediaStudio, { isPhotoStudioEnabled } from '../components/profile/ProfileMediaStudio'; // [2026-10-21 foto-capa-studio]
 import { normalizePlanState, planDisplayName } from '../services/planState';
 import { PLAN_NAME } from '../services/brandPlan';
 import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
@@ -64,7 +65,7 @@ import { FontSize, Spacing, BorderRadius, LetterSpacing } from '../constants/the
 import {
   IconArrowLeft, IconSparkles, IconPlusCircle, IconMessageSquare, IconGlobe, IconBell, IconShield, IconUser,
   IconMail, IconDatabase, IconX, IconHelpCircle, IconSearch, IconUserPlus, IconType,
-  IconMonitor, IconStar, IconCreditCard, IconPalette, IconFolder, IconBroadcast, IconUsers, IconCamera, IconImage,
+  IconMonitor, IconStar, IconCreditCard, IconPalette, IconFolder, IconBroadcast, IconUsers, IconImage,
 } from '../components/Icons';
 import * as ProfilePhotos from '../services/profilePhotos'; // [perfil-fotos 2026-10-19]
 import * as settingsCache from '../services/settingsCache';
@@ -466,6 +467,20 @@ function SettingsScreenInner() {
   // numa linha só dentro do MeHeader. Capa do perfil em cache = 1º frame.
   const meImmersive = USE_NATIVE_HEADER && !twoPane && activeCategory === null && meHeroImmersiveOn();
   const meCoverUrl = normalizeCoverUrl(myProfile?.cover_url || '');
+  // [2026-10-21 foto-capa-studio] selo de câmera → trocar foto; toque na capa → trocar capa
+  // (mesma tela do "Editar"; kill switch __chatyy_photo_studio = false → editor como antes).
+  const studioOn = Platform.OS !== 'web' && isPhotoStudioEnabled();
+  const [studioKind, setStudioKind] = useState('');
+  const onStudioAvatar = useCallback((r) => {
+    const d = (r && r.data) || {};
+    if (d.avatar_url) { try { patchMyProfileCache({ avatar_url: d.avatar_url }, user?.email); } catch {} }
+    setAvatarKey(Date.now());
+    try { settingsCache.revalidate('profile', { force: true }).catch(() => {}); } catch {}
+  }, [user?.email]);
+  const onStudioCover = useCallback((url) => {
+    try { patchMyProfileCache({ cover_url: url || '' }, user?.email); } catch {}
+    setMyProfile((p) => ({ ...(p || {}), cover_url: url || '' }));
+  }, [user?.email]);
   const heroNode = (
     <MeHeader
       user={user}
@@ -480,7 +495,8 @@ function SettingsScreenInner() {
       note={noteOn ? myNote : undefined}
       onNote={noteOn ? () => { try { Haptics.selectionAsync?.(); } catch {} setNoteOpen(true); } : undefined}
       onAvatar={() => { try { Haptics.selectionAsync?.(); } catch {} setAvatarOpen(true); }}
-      onChangePhoto={openEditProfile}
+      onChangePhoto={studioOn ? () => setStudioKind('avatar') : openEditProfile}
+      onCover={studioOn ? () => setStudioKind('cover') : undefined}
       onSwitch={openAccountSwitcher}
       coverUrl={meCoverUrl}
       topInset={meImmersive ? insets.top : 0}
@@ -510,8 +526,8 @@ function SettingsScreenInner() {
     [
       { key: 'plus', type: 'r', icon: PLUS_NATIVE_ICON(), Icon: IconPlusCircle, title: plusTitle, sub: plusSub, value: plusValue, route: '/settings-one' },
       { key: 'public', type: 'r', icon: 'followers', Icon: IconUsers, title: tr('me.publicProfile', 'Meu mural'), sub: tr('me.publicProfileSub', 'Suas publicações de texto e fotos'), go: openPublicProfile },
-      // [perfil-fotos 2026-10-19] galeria de fotos do perfil (Telegram) + publicar no perfil.
-      ProfilePhotos.isProfileGalleryEnabled() ? { key: 'ppAdd', type: 'r', icon: 'camera', Icon: IconCamera, title: ProfilePhotos.ppT(t, 'addPhoto'), sub: ProfilePhotos.ppT(t, 'addPhotoHint'), go: () => { ProfilePhotos.pickAndAddProfilePhoto({ t, email: user?.email || '' }); } } : null,
+      // [perfil-fotos 2026-10-19] publicar no perfil. [2026-10-21 foto-capa-studio] "Adicionar foto
+      // de perfil" saiu (founder): trocar a foto = selo de câmera do avatar / Editar (ProfileMediaStudio).
       ProfilePhotos.isProfilePostsCiEnabled() ? { key: 'ppPublish', type: 'r', icon: 'image', Icon: IconImage, title: ProfilePhotos.ppT(t, 'publish'), sub: ProfilePhotos.ppT(t, 'publishHint'), go: () => { ProfilePhotos.startProfilePost(router, t); } } : null,
       { key: 'lists', type: 'r', icon: 'archive', Icon: IconFolder, title: tr('me.lists', 'Listas'), route: '/chat-folders' },
       { key: 'broadcast', type: 'r', icon: 'forward', Icon: IconBroadcast, title: tr('me.broadcast', 'Mensagens de transmissão'), route: '/chat-new' },
@@ -868,6 +884,20 @@ function SettingsScreenInner() {
           t={t}
           onClose={() => setNoteOpen(false)}
           onError={(msg) => { try { Alert.alert(msg); } catch {} }}
+        />
+      ) : null}
+      {studioOn ? (
+        <ProfileMediaStudio
+          visible={!!studioKind}
+          kind={studioKind || 'avatar'}
+          onClose={() => setStudioKind('')}
+          t={t}
+          email={user?.email}
+          name={(myProfile?.name || user?.name || '').trim()}
+          avatarUri={myProfile?.avatar_url || undefined}
+          coverUrl={meCoverUrl}
+          onAvatarChanged={onStudioAvatar}
+          onCoverChanged={onStudioCover}
         />
       ) : null}
       <LazyAvatarLightbox

@@ -70,6 +70,7 @@ import { buildNativeProfileInfo } from './profile/nativeProfileInfo'; // [2026-1
 import { ProfilePhotoGalleryHost } from './profile/ProfilePhotoGallery'; // [perfil-fotos 2026-10-19]
 import * as ProfilePhotos from '../services/profilePhotos'; // [perfil-fotos 2026-10-19] galeria + publicar no perfil
 import { useNativeProfileEdit, isNativeProfileEditEnabled } from './profile/nativeProfileEdit'; // [2026-10-18 profile-edit-native]
+import ProfileMediaStudio from './profile/ProfileMediaStudio'; // [2026-10-21 foto-capa-studio]
 import { PLAN_NAME } from '../services/brandPlan'; // [2026-10-18 profile-native]
 import HighlightShareSheet from './HighlightShareSheet';
 // [post-perfil 2026-10-20] post otimista (fila durável) no topo da grade + cartão de progresso.
@@ -4399,7 +4400,7 @@ export default function Profile({
       try { require('../services/profileCover').patchMyProfileCache(next, identity?.email); } catch {}
       try { if (identity?.username && identity.username !== fetchKey) invalidateProfileCache(identity.username); } catch {}
     },
-    onAvatarChanged: () => { invalidateProfileCache(fetchKey); },
+    onAvatarChanged: (r) => { invalidateProfileCache(fetchKey); if (r && r.success) { try { _ppAfterAvatarChange(r); } catch {} } },
     // Aberto direto no modo edição (/u/<me>?edit=1, tela "Você") → Concluído/
     // Cancelar voltam para quem abriu, como no Telegram.
     onClosed: () => { if (_autoEditFiredRef.current) _npBack(); },
@@ -4557,7 +4558,8 @@ export default function Profile({
     // [perfil-fotos 2026-10-19] galeria no carrossel + deslizar (api 6) + atalhos do dono.
     gallery: _ppOn ? _ppPhotos : null,
     v6: _npV5 && chatInfoV6(),
-    ownerCta: actions?.is_self ? { photo: _ppOn, post: _ppPostsOn } : null,
+    // [2026-10-21 foto-capa-studio] sem a linha "Adicionar foto de perfil" (foto troca no Editar).
+    ownerCta: actions?.is_self ? { photo: false, post: _ppPostsOn } : null,
     storyRing: stories.length > 0 ? ((!actions?.is_self && _profileStatusRing?.allViewed) ? 'seen' : 'unseen') : '',
     postsHasMore: _canPageMore,
     presenceText,
@@ -4684,6 +4686,7 @@ export default function Profile({
         {selfStatusHostNode}
         {highlightActionSheetNode}
         {avatarActionNode}
+        {_npEditOn && _npEdit.studio ? <ProfileMediaStudio {..._npEdit.studio} /> : null}
         {_ppOn ? <ProfilePhotoGalleryHost t={t} onChanged={(d) => _ppAfterAvatarChange({ success: true, data: d || {} })} /> : null}
         {menuNode}
         {nicknameModalNode}
