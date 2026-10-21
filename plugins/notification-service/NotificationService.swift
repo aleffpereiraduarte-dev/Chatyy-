@@ -43,6 +43,9 @@ class NotificationService: UNNotificationServiceExtension {
 
     private static let chatTypes: Set<String> = ["chat_message", "chat_mention", "chat_keyword", "chat_reaction"]
     private static let downloadTimeout: TimeInterval = 8
+    // [push-preview 2026-10-21] banner: folga máx. p/ o POST do ✓✓ e prazo p/ avatar/mídia.
+    private static let ackGrace: TimeInterval = 0.35
+    private static let bannerDeadline: TimeInterval = 3.0
     private static let maxAvatarBytes = 3 * 1024 * 1024
 
     override func didReceive(_ request: UNNotificationRequest,
@@ -61,7 +64,14 @@ class NotificationService: UNNotificationServiceExtension {
         // contentHandler, levando o POST junto (APNs 200, sem ✓✓). Limite curto
         // (ackTimeout) — não atrasa o banner de forma perceptível.
         let group = DispatchGroup()
-        Self.reportDelivered(p, group: group) { [weak self] t in self?.addTask(t) }
+        // [push-preview 2026-10-21] O ✓✓ NÃO segura mais o banner: com RTT alto
+        // (4G/roaming ~0,7 s) o POST levava 1-3 s (até ackTimeout = 6 s) e o
+        // aviso só aparecia depois → "treme e o push demora". Agora o token vai
+        // p/ a fila pendente ANTES do POST (sai dela no 2xx/4xx) e o banner
+        // espera no máximo ackGrace: se o iOS congelar a extensão, o próximo
+        // push (ou o app) reenvia.
+        let ackGroup = DispatchGroup()
+        Self.reportDelivered(p, group: ackGroup) { [weak self] t in self?.addTask(t) }
         // [2026-10-07 bgsync] Store the message in the App Group journal so the
         // app shows it instantly on open (merged before first paint by
         // services/bgJournal.js). No-op without the App Group entitlement.
@@ -131,31 +141,50 @@ class NotificationService: UNNotificationServiceExtension {
             if let t = t { addTask(t) }
         }
 
-        group.notify(queue: DispatchQueue.global(qos: .userInitiated)) { [weak self] in
+        var finalized = false
+        let finalize: () -> Void = { [weak self] in
             guard let self = self else { return }
             resultLock.lock()
-            let media = mediaAttachment, avatar = avatarData, groupAvatar = groupAvatarData
+            if finalized { resultLock.unlock(); return }
+            finalized = true
             resultLock.unlock()
-            if let a = media { best.attachments = [a] }
+            // Dá ao ✓✓ uma folga curta (rede boa = já voltou) e entrega.
+            _ = ackGroup.wait(timeout: .now() + Self.ackGrace)
+            self.deliverBest(best, p: p, isChat: isChat, locked: locked, conv: conv, isGroup: isGroup,
+                             resultLock: resultLock,
+                             media: { mediaAttachment }, avatar: { avatarData }, groupAvatar: { groupAvatarData })
+        }
+        // Avatar/mídia lentos (cache frio, rede ruim) não seguram o banner além do prazo.
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + Self.bannerDeadline) { finalize() }
+        group.notify(queue: DispatchQueue.global(qos: .userInitiated)) { finalize() }
+    }
 
-            guard isChat, !locked, !conv.isEmpty else {
-                self.finish(best)
-                return
-            }
-            if #available(iOS 15.0, *) {
-                self.applyCommunication(best: best, p: p, conv: conv, isGroup: isGroup,
-                                        avatar: avatar, groupAvatar: groupAvatar) { updated in
-                    if let updated = updated {
-                        self.finish(updated)
-                    } else {
-                        Self.attachAvatarFallback(best, avatar: avatar)
-                        self.finish(best)
-                    }
+    private func deliverBest(_ best: UNMutableNotificationContent, p: [String: Any], isChat: Bool, locked: Bool,
+                             conv: String, isGroup: Bool, resultLock: NSLock,
+                             media mediaGet: () -> UNNotificationAttachment?,
+                             avatar avatarGet: () -> Data?, groupAvatar groupAvatarGet: () -> Data?) {
+        resultLock.lock()
+        let media = mediaGet(), avatar = avatarGet(), groupAvatar = groupAvatarGet()
+        resultLock.unlock()
+        if let a = media { best.attachments = [a] }
+
+        guard isChat, !locked, !conv.isEmpty else {
+            self.finish(best)
+            return
+        }
+        if #available(iOS 15.0, *) {
+            self.applyCommunication(best: best, p: p, conv: conv, isGroup: isGroup,
+                                    avatar: avatar, groupAvatar: groupAvatar) { updated in
+                if let updated = updated {
+                    self.finish(updated)
+                } else {
+                    Self.attachAvatarFallback(best, avatar: avatar)
+                    self.finish(best)
                 }
-            } else {
-                Self.attachAvatarFallback(best, avatar: avatar)
-                self.finish(best)
             }
+        } else {
+            Self.attachAvatarFallback(best, avatar: avatar)
+            self.finish(best)
         }
     }
 
@@ -385,12 +414,15 @@ class NotificationService: UNNotificationServiceExtension {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.httpBody = body
         group.enter()
+        // [push-preview 2026-10-21] pendente ANTES do POST: o banner não espera mais
+        // o fim do POST, e se o iOS congelar/matar a extensão o próximo push reenvia.
+        addPendingAck(dAck)
         let task = ackSession.dataTask(with: req) { _, response, error in
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             // 2xx = servidor gravou (ou já estava entregue). 4xx = definitivo
             // (token inválido/expirado) → não reenvia. Resto = tenta depois.
-            if error != nil || code == 0 || code >= 500 || code == 429 {
-                addPendingAck(dAck)
+            if !(error != nil || code == 0 || code >= 500 || code == 429) {
+                removePendingAck(dAck)
             }
             group.leave()
         }
@@ -408,6 +440,16 @@ class NotificationService: UNNotificationServiceExtension {
         arr.removeLast(take.count)
         ud.set(arr, forKey: pendingAckKey)
         return take
+    }
+
+    private static func removePendingAck(_ tok: String) {
+        guard FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) != nil,
+              let ud = UserDefaults(suiteName: appGroupId) else { return }
+        ackLock.lock(); defer { ackLock.unlock() }
+        var arr = ud.stringArray(forKey: pendingAckKey) ?? []
+        guard let i = arr.firstIndex(of: tok) else { return }
+        arr.remove(at: i)
+        ud.set(arr, forKey: pendingAckKey)
     }
 
     private static func addPendingAck(_ tok: String) {

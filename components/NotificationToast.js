@@ -236,6 +236,10 @@ function _playAlert(notifType, data) {
   if (Platform.OS !== 'web' && !(data && data.__sysSound)) {
     try { triggerHaptic(notifType); } catch {}
   }
+  // [push-preview 2026-10-21] No nativo playNotificationAlert = só vibrateDevice →
+  // triggerHaptic de NOVO (2 vibrações por banner, e 1 por cima do som do push
+  // mesmo com __sysSound). Som nativo é do sistema; aqui só a web toca.
+  if (Platform.OS !== 'web') return;
   let notifPrefs = {};
   try {
     if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {

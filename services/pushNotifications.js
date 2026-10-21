@@ -599,6 +599,71 @@ export function _triggerForegroundToast(notif) {
   }
 }
 
+// [push-preview 2026-10-21] "O celular treme e o push demora": com o app ABERTO a
+// bolha chega pelo WS e a lista vibra/toca na hora, mas o banner in-app só vinha
+// com o push (APNs + extensão de notificação esperando o ✓✓ + handler JS ~0,8 s
+// = 1-3 s depois). Agora o servidor manda, logo antes do APNs, o frame WS
+// `push_preview` com o MESMO título/corpo do push (por destinatário: trancada/E2E
+// já genéricos) → banner na hora. O push que chega depois é engolido (sem banner
+// nem som repetidos) pelo id da mensagem. Kill: globalThis.__chatyy_ws_push_preview = false.
+const _wsPreviewShown = new Map(); // message_id → ts
+function _wsPreviewWasShown(mid) {
+  if (!mid) return false;
+  const t = _wsPreviewShown.get(String(mid));
+  return !!t && Date.now() - t < 60000;
+}
+async function _onWsPushPreview(p) {
+  try {
+    if (globalThis.__chatyy_ws_push_preview === false || Platform.OS === 'web') return;
+    if (!p || typeof p !== 'object' || !_onForegroundNotification) return;
+    const data = (p.data && typeof p.data === 'object') ? p.data : null;
+    if (!data || !_FG_CHAT_TYPES.has(String(data.type || '')) || !data.message_id || !data.conversation_id) return;
+    // Replay do resume / frame velho: o push (ou a lista) já cuidou.
+    const ts = Number(p.ts || 0);
+    if (!(ts > 0) || Math.abs(Date.now() - ts * 1000) > 20000) return;
+    if (AppState.currentState !== 'active') return; // fora de vista → banner do sistema (push)
+    if (_pushMasterEnabled === false) return;
+    if (_activeConversationId != null && String(data.conversation_id) === String(_activeConversationId)) return;
+    if (_fgCallActive()) return;
+    const cs = await _readConvSettings(data.conversation_id);
+    if (cs && cs.notify_messages === false) return;
+    if (cs && _isMutedNow(cs.mute_until) && data.type !== 'chat_mention') return;
+    if (AppState.currentState !== 'active') return;
+    let body = String(p.body || '');
+    if (data.preview_when === 'never') {
+      try { body = (await _notifActionLabels()).newMessage || 'Nova mensagem'; } catch {}
+    }
+    const mid = String(data.message_id);
+    if (_wsPreviewWasShown(mid)) return;
+    // Som + vibração UMA vez: se a lista/conversa já tocou o som de chegada (WS
+    // da bolha, < 3 s), o banner não vibra de novo; senão toca aqui (respeita
+    // som 'silent' da conversa) e o banner também não vibra por cima.
+    let sysSound = (Date.now() - (globalThis.__chatyyRxSoundAt || 0)) <= 3000;
+    if (!sysSound && !(cs && cs.sound === 'silent')) {
+      try { await require('./notificationSound').playChatReceiveSound(); sysSound = true; } catch {}
+    }
+    _wsPreviewShown.set(mid, Date.now());
+    if (_wsPreviewShown.size > 200) {
+      const now = Date.now();
+      for (const [k, t] of _wsPreviewShown) { if (now - t > 60000) _wsPreviewShown.delete(k); }
+    }
+    _onForegroundNotification({
+      title: String(p.title || ''),
+      body,
+      data: sysSound ? { ...data, __sysSound: 1 } : data,
+    });
+    _fgPushBeacon(data, 'ws', 'active', AppState.currentState, sysSound);
+  } catch {}
+}
+let _wsPreviewUnsub = null;
+function _installWsPushPreview() {
+  if (_wsPreviewUnsub || Platform.OS === 'web') return;
+  try {
+    const ws = require('./websocket').default;
+    if (ws && typeof ws.on === 'function') _wsPreviewUnsub = ws.on('push_preview', (d) => { _onWsPushPreview(d); });
+  } catch {}
+}
+
 // Load native modules (avoid crash on web)
 // Called eagerly on native to ensure notification handler is set before any push arrives
 async function loadModules() {
@@ -863,6 +928,12 @@ async function loadModules() {
           'status_reply',
         ]);
         if (AppState.currentState === 'active' && _foregroundContentTypes.has(data?.type)) {
+          // [push-preview 2026-10-21] banner + som já saíram pelo WS (push_preview) →
+          // o push atrasado não repete nada (só o badge).
+          if (_FG_CHAT_TYPES.has(String(data?.type || '')) && _wsPreviewWasShown(data?.message_id)) {
+            _fgPushBeacon(data, 'drop', 'ws_shown', _fgAs, false);
+            return { shouldShowAlert: false, shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: true };
+          }
           // [2026-10-15 email-melhorias] Push de e-mail com o app aberto → a
           // caixa atualiza na hora (antes só mostrava o toast e a lista
           // esperava o WS/poll de 30 s). MailContext ouve `silent_sync`.
@@ -2713,6 +2784,7 @@ export async function removeTokenFromBackend(pushToken) {
 export async function setupNotificationListeners() {
   const loaded = await loadModules();
   if (!loaded) return () => {};
+  _installWsPushPreview(); // [push-preview 2026-10-21]
 
   // [FIX push-prompt 2026-10-05] The early permission REQUEST that used to
   // live here was removed. Wiring the listeners below needs no permission,
