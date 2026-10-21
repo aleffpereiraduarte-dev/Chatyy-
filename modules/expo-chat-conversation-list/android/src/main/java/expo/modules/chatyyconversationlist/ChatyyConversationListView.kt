@@ -217,6 +217,15 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   private var compactDensity = false // [2026-10-18 compact-list] prop `density`
   private var tgDensity = false      // [2026-10-19 tg-list] density "telegram"
   private var accentColor: Int? = null // [2026-10-19 tg-list] prop `accent` ("#RRGGBB")
+  // [2026-10-21 lista-viva, apiVersion 12] prop `vivo`: fixadas num cartão
+  // (decoração com cabeçalho "FIXADAS"), sem separadores, entrada leve.
+  // false = exatamente como antes.
+  private var vivo = false
+  private var pinnedIds: Set<String> = emptySet()
+  private var pinFirstId: String? = null
+  private var pinLastId: String? = null
+  private var entranceArmed = false
+  private var entranceUntil = 0L
   var swipeEnabled = true
   var menuEnabled = true
   var collapseOffsetDp = 34f
@@ -309,7 +318,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       if (ids.size >= HOME_WINDOW) break
       val d0 = rawRows[id] ?: continue
       val d = HashMap(d0)
-      d["typing"] = ""; d["selected"] = false; d["online"] = false; d["activity"] = ""
+      d["typing"] = ""; d["typingKind"] = ""; d["selected"] = false; d["online"] = false; d["activity"] = ""
       ids.add(id); out.add(d)
     }
     try { ChatyyStoreDB.get(context).saveHome(storeA, storeS, storeR, storeN, ids, out) } catch (_: Throwable) {}
@@ -420,6 +429,15 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     if (c == accentColor) return
     accentColor = c
     labelsDirty = true
+  }
+
+  // [2026-10-21 lista-viva, apiVersion 12]
+  fun setVivoProp(on: Boolean) {
+    if (on == vivo) return
+    vivo = on
+    if (!on) entranceUntil = 0L
+    labelsDirty = true   // rebind de tudo
+    needsApply = true    // re-separa fixadas / resto
   }
 
   fun setLabelsProp(m: Map<String, Any?>?) {
@@ -535,9 +553,29 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       for (id in order) if (rows.containsKey(id) && seen.add(id)) ids.add(id)
       if (ids.size < rows.size) for (id in rows.keys.sorted()) if (seen.add(id)) ids.add(id)
       order = ids
-      val next = ArrayList<Item>(ids.size + 2)
+      val firstRows = !entranceArmed && ids.isNotEmpty()
+      if (firstRows) entranceArmed = true
+      // [lista-viva] fixadas primeiro (no cartão), depois o resto.
+      var shown: List<String> = ids
+      val oldPins = pinnedIds
+      val oldFirst = pinFirstId
+      val oldLast = pinLastId
+      if (vivo) {
+        val pins = ids.filter { rows[it]?.pinned == true }
+        if (pins.isNotEmpty()) shown = pins + ids.filter { rows[it]?.pinned != true }
+        pinnedIds = pins.toHashSet()
+        pinFirstId = pins.firstOrNull()
+        pinLastId = pins.lastOrNull()
+        if (firstRows && !CLMotion.reduced(context)) entranceUntil = SystemClock.uptimeMillis() + 900L
+      } else {
+        pinnedIds = emptySet()
+        pinFirstId = null
+        pinLastId = null
+      }
+      val decoChanged = oldFirst != pinFirstId || oldLast != pinLastId || oldPins != pinnedIds || rebindAll
+      val next = ArrayList<Item>(shown.size + 2)
       next.add(Item.Header)
-      for (id in ids) next.add(Item.Row(id))
+      for (id in shown) next.add(Item.Row(id))
       next.add(Item.Footer)
       val old = items
       val changed = if (rebindAll || pendingReset) HashSet(ids) else HashSet(dirty)
@@ -565,6 +603,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
         if (atTop) recycler.scrollToPosition(0)
         topBar.contentChanged()
       }
+      if (decoChanged && (vivo || oldPins.isNotEmpty() || oldFirst != null)) recycler.invalidateItemDecorations()
       if (!firstPaintSent) {
         firstPaintSent = true
         recycler.post { onFirstPaint(mapOf("count" to ids.size)) }
@@ -765,7 +804,10 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     }
 
     override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
-      if (holder is RowHolder) swipe.onRecycled(holder.rowView)
+      if (holder is RowHolder) {
+        holder.rowView.resetEntrance()
+        swipe.onRecycled(holder.rowView)
+      }
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int, payloads: MutableList<Any>) {
@@ -777,8 +819,16 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       val item = items.getOrNull(position) as? Item.Row ?: return
       val row = rows[item.id] ?: return
       try {
-        holder.rowView.bind(row, theme, labels, selectionMode, animate && holder.rowView.isAttachedToWindow, compactDensity, tgDensity, if (tgDensity) accentColor else null)
+        val inCard = vivo && pinnedIds.contains(item.id)
+        holder.rowView.bind(row, theme, labels, selectionMode, animate && holder.rowView.isAttachedToWindow, compactDensity, tgDensity, if (tgDensity) accentColor else null,
+          vivo, if (inCard) theme.pinnedCard else null)
         swipe.onBound(holder.rowView)
+        // [lista-viva] entrada leve na 1ª pintura (defasada 40 ms por linha).
+        if (!animate && vivo && entranceUntil > 0L) {
+          if (SystemClock.uptimeMillis() < entranceUntil) {
+            holder.rowView.playEntrance(min(500L, max(0, position - 1) * 40L))
+          } else entranceUntil = 0L
+        }
       } catch (e: Throwable) {
         onNativeError(mapOf("message" to ("bind: " + (e.message ?: e.javaClass.simpleName))))
       }
@@ -1320,6 +1370,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
 
     /** Linha fina a partir do nome (16 + 54 + 14 dp), como o iOS (sep inset). */
     private fun drawSeparators(c: Canvas, parent: RecyclerView) {
+      if (vivo) return // [lista-viva] sem linhas entre as conversas
       hairPaint.color = theme.hair
       val hh = max(1f, density * 0.5f)
       // [2026-10-19 tg-list] Telegram: 12 + 58 + 10 = 80 (x do texto).
@@ -1337,6 +1388,113 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
   }
 
   private val swipe = SwipeController()
+
+  /**
+   * [2026-10-21 lista-viva] Cartão das fixadas (raio 22, margem 0 12 10, respiro
+   * 4 em cima/embaixo, sombra dupla suave só no claro) + cabeçalho "FIXADAS"
+   * com alfinete (12 sp, 700, caixa alta). Desenhado por baixo das linhas;
+   * as linhas fixadas ficam com fundo transparente (CLRowView no cartão).
+   */
+  private inner class PinnedCardDecoration : RecyclerView.ItemDecoration() {
+    private val cardPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val textPaint = android.text.TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+      typeface = CLType.weight(700)
+      letterSpacing = 0.05f
+    }
+    private val rect = RectF()
+    private var pinIcon: android.graphics.drawable.Drawable? = null
+    private var pinIconColor = 0
+    private val fontScale = context.resources.configuration.fontScale
+
+    private fun textSize(): Float = 12f * density * min(max(fontScale, 0.85f), 1.3f)
+
+    private fun headerH(): Int {
+      textPaint.textSize = textSize()
+      val fm = textPaint.fontMetrics
+      return ceil(fm.descent - fm.ascent).toInt() + (16f * density).toInt()
+    }
+
+    private fun idOf(view: View, parent: RecyclerView): String? {
+      val pos = parent.getChildAdapterPosition(view)
+      val it = if (pos != RecyclerView.NO_POSITION) items.getOrNull(pos) else null
+      if (it is Item.Row) return it.id
+      return (view as? CLRowView)?.row?.id
+    }
+
+    override fun getItemOffsets(outRect: android.graphics.Rect, view: View, parent: RecyclerView, state: RecyclerView.State) {
+      outRect.set(0, 0, 0, 0)
+      if (!vivo || pinnedIds.isEmpty() || view !is CLRowView) return
+      val id = idOf(view, parent) ?: return
+      if (!pinnedIds.contains(id)) return
+      val side = (12f * density).toInt()
+      outRect.left = side
+      outRect.right = side
+      // O rótulo "FIXADAS" + alfinete é do header JS (logo acima da 1ª linha).
+      if (id == pinFirstId) outRect.top = (4f * density).toInt()
+      if (id == pinLastId) outRect.bottom = (14f * density).toInt()
+    }
+
+    override fun onDraw(c: Canvas, parent: RecyclerView, state: RecyclerView.State) {
+      if (!vivo || pinnedIds.isEmpty()) return
+      var top = Float.NaN
+      var bottom = Float.NaN
+      var firstTop = Float.NaN
+      var lastBottom = Float.NaN
+      for (i in 0 until parent.childCount) {
+        val ch = parent.getChildAt(i) as? CLRowView ?: continue
+        val id = idOf(ch, parent) ?: continue
+        if (!pinnedIds.contains(id)) continue
+        val t = ch.top + ch.translationY
+        val b = ch.bottom + ch.translationY
+        if (top.isNaN() || t < top) top = t
+        if (bottom.isNaN() || b > bottom) bottom = b
+        if (id == pinFirstId) firstTop = t
+        if (id == pinLastId) lastBottom = b
+      }
+      if (top.isNaN()) return
+      val pad = 4f * density
+      val cardTop = if (!firstTop.isNaN()) firstTop - pad else top - 60f * density
+      val cardBottom = if (!lastBottom.isNaN()) lastBottom + pad else bottom + 60f * density
+      val side = 12f * density
+      rect.set(side, cardTop, parent.width - side, cardBottom)
+      val rad = 22f * density
+      cardPaint.color = theme.pinnedCard
+      if (!theme.dark && Build.VERSION.SDK_INT >= 28) {
+        // 0 8 24 /4,5% (longe) + 0 1 2 /3,5% (perto) — sombra do cartão do JS.
+        cardPaint.setShadowLayer(12f * density, 0f, 8f * density, 0x0B000000)
+        c.drawRoundRect(rect, rad, rad, cardPaint)
+        cardPaint.setShadowLayer(1f * density, 0f, 1f * density, 0x09000000)
+        c.drawRoundRect(rect, rad, rad, cardPaint)
+        cardPaint.clearShadowLayer()
+      }
+      c.drawRoundRect(rect, rad, rad, cardPaint)
+      if (firstTop.isNaN() || !DRAW_NATIVE_HEADER) return
+      // Cabeçalho "FIXADAS" acima do cartão.
+      textPaint.textSize = textSize()
+      textPaint.color = theme.sub
+      val fm = textPaint.fontMetrics
+      val baseline = cardTop - 6f * density - fm.descent
+      val title = labels.get("pinnedHeader", "Fixadas").uppercase()
+      val rtl = parent.layoutDirection == View.LAYOUT_DIRECTION_RTL
+      val iconS = (13f * density).toInt()
+      if (pinIcon == null || pinIconColor != theme.sub) {
+        pinIcon = tintedIcon(context, R.drawable.ccl_ic_pin, theme.sub)
+        pinIconColor = theme.sub
+      }
+      val midY = baseline + (fm.ascent + fm.descent) / 2f
+      val x0 = 18f * density
+      val tw = textPaint.measureText(title)
+      val iconX = if (rtl) parent.width - x0 - iconS else x0
+      val textX = if (rtl) parent.width - x0 - iconS - 6f * density - tw else x0 + iconS + 6f * density
+      pinIcon?.let {
+        it.setBounds(iconX.toInt(), (midY - iconS / 2f).toInt(), iconX.toInt() + iconS, (midY - iconS / 2f).toInt() + iconS)
+        it.draw(c)
+      }
+      c.drawText(title, textX, baseline, textPaint)
+    }
+  }
+
+  private val pinnedCard = PinnedCardDecoration()
 
   /**
    * [2026-10-18 tg-list] Detector do puxão no topo: só observa (nunca
@@ -1397,6 +1555,8 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     stack.addView(topBar, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, 1, Gravity.TOP))
     addView(stack, android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, android.widget.LinearLayout.LayoutParams.MATCH_PARENT))
     // [wave13 swipe-ios] swipe próprio (pílulas iOS) no lugar do ItemTouchHelper.
+    // [lista-viva] cartão das fixadas por baixo de tudo (antes do swipe).
+    recycler.addItemDecoration(pinnedCard)
     recycler.addItemDecoration(swipe)
     recycler.addOnItemTouchListener(swipe)
     recycler.addOnItemTouchListener(pullDetector)
@@ -1433,6 +1593,8 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
     private const val TYPE_HEADER = 0
     private const val TYPE_ROW = 1
     private const val TYPE_FOOTER = 2
+    /** [lista-viva] cabeçalho "FIXADAS" nativo desligado: quem desenha é o header JS. */
+    private const val DRAW_NATIVE_HEADER = false
     private val PAYLOAD_BIND = Any()
   }
 }

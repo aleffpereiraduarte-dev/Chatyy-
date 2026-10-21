@@ -20,6 +20,7 @@ import { listMetrics, tgListOn, listAccentHex } from './listDensity';
 import { useTheme } from '../../context/ThemeContext';
 import { THEME_V2 as _THEME_V2, grafite as _grafite } from '../../constants/theme'; // [2026-10-20 grafite]
 import { toArgb as _toArgb } from '../chat/argb';
+import { listVivoOn as _listVivoOn } from './listVivoData'; // [2026-10-21 lista-viva]
 
 class NativeListBoundary extends React.Component {
   constructor(props) {
@@ -423,6 +424,18 @@ function NativeConversationListInner(props) {
     }
   } catch {}
 
+  // [2026-10-21 lista-viva] binário com a prop `vivo` (iOS api >= 11 /
+  // Android api >= 12): avatar quente, online pulsando, digitando animado,
+  // fixadas num cartão, miniatura, sem separadores, entrada leve. Binário
+  // antigo: nem recebe. Kill: globalThis.__chatyy_list_vivo = false.
+  let vivoProps = null;
+  try {
+    if (_listVivoOn() && _clApiVersion() >= (Platform.OS === 'android' ? 12 : 11)) {
+      vivoProps = _VIVO_PROPS;
+      if (paletteProps) paletteProps = isDark ? _PALETTE_VD : _PALETTE_VL;
+    }
+  } catch {}
+
   if (!Native) return null;
   return (
     <Native
@@ -446,6 +459,7 @@ function NativeConversationListInner(props) {
       {...peekHeightProps}
       {...densityProps}
       {...paletteProps}
+      {...vivoProps}
       {...handlers}
     >
       <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>
@@ -482,6 +496,15 @@ function _mkPalette(dark) {
 }
 const _PALETTE_L = _mkPalette(false);
 const _PALETTE_D = _mkPalette(true);
+// [2026-10-21 lista-viva] + cor do cartão das fixadas (claro: off-white sobre a
+// lista branca; escuro: superfície #1A1A1D sobre #0E0E10).
+function _mkVivoPalette(base, dark) {
+  if (!base) return null;
+  return { palette: { ...base.palette, pinnedCard: _toArgb(dark ? '#1A1A1D' : '#F6F6F3') } };
+}
+const _PALETTE_VL = _mkVivoPalette(_PALETTE_L, false);
+const _PALETTE_VD = _mkVivoPalette(_PALETTE_D, true);
+const _VIVO_PROPS = Object.freeze({ vivo: true });
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },

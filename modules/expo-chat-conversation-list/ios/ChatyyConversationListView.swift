@@ -7,6 +7,9 @@ import ExpoChatStore
 /// UICollectionView que avisa quando faz layout (reposiciona header/rodapé RN).
 final class CLCollectionView: UICollectionView {
   var onLayout: (() -> Void)?
+  // [2026-10-21 lista-viva] cores do cartão das fixadas (lidas pela decoração).
+  var pinnedCardColor: UIColor = .white
+  var pinnedCardShadow = true
   override func layoutSubviews() {
     super.layoutSubviews()
     onLayout?()
@@ -115,6 +118,14 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   private var compact = false // [2026-10-18 compact-list] prop `density`
   private var tg = false      // [2026-10-19 tg-list] density "telegram"
   private var accent: UIColor? // [2026-10-19 tg-list] prop `accent` ("#RRGGBB")
+  // [2026-10-21 lista-viva, apiVersion 11] prop `vivo`: seções (cabeçalho
+  // "FIXADAS" / cartão das fixadas / resto), sem separadores, entrada leve.
+  // false = uma seção só, exatamente como antes.
+  private var vivo = false
+  private var sectionIds: [Int] = [0]
+  private var entranceUntil: CFTimeInterval = 0
+  private var entranceArmed = false
+  static let secFlat = 0, secPinHeader = 1, secPinned = 2, secRest = 3
   var swipeEnabled = true
   var menuEnabled = true
   var collapseOffset: CGFloat = 34
@@ -193,14 +204,22 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       guard let self = self else { return }
       self.bind(cell, id: id)
     }
+    let headerReg = UICollectionView.CellRegistration<CLPinnedHeaderCell, String> { [weak self] cell, _, _ in
+      guard let self = self else { return }
+      cell.configure(title: self.labels.get("pinnedHeader", "Fixadas"), theme: self.theme)
+    }
     dataSource = UICollectionViewDiffableDataSource<Int, String>(collectionView: cv) { collectionView, indexPath, id in
+      if id == CLPinnedHeaderCell.itemId {
+        return collectionView.dequeueConfiguredReusableCell(using: headerReg, for: indexPath, item: id)
+      }
       return collectionView.dequeueConfiguredReusableCell(using: reg, for: indexPath, item: id)
     }
   }
 
   private func bind(_ cell: CLConversationCell, id: String) {
     guard let row = rows[id] else { return }
-    cell.configure(row, theme: theme, labels: labels, selectionMode: selectionMode, compact: compact, tg: tg, accent: tg ? accent : nil)
+    cell.configure(row, theme: theme, labels: labels, selectionMode: selectionMode, compact: compact, tg: tg, accent: tg ? accent : nil,
+                   vivo: vivo, cardColor: (vivo && row.pinned) ? theme.pinnedCard : nil)
     cell.onAvatarTap = { [weak self] rid in
       self?.onAvatarPress(["id": rid])
     }
@@ -210,6 +229,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   }
 
   private func makeLayout() -> UICollectionViewLayout {
+    if vivo { return makeVivoLayout() }
     var cfg = UICollectionLayoutListConfiguration(appearance: .plain)
     cfg.backgroundColor = theme.bg
     cfg.showsSeparators = true
@@ -228,6 +248,39 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       return self?.swipeConfiguration(indexPath, leading: false)
     }
     return UICollectionViewCompositionalLayout.list(using: cfg)
+  }
+
+  /// [lista-viva] Uma seção por papel: cabeçalho "FIXADAS" (1 item), cartão
+  /// das fixadas (raio 22, margem 0 12 10, respiro 4 em cima/embaixo) e o
+  /// resto. Sem separadores.
+  private func makeVivoLayout() -> UICollectionViewLayout {
+    let layout = UICollectionViewCompositionalLayout(sectionProvider: { [weak self] idx, env in
+      let ids = self?.sectionIds ?? []
+      let sid = (idx >= 0 && idx < ids.count) ? ids[idx] : ChatyyConversationListView.secRest
+      var cfg = UICollectionLayoutListConfiguration(appearance: .plain)
+      cfg.backgroundColor = .clear
+      cfg.showsSeparators = false
+      if sid != ChatyyConversationListView.secPinHeader {
+        // `self` aqui já é a referência fraca do closure externo.
+        cfg.leadingSwipeActionsConfigurationProvider = { indexPath in
+          return self?.swipeConfiguration(indexPath, leading: true)
+        }
+        cfg.trailingSwipeActionsConfigurationProvider = { indexPath in
+          return self?.swipeConfiguration(indexPath, leading: false)
+        }
+      }
+      let sec = NSCollectionLayoutSection.list(using: cfg, layoutEnvironment: env)
+      if sid == ChatyyConversationListView.secPinned {
+        sec.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 12, bottom: 14, trailing: 12)
+        let deco = NSCollectionLayoutDecorationItem.background(elementKind: CLPinnedCardView.kind)
+        deco.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 12, bottom: 10, trailing: 12)
+        deco.zIndex = -1
+        sec.decorationItems = [deco]
+      }
+      return sec
+    })
+    layout.register(CLPinnedCardView.self, forDecorationViewOfKind: CLPinnedCardView.kind)
+    return layout
   }
 
   // MARK: - Props
@@ -309,6 +362,16 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
     palette = next
     theme = CLTheme(dark: theme.dark, palette: palette)
     themeDirty = true
+  }
+
+  // [2026-10-21 lista-viva, apiVersion 11]
+  func setVivo(_ on: Bool) {
+    if on == vivo { return }
+    vivo = on
+    selectionDirty = true   // layout novo + reconfigura as visíveis
+    needsApply = true
+    pendingReset = true     // re-seciona sem animar
+    if !on { entranceUntil = 0 }
   }
 
   func setSelectionMode(_ on: Bool) {
@@ -395,6 +458,8 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       backgroundColor = theme.bg
       collectionView.backgroundColor = theme.bg
       collectionView.indicatorStyle = theme.dark ? .white : .black
+      collectionView.pinnedCardColor = theme.pinnedCard
+      collectionView.pinnedCardShadow = !theme.dark
       collectionView.setCollectionViewLayout(makeLayout(), animated: false)
       topBar.apply(theme: theme)
       reconfigureAll = appliedOnce
@@ -476,6 +541,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       if ids.count >= Self.homeWindow { break }
       guard var d = rawRows[id] else { continue }
       d["typing"] = ""
+      d["typingKind"] = ""
       d["selected"] = false
       d["online"] = false
       d["activity"] = ""
@@ -513,11 +579,35 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
     let oldList = dataSource.snapshot().itemIdentifiers
     let oldIds = Set(oldList)
     var snap = NSDiffableDataSourceSnapshot<Int, String>()
-    snap.appendSections([0])
-    snap.appendItems(ids, toSection: 0)
-    let reconf: [String]
+    let firstRows = !entranceArmed && !ids.isEmpty
+    if firstRows { entranceArmed = true }
+    if vivo {
+      // [lista-viva] fixadas no cartão (com cabeçalho), o resto embaixo.
+      let pins = ids.filter { rows[$0]?.pinned == true }
+      if pins.isEmpty {
+        snap.appendSections([Self.secRest])
+        snap.appendItems(ids, toSection: Self.secRest)
+      } else {
+        // O rótulo "FIXADAS" + alfinete é do header JS (logo acima da 1ª
+        // linha); aqui só o cartão. (CLPinnedHeaderCell fica de reserva.)
+        snap.appendSections([Self.secPinned, Self.secRest])
+        snap.appendItems(pins, toSection: Self.secPinned)
+        snap.appendItems(ids.filter { rows[$0]?.pinned != true }, toSection: Self.secRest)
+      }
+      // Entrada leve só na 1ª pintura COM linhas (foto do store ou 1º reset).
+      if firstRows && !CLMotion.reduced { entranceUntil = CACurrentMediaTime() + 0.9 }
+    } else {
+      snap.appendSections([Self.secFlat])
+      snap.appendItems(ids, toSection: Self.secFlat)
+    }
+    sectionIds = snap.sectionIdentifiers
+    let newList = snap.itemIdentifiers
+    var reconf: [String]
     if reconfigureAll || pendingReset {
       reconf = ids.filter { oldIds.contains($0) }
+      if vivo && oldIds.contains(CLPinnedHeaderCell.itemId) && newList.contains(CLPinnedHeaderCell.itemId) {
+        reconf.append(CLPinnedHeaderCell.itemId)
+      }
     } else {
       reconf = pendingDirty.filter { seen.contains($0) && oldIds.contains($0) }
     }
@@ -531,7 +621,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       dataSource.apply(snap, animatingDifferences: false) { [weak self] in self?.afterApply() }
       return
     }
-    if animate && oldList != ids {
+    if animate && oldList != newList {
       // [2026-10-16 wave8-list] Conversa que recebeu mensagem SOBE com mola
       // suave e as outras deslizam para baixo (Telegram) — o batch update da
       // diffable herda a curva do bloco de animação.
@@ -706,9 +796,27 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
 
   // MARK: - UICollectionViewDelegate
 
+  public func collectionView(_ collectionView: UICollectionView, shouldHighlightItemAt indexPath: IndexPath) -> Bool {
+    return dataSource.itemIdentifier(for: indexPath) != CLPinnedHeaderCell.itemId
+  }
+
+  public func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
+    return dataSource.itemIdentifier(for: indexPath) != CLPinnedHeaderCell.itemId
+  }
+
+  // [lista-viva] entrada leve das linhas na 1ª pintura (defasada pela posição).
+  public func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
+    guard vivo, entranceUntil > 0, let c = cell as? CLConversationCell else { return }
+    if CACurrentMediaTime() > entranceUntil { entranceUntil = 0; return }
+    let rel = max(0, cell.frame.minY - (collectionView.contentOffset.y + collectionView.contentInset.top))
+    if rel > collectionView.bounds.height { return }
+    let step = max(60, cell.frame.height)
+    c.playEntrance(delay: min(0.5, Double(rel / step) * 0.04))
+  }
+
   public func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
     collectionView.deselectItem(at: indexPath, animated: true)
-    guard let id = dataSource.itemIdentifier(for: indexPath) else { return }
+    guard let id = dataSource.itemIdentifier(for: indexPath), id != CLPinnedHeaderCell.itemId else { return }
     // [wave8 row-zoom] navigationHint: frame da linha em coords da janela (pt)
     // p/ a transição "a conversa cresce a partir da linha" (modules/expo-chat-row-zoom).
     var ev: [String: Any] = ["id": id]
@@ -724,7 +832,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   public func collectionView(_ collectionView: UICollectionView, didHighlightItemAt indexPath: IndexPath) {
     // Pré-carrega a conversa no toque (o JS usa onPressIn para isso).
     if selectionMode { return }
-    guard let id = dataSource.itemIdentifier(for: indexPath) else { return }
+    guard let id = dataSource.itemIdentifier(for: indexPath), id != CLPinnedHeaderCell.itemId else { return }
     onRowPressIn(["id": id])
   }
 

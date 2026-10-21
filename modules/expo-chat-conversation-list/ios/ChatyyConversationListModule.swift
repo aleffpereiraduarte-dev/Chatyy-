@@ -45,9 +45,15 @@ public class ChatyyConversationListModule: Module {
     //     própria, alfinete no lugar do contador, swipe com glifo cheio) +
     //     prop `accent` ("#RRGGBB": cor do "digitando…").
     // [2026-10-20 grafite] 10 = prop `palette` (cores do tema Grafite suave).
+    // [2026-10-21 lista-viva] 11 = prop `vivo` (mockup preview-2026/lista.html:
+    //     avatar quente, online pulsando, digitando/gravando animados, não lidas
+    //     fortes, fixadas num cartão, miniatura de foto/vídeo, sem separadores,
+    //     entrada leve) + chaves opcionais da linha `typing` ("typing" |
+    //     "recording" | texto), `typingKind`, `thumbUrl`, `thumbAuth` e
+    //     palette `pinnedCard`. vivo ausente/false = desenho idêntico ao 10.
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 10
+      return 11
       #else
       return 1
       #endif
@@ -78,6 +84,9 @@ public class ChatyyConversationListModule: Module {
       }
       Prop("palette") { (view: ChatyyConversationListView, value: [String: Any]?) in
         view.setPalette(value)
+      }
+      Prop("vivo") { (view: ChatyyConversationListView, value: Bool?) in
+        view.setVivo(value ?? false)
       }
       Prop("selectionMode") { (view: ChatyyConversationListView, value: Bool?) in
         view.setSelectionMode(value ?? false)

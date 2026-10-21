@@ -24,6 +24,17 @@ final class CLConversationCell: UICollectionViewListCell {
   private let mentionPill = CLPillView()
   private let unreadPill = CLPillView()
   private let avatarTap = UITapGestureRecognizer()
+  // [2026-10-21 lista-viva, apiVersion 11] só com a prop `vivo` da lista:
+  // "digitando" com pontinhos / "gravando áudio" com ondinha DEPOIS do texto,
+  // miniatura 40×40 (raio 10) da última foto/vídeo, linha dentro do cartão das fixadas.
+  private let vivoDots = CLVivoDots()
+  private let waveBars = CLWaveBars()
+  private let thumbView = UIImageView()
+  private let thumbPlay = UIImageView()
+  private var thumbURL = ""
+  private var vivo = false
+  private var cardColor: UIColor?   // != nil = linha dentro do cartão das fixadas
+  private var pinOnTop = false      // vivo: alfinete ao lado da hora (linha de cima)
 
   private(set) var row = CLRow()
   private var theme = CLTheme(dark: false)
@@ -60,6 +71,7 @@ final class CLConversationCell: UICollectionViewListCell {
   private var previewSemibold = UIFont.systemFont(ofSize: 15, weight: .semibold)
   private var previewMedium = UIFont.systemFont(ofSize: 15, weight: .medium)
   private var pillFont = UIFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+  private var nameHeavyFont = UIFont.systemFont(ofSize: 17, weight: .bold)
 
   var onAvatarTap: ((String) -> Void)?
   var onA11yAction: ((String, String) -> Void)?
@@ -82,6 +94,25 @@ final class CLConversationCell: UICollectionViewListCell {
     }
     cv.addSubview(receipt)
     cv.addSubview(typingDots)
+    vivoDots.isHidden = true
+    waveBars.isHidden = true
+    cv.addSubview(vivoDots)
+    cv.addSubview(waveBars)
+    thumbView.isHidden = true
+    thumbView.contentMode = .scaleAspectFill
+    thumbView.clipsToBounds = true
+    thumbView.layer.cornerRadius = 10
+    if #available(iOS 13.0, *) { thumbView.layer.cornerCurve = .continuous }
+    thumbView.isUserInteractionEnabled = false
+    cv.addSubview(thumbView)
+    thumbPlay.contentMode = .center
+    thumbPlay.isHidden = true
+    thumbPlay.image = CLSymbols.image("play.fill", pointSize: 12, weight: .bold, color: .white)
+    thumbPlay.layer.shadowColor = UIColor.black.cgColor
+    thumbPlay.layer.shadowOpacity = 0.35
+    thumbPlay.layer.shadowRadius = 2
+    thumbPlay.layer.shadowOffset = .zero
+    thumbView.addSubview(thumbPlay)
     cv.addSubview(mentionPill)
     cv.addSubview(unreadPill)
     avatarTap.addTarget(self, action: #selector(avatarTapped))
@@ -119,6 +150,7 @@ final class CLConversationCell: UICollectionViewListCell {
     let tc = traitCollection
     nameFont = CLFonts.scaled(17, .semibold, cap: 1.35, traits: tc)
     nameBoldFont = CLFonts.scaled(17, .semibold, cap: 1.35, traits: tc)
+    nameHeavyFont = CLFonts.scaled(17, .bold, cap: 1.35, traits: tc)
     activityFont = CLFonts.scaled(13, .medium, cap: 1.3, traits: tc)
     timeFont = CLFonts.scaled(14, .regular, cap: 1.3, traits: tc, mono: true)
     timeBoldFont = CLFonts.scaled(14, .semibold, cap: 1.3, traits: tc, mono: true)
@@ -138,9 +170,13 @@ final class CLConversationCell: UICollectionViewListCell {
 
   // MARK: - Configuração
 
-  func configure(_ newRow: CLRow, theme: CLTheme, labels: CLLabels, selectionMode: Bool, compact: Bool = false, tg: Bool = false, accent: UIColor? = nil) {
+  func configure(_ newRow: CLRow, theme: CLTheme, labels: CLLabels, selectionMode: Bool, compact: Bool = false, tg: Bool = false, accent: UIColor? = nil, vivo: Bool = false, cardColor: UIColor? = nil) {
     let previous: CLRow? = (row.id == newRow.id && !row.id.isEmpty) ? row : nil
     let themeChanged = theme.dark != self.theme.dark
+    let vivoChanged = vivo != self.vivo || (cardColor == nil) != (self.cardColor == nil)
+    self.vivo = vivo
+    self.cardColor = vivo ? cardColor : nil
+    if vivoChanged { setNeedsLayout() }
     self.row = newRow
     self.theme = theme
     self.labels = labels
@@ -161,12 +197,14 @@ final class CLConversationCell: UICollectionViewListCell {
 
   private var rowBackground: UIColor {
     // [2026-10-17 wa-cells] Fixada = fundo liso (como o WhatsApp); só o alfinete marca.
-    return theme.bg
+    // [lista-viva] dentro do cartão das fixadas = cor do cartão.
+    return cardColor ?? theme.bg
   }
 
   private func apply(animated: Bool, previous: CLRow?) {
     let r = row
     let unread = r.unreadVisible
+    avatar.vivo = vivo
     avatar.configure(r, theme: theme, rowBackground: rowBackground)
     // Em modo seleção (ou grupo/canal) o toque no avatar vira toque na linha.
     avatarTap.isEnabled = !selectionMode && !r.isGroupish
@@ -178,7 +216,7 @@ final class CLConversationCell: UICollectionViewListCell {
     check.checked = r.selected
 
     nameLabel.text = r.title
-    nameLabel.font = unread ? nameBoldFont : nameFont
+    nameLabel.font = unread ? (vivo ? nameHeavyFont : nameBoldFont) : nameFont
     nameLabel.textColor = theme.text
     activityLabel.isHidden = r.activity.isEmpty || r.isGroupish
     activityLabel.text = r.activity
@@ -187,7 +225,8 @@ final class CLConversationCell: UICollectionViewListCell {
 
     timeLabel.text = r.time
     // Telegram: hora sempre cinza/regular (o contador já marca a não lida).
-    let timeStrong = r.timeBold && !tg
+    // [lista-viva] não lida = hora escura e mais forte (também no Telegram).
+    let timeStrong = vivo ? (unread || r.timeBold) : (r.timeBold && !tg)
     timeLabel.font = timeStrong ? timeBoldFont : timeFont
     timeLabel.textColor = timeStrong ? theme.text : theme.sub
 
@@ -195,11 +234,20 @@ final class CLConversationCell: UICollectionViewListCell {
     lockIcon.image = r.locked ? CLSymbols.image("lock", pointSize: 11, weight: .semibold, color: theme.icon) : nil
 
     // Linha de baixo
-    let typing = !r.typing.isEmpty && !r.locked
+    let typing = r.isTyping && !r.locked
     let drafting = !typing && !r.draft.isEmpty && !r.locked
-    typingDots.isHidden = !typing
+    typingDots.isHidden = !typing || vivo
     typingDots.color = tg ? typingTint : theme.text
-    if typing { typingDots.start() } else { typingDots.stop() }
+    if typing && !vivo { typingDots.start() } else { typingDots.stop() }
+    // [lista-viva] pontinhos que sobem / ondinha do áudio, depois do texto.
+    let vivoTyping = vivo && typing
+    let recording = vivoTyping && r.typingKind == "recording"
+    vivoDots.isHidden = !vivoTyping || recording
+    waveBars.isHidden = !recording
+    vivoDots.color = tg ? typingTint : theme.text
+    waveBars.color = tg ? typingTint : theme.text
+    if vivoTyping && !recording { vivoDots.start() } else { vivoDots.stop() }
+    if recording { waveBars.start() } else { waveBars.stop() }
 
     let showReceipt = !typing && !drafting && !r.locked && r.receipt > 0
     // tg: enviado/entregue no MESMO cinza da hora (✓✓ e hora lidos como um bloco).
@@ -234,7 +282,7 @@ final class CLConversationCell: UICollectionViewListCell {
     previewLabel.attributedText = buildPreview(typing: typing, drafting: drafting, unread: unread, senderLine: senderLine, ownMark: ownMark)
     // [2026-10-16 wave8-list] "digitando…" entra/sai em crossfade curto (sem
     // trocar o texto num corte seco).
-    if animated, let p = previous, p.typing.isEmpty != r.typing.isEmpty, !CLMotion.reduced {
+    if animated, let p = previous, p.isTyping != r.isTyping, !CLMotion.reduced {
       let fade = CATransition()
       fade.type = .fade
       fade.duration = 0.18
@@ -257,17 +305,54 @@ final class CLConversationCell: UICollectionViewListCell {
     }
     // tg: alfinete só quando não há contador/menção (mesmo lugar, como no Telegram).
     pinIcon.isHidden = !r.pinned || (tg && (unread || r.mention))
+    // [lista-viva] alfinete cheio pequeno ao lado da hora (layout regular).
+    pinOnTop = vivo && !tg && !pinIcon.isHidden
     if !pinIcon.isHidden {
-      pinIcon.image = tg
-        ? CLSymbols.image("pin.fill", pointSize: 12, weight: .regular, color: theme.faint)
-        : CLSymbols.image("pin", pointSize: 13, weight: .regular, color: theme.icon)
+      if pinOnTop {
+        pinIcon.image = CLSymbols.image("pin.fill", pointSize: 10, weight: .regular, color: theme.sub)
+      } else {
+        pinIcon.image = tg
+          ? CLSymbols.image("pin.fill", pointSize: 12, weight: .regular, color: theme.faint)
+          : CLSymbols.image("pin", pointSize: 13, weight: .regular, color: theme.icon)
+      }
     }
 
     mentionPill.isHidden = !r.mention
-    mentionPill.backgroundColor = theme.pillBg
     mentionPill.label.text = "@"
-    mentionPill.label.font = CLFonts.scaled(13, .bold, cap: 1.15, traits: traitCollection)
-    mentionPill.label.textColor = theme.pillTxt
+    if vivo {
+      // Selo próprio da menção: círculo claro (superfície 2) com "@" forte.
+      mentionPill.backgroundColor = theme.card
+      mentionPill.label.font = CLFonts.scaled(12, .heavy, cap: 1.15, traits: traitCollection)
+      mentionPill.label.textColor = theme.text
+    } else {
+      mentionPill.backgroundColor = theme.pillBg
+      mentionPill.label.font = CLFonts.scaled(13, .bold, cap: 1.15, traits: traitCollection)
+      mentionPill.label.textColor = theme.pillTxt
+    }
+
+    // [lista-viva] miniatura da última foto/vídeo (40×40, raio 10) à direita.
+    let showThumb = vivo && !r.thumbUrl.isEmpty && !r.locked
+    thumbView.isHidden = !showThumb
+    thumbPlay.isHidden = !(showThumb && r.thumbVideo)
+    if showThumb {
+      thumbView.backgroundColor = theme.card
+      let url = r.thumbUrl
+      if url != thumbURL || thumbView.image == nil {
+        thumbURL = url
+        if let img = CLImageLoader.shared.cachedImage(url, maxPixel: 120) {
+          thumbView.image = img
+        } else {
+          thumbView.image = nil
+          CLImageLoader.shared.load(url, auth: r.thumbAuth, maxPixel: 120) { [weak self] img in
+            guard let self = self, self.thumbURL == url else { return }
+            self.thumbView.image = img
+          }
+        }
+      }
+    } else if !thumbURL.isEmpty {
+      thumbURL = ""
+      thumbView.image = nil
+    }
 
     unreadPill.isHidden = !unread
     let mutedPill = r.muted && !r.mention
@@ -326,7 +411,7 @@ final class CLConversationCell: UICollectionViewListCell {
       return out
     }
     if typing {
-      out.append(NSAttributedString(string: r.typing, attributes: [.font: tg ? previewFont : previewMedium, .foregroundColor: tg ? typingTint : theme.text]))
+      out.append(NSAttributedString(string: typingText, attributes: [.font: tg ? previewFont : previewMedium, .foregroundColor: tg ? typingTint : theme.text]))
       return out
     }
     if drafting {
@@ -338,7 +423,8 @@ final class CLConversationCell: UICollectionViewListCell {
       out.append(NSAttributedString(string: r.draft, attributes: [.font: previewFont, .foregroundColor: theme.sub]))
       return out
     }
-    let bodyColor = (unread && !tg) ? theme.subStrong : theme.sub
+    // [lista-viva] não lida = prévia na cor principal do texto.
+    let bodyColor = vivo ? (unread ? theme.text : theme.sub) : ((unread && !tg) ? theme.subStrong : theme.sub)
     // tg: no grupo o remetente vai na linha de cima; numa conversa direta o
     // "Você:" sai quando ✓/relógio/"!" já dizem que a mensagem é minha.
     let inlineSender = !r.sender.isEmpty && !senderLine && !(tg && !r.isGroupish && ownMark)
@@ -356,6 +442,42 @@ final class CLConversationCell: UICollectionViewListCell {
     }
     out.append(NSAttributedString(string: body, attributes: [.font: bodyFont, .foregroundColor: bodyColor]))
     return out
+  }
+
+  /// Texto do "digitando": o pronto do JS ou o rótulo pelo tipo. Na lista viva
+  /// as reticências saem (os pontinhos animados fazem esse papel).
+  private var typingText: String {
+    var t = row.typing
+    if t.isEmpty {
+      t = row.typingKind == "recording"
+        ? labels.get("recordingAudio", "gravando áudio")
+        : labels.get("typingShort", "digitando")
+    }
+    if vivo {
+      while let last = t.last, last == "." || last == "…" || last == " " { t.removeLast() }
+    }
+    return t
+  }
+
+  /// [lista-viva] entrada leve ao abrir a lista: sobe 10 pt e acende (0,5 s,
+  /// curva 0,2 0,8 0,2 1). Só CA (nada no modelo da view) → reuso seguro.
+  func playEntrance(delay: TimeInterval) {
+    if CLMotion.reduced { return }
+    let l = contentView.layer
+    l.removeAnimation(forKey: "vivoEnter")
+    let op = CABasicAnimation(keyPath: "opacity")
+    op.fromValue = 0
+    op.toValue = 1
+    let ty = CABasicAnimation(keyPath: "transform.translation.y")
+    ty.fromValue = 10
+    ty.toValue = 0
+    let g = CAAnimationGroup()
+    g.animations = [op, ty]
+    g.duration = 0.5
+    g.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+    g.beginTime = CACurrentMediaTime() + delay
+    g.fillMode = .backwards
+    l.add(g, forKey: "vivoEnter")
   }
 
   private func buildA11yActions() -> [UIAccessibilityCustomAction] {
@@ -389,9 +511,28 @@ final class CLConversationCell: UICollectionViewListCell {
   // MARK: - Fundo (fixada / selecionada / pressionada)
 
   override func updateConfiguration(using state: UICellConfigurationState) {
+    if vivo, let card = cardColor {
+      // [lista-viva] dentro do cartão: fundo transparente (o cartão é a
+      // decoração da seção); tocar = pílula arredondada na superfície 2.
+      var cb = UIBackgroundConfiguration.clear()
+      if state.isHighlighted || state.isSelected || state.isSwiped {
+        cb.backgroundColor = theme.card
+        cb.cornerRadius = 16
+        cb.backgroundInsets = NSDirectionalEdgeInsets(top: 2, leading: 4, bottom: 2, trailing: 4)
+      } else if row.selected && selectionMode {
+        cb.backgroundColor = theme.selectedBg
+        cb.cornerRadius = 16
+        cb.backgroundInsets = NSDirectionalEdgeInsets(top: 2, leading: 4, bottom: 2, trailing: 4)
+      }
+      backgroundConfiguration = cb
+      avatar.updateRowBackground(card)
+      return
+    }
     var bg = UIBackgroundConfiguration.listPlainCell()
     let base: UIColor = row.selected && selectionMode ? theme.selectedBg : theme.bg
-    if state.isHighlighted || state.isSelected || state.isSwiped {
+    if vivo && (state.isHighlighted || state.isSelected || state.isSwiped) {
+      bg.backgroundColor = theme.card
+    } else if state.isHighlighted || state.isSelected || state.isSwiped {
       bg.backgroundColor = theme.dark ? UIColor(clHex: 0x1A1A1A) : UIColor(clHex: 0xF0F0F0)
     } else if row.selected && selectionMode {
       // selectedBg é translúcido → compõe sobre o fundo da lista.
@@ -411,6 +552,9 @@ final class CLConversationCell: UICollectionViewListCell {
   override func prepareForReuse() {
     super.prepareForReuse()
     typingDots.stop()
+    vivoDots.stop()
+    waveBars.stop()
+    contentView.layer.removeAnimation(forKey: "vivoEnter")
     unreadPill.layer.removeAllAnimations()
     unreadPill.cancelRoll()
     mentionPill.layer.removeAllAnimations()
@@ -428,7 +572,8 @@ final class CLConversationCell: UICollectionViewListCell {
     let b = contentView.bounds
     let W = b.width
     let H = b.height
-    var x: CGFloat = 16
+    let edge: CGFloat = cardColor != nil ? 10 : 16
+    var x: CGFloat = edge
     if selectionMode {
       check.frame = CGRect(x: x, y: (H - 26) / 2, width: 26, height: 26)
       x += 36
@@ -436,7 +581,12 @@ final class CLConversationCell: UICollectionViewListCell {
     let box = CLConversationCell.avatarBox(compact: compact)
     avatar.frame = CGRect(x: x, y: (H - box) / 2, width: box, height: box)
     let textX = x + box + CLConversationCell.avatarGap(compact: compact)
-    let right = W - 16
+    var right = W - edge
+    if !thumbView.isHidden {
+      thumbView.frame = CGRect(x: right - 40, y: floor((H - 40) / 2), width: 40, height: 40)
+      thumbPlay.frame = thumbView.bounds
+      right -= 40 + 10
+    }
 
     let nf = nameLabel.font ?? nameFont
     let nameH = ceil(nf.lineHeight)
@@ -455,6 +605,11 @@ final class CLConversationCell: UICollectionViewListCell {
       let s: CGFloat = 13
       lockIcon.frame = CGRect(x: rx - 5 - s, y: top + (nameH - s) / 2, width: s, height: s)
       rx -= 5 + s
+    }
+    if pinOnTop && !pinIcon.isHidden {
+      let s: CGFloat = 13
+      pinIcon.frame = CGRect(x: rx - 6 - s, y: top + (nameH - s) / 2, width: s, height: s)
+      rx -= 6 + s
     }
     let nameMax = max(0, rx - 10 - textX)
     var aw: CGFloat = 0
@@ -484,7 +639,7 @@ final class CLConversationCell: UICollectionViewListCell {
       bx -= pillH + 6
     }
     let icon: CGFloat = 16
-    if !pinIcon.isHidden {
+    if !pinIcon.isHidden && !pinOnTop {
       pinIcon.frame = CGRect(x: bx - icon, y: cy - icon / 2, width: icon, height: icon)
       bx -= icon + 6
     }
@@ -512,6 +667,21 @@ final class CLConversationCell: UICollectionViewListCell {
       px += w + 3
     }
     previewLabel.frame = CGRect(x: px, y: by, width: max(0, previewRight - px), height: prevH)
+    layoutVivoTyping(lineMidY: cy)
+  }
+
+  /// [lista-viva] pontinhos/ondinha logo depois do texto do "digitando"
+  /// (a prévia encolhe até o texto para o indicador encostar nele).
+  private func layoutVivoTyping(lineMidY cy: CGFloat) {
+    let ind: UIView? = !vivoDots.isHidden ? vivoDots : (!waveBars.isHidden ? waveBars : nil)
+    guard let v = ind else { return }
+    let w: CGFloat = v === vivoDots ? CLVivoDots.width : CLWaveBars.width
+    let f = previewLabel.frame
+    let textW = ceil(previewLabel.attributedText?.size().width ?? 0)
+    let avail = max(0, f.width - w - 6)
+    let tw = min(textW, avail)
+    previewLabel.frame = CGRect(x: f.minX, y: f.minY, width: tw, height: f.height)
+    v.frame = CGRect(x: f.minX + tw + 6, y: cy - 7, width: w, height: 14)
   }
   // [2026-10-19 tg-list] Layout Telegram iOS:
   //   [avatar 58]  Nome 🔇 · online …………… 🔒 ✓✓ 14:02
@@ -528,7 +698,12 @@ final class CLConversationCell: UICollectionViewListCell {
     let box = CLConversationCell.avatarBox(compact: compact, tg: true)
     avatar.frame = CGRect(x: x, y: (H - box) / 2, width: box, height: box)
     let textX = x + box + CLConversationCell.avatarGap(compact: compact, tg: true)
-    let right = W - 16
+    var right = W - (cardColor != nil ? 10 : 16)
+    if !thumbView.isHidden {
+      thumbView.frame = CGRect(x: right - 40, y: floor((H - 40) / 2), width: 40, height: 40)
+      thumbPlay.frame = thumbView.bounds
+      right -= 40 + 10
+    }
 
     let nf = nameLabel.font ?? nameFont
     let nameH = ceil(nf.lineHeight)
@@ -621,6 +796,10 @@ final class CLConversationCell: UICollectionViewListCell {
       let fit = previewLabel.sizeThatFits(CGSize(width: pw, height: blockH + 4)).height
       let ph = min(blockH + 2, max(lineH + 2, ceil(fit)))
       previewLabel.frame = CGRect(x: px, y: by, width: pw, height: ph)
+      if !vivoDots.isHidden || !waveBars.isHidden {
+        previewLabel.frame = CGRect(x: px, y: by, width: pw, height: lineH + 2)
+        layoutVivoTyping(lineMidY: by + (lineH + 2) / 2)
+      }
     }
   }
 }

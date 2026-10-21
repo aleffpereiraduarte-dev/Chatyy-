@@ -51,14 +51,17 @@ internal data class CLTile(
   val url: String,
   val auth: Boolean,
   val initials: String,
-  val grad: Int
+  val grad: Int,
+  /** [2026-10-21 lista-viva] `w` = índice 0–5 da paleta quente (JS); -1 = ausente (usa grad). */
+  val warm: Int = -1
 ) {
   companion object {
     fun from(m: Map<String, Any?>): CLTile = CLTile(
       url = CLVal.str(m["u"]),
       auth = CLVal.bool(m["a"]),
       initials = CLVal.str(m["i"]),
-      grad = CLVal.int(m["g"])
+      grad = CLVal.int(m["g"]),
+      warm = if (m["w"] is Number) CLVal.int(m["w"]) else -1
     )
   }
 }
@@ -97,9 +100,18 @@ internal data class CLRow(
   val empty: String = "",
   val lockOn: Boolean = false,
   val blockLabel: String = "",
-  val smart: Boolean = false
+  val smart: Boolean = false,
+  // [2026-10-21 lista-viva, apiVersion 12] campos opcionais (só com a prop
+  // `vivo`): tipo do "digitando" (typing | recording) e miniatura da última
+  // foto/vídeo. JS/binário antigo: vazios → comportamento idêntico.
+  val typingKind: String = "",
+  val thumbUrl: String = "",
+  val thumbAuth: Boolean = false,
+  val thumbVideo: Boolean = false // thumbKind "video" → triângulo de play
 ) {
   val isGroupish: Boolean get() = kind == "group" || kind == "channel"
+  /** Alguém digitando/gravando (texto pronto ou só o tipo). */
+  val isTyping: Boolean get() = typing.isNotEmpty() || typingKind.isNotEmpty()
   val tilesKey: String get() = kind + "|" + tiles.joinToString("|") { "${it.url}#${it.initials}#${it.grad}" }
 
   companion object {
@@ -107,6 +119,23 @@ internal data class CLRow(
       val tiles = ArrayList<CLTile>()
       CLVal.list(m["tiles"])?.forEach { t -> CLVal.map(t)?.let { tiles.add(CLTile.from(it)) } }
       val kind = CLVal.str(m["kind"]).ifEmpty { "direct" }
+      // `typing` aceita o texto pronto ("Ana digitando...") OU só o tipo
+      // ("typing" / "recording"); `typingKind`/`recording` explícitos vencem.
+      val tv = CLVal.str(m["typing"])
+      var typingText = tv
+      var typingKind: String
+      if (tv == "typing" || tv == "recording") {
+        typingKind = tv
+        typingText = ""
+      } else {
+        typingKind = CLVal.str(m["typingKind"])
+        if (typingKind != "typing" && typingKind != "recording") typingKind = ""
+        if (CLVal.bool(m["recording"]) && tv.isNotEmpty()) typingKind = "recording"
+        if (typingKind.isEmpty() && tv.isNotEmpty()) {
+          val low = tv.lowercase()
+          typingKind = if (low.contains("gravando") || low.contains("recording") || low.contains("grabando")) "recording" else "typing"
+        }
+      }
       return CLRow(
         id = CLVal.str(m["id"]),
         kind = kind,
@@ -128,7 +157,7 @@ internal data class CLRow(
         scheduled = CLVal.bool(m["scheduled"]),
         pending = CLVal.bool(m["pending"]),
         failed = CLVal.bool(m["failed"]),
-        typing = CLVal.str(m["typing"]),
+        typing = typingText,
         draft = CLVal.str(m["draft"]),
         draftLabel = CLVal.str(m["draftLabel"]),
         draftFresh = CLVal.bool(m["draftFresh"]),
@@ -141,7 +170,11 @@ internal data class CLRow(
         empty = CLVal.str(m["empty"]),
         lockOn = CLVal.bool(m["lockOn"]),
         blockLabel = CLVal.str(m["blockLabel"]),
-        smart = CLVal.bool(m["smart"])
+        smart = CLVal.bool(m["smart"]),
+        typingKind = typingKind,
+        thumbUrl = CLVal.str(m["thumbUrl"]),
+        thumbAuth = CLVal.bool(m["thumbAuth"]),
+        thumbVideo = CLVal.str(m["thumbKind"]) == "video"
       )
     }
   }
@@ -195,6 +228,8 @@ internal class CLTheme(val dark: Boolean, palette: Map<String, Any?>? = null) {
   var online: Int = Color.parseColor("#22C55E")
   // [2026-10-20 grafite] linha entre as conversas (antes fixa na view).
   var hair: Int = if (dark) 0x17FFFFFF else 0x14000000
+  // [2026-10-21 lista-viva] cartão das fixadas (palette `pinnedCard`).
+  var pinnedCard: Int = if (dark) 0xFF1A1A1D.toInt() else 0xFFF6F6F3.toInt()
 
   init {
     if (dark) {
@@ -263,6 +298,7 @@ internal class CLTheme(val dark: Boolean, palette: Map<String, Any?>? = null) {
       ringHot = paletteColor(palette["ringHot"]) ?: ringHot
       ringCold = paletteColor(palette["ringCold"]) ?: ringCold
       online = paletteColor(palette["online"]) ?: online
+      pinnedCard = paletteColor(palette["pinnedCard"]) ?: pinnedCard
     }
   }
 
@@ -305,6 +341,28 @@ internal class CLTheme(val dark: Boolean, palette: Map<String, Any?>? = null) {
       val g = GRADIENTS[((i % n) + n) % n]
       return intArrayOf(0xFF000000.toInt() or g[0], 0xFF000000.toInt() or g[1])
     }
+
+    /**
+     * [2026-10-21 lista-viva] gradientes QUENTES do avatar sem foto (mockup
+     * preview-2026/lista.html). Índice = `g` do ladrilho (hash do nome no JS).
+     */
+    private val WARM = arrayOf(
+      intArrayOf(0xD8B89A, 0x9B6F52),
+      intArrayOf(0xC9A28F, 0x8B5A4A),
+      intArrayOf(0xB7B892, 0x6F7350),
+      intArrayOf(0xA9B4BD, 0x5C6873),
+      intArrayOf(0xC7B2C4, 0x7F6680),
+      intArrayOf(0xBFAE8C, 0x7D6B48)
+    )
+
+    fun warmGradient(i: Int): IntArray {
+      val n = WARM.size
+      val g = WARM[((i % n) + n) % n]
+      return intArrayOf(0xFF000000.toInt() or g[0], 0xFF000000.toInt() or g[1])
+    }
+
+    /** Verde do ponto online na lista viva (#2FB36B). */
+    val ONLINE_VIVO = 0xFF2FB36B.toInt()
 
     // Botões de swipe (SWIPE_C do JS): cinzas + vermelho só no destrutivo.
     val SWIPE_READ = Color.parseColor("#1C1C1E")

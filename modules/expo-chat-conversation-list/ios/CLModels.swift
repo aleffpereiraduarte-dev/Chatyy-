@@ -47,12 +47,15 @@ struct CLTile {
   var auth: Bool = false
   var initials: String = ""
   var grad: Int = 0
+  /// [2026-10-21 lista-viva] `w` = índice 0–5 da paleta quente (JS); -1 = ausente (usa g).
+  var warm: Int = -1
 
   init(_ d: [String: Any]) {
     url = CLVal.str(d["u"])
     auth = CLVal.bool(d["a"])
     initials = CLVal.str(d["i"])
     grad = CLVal.int(d["g"])
+    if d["w"] is NSNumber { warm = CLVal.int(d["w"]) }
   }
 }
 
@@ -92,6 +95,13 @@ struct CLRow {
   var lockOn: Bool = false           // conversa trancada (rótulo Trancar/Destrancar)
   var blockLabel: String = ""        // "Bloquear Ana" (vazio = sem peer p/ bloquear)
   var smart: Bool = false            // fixada "inteligente" (fileira de fixados)
+  // [2026-10-21 lista-viva, apiVersion 11] campos opcionais (só com a prop
+  // `vivo`): tipo do "digitando" (typing | recording), miniatura da última
+  // foto/vídeo. Binário/JS antigo: vazios → comportamento idêntico.
+  var typingKind: String = ""        // "" | "typing" | "recording"
+  var thumbUrl: String = ""
+  var thumbAuth: Bool = false
+  var thumbVideo: Bool = false       // thumbKind "video" → triângulo de play
 
   init() {}
 
@@ -117,7 +127,25 @@ struct CLRow {
     scheduled = CLVal.bool(d["scheduled"])
     pending = CLVal.bool(d["pending"])
     failed = CLVal.bool(d["failed"])
-    typing = CLVal.str(d["typing"])
+    // `typing` aceita o texto pronto ("Ana digitando...") OU só o tipo
+    // ("typing" / "recording"); `typingKind`/`recording` explícitos vencem.
+    let tv = CLVal.str(d["typing"])
+    if tv == "typing" || tv == "recording" {
+      typingKind = tv
+      typing = ""
+    } else {
+      typing = tv
+      typingKind = CLVal.str(d["typingKind"])
+      if typingKind != "typing" && typingKind != "recording" { typingKind = "" }
+      if CLVal.bool(d["recording"]) && !typing.isEmpty { typingKind = "recording" }
+      if typingKind.isEmpty && !typing.isEmpty {
+        let low = typing.lowercased()
+        typingKind = (low.contains("gravando") || low.contains("recording") || low.contains("grabando")) ? "recording" : "typing"
+      }
+    }
+    thumbUrl = CLVal.str(d["thumbUrl"])
+    thumbAuth = CLVal.bool(d["thumbAuth"])
+    thumbVideo = CLVal.str(d["thumbKind"]) == "video"
     draft = CLVal.str(d["draft"])
     draftLabel = CLVal.str(d["draftLabel"])
     draftFresh = CLVal.bool(d["draftFresh"])
@@ -137,6 +165,8 @@ struct CLRow {
   }
 
   var isGroupish: Bool { kind == "group" || kind == "channel" }
+  /// Alguém digitando/gravando (texto pronto ou só o tipo).
+  var isTyping: Bool { !typing.isEmpty || !typingKind.isEmpty }
   var unreadVisible: Bool { unread > 0 }
 }
 
@@ -208,9 +238,12 @@ struct CLTheme {
   var ringHot: UIColor
   var ringCold: UIColor
   var online: UIColor
+  /// [2026-10-21 lista-viva] cartão das fixadas (palette `pinnedCard`).
+  var pinnedCard: UIColor
 
   init(dark: Bool) {
     self.dark = dark
+    pinnedCard = dark ? UIColor(clHex: 0x1A1A1D) : UIColor(clHex: 0xF6F6F3)
     if dark {
       bg = UIColor(clHex: 0x0B0B0B)
       text = UIColor(clHex: 0xF5F5F5)
@@ -284,6 +317,7 @@ struct CLTheme {
     ringHot = c("ringHot", ringHot)
     ringCold = c("ringCold", ringCold)
     online = c("online", online)
+    pinnedCard = c("pinnedCard", pinnedCard)
   }
 
   static func paletteColor(_ v: Any?) -> UIColor? {
@@ -330,6 +364,27 @@ struct CLTheme {
     let g = gradients[((i % gradients.count) + gradients.count) % gradients.count]
     return (UIColor(clHex: g.0), UIColor(clHex: g.1))
   }
+
+  /// [2026-10-21 lista-viva] Gradientes QUENTES do avatar sem foto (mockup
+  /// preview-2026/lista.html: areia, terracota, oliva, ardósia, malva, trigo).
+  /// Índice = `g` do ladrilho (hash do nome no JS) → mesma cor p/ a mesma pessoa.
+  static let warmGradients: [(UInt32, UInt32)] = [
+    (0xD8B89A, 0x9B6F52),
+    (0xC9A28F, 0x8B5A4A),
+    (0xB7B892, 0x6F7350),
+    (0xA9B4BD, 0x5C6873),
+    (0xC7B2C4, 0x7F6680),
+    (0xBFAE8C, 0x7D6B48),
+  ]
+
+  static func warmGradient(_ i: Int) -> (UIColor, UIColor) {
+    let n = warmGradients.count
+    let g = warmGradients[((i % n) + n) % n]
+    return (UIColor(clHex: g.0), UIColor(clHex: g.1))
+  }
+
+  /// Verde do ponto online na lista viva (#2FB36B).
+  static let onlineVivo = UIColor(clHex: 0x2FB36B)
 }
 
 /// Fontes do sistema escaladas pelo Dynamic Type, com o mesmo teto do JS

@@ -78,6 +78,23 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
   }
 
+  // [2026-10-21 lista-viva, apiVersion 12] só com a prop `vivo` da lista:
+  // "digitando"/"gravando áudio" animados DEPOIS do texto, miniatura 40×40
+  // (raio 10) da última foto/vídeo, linha dentro do cartão das fixadas.
+  private val vivoDots = CLVivoDots(ctx)
+  private val waveBars = CLWaveBars(ctx)
+  private val thumbIv = ImageView(ctx)
+  private val thumbPlayIv = ImageView(ctx)
+  private var thumbUrlCur = ""
+  private var vivo = false
+  private var cardColor: Int? = null   // != null = linha dentro do cartão das fixadas
+  private var pinOnTop = false
+  private val cardContent = ColorDrawable(0)
+  private var cardRipple: RippleDrawable? = null
+  private val tfNameHeavy = CLType.weight(700)
+  private val tfMention = CLType.weight(700)
+  private val tfMentionHeavy = CLType.weight(800)
+
   private val tfName = CLType.weight(600)
   private val tfNameBold = CLType.weight(600)
   private val tfTime = CLType.weight(400)
@@ -125,6 +142,24 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
     addView(receipt)
     addView(typing)
+    vivoDots.visibility = GONE
+    waveBars.visibility = GONE
+    addView(vivoDots)
+    addView(waveBars)
+    thumbIv.visibility = GONE
+    thumbIv.scaleType = ImageView.ScaleType.CENTER_CROP
+    thumbIv.outlineProvider = object : android.view.ViewOutlineProvider() {
+      override fun getOutline(view: View, outline: android.graphics.Outline) {
+        outline.setRoundRect(0, 0, view.width, view.height, px(10f).toFloat())
+      }
+    }
+    thumbIv.clipToOutline = true
+    addView(thumbIv)
+    thumbPlayIv.visibility = GONE
+    thumbPlayIv.scaleType = ImageView.ScaleType.FIT_CENTER
+    thumbPlayIv.setImageDrawable(tintedIcon(ctx, R.drawable.crl_ic_play, 0xFFFFFFFF.toInt()))
+    thumbPlayIv.elevation = 0f
+    addView(thumbPlayIv)
     timeTv.fontFeatureSettings = "tnum"
     unreadTv.setTextSizePx(sp(13f, 1.15f))
     unreadTv.setTypeface(CLType.weight(600))
@@ -174,9 +209,12 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     return false
   }
 
-  fun bind(r: CLRow, t: CLTheme, l: CLLabels, selection: Boolean, animate: Boolean, compactDensity: Boolean = false, tgDensity: Boolean = false, accentColor: Int? = null) {
+  fun bind(r: CLRow, t: CLTheme, l: CLLabels, selection: Boolean, animate: Boolean, compactDensity: Boolean = false, tgDensity: Boolean = false, accentColor: Int? = null, vivoOn: Boolean = false, inCardColor: Int? = null) {
     val prev: CLRow? = if (animate && r.id == row.id && row.id.isNotEmpty()) row else null
     accent = accentColor
+    if (vivoOn != vivo || (inCardColor == null) != (cardColor == null)) requestLayout()
+    vivo = vivoOn
+    cardColor = if (vivoOn) inCardColor else null
     if (compactDensity != compact || tgDensity != tg) {
       compact = compactDensity
       tg = tgDensity
@@ -198,13 +236,34 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
     baseBg = base
     rowBgDrawable.color = if (swiped) swipeBg() else base
-    if (background !is RippleDrawable) {
-      background = RippleDrawable(ColorStateList.valueOf(t.press), rowBgDrawable, null)
+    val inCard = cardColor
+    if (inCard != null) {
+      // [lista-viva] no cartão: fundo transparente (o cartão é desenhado pela
+      // lista) e toque = pílula arredondada na superfície 2.
+      cardContent.color = when {
+        swiped -> swipeBg()
+        selection && r.selected -> t.selectedBg
+        else -> 0
+      }
+      var rip = cardRipple
+      if (rip == null) {
+        val mask = GradientDrawable()
+        mask.cornerRadius = px(16f).toFloat()
+        mask.setColor(0xFFFFFFFF.toInt())
+        rip = RippleDrawable(ColorStateList.valueOf(t.card), cardContent, android.graphics.drawable.InsetDrawable(mask, px(4f), px(2f), px(4f), px(2f)))
+        cardRipple = rip
+      } else {
+        rip.setColor(ColorStateList.valueOf(t.card))
+      }
+      if (background !== rip) background = rip
+    } else if (background !is RippleDrawable || background === cardRipple) {
+      background = RippleDrawable(ColorStateList.valueOf(if (vivo) t.card else t.press), rowBgDrawable, null)
     } else {
-      (background as RippleDrawable).setColor(ColorStateList.valueOf(t.press))
+      (background as RippleDrawable).setColor(ColorStateList.valueOf(if (vivo) t.card else t.press))
     }
 
-    avatar.bind(r, t, base)
+    avatar.vivo = vivo
+    avatar.bind(r, t, inCard ?: base)
     avatar.isClickable = !selection && !r.isGroupish
     check.visibility = if (selection) VISIBLE else GONE
     check.checked = r.selected
@@ -213,7 +272,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     check.borderTint = t.checkBorder
 
     nameTv.text = r.title
-    nameTv.typeface = if (unread) tfNameBold else tfName
+    nameTv.typeface = if (unread) (if (vivo) tfNameHeavy else tfNameBold) else tfName
     nameTv.setTextColor(t.text)
     activityTv.visibility = if (r.activity.isNotEmpty() && !r.isGroupish) VISIBLE else GONE
     activityTv.text = r.activity
@@ -221,17 +280,26 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
 
     timeTv.text = r.time
     // Telegram: hora sempre cinza/regular (o contador já marca a não lida).
-    val timeStrong = r.timeBold && !tg
+    // [lista-viva] não lida = hora escura e mais forte (também no Telegram).
+    val timeStrong = if (vivo) (unread || r.timeBold) else (r.timeBold && !tg)
     timeTv.typeface = if (timeStrong) tfTimeBold else tfTime
     timeTv.setTextColor(if (timeStrong) t.text else t.sub)
 
     lockIv.visibility = if (r.locked) VISIBLE else GONE
     if (r.locked) lockIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_lock, t.icon))
 
-    val isTyping = r.typing.isNotEmpty() && !r.locked
+    val isTyping = r.isTyping && !r.locked
     val drafting = !isTyping && r.draft.isNotEmpty() && !r.locked
     typing.color = if (tg) (accent ?: t.text) else t.text
-    typing.setActive(isTyping)
+    typing.setActive(isTyping && !vivo)
+    // [lista-viva] pontinhos que sobem / ondinha do áudio, depois do texto.
+    val vivoTyping = vivo && isTyping
+    val recording = vivoTyping && r.typingKind == "recording"
+    val tint = if (tg) (accent ?: t.text) else t.text
+    vivoDots.color = tint
+    waveBars.color = tint
+    vivoDots.setActive(vivoTyping && !recording)
+    waveBars.setActive(recording)
 
     val showReceipt = !isTyping && !drafting && !r.locked && r.receipt > 0
     // tg: enviado/entregue no MESMO cinza da hora (✓✓ + hora = um bloco).
@@ -274,7 +342,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
     previewTv.text = buildPreview(isTyping, drafting, unread, senderLine, ownMark)
     // [2026-10-16 wave8-list] "digitando…" entra/sai num fade curto.
-    if (prev != null && prev.typing.isEmpty() != r.typing.isEmpty() && !CLMotion.reduced(context)) {
+    if (prev != null && prev.isTyping != r.isTyping && !CLMotion.reduced(context)) {
       previewTv.alpha = 0.35f
       previewTv.animate().alpha(1f).setDuration(180).start()
     } else if (prev == null) {
@@ -293,11 +361,40 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     // tg: alfinete só sem contador/menção (mesmo lugar, como no Telegram).
     val showPin = r.pinned && !(tg && (unread || r.mention))
     pinIv.visibility = if (showPin) VISIBLE else GONE
-    if (showPin) pinIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_pin, if (tg) t.faint else t.icon))
+    // [lista-viva] alfinete pequeno ao lado da hora (layout regular).
+    pinOnTop = vivo && !tg && showPin
+    if (showPin) pinIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_pin, if (pinOnTop) t.sub else if (tg) t.faint else t.icon))
 
     mentionTv.visibility = if (r.mention) VISIBLE else GONE
-    mentionBg.setColor(t.pillBg)
-    mentionTv.setTextColor(t.pillTxt)
+    if (vivo) {
+      // Selo próprio da menção: círculo claro (superfície 2) com "@" forte.
+      mentionBg.setColor(t.card)
+      mentionTv.setTextColor(t.text)
+      mentionTv.typeface = tfMentionHeavy
+    } else {
+      mentionBg.setColor(t.pillBg)
+      mentionTv.setTextColor(t.pillTxt)
+      mentionTv.typeface = tfMention
+    }
+
+    // [lista-viva] miniatura da última foto/vídeo (40×40, raio 10) à direita.
+    val showThumb = vivo && r.thumbUrl.isNotEmpty() && !r.locked
+    thumbPlayIv.visibility = if (showThumb && r.thumbVideo) VISIBLE else GONE
+    if (showThumb) {
+      if (thumbIv.visibility != VISIBLE) { thumbIv.visibility = VISIBLE }
+      thumbIv.setBackgroundColor(t.card)
+      if (r.thumbUrl != thumbUrlCur) {
+        thumbUrlCur = r.thumbUrl
+        loadThumb(r.thumbUrl, r.thumbAuth)
+      }
+    } else {
+      if (thumbIv.visibility != GONE) thumbIv.visibility = GONE
+      if (thumbUrlCur.isNotEmpty()) {
+        thumbUrlCur = ""
+        try { com.bumptech.glide.Glide.with(context.applicationContext).clear(thumbIv) } catch (_: Throwable) {}
+        thumbIv.setImageDrawable(null)
+      }
+    }
 
     unreadTv.visibility = if (unread) VISIBLE else GONE
     val mutedPill = r.muted && !r.mention
@@ -342,6 +439,81 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     invalidate()
   }
 
+  private fun loadThumb(u: String, auth: Boolean) {
+    val side = px(40f)
+    val model: Any? = when {
+      u.startsWith("http://") || u.startsWith("https://") -> {
+        val tok = CLAuth.token
+        if (auth && tok.isNotEmpty()) com.bumptech.glide.load.model.GlideUrl(u, com.bumptech.glide.load.model.LazyHeaders.Builder().addHeader("Authorization", "Bearer $tok").build())
+        else u
+      }
+      u.startsWith("file://") || u.startsWith("content://") -> android.net.Uri.parse(u)
+      u.startsWith("/") -> java.io.File(u)
+      u.startsWith("data:") -> u
+      else -> null
+    }
+    thumbIv.setImageDrawable(null)
+    if (model == null) return
+    try {
+      com.bumptech.glide.Glide.with(context.applicationContext)
+        .load(model)
+        .override(side, side)
+        .centerCrop()
+        .diskCacheStrategy(com.bumptech.glide.load.engine.DiskCacheStrategy.AUTOMATIC)
+        .into(thumbIv)
+    } catch (_: Throwable) {}
+  }
+
+  /** Texto do "digitando": o pronto do JS ou o rótulo pelo tipo; na lista viva sem reticências. */
+  private fun typingText(): String {
+    var s = row.typing
+    if (s.isEmpty()) {
+      s = if (row.typingKind == "recording") labels.get("recordingAudio", "gravando áudio") else labels.get("typingShort", "digitando")
+    }
+    if (vivo) s = s.trimEnd('.', '…', ' ')
+    return s
+  }
+
+  /**
+   * [lista-viva] entrada leve ao abrir a lista: sobe 10 dp e acende (0,5 s,
+   * curva 0,2 0,8 0,2 1). "Remover animações" = nada.
+   */
+  // ValueAnimator próprio (não o animate() da view: o ItemAnimator usa o
+  // ViewPropertyAnimator e herdaria o startDelay).
+  private var entranceAnim: android.animation.ValueAnimator? = null
+
+  fun playEntrance(delayMs: Long) {
+    if (CLMotion.reduced(context)) return
+    entranceAnim?.cancel()
+    val dy = px(10f).toFloat()
+    alpha = 0f
+    translationY = dy
+    val a = android.animation.ValueAnimator.ofFloat(0f, 1f)
+    a.startDelay = delayMs
+    a.duration = 500
+    a.interpolator = android.view.animation.PathInterpolator(0.2f, 0.8f, 0.2f, 1f)
+    a.addUpdateListener {
+      val f = it.animatedValue as Float
+      alpha = f
+      translationY = dy * (1f - f)
+    }
+    a.addListener(object : android.animation.AnimatorListenerAdapter() {
+      override fun onAnimationEnd(animation: android.animation.Animator) { alpha = 1f; translationY = 0f }
+      override fun onAnimationCancel(animation: android.animation.Animator) { alpha = 1f; translationY = 0f }
+    })
+    entranceAnim = a
+    a.start()
+  }
+
+  /** Cancela a entrada (reciclagem) e volta ao estado de repouso. */
+  fun resetEntrance() {
+    val a = entranceAnim ?: return
+    entranceAnim = null
+    a.cancel()
+    alpha = 1f
+    translationY = 0f
+  }
+
   private fun swipeBg(): Int = if (theme.dark) 0xFF1A1A1A.toInt() else 0xFFF0F0F0.toInt()
 
   /** [wave13 swipe-ios] Visual da linha enquanto arrastada/aberta. */
@@ -349,6 +521,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     if (swiped == on) return
     swiped = on
     rowBgDrawable.color = if (on) swipeBg() else baseBg
+    if (cardColor != null) cardContent.color = if (on) swipeBg() else if (selectionMode && row.selected) theme.selectedBg else 0
     if (on) {
       outlineProvider = swipeOutline
       clipToOutline = true
@@ -420,7 +593,8 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
       return sb
     }
     if (isTyping) {
-      if (tg) styled(sb, r.typing, accent ?: t.text, null) else styled(sb, r.typing, t.text, tfMedium)
+      val tt = typingText()
+      if (tg) styled(sb, tt, accent ?: t.text, null) else styled(sb, tt, t.text, tfMedium)
       return sb
     }
     if (drafting) {
@@ -432,7 +606,8 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
       styled(sb, r.draft, t.sub, null)
       return sb
     }
-    val body = if (unread && !tg) t.subStrong else t.sub
+    // [lista-viva] não lida = prévia na cor principal do texto.
+    val body = if (vivo) (if (unread) t.text else t.sub) else if (unread && !tg) t.subStrong else t.sub
     // tg: grupo = remetente na linha de cima; direta = sem "Você:" quando
     // ✓/relógio/"!" já mostram que a mensagem é minha.
     val inlineSender = r.sender.isNotEmpty() && !senderLine && !(tg && !r.isGroupish && ownMark)
@@ -468,7 +643,8 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
     val w = MeasureSpec.getSize(widthMeasureSpec)
     val h = if (compact) rowHeightCompact else rowHeight
-    var x = px(16f)
+    val edge = px(if (cardColor != null) 10f else 16f)
+    var x = edge
     if (selectionMode) {
       check.measure(exactly(px(26f)), exactly(px(26f)))
       x += px(36f)
@@ -478,7 +654,12 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     val box = px(if (compact) 52f else 54f)
     avatar.measure(exactly(box), exactly(box))
     val textX = x + box + px(if (compact) 12f else 14f)
-    val right = w - px(16f)
+    var right = w - edge
+    if (thumbIv.visibility == VISIBLE) {
+      thumbIv.measure(exactly(px(40f)), exactly(px(40f)))
+      if (thumbPlayIv.visibility == VISIBLE) thumbPlayIv.measure(exactly(px(14f)), exactly(px(14f)))
+      right -= px(40f) + px(10f)
+    }
 
     timeTv.measure(unspec, unspec)
     var rx = right - timeTv.measuredWidth
@@ -486,6 +667,10 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     if (lockIv.visibility == VISIBLE) {
       lockIv.measure(exactly(px(13f)), exactly(px(13f)))
       rx -= px(5f) + px(13f)
+    }
+    if (pinOnTop && pinIv.visibility == VISIBLE) {
+      pinIv.measure(exactly(px(13f)), exactly(px(13f)))
+      rx -= px(6f) + px(13f)
     }
     val nameMax = max(0, rx - px(10f) - textX)
     var aw = 0
@@ -510,7 +695,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
       mentionTv.measure(exactly(pillH), exactly(pillH))
       bx -= pillH + px(6f)
     }
-    if (pinIv.visibility == VISIBLE) {
+    if (pinIv.visibility == VISIBLE && !pinOnTop) {
       pinIv.measure(exactly(icon), exactly(icon))
       bx -= icon + px(6f)
     }
@@ -538,9 +723,26 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
     cPrevX = pxX
     cPrevW = max(0, previewRight - pxX)
+    measureVivoTyping()
     previewTv.measure(exactly(cPrevW), unspec)
     cTextX = textX
     setMeasuredDimension(w, h)
+  }
+
+  /** [lista-viva] a prévia encolhe até o texto do "digitando" e o indicador encosta nele. */
+  private fun measureVivoTyping() {
+    val ind: View = if (vivoDots.visibility == VISIBLE) vivoDots else if (waveBars.visibility == VISIBLE) waveBars else return
+    val iw = px(if (ind === vivoDots) CLVivoDots.WIDTH_DP else CLWaveBars.WIDTH_DP)
+    ind.measure(exactly(iw), exactly(px(14f)))
+    val tw = ceil(android.text.Layout.getDesiredWidth(previewTv.text ?: "", previewTv.paint)).toInt()
+    cPrevW = min(tw + px(1f), max(0, cPrevW - iw - px(6f)))
+  }
+
+  private fun layoutVivoTyping(midY: Int) {
+    val ind: View = if (vivoDots.visibility == VISIBLE) vivoDots else if (waveBars.visibility == VISIBLE) waveBars else return
+    val x = cPrevX + cPrevW + px(6f)
+    val ih = ind.measuredHeight
+    ind.layout(x, midY - ih / 2, x + ind.measuredWidth, midY - ih / 2 + ih)
   }
 
   override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
@@ -550,7 +752,8 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
     val w = r - l
     val h = b - t
-    var x = px(16f)
+    val edge = px(if (cardColor != null) 10f else 16f)
+    var x = edge
     if (selectionMode) {
       val s = px(26f)
       check.layout(x, (h - s) / 2, x + s, (h - s) / 2 + s)
@@ -562,7 +765,17 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     val ay = (h - box) / 2
     avatar.layout(x, ay, x + box, ay + box)
     val textX = cTextX
-    val right = w - px(16f)
+    var right = w - edge
+    if (thumbIv.visibility == VISIBLE) {
+      val s = px(40f)
+      thumbIv.layout(right - s, (h - s) / 2, right, (h - s) / 2 + s)
+      if (thumbPlayIv.visibility == VISIBLE) {
+        val ps = px(14f)
+        val cx = right - s / 2
+        thumbPlayIv.layout(cx - ps / 2, h / 2 - ps / 2, cx - ps / 2 + ps, h / 2 - ps / 2 + ps)
+      }
+      right -= s + px(10f)
+    }
 
     val nameH = nameTv.measuredHeight
     val prevH = previewTv.measuredHeight + px(2f)
@@ -580,6 +793,12 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
       val ly = top + (nameH - s) / 2
       lockIv.layout(rx - px(5f) - s, ly, rx - px(5f), ly + s)
       rx -= px(5f) + s
+    }
+    if (pinOnTop && pinIv.visibility == VISIBLE) {
+      val s = px(13f)
+      val ly = top + (nameH - s) / 2
+      pinIv.layout(rx - px(6f) - s, ly, rx - px(6f), ly + s)
+      rx -= px(6f) + s
     }
     nameTv.layout(textX, top, textX + cNameW, top + nameH)
     if (activityTv.visibility == VISIBLE) {
@@ -603,7 +822,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
       bx -= pillH + px(6f)
     }
     val icon = px(15f)
-    if (pinIv.visibility == VISIBLE) {
+    if (pinIv.visibility == VISIBLE && !pinOnTop) {
       pinIv.layout(bx - icon, cy - icon / 2, bx, cy - icon / 2 + icon)
       bx -= icon + px(6f)
     }
@@ -633,6 +852,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
     val ph = previewTv.measuredHeight
     previewTv.layout(cPrevX, cy - ph / 2, cPrevX + cPrevW, cy - ph / 2 + ph)
+    layoutVivoTyping(cy)
   }
 
   // ─── [2026-10-19 tg-list] Medida / layout Telegram ───────────────────────
@@ -653,7 +873,12 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     val box = px(58f)
     avatar.measure(exactly(box), exactly(box))
     val textX = x + box + px(10f)
-    val right = w - px(16f)
+    var right = w - px(if (cardColor != null) 10f else 16f)
+    if (thumbIv.visibility == VISIBLE) {
+      thumbIv.measure(exactly(px(40f)), exactly(px(40f)))
+      if (thumbPlayIv.visibility == VISIBLE) thumbPlayIv.measure(exactly(px(14f)), exactly(px(14f)))
+      right -= px(40f) + px(10f)
+    }
 
     timeTv.measure(unspec, unspec)
     var rx = right - timeTv.measuredWidth
@@ -714,6 +939,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     if (senderTv.visibility == VISIBLE) senderTv.measure(exactly(max(0, previewRight - textX)), unspec)
     cPrevX = pxX
     cPrevW = max(0, previewRight - pxX)
+    measureVivoTyping()
     previewTv.measure(exactly(cPrevW), unspec)
     cTextX = textX
     setMeasuredDimension(w, h)
@@ -732,7 +958,17 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     val ay = (h - box) / 2
     avatar.layout(x, ay, x + box, ay + box)
     val textX = cTextX
-    val right = w - px(16f)
+    var right = w - px(if (cardColor != null) 10f else 16f)
+    if (thumbIv.visibility == VISIBLE) {
+      val s = px(40f)
+      thumbIv.layout(right - s, (h - s) / 2, right, (h - s) / 2 + s)
+      if (thumbPlayIv.visibility == VISIBLE) {
+        val ps = px(14f)
+        val cx = right - s / 2
+        thumbPlayIv.layout(cx - ps / 2, h / 2 - ps / 2, cx - ps / 2 + ps, h / 2 - ps / 2 + ps)
+      }
+      right -= s + px(10f)
+    }
 
     val nameH = nameTv.measuredHeight
     val lineH = previewTv.lineHeight
@@ -811,6 +1047,7 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
       previewTv.layout(cPrevX, by + lineH, cPrevX + cPrevW, by + lineH + ph)
     } else {
       previewTv.layout(cPrevX, by, cPrevX + cPrevW, by + ph)
+      layoutVivoTyping(by + ph / 2)
     }
   }
 

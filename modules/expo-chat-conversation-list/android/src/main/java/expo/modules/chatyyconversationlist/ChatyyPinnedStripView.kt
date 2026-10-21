@@ -225,7 +225,7 @@ internal class CLPinCellView(ctx: Context) : ViewGroup(ctx) {
     }
     lastUnread = count
 
-    val typing = r.typing.isNotEmpty() && !r.locked
+    val typing = r.isTyping && !r.locked
     wrap.dots.setActive(typing)
     if (typing) {
       if (wrap.typing.visibility != VISIBLE || !(same && wasTyping)) {

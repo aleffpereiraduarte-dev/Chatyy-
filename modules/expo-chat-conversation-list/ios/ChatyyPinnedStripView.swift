@@ -114,7 +114,7 @@ final class CLPinCell: UICollectionViewCell {
     lastUnread = count
 
     // Balão "digitando" (só quando ninguém trancou a conversa).
-    let typing = !r.typing.isEmpty && !r.locked
+    let typing = r.isTyping && !r.locked
     typingBubble.backgroundColor = theme.card
     typingBubble.layer.borderColor = theme.bg.cgColor
     typingDots.color = theme.text

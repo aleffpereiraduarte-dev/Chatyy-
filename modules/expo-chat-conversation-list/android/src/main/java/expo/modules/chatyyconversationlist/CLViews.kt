@@ -182,6 +182,15 @@ internal class CLAvatarView(ctx: Context) : View(ctx) {
   private var channelIcon: Drawable? = null
   private var channelIconDark: Boolean? = null
 
+  /**
+   * [2026-10-21 lista-viva, apiVersion 12] avatar sem foto em gradiente quente
+   * + ponto online #2FB36B com pulso. Só a linha da lista liga.
+   */
+  var vivo = false
+  private var pulseAnim: ValueAnimator? = null
+  private var pulseP = 0f
+  private val pulseInterp = android.view.animation.PathInterpolator(0f, 0f, 0.58f, 1f) // ease-out do CSS
+
   fun bind(r: CLRow, t: CLTheme, background: Int) {
     val keyChanged = r.tilesKey != tilesKey
     row = r
@@ -192,7 +201,45 @@ internal class CLAvatarView(ctx: Context) : View(ctx) {
       loadTiles()
     }
     contentDescription = null
+    syncPulse()
     invalidate()
+  }
+
+  // Anel 2 dp na cor do ponto, inset −3 dp: escala 0,8→1,7 e some (2 s,
+  // ease-out, infinito). Um animator só, ligado na janela; "Remover animações" = sem pulso.
+  private fun wantsPulse(): Boolean = vivo && row.online && isAttachedToWindow && !CLMotion.reduced(context)
+
+  private fun syncPulse() {
+    if (!wantsPulse()) {
+      pulseAnim?.cancel()
+      pulseAnim = null
+      return
+    }
+    if (pulseAnim != null) return
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = 2000
+    a.repeatCount = ValueAnimator.INFINITE
+    a.interpolator = LinearInterpolator()
+    a.addUpdateListener {
+      pulseP = it.animatedValue as Float
+      // O anel passa da caixa do avatar: redesenha pela linha (clipChildren=false).
+      val p = parent as? View
+      if (p != null) p.invalidate() else invalidate()
+      invalidate()
+    }
+    pulseAnim = a
+    a.start()
+  }
+
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    syncPulse()
+  }
+
+  override fun onDetachedFromWindow() {
+    pulseAnim?.cancel()
+    pulseAnim = null
+    super.onDetachedFromWindow()
   }
 
   fun setRowBackground(c: Int) {
@@ -327,7 +374,7 @@ internal class CLAvatarView(ctx: Context) : View(ctx) {
           canvas.drawPath(tmpPath, fill)
           fill.shader = null
         } else {
-          val g = CLTheme.gradient(tile.grad)
+          val g = if (vivo) CLTheme.warmGradient(if (tile.warm >= 0) tile.warm else tile.grad) else CLTheme.gradient(tile.grad)
           fill.shader = LinearGradient(r.left, r.top, r.right, r.bottom, g[0], g[1], Shader.TileMode.CLAMP)
           canvas.drawPath(tmpPath, fill)
           fill.shader = null
@@ -367,7 +414,26 @@ internal class CLAvatarView(ctx: Context) : View(ctx) {
     }
 
     // Bolinha online (14 com borda 2.5 na cor do fundo da linha)
-    if (row.online) {
+    if (row.online && vivo && box <= context.dp(60.5f)) {
+      // [lista-viva] 15 dp com borda 2,5 na cor do fundo, encostado no canto (1 dp) + pulso.
+      val r = context.dp(7.5f)
+      val c = box - context.dp(1f) - r
+      if (pulseAnim != null) {
+        val e = pulseInterp.getInterpolation(pulseP)
+        val sc = 0.8f + 0.9f * e
+        stroke.strokeCap = Paint.Cap.BUTT
+        stroke.strokeWidth = context.dp(2f)
+        stroke.color = CLTheme.ONLINE_VIVO
+        stroke.alpha = ((0.7f * (1f - e)) * 255).toInt()
+        canvas.drawCircle(c, c, (r + context.dp(3f) - context.dp(1f)) * sc, stroke)
+        stroke.alpha = 255
+      }
+      fill.shader = null
+      fill.color = rowBg
+      canvas.drawCircle(c, c, r, fill)
+      fill.color = CLTheme.ONLINE_VIVO
+      canvas.drawCircle(c, c, r - context.dp(2.5f), fill)
+    } else if (row.online) {
       val big = box > baseBox + 0.5f
       val r = if (big) Math.round(box * 0.22f) / 2f else context.dp(7f)
       val c = if (big) box / 2f + box / 2f * 0.7071f else box - context.dp(1f) - r

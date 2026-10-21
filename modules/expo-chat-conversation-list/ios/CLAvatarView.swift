@@ -74,8 +74,9 @@ final class CLTileView: UIView {
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-  func configure(_ tile: CLTile) {
-    let (c1, c2) = CLTheme.gradient(tile.grad)
+  func configure(_ tile: CLTile, warm: Bool = false) {
+    // [2026-10-21 lista-viva] sem foto = gradiente quente (mesmo `g` = mesma pessoa).
+    let (c1, c2) = warm ? CLTheme.warmGradient(tile.warm >= 0 ? tile.warm : tile.grad) : CLTheme.gradient(tile.grad)
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     gradient.colors = [c1.cgColor, c2.cgColor]
@@ -139,6 +140,11 @@ final class CLAvatarView: UIView {
   private var tileCount = 0
   private var isChannel = false
   var theme = CLTheme(dark: false)
+  /// [2026-10-21 lista-viva, apiVersion 11] avatar quente + ponto online
+  /// #2FB36B com pulso. Só a linha da lista liga (fixados/prévia não).
+  var vivo = false
+  private var pulse: CAShapeLayer?
+  private var pulseOn = false
   /// [2026-10-15 native-pins] Lado da caixa (54 na linha; a fileira de
   /// fixados usa avatares maiores com o mesmo desenho).
   var boxSize: CGFloat = CLAvatarView.box {
@@ -201,7 +207,7 @@ final class CLAvatarView: UIView {
       for (i, tv) in tileViews.enumerated() {
         if i < tiles.count {
           tv.isHidden = false
-          tv.configure(tiles[i])
+          tv.configure(tiles[i], warm: vivo)
         } else {
           tv.isHidden = true
           tv.reset()
@@ -212,8 +218,9 @@ final class CLAvatarView: UIView {
     }
     // Online
     onlineDot.isHidden = !row.online
-    onlineDot.backgroundColor = theme.online
+    onlineDot.backgroundColor = vivo ? CLTheme.onlineVivo : theme.online
     onlineDot.layer.borderColor = rowBackground.cgColor
+    setPulse(vivo && row.online)
     // Nota (estilo Instagram) acima do avatar
     if row.note.isEmpty {
       noteLabel.isHidden = true
@@ -225,6 +232,65 @@ final class CLAvatarView: UIView {
       noteLabel.layer.borderColor = rowBackground.cgColor
     }
     setNeedsLayout()
+  }
+
+  // MARK: [2026-10-21 lista-viva] pulso do ponto online
+  // Anel 2 pt na cor do ponto, inset −3: escala 0,8→1,7 e some (2 s, ease-out,
+  // infinito). Layer criada uma vez; liga/desliga sem recriar. Reduzir
+  // Movimento = sem pulso (só o ponto).
+
+  private func setPulse(_ on: Bool) {
+    pulseOn = on
+    if !on {
+      if let p = pulse { p.removeAnimation(forKey: "pulse"); p.isHidden = true }
+      return
+    }
+    if pulse == nil {
+      let p = CAShapeLayer()
+      p.fillColor = UIColor.clear.cgColor
+      p.lineWidth = 2
+      p.isHidden = true
+      layer.insertSublayer(p, below: onlineDot.layer)
+      pulse = p
+    }
+    pulse?.strokeColor = CLTheme.onlineVivo.cgColor
+    startPulseIfNeeded()
+  }
+
+  private func startPulseIfNeeded() {
+    guard let p = pulse else { return }
+    if !pulseOn || CLMotion.reduced || window == nil {
+      p.removeAnimation(forKey: "pulse")
+      p.isHidden = true
+      return
+    }
+    p.isHidden = false
+    if p.animation(forKey: "pulse") != nil { return }
+    let sc = CABasicAnimation(keyPath: "transform.scale")
+    sc.fromValue = 0.8
+    sc.toValue = 1.7
+    let op = CABasicAnimation(keyPath: "opacity")
+    op.fromValue = 0.7
+    op.toValue = 0
+    let g = CAAnimationGroup()
+    g.animations = [sc, op]
+    g.duration = 2
+    g.timingFunction = CAMediaTimingFunction(name: .easeOut)
+    g.repeatCount = .infinity
+    g.isRemovedOnCompletion = false
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    p.opacity = 0
+    CATransaction.commit()
+    p.add(g, forKey: "pulse")
+  }
+
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    // Animações caem quando a célula sai da janela; religa ao voltar.
+    if pulse != nil {
+      pulse?.removeAnimation(forKey: "pulse")
+      startPulseIfNeeded()
+    }
   }
 
   func updateRowBackground(_ c: UIColor) {
@@ -263,7 +329,11 @@ final class CLAvatarView: UIView {
       visible[2].frame = CGRect(x: 0, y: half, width: half, height: half)
       visible[3].frame = CGRect(x: half, y: half, width: half, height: half)
     }
-    if box <= CLAvatarView.box + 0.5 {
+    if vivo && box <= 60.5 {
+      // Mockup: 15 pt com borda 2,5 na cor do fundo, encostado no canto (1 pt).
+      onlineDot.frame = CGRect(x: box - 16, y: box - 16, width: 15, height: 15)
+      onlineDot.layer.cornerRadius = 7.5
+    } else if box <= CLAvatarView.box + 0.5 {
       onlineDot.frame = CGRect(x: box - 15, y: box - 15, width: 14, height: 14)
       onlineDot.layer.cornerRadius = 7
     } else {
@@ -272,6 +342,14 @@ final class CLAvatarView: UIView {
       let o = box / 2 + box / 2 * 0.7071 - dot / 2
       onlineDot.frame = CGRect(x: o, y: o, width: dot, height: dot)
       onlineDot.layer.cornerRadius = dot / 2
+    }
+    if let p = pulse {
+      let f = onlineDot.frame.insetBy(dx: -3, dy: -3)
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+      p.bounds = CGRect(origin: .zero, size: f.size)
+      p.position = CGPoint(x: f.midX, y: f.midY)
+      p.path = UIBezierPath(ovalIn: CGRect(origin: .zero, size: f.size).insetBy(dx: 1, dy: 1)).cgPath
+      CATransaction.commit()
     }
     if !noteLabel.isHidden {
       let h: CGFloat = 18

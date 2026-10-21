@@ -34,7 +34,13 @@ class ChatyyConversationListModule : Module() {
     //      prévia 2 linhas, ✓✓ junto da hora, remetente do grupo em linha
     //      própria, alfinete no lugar do contador) + prop `accent` ("#RRGGBB").
     // 11 = [2026-10-20 grafite] prop `palette` (cores do tema Grafite suave).
-    Function("apiVersion") { 11 }
+    // 12 = [2026-10-21 lista-viva] prop `vivo` (mockup preview-2026/lista.html:
+    //      avatar quente, online pulsando, digitando/gravando animados, não
+    //      lidas fortes, fixadas num cartão, miniatura de foto/vídeo, sem
+    //      separadores, entrada leve) + chaves opcionais da linha `typing`
+    //      ("typing" | "recording" | texto), `typingKind`, `thumbUrl`,
+    //      `thumbAuth` e palette `pinnedCard`. vivo ausente/false = idêntico ao 11.
+    Function("apiVersion") { 12 }
 
     View(ChatyyConversationListView::class) {
       Events(
@@ -56,6 +62,7 @@ class ChatyyConversationListModule : Module() {
       Prop("rowsPatch") { view: ChatyyConversationListView, v: Map<String, Any?>? -> view.setRowsPatch(v) }
       Prop("dark") { view: ChatyyConversationListView, v: Boolean? -> view.setDark(v ?: false) }
       Prop("palette") { view: ChatyyConversationListView, v: Map<String, Any?>? -> view.setPaletteProp(v) }
+      Prop("vivo") { view: ChatyyConversationListView, v: Boolean? -> view.setVivoProp(v ?: false) }
       Prop("selectionMode") { view: ChatyyConversationListView, v: Boolean? -> view.setSelectionModeProp(v ?: false) }
       Prop("labels") { view: ChatyyConversationListView, v: Map<String, Any?>? -> view.setLabelsProp(v) }
       Prop("density") { view: ChatyyConversationListView, v: String? -> view.setDensityProp(v) }
