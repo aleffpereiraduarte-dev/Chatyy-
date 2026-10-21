@@ -303,8 +303,10 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/chatyy-crypto-target
           CHATYY_CRYPTO_BUILD_FALLBACK: '1'
         run: |
+          # [2026-10-21] founder: TestFlight com o núcleo incluído (E2EE continua desligado por flag
+          # no app e por allowlist no servidor). submit=true aqui = só TestFlight, não App Store.
           if [ "${{ inputs.submit }}" = "true" ]; then
-            echo "::error::chatyy_crypto=true é só build de teste — rode com submit=false"; exit 1
+            echo "::warning::chatyy_crypto=true + submit=true → TestFlight com o núcleo (E2EE desligado por flag)"
           fi
           test -d modules/expo-chatyy-crypto || { echo "::error::modules/expo-chatyy-crypto (WP-03) ainda não existe"; exit 1; }
           bash native/chatyy-crypto/ci/fetch-prebuilt.sh ios modules/expo-chatyy-crypto
