@@ -15698,6 +15698,14 @@ export default {
   "e2ee5.settings.row_sub": "As mensagens são protegidas com criptografia de ponta a ponta. Toque para verificar.",
   "e2ee5.settings.row_sub_group": "As mensagens são protegidas com criptografia de ponta a ponta.",
   "e2ee5.settings.row_title": "Criptografia",
+  // [e2ee5 WP-13 2026-10-21] ligações — início
+  "e2ee5.call.encrypted": "Ligação protegida com criptografia de ponta a ponta",
+  "e2ee5.call.encrypted_short": "Criptografada",
+  "e2ee5.call.no_key": "Não foi possível proteger esta ligação. Desligue e tente de novo.",
+  "e2ee5.call.peer_not_protected": "A outra pessoa precisa atualizar o Chatyy para esta ligação ser protegida.",
+  "e2ee5.call.unsupported": "Não foi possível proteger esta ligação. Atualize o Chatyy e tente de novo.",
+  "e2ee5.call.unsupported_title": "Ligação protegida",
+  // [e2ee5 WP-13 2026-10-21] ligações — fim
   "e2ee5.x.bia_only_you": "Bia · só você vê",
   "e2ee5.x.disabled": "Este recurso está indisponível agora.",
   "e2ee5.x.export_head": "Conversa exportada deste aparelho. As mensagens são protegidas com criptografia de ponta a ponta; este arquivo não é.",

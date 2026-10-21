@@ -2160,6 +2160,16 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if !isOutgoing {
             NativeCallRoom.shared.reclaimPreconnect(callId: callId, reason: "callvc")
         }
+        // [e2ee5 WP-13] Room do toque criado SEM E2EE numa ligação que agora é exigida: sai dele
+        // e conecta de novo cifrado (nunca adota mídia em claro). Ligação não cifrada = no-op.
+        if let pre = NativeCallRoom.shared.currentRoom(), NativeCallRoom.shared.isPreconnected(callId: callId),
+           CallE2EE.shared.roomViolatesPolicy(callId, room: pre) {
+            nativeCallDiag("e2ee5_preconnect_plain_drop", callId)
+            NativeCallRoom.shared.clear()
+            LKLeave.leave(pre, callId: callId, reason: "e2ee5_plain")
+        }
+        // [e2ee5 WP-13] Cadeado / aviso (escondido se a ligação não é cifrada).
+        CallE2EEBadge.attach(to: view, callId: callId, room: { [weak self] in self?.room })
         if NativeCallRoom.shared.isPreconnected(callId: callId) {
             print("[CallVC] STAGE-A: adopting preconnected Room for \(callId)")
             // Take over the Room reference + register as RoomDelegate so
@@ -2400,6 +2410,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 // (applyReceivePreference in didSubscribeTrack).
                 adaptiveStream: !CallVideoQuality.isDataSaver,
                 dynacast: true,
+                // [e2ee5 WP-13] nil (= hoje) salvo ligação cifrada (CallE2EE.swift).
+                e2eeOptions: CallE2EE.shared.e2eeOptions(callId: self.callId),
                 // [video-quality 2026-10-06] Enables Track.statistics (1 Hz
                 // getStats) so the "video_quality" diag can report the REAL
                 // encoded resolution/bitrate/limitation — stats are nil otherwise.
@@ -5784,6 +5796,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // [2026-10-11 full-hd] OFF with "Economizar dados" → MEDIUM layer pinned.
             adaptiveStream: !CallVideoQuality.isDataSaver,
             dynacast: true,
+            // [e2ee5 WP-13] Conversa cifrada (dica do push): o Room do toque já nasce com E2EE,
+            // sem chave = quadros descartados até a chave chegar. nil = hoje.
+            e2eeOptions: CallE2EE.shared.e2eeOptions(callId: callId),
             // [video-quality 2026-10-06] Track.statistics for the diag beacon.
             reportRemoteTrackStatistics: true
         )

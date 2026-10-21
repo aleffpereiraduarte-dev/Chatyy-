@@ -298,6 +298,29 @@ export async function startOutgoingCall({
   const cid = callId || generateCallId();
   const _tapT0 = Date.now();
 
+  // [e2ee5 WP-13] Conversa cifrada ⇒ ligação cifrada. Chave gerada AQUI (antes do convite e do
+  // Room nativo) e entregue ao nativo (setCallE2EERequired/Key); distribuição por to-device em
+  // 2º plano. Exigida e impossível (binário sem E2EE de ligação, sem núcleo) ⇒ NÃO liga em claro.
+  // Sem __chatyy_e2ee5 nada disto roda (nem o require).
+  if (conversationId && (() => { try { return globalThis.__chatyy_e2ee5 === true; } catch { return false; } })()) {
+    let _e5 = null;
+    try {
+      _e5 = await require('./callE2ee').e2ee5BeginCall({ callId: cid, convId: String(conversationId), isGroup: false, needsNative: Platform.OS !== 'web' });
+    } catch (e) {
+      _e5 = { required: true, blocked: 'error' };
+    }
+    if (_e5 && _e5.required && _e5.blocked) {
+      _diag('e2ee5_call_blocked', cid, `why=${_e5.blocked}`);
+      try { _outgoingCallLock.delete(_lockKey); } catch {}
+      try {
+        const { Alert } = require('react-native');
+        const tx = require('./callE2ee').e2ee5Text;
+        Alert.alert(tx('e2ee5.call.unsupported_title', 'Ligação protegida'), tx('e2ee5.call.unsupported', 'Não foi possível proteger esta ligação. Atualize o Chatyy e tente de novo.'));
+      } catch {}
+      return { callId: null, native: false, blocked: 'e2ee5_' + _e5.blocked };
+    }
+  }
+
   // [2026-10-11 call-tap-latency] The call owns the uplink from the tap on:
   // pause the photo backup and CANCEL its in-flight upload BEFORE the invite.
   // Incident call_1791735091317_q9bvow1ci (Android, cellular): tap 16:11:31.3,

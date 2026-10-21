@@ -920,6 +920,8 @@ class CallActivity : ComponentActivity() {
     try { CallDiag.setRole(callId, if (isOutgoing) "caller" else "callee") } catch (_: Throwable) {}
     conversationId = extras.getString(EXTRA_CONVERSATION_ID) ?: ""
     val callerAvatarUrl = extras.getString(EXTRA_CALLER_AVATAR) ?: ""
+    // [e2ee5 WP-13] Conversa cifrada (dica do JS) ⇒ ligação exigida (sem dica = hoje).
+    try { CallE2EE.noteIncoming(applicationContext, callId, conversationId, callerEmail) } catch (_: Throwable) {}
 
     Log.d(TAG, "onCreate: callId=$callId caller=$callerName video=$hasVideo " +
       "outgoing=$isOutgoing convId=$conversationId " +
@@ -1047,6 +1049,9 @@ class CallActivity : ComponentActivity() {
     try { localRenderer?.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL) } catch (_: Throwable) {}
 
     refreshDataSaverState() // [2026-10-11 full-hd] More-sheet "Economizar dados" state
+    // [e2ee5 WP-13] Cadeado / aviso por cima do Compose (post = depois do setContent abaixo,
+    // que troca o conteúdo). Escondido se a ligação não é cifrada.
+    window.decorView.post { CallE2EEBadge.attach(this, { callId }, { room }) }
     // Mount the Compose UI.
     setContent {
       MaterialTheme(colorScheme = darkColorScheme()) {
@@ -2072,6 +2077,13 @@ class CallActivity : ComponentActivity() {
    * fresh bringUpRoom) if anything throws before the Room is taken over.
    */
   private fun adoptWarmRoom(r: Room): Boolean {
+    // [e2ee5 WP-13] Room do toque sem E2EE numa ligação exigida: sai dele; o chamador conecta de
+    // novo (cifrado) pelo bringUpRoom.
+    if (CallE2EE.roomViolatesPolicy(callId, r)) {
+      Log.i(TAG, "[e2ee5] warm Room sem E2EE numa ligação cifrada — descartado callId=$callId")
+      try { NativeCallRoom.disconnect() } catch (_: Throwable) {}
+      return false
+    }
     return try {
       Log.i("CallTrace", "[8w/12] CallActivity ADOPT warm Room callId=$callId state=${r.state} ts=${System.currentTimeMillis()}")
       room = r
@@ -2379,6 +2391,8 @@ class CallActivity : ComponentActivity() {
   /** true = a tentativa P2P assumiu (quem chamou NÃO deve subir o LiveKit). */
   private fun startP2PIfEligible(source: String): Boolean {
     if (p2pTried || finishing || room != null) return false
+    // [e2ee5 WP-13] Ligação cifrada: P2P nativo (SDP sem autenticação pelo hub) fica de fora.
+    if (CallE2EE.blocksNativeP2P(callId)) return false
     if (callId.isEmpty() || callId.startsWith("group_") || state.groupParticipants.size >= 2) return false
     val info = LkTokenFetcher.p2pFor(applicationContext, callId) ?: return false
     val cfg = P2PCallSession.parseConfig(info.first) ?: return false
@@ -2842,6 +2856,12 @@ class CallActivity : ComponentActivity() {
         roomOptions.copy(e2eeOptions = e2ee)
       } else roomOptions
     } catch (t: Throwable) {
+      if (CallE2EE.isRequired(callId)) {
+        // [e2ee5 WP-13] ligação cifrada: NUNCA conecta em claro
+        Log.e(TAG, "[e2ee5] E2EE options failed (${t.javaClass.simpleName}) — NOT connecting plaintext callId=$callId")
+        state.status = CallE2EE.text(this, "nokey")
+        return
+      }
       Log.w(TAG, "[CALL_E2EE] cold-launch e2ee build failed (${t.message}) — plaintext")
       roomOptions
     }

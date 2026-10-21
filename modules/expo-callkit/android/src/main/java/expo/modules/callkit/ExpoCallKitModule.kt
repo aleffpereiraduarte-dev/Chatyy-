@@ -1306,7 +1306,10 @@ class ExpoCallKitModule : Module() {
     // material cross-platform. See pendingE2EEKeys contract note above.
     Function("setCallE2EEKey") { callId: String, keyBase64: String ->
       try {
-        if (callId.isNotEmpty() && keyBase64.isNotEmpty()) {
+        // [e2ee5 WP-13] chave v5 (32 B em base64) → CallE2EE (vale também para o Room vivo/rotação)
+        if (CallE2EE.setKey(callId, keyBase64)) {
+          // ok
+        } else if (callId.isNotEmpty() && keyBase64.isNotEmpty()) {
           setPendingE2EEKey(callId, keyBase64)
         } else {
           Log.w(TAG, "setCallE2EEKey: empty callId or key — ignoring (no E2EE)")
@@ -1316,6 +1319,23 @@ class ExpoCallKitModule : Module() {
         Log.w(TAG, "setCallE2EEKey: base64 decode failed (${t.message}) — no E2EE for callId=$callId")
       }
     }
+
+    // [e2ee5 WP-13] Ligações E2EE v5 (ver CallE2EE.kt). O JS só chama com __chatyy_e2ee5 +
+    // e2ee5_calls; sem chamada = nenhum Room muda.
+    Function("callE2EECaps") { CallE2EE.API_VERSION }
+    Function("setCallE2EERequired") { callId: String, required: Boolean ->
+      CallE2EE.setRequired(callId, required)
+      true
+    }
+    Function("clearCallE2EE") { callId: String ->
+      CallE2EE.clear(callId)
+      true
+    }
+    Function("setCallE2EEConvHint") { convId: String, peerEmail: String, on: Boolean ->
+      CallE2EE.setConvHint(context, convId, peerEmail, on)
+      true
+    }
+    Function("callE2EEStatus") { callId: String -> CallE2EE.status(callId) }
 
     // [#1205 live muting fix, 2026-05-19] Reset AudioManager mode before
     // live-broadcast.js calls getUserMedia. Symptom: "a live tá ficando muda"

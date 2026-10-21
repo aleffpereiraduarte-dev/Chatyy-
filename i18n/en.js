@@ -15620,6 +15620,14 @@ export default {
   "e2ee5.settings.row_sub": "Messages are protected with end-to-end encryption. Tap to verify.",
   "e2ee5.settings.row_sub_group": "Messages are protected with end-to-end encryption.",
   "e2ee5.settings.row_title": "Encryption",
+  // [e2ee5 WP-13 2026-10-21] ligações — início
+  "e2ee5.call.encrypted": "Call protected with end-to-end encryption",
+  "e2ee5.call.encrypted_short": "Encrypted",
+  "e2ee5.call.no_key": "Couldn't secure this call. Hang up and try again.",
+  "e2ee5.call.peer_not_protected": "The other person needs to update Chatyy for this call to be protected.",
+  "e2ee5.call.unsupported": "Couldn't secure this call. Update Chatyy and try again.",
+  "e2ee5.call.unsupported_title": "Protected call",
+  // [e2ee5 WP-13 2026-10-21] ligações — fim
   "e2ee5.x.bia_only_you": "Bia · only you can see this",
   "e2ee5.x.disabled": "This feature isn't available right now.",
   "e2ee5.x.export_head": "Chat exported from this device. Messages are protected with end-to-end encryption; this file is not.",

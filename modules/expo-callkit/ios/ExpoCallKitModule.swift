@@ -1095,6 +1095,32 @@ public class ExpoCallKitModule: Module {
       return true
     }
 
+    // [e2ee5 WP-13] Ligações E2EE v5 (ver CallE2EE.swift). O JS só chama com __chatyy_e2ee5 +
+    // e2ee5_calls; sem chamada = nenhum Room muda.
+    Function("callE2EECaps") { () -> Int in
+      return CallE2EE.apiVersion
+    }
+    Function("setCallE2EERequired") { (callId: String, required: Bool) -> Bool in
+      CallE2EE.shared.setRequired(callId, required)
+      return true
+    }
+    Function("setCallE2EEKey") { (callId: String, keyBase64: String) -> Bool in
+      guard CallE2EE.validKey(keyBase64) else { return false }
+      CallE2EE.shared.setKey(callId, keyBase64)
+      return true
+    }
+    Function("clearCallE2EE") { (callId: String) -> Bool in
+      CallE2EE.shared.clear(callId)
+      return true
+    }
+    Function("setCallE2EEConvHint") { (convId: String, peerEmail: String, on: Bool) -> Bool in
+      CallE2EE.shared.setConvHint(convId: convId, peerEmail: peerEmail, on: on)
+      return true
+    }
+    Function("callE2EEStatus") { (callId: String) -> [String: Any] in
+      return CallE2EE.shared.status(callId)
+    }
+
     Function("getDiagnostics") { () -> [String: Any] in
       let callCount = self.safeStateSync { self.activeCalls.count }
       let hasToken: Bool = {

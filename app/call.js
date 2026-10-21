@@ -295,6 +295,9 @@ import { getGlobalCall as _getGC, setGlobalCall as _setGC, clearGlobalCall as _c
 // DEFAULT false → none of the call-key path below executes; the call behaves
 // exactly like today. See constants/featureFlags.js + services/callE2ee.js.
 import { CALL_E2EE_ENABLED, isPstnEnabled } from '../constants/featureFlags';
+// [e2ee5 WP-13] Ligações E2EE v5 — gate JS barato (o resto mora em services/callE2ee.js).
+function _e5JsOn() { try { return globalThis.__chatyy_e2ee5 === true; } catch { return false; } }
+function _e5ConvCached(cid) { try { return require('../services/e2ee/e2ee5').convModeSync(cid) === 1; } catch { return false; } }
 export const getGlobalCall = _getGC;
 export const clearGlobalCall = _clearGC;
 
@@ -648,6 +651,12 @@ function CallScreenInner() {
   // Drives the "Criptografada" lock chip. Stays false forever when
   // CALL_E2EE_ENABLED is off (the path that sets it never runs).
   const [e2eeActive, setE2eeActive] = useState(false);
+  // [e2ee5 WP-13] Ligação E2EE v5: exigida (conversa cifrada) + aviso (sem chave / par sem cifra).
+  // Só muda com __chatyy_e2ee5 + e2ee5_calls; desligado = sempre false/null (UI de hoje).
+  const [e5Required, setE5Required] = useState(false);
+  const [e5Warn, setE5Warn] = useState(null);
+  const e5Ref = useRef(null);
+  const e5UnsubRef = useRef(null);
   const [showSlowConnectOverlay, setShowSlowConnectOverlay] = useState(false);
   // [WAVE 68 2026-05-21] Progressive connect phase. Drives the topStatus
   // line BEFORE peer joins so user never sees an alarmist "Conexão lenta"
@@ -1902,6 +1911,46 @@ function CallScreenInner() {
     try {
     ensureLiveKitRegistered();
 
+    // [e2ee5 WP-13] Conversa cifrada ⇒ ligação cifrada (LiveKit E2EE + chave por to-device).
+    // Sem a flag JS nada aqui roda. Exigida e impossível (sem núcleo/worker/binário) ⇒ NÃO
+    // conecta em claro: mostra e2ee5.call.unsupported. Quem liga gera e distribui a chave;
+    // quem atende marca o nativo como "exigido" e espera a chave (sem chave = sem mídia).
+    let _e5 = null;
+    if (_e5JsOn()) {
+      try {
+        const _ce = require('../services/callE2ee');
+        const _a = { callId: String(callId), convId: conversationId, isGroup: isGroupCall, needsNative: Platform.OS !== 'web' };
+        _e5 = isCaller ? await _ce.e2ee5BeginCall(_a) : await _ce.e2ee5PrepareJoin(_a);
+      } catch (e) {
+        _e5 = { required: _e5ConvCached(conversationId), blocked: 'error' };
+      }
+      e5Ref.current = _e5 && _e5.required ? _e5 : null;
+      if (_e5 && _e5.required) {
+        setE5Required(true);
+        try { _callDiagAppend('info', 'e2ee5_call', { call_id: callId, role: isCaller ? 'caller' : 'callee', blocked: _e5.blocked || '', key: _e5.keyB64 ? 1 : 0 }); } catch {}
+        if (_e5.blocked) {
+          setErrorMsg(t('e2ee5.call.unsupported') || 'Não foi possível proteger esta ligação. Atualize o Chatyy.');
+          setConnectionFailed(true);
+          return;
+        }
+        try {
+          const _ce = require('../services/callE2ee');
+          const _cid = String(callId);
+          const _offUi = _ce.e2ee5OnKey(_cid, (ev) => {
+            if (endedRef.current) return;
+            if (ev && ev.keyB64) setE2eeActive(true);
+            if (ev && ev.warn) setE5Warn(ev.warn);
+          });
+          e5UnsubRef.current = _offUi;
+          if (_e5.keyB64) setE2eeActive(true);
+          // Sem chave em 30 s: avisa (a mídia segue bloqueada — nunca cai para texto claro).
+          setTimeout(() => {
+            try { if (!endedRef.current && !_ce.e2ee5Status(_cid).hasKey) setE5Warn({ kind: 'no_key', at: Date.now() }); } catch {}
+          }, 30000);
+        } catch {}
+      }
+    }
+
     // [bug 2026-05-15 #7 + #9] LiveKit AudioSession lifecycle vs. CallKit.
     //
     // - On the CallKit-accept path (iOS callee, isCaller=0):
@@ -2224,7 +2273,7 @@ function CallScreenInner() {
     if (endedRef.current) { _diag('ended_before_room'); return; }
     // [2026-10-09 p2p-calls] 1:1 com flag ligada: tenta P2P primeiro; só segue
     // p/ o LiveKit se não conectar no prazo (~4s) ou o par não suportar.
-    if (!isGroupCall && !_e2eeKeyB64 && p2pAttemptRef.current) {
+    if (!isGroupCall && !_e2eeKeyB64 && p2pAttemptRef.current && !(_e5 && _e5.required && Platform.OS !== 'web')) {
       let handled = false;
       try { handled = await p2pAttemptRef.current({ iceServers, p2pCfg }); } catch (e) {
         try { _diag('p2p_attempt_err', { msg: String(e?.message || e).slice(0, 160) }); } catch {}
@@ -2429,6 +2478,23 @@ function CallScreenInner() {
         setE2eeActive(false);
       }
     }
+    // [e2ee5 WP-13] Opções E2EE do Room JS (web: worker; mobile JS: RNE2EEManager).
+    let _e5room = null;
+    if (_e5 && _e5.required) {
+      try {
+        const _ce = require('../services/callE2ee');
+        const _lkm = require('../services/lkLoader');
+        _e5room = await _ce.e2ee5BuildRoomE2ee({ lk: Platform.OS === 'web' ? _lkm.lkSync() : null, lkrn: Platform.OS !== 'web' ? _lkm.lkRn() : null });
+      } catch { _e5room = { ok: false, why: 'error' }; }
+      if (!_e5room || !_e5room.ok) {
+        try { _diag('e2ee5_room_unsupported', { why: (_e5room && _e5room.why) || '' }); } catch {}
+        setErrorMsg(t('e2ee5.call.unsupported') || 'Não foi possível proteger esta ligação. Atualize o Chatyy.');
+        setConnectionFailed(true);
+        return;
+      }
+      try { delete roomOpts.encryption; } catch {}
+      roomOpts.e2ee = _e5room.e2ee;
+    }
     let r;
     try {
       r = new Room(roomOpts);
@@ -2438,6 +2504,50 @@ function CallScreenInner() {
       setErrorMsg(String(e?.message || 'Room ctor failed'));
       setConnectionFailed(true);
       return;
+    }
+
+    if (_e5room) {
+      try {
+        await r.setE2EEEnabled(true);
+      } catch (e) {
+        try { _diag('e2ee5_enable_err', { msg: String(e?.message || e).slice(0, 120) }); } catch {}
+        setErrorMsg(t('e2ee5.call.unsupported') || 'Não foi possível proteger esta ligação. Atualize o Chatyy.');
+        setConnectionFailed(true);
+        try { r.disconnect(); } catch {}
+        return;
+      }
+      try {
+        const _ce = require('../services/callE2ee');
+        const _cid = String(callId);
+        const _st = _ce.e2ee5Status(_cid);
+        const _k0 = (_e5 && _e5.keyB64) || null;
+        if (_k0) { await _e5room.setKey(_k0); setE2eeActive(true); }
+        const _offKey = _ce.e2ee5OnKey(_cid, (ev) => {
+          if (ev && ev.keyB64) { _e5room.setKey(ev.keyB64); if (!endedRef.current) setE2eeActive(true); }
+          if (ev && ev.warn && !endedRef.current) setE5Warn(ev.warn);
+        });
+        const _prevUnsub = e5UnsubRef.current;
+        e5UnsubRef.current = () => { try { _prevUnsub && _prevUnsub(); } catch {} try { _offKey(); } catch {} try { _e5room.dispose && _e5room.dispose(); } catch {} };
+        if (!_k0 && _st.hasKey) { /* chegou entre o prepare e aqui: o OnKey não reemite */
+          const _w = await _ce.e2ee5AwaitKey(_cid, 1);
+          if (_w && _w.keyB64) { await _e5room.setKey(_w.keyB64); setE2eeActive(true); }
+        }
+        const _e5sync = () => {
+          try {
+            const ids = Array.from(r.remoteParticipants?.values?.() || []).map((p) => p.identity);
+            _ce.e2ee5RoomChanged(_cid, { selfIdentity: r.localParticipant?.identity, identities: ids });
+          } catch {}
+        };
+        r.on(RoomEvent.Connected, _e5sync);
+        r.on(RoomEvent.ParticipantConnected, _e5sync);
+        r.on(RoomEvent.ParticipantDisconnected, _e5sync);
+        // Par publicando SEM cifra (app antigo): avisa; a NOSSA mídia continua cifrada.
+        r.on(RoomEvent.TrackSubscribed, (_tr, pub, p) => {
+          try { if (pub && pub.isEncrypted === false && p) _ce.e2ee5NoteUnencrypted(_cid, p.identity); } catch {}
+        });
+      } catch (e) {
+        try { _diag('e2ee5_wire_err', { msg: String(e?.message || e).slice(0, 120) }); } catch {}
+      }
     }
 
     // [WAVE 44B, 2026-05-21 gap A2] Wire applyOpusSdpMunge into the publisher
@@ -3434,9 +3544,21 @@ function CallScreenInner() {
       if (!callAcceptedRef.current) return false;
     }
     const t0 = Date.now();
+    // [e2ee5 WP-13] Ligação cifrada: oferta/resposta SDP só pelo canal E2EE (uid do par).
+    let _e5p2p = null;
+    if (e5Ref.current && e5Ref.current.required) {
+      try {
+        const _ce = require('../services/callE2ee');
+        const peerUid = _ce.e2ee5PeerUid(conversationId, contactEmail);
+        if (!peerUid) return false; // sem o uid do par não dá para autenticar a SDP → LiveKit E2EE
+        _ce.e2ee5SetPeer(String(callId), peerUid);
+        _e5p2p = { peerUid };
+      } catch { return false; }
+    }
     const sess = P2P.startP2PSession({
       callId,
       isCaller,
+      e2ee: _e5p2p,
       video: !!isVideoCall && !!videoEnabledRef.current,
       iceServers: _ice,
       cfg,
@@ -3815,6 +3937,12 @@ function CallScreenInner() {
       console.warn(new Error('handleEndCall stack').stack);
     } catch {}
     endedRef.current = true;
+    // [e2ee5 WP-13] Esquece a chave da ligação (JS + nativo).
+    if (e5Ref.current || e5UnsubRef.current) {
+      try { e5UnsubRef.current && e5UnsubRef.current(); } catch {}
+      e5UnsubRef.current = null;
+      try { require('../services/callE2ee').e2ee5End(String(callId)); } catch {}
+    }
     // [2026-10-11 ongoing-call] Ended WHILE minimized (peer hung up / bar
     // "end"): the live Room + WS subs were parked in the global call slot and
     // roomRef was nulled — re-adopt them so the teardown below disconnects
@@ -6055,14 +6183,22 @@ function CallScreenInner() {
               )}
               {/* [CALL-E2EE 2026-06-28] "Criptografada" lock chip — only when the
                   per-call key is active (flag on + key distributed/unwrapped). */}
-              {CALL_E2EE_ENABLED && e2eeActive && (
+              {(CALL_E2EE_ENABLED || e5Required) && e2eeActive && (
                 <View style={styles.e2eeLockChip} accessibilityRole="text"
-                  accessibilityLabel={t('call.e2eeEncrypted') || 'Criptografada de ponta a ponta'}>
+                  accessibilityLabel={(e5Required ? t('e2ee5.call.encrypted') : t('call.e2eeEncrypted')) || 'Criptografada de ponta a ponta'}>
                   <Svg width={11} height={11} viewBox="0 0 24 24" fill="none">
                     <SvgPath d="M7 11V8a5 5 0 0110 0v3M5 11h14v9H5z" stroke="rgba(255,255,255,0.72)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
                   </Svg>
-                  <Text style={styles.e2eeLockChipText}>{t('call.e2eeEncrypted') || 'Criptografada'}</Text>
+                  <Text style={styles.e2eeLockChipText}>{(e5Required ? t('e2ee5.call.encrypted_short') : t('call.e2eeEncrypted')) || 'Criptografada'}</Text>
                 </View>
+              )}
+              {/* [e2ee5 WP-13] Aviso: par sem cifra (app antigo) ou chave que não chegou. */}
+              {e5Required && !!e5Warn && (
+                <Text style={styles.e2eeWarnText} numberOfLines={2} accessibilityRole="alert">
+                  {e5Warn.kind === 'unencrypted_peer'
+                    ? (t('e2ee5.call.peer_not_protected') || 'A outra pessoa precisa atualizar o Chatyy para esta ligação ser protegida.')
+                    : (t('e2ee5.call.no_key') || 'Não foi possível proteger esta ligação.')}
+                </Text>
               )}
             </View>
             {/* [2026-10-11 ongoing-call] "Mensagem": minimize + open the chat. */}
@@ -7261,6 +7397,8 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.18)',
   },
   e2eeLockChipText: { color: 'rgba(255,255,255,0.78)', fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 },
+  // [e2ee5 WP-13]
+  e2eeWarnText: { color: '#FFD27A', fontSize: 11.5, fontWeight: '600', marginTop: 4, textAlign: 'center', maxWidth: 280 },
   centerArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 180 },
   avatarStack: { alignItems: 'center', justifyContent: 'center' },
   pulseRing: { position: 'absolute', borderRadius: 999, borderWidth: 1 },

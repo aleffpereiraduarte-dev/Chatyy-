@@ -130,6 +130,9 @@ final class P2PCallBridge {
     /// ser) dono da mídia; false → siga o caminho LiveKit normal.
     @discardableResult
     static func startIfEligible(callId: String, isCaller: Bool, hasVideo: Bool) -> Bool {
+        // [e2ee5 WP-13] Ligação cifrada: a SDP do P2P nativo vai pelo hub sem autenticação →
+        // fica no LiveKit com E2EE (o P2P autenticado é só no JS/web por enquanto).
+        if CallE2EE.shared.blocksNativeP2P(callId) { return false }
         guard !callId.isEmpty else { return false }
         lock.lock()
         if active[callId] != nil { lock.unlock(); return true }

@@ -15604,6 +15604,14 @@ export default {
   "e2ee5.settings.row_sub": "Los mensajes están protegidos con cifrado de extremo a extremo. Toca para verificar.",
   "e2ee5.settings.row_sub_group": "Los mensajes están protegidos con cifrado de extremo a extremo.",
   "e2ee5.settings.row_title": "Cifrado",
+  // [e2ee5 WP-13 2026-10-21] ligações — início
+  "e2ee5.call.encrypted": "Llamada protegida con cifrado de extremo a extremo",
+  "e2ee5.call.encrypted_short": "Cifrada",
+  "e2ee5.call.no_key": "No fue posible proteger esta llamada. Cuelga e inténtalo de nuevo.",
+  "e2ee5.call.peer_not_protected": "La otra persona necesita actualizar Chatyy para que esta llamada esté protegida.",
+  "e2ee5.call.unsupported": "No fue posible proteger esta llamada. Actualiza Chatyy e inténtalo de nuevo.",
+  "e2ee5.call.unsupported_title": "Llamada protegida",
+  // [e2ee5 WP-13 2026-10-21] ligações — fim
   "e2ee5.x.bia_only_you": "Bia · solo tú lo ves",
   "e2ee5.x.disabled": "Esta función no está disponible ahora.",
   "e2ee5.x.export_head": "Chat exportado desde este dispositivo. Los mensajes están protegidos con cifrado de extremo a extremo; este archivo no.",

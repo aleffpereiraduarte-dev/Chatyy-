@@ -17,6 +17,13 @@
 //
 // Flag: chat_livekit_token devolve `p2p: {enabled, connect_timeout_ms, ...}`
 // (CALL_P2P / CALL_P2P_ACCOUNTS no /etc/mail-api.env). DESLIGADO por padrão.
+//
+// [e2ee5 WP-13] `opts.e2ee = {peerUid}` (só em ligação de conversa cifrada, __chatyy_e2ee5 +
+// e2ee5_calls): oferta/resposta vão por to-device Olm `chatyy.call_sdp` (services/callE2ee) —
+// o fingerprint DTLS fica autenticado e o hub não consegue fazer MITM. Pelo hub vai só um stub
+// "v=0" (mantém a rota/estado do p2p_signal.go, que exige SDP começando por v=0). Candidatos ICE
+// seguem pelo hub (não dão MITM com o fingerprint autenticado). SDP autenticada não chegou ⇒
+// fallback para o LiveKit (também cifrado). Sem `opts.e2ee` = exatamente o fluxo de hoje.
 import { Platform } from 'react-native';
 
 const P2P_TYPES = ['call_p2p_ready', 'call_p2p_offer', 'call_p2p_answer', 'call_p2p_candidate', 'call_p2p_restart', 'call_p2p_fallback'];
@@ -270,6 +277,27 @@ class P2PSession {
     const ws = _ws();
     if (!ws) return;
     try { ws._send({ type, call_id: this.callId, gen: this.gen, ...(extra || {}) }); } catch {}
+  }
+
+  // [e2ee5 WP-13] Oferta/resposta: com E2EE vai a SDP real pelo canal cifrado + stub no hub.
+  async _sendSdp(type, kind, sdp, extra) {
+    if (!this.o.e2ee) { this._send(type, { sdp, ...(extra || {}) }); return true; }
+    let ce = null;
+    try { ce = require('./callE2ee'); } catch { ce = null; }
+    const ok = !!(ce && await ce.e2ee5SendSdp(this.callId, { kind, sdp, gen: this.gen, peerUid: this.o.e2ee.peerUid }));
+    if (!ok) { this._log('p2p_e2ee_sdp_send_fail', { kind }); this.fallback('e2ee_sdp_send'); return false; }
+    this._send(type, { sdp: ce.E5_SDP_STUB, ...(extra || {}) });
+    return true;
+  }
+
+  // [e2ee5 WP-13] SDP recebida: com E2EE só vale a autenticada (o conteúdo do hub é ignorado).
+  async _recvSdp(kind, msg) {
+    if (!this.o.e2ee) return msg.sdp;
+    let ce = null;
+    try { ce = require('./callE2ee'); } catch { ce = null; }
+    const sdp = ce ? await ce.e2ee5TakeSdp(this.callId, kind, msg.gen, 6000) : null;
+    if (!sdp) { this._log('p2p_e2ee_sdp_timeout', { kind }); this.fallback('e2ee_sdp_timeout'); return null; }
+    return sdp;
   }
 
   async _start(buffered) {
@@ -561,7 +589,7 @@ class P2PSession {
     const offer = await pc.createOffer(iceRestart ? { iceRestart: true } : {});
     const sdp = _mungeOpus(offer.sdp, this.cfg.maxAudioKbps);
     await pc.setLocalDescription({ type: 'offer', sdp });
-    this._send('call_p2p_offer', { sdp, video: !!this.o.video });
+    await this._sendSdp('call_p2p_offer', 'offer', sdp, { video: !!this.o.video });
     this._log('p2p_offer_sent', { gen: this.gen, restart: !!iceRestart });
   }
 
@@ -591,7 +619,9 @@ class P2PSession {
         const pc = this.pc;
         if (typeof msg.gen === 'number' && msg.gen <= this.remoteGen) return;
         this.remoteGen = typeof msg.gen === 'number' ? msg.gen : this.remoteGen + 1;
-        await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+        const offerSdp = await this._recvSdp('offer', msg);
+        if (offerSdp == null || this._done) return;
+        await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
         this._haveRemote = true;
         if (!this.audioTx) {
           const txs = pc.getTransceivers ? pc.getTransceivers() : [];
@@ -608,7 +638,7 @@ class P2PSession {
         const sdp = _mungeOpus(ans.sdp, this.cfg.maxAudioKbps);
         await pc.setLocalDescription({ type: 'answer', sdp });
         this.gen = this.remoteGen;
-        this._send('call_p2p_answer', { sdp });
+        if (!(await this._sendSdp('call_p2p_answer', 'answer', sdp))) return;
         this._flushCands();
         return;
       }
@@ -617,7 +647,9 @@ class P2PSession {
         const pc = this.pc;
         if (typeof msg.gen === 'number' && msg.gen !== this.gen) return; // resposta velha
         if (pc.signalingState !== 'have-local-offer') return;
-        await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+        const answerSdp = await this._recvSdp('answer', msg);
+        if (answerSdp == null || this._done || pc.signalingState !== 'have-local-offer') return;
+        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
         this._haveRemote = true;
         this._flushCands();
         return;

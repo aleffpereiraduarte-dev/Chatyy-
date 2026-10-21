@@ -315,6 +315,16 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         // [2026-10-09 native-group-call] Incoming CallKit answer: adopt the
         // ring-window preconnected Room instead of joining a 2nd time with
         // the same identity (SFU would evict one of them).
+        // [e2ee5 WP-13] Grupo de conversa cifrada (dica gravada pelo JS) ⇒ exigida; Room do toque
+        // sem E2EE não é adotado (sai e entra de novo cifrado). Não cifrada = no-op.
+        CallE2EE.shared.noteIncoming(callId: roomName, convId: conversationId, peerEmail: "")
+        if let plain = NativeCallRoom.shared.currentRoom(), NativeCallRoom.shared.isPreconnected(callId: roomName),
+           CallE2EE.shared.roomViolatesPolicy(roomName, room: plain) {
+            nativeCallDiag("e2ee5_preconnect_plain_drop", roomName)
+            NativeCallRoom.shared.clear()
+            LKLeave.leave(plain, callId: roomName, reason: "e2ee5_plain")
+        }
+        CallE2EEBadge.attach(to: view, callId: roomName, room: { [weak self] in self?.room })
         if !isOutgoing, NativeCallRoom.shared.isPreconnected(callId: roomName),
            let pre = NativeCallRoom.shared.currentRoom() {
             adoptPreconnectedRoom(pre)
@@ -372,7 +382,9 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             // someone spotlights this tile.
             defaultVideoPublishOptions: CallViewController.defaultVideoPublishOptions(),
             adaptiveStream: true,
-            dynacast: true
+            dynacast: true,
+            // [e2ee5 WP-13] nil (= hoje) salvo ligação cifrada (CallE2EE.swift).
+            e2eeOptions: CallE2EE.shared.e2eeOptions(callId: roomName)
         )
     }
 

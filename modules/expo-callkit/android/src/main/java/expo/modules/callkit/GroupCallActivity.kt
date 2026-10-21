@@ -473,6 +473,8 @@ class GroupCallActivity : ComponentActivity() {
     )
 
     setContentView(buildRootView())
+    // [e2ee5 WP-13] Cadeado / aviso (escondido se a ligação não é cifrada).
+    CallE2EEBadge.attach(this, { roomName }, { room })
 
     // Pre-seed placeholder tiles for each invited participant (keyed by bare
     // email; upgraded in place when their "<email>#<device>" identity joins).
@@ -612,8 +614,19 @@ class GroupCallActivity : ComponentActivity() {
       Log.w(TAG, "RoomOptions ctor failed: ${t.message} — defaults")
       RoomOptions()
     }
+    // [e2ee5 WP-13] Grupo de conversa cifrada (dica do JS) ⇒ E2EE (sem chave = sem mídia).
+    // Não cifrada = roomOptions de hoje. Falhou com a ligação exigida ⇒ não conecta em claro.
+    try { CallE2EE.noteIncoming(applicationContext, roomName, conversationId, "") } catch (_: Throwable) {}
+    val roomOptionsE5 = if (CallE2EE.isRequired(roomName)) {
+      val e5 = try { CallE2EE.optionsFor(roomName) } catch (t: Throwable) { null }
+      if (e5 == null) {
+        Log.e(TAG, "[e2ee5] E2EE options failed — NOT connecting plaintext room=$roomName")
+        return
+      }
+      roomOptions.copy(e2eeOptions = e5)
+    } else roomOptions
     // [2026-10-15 viva-voz] No LiveKit AudioSwitch: AudioRouter owns the route.
-    val r = LiveKit.create(applicationContext, options = roomOptions, overrides = expo.modules.callkit.audio.AudioRouter.liveKitOverrides())
+    val r = LiveKit.create(applicationContext, options = roomOptionsE5, overrides = expo.modules.callkit.audio.AudioRouter.liveKitOverrides())
     room = r
     // [2026-10-11 noise] RNNoise capture post-processor (pass-through on failure).
     expo.modules.callkit.audio.RNNoiseProcessor.attachTo(r)

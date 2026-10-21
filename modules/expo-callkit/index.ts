@@ -768,6 +768,42 @@ export async function persistPendingLkToken(roomName: string, token: string, url
   }
 }
 
+// ─── [e2ee5 WP-13] Ligações E2EE v5 (CallE2EE.swift / CallE2EE.kt) ─────────────────────────
+// Só services/callE2ee.js chama, e só com __chatyy_e2ee5 + e2ee5_calls. Binário antigo (sem os
+// métodos) → callE2EECaps() = 0 e o JS não liga em claro numa conversa cifrada (avisa).
+export function callE2EECaps(): number {
+  const m = getModule() as any;
+  if (!m || typeof m.callE2EECaps !== 'function') return 0;
+  try { return Number(m.callE2EECaps()) || 0; } catch { return 0; }
+}
+export function setCallE2EERequired(callId: string, required: boolean): boolean {
+  const m = getModule() as any;
+  if (!m || typeof m.setCallE2EERequired !== 'function') return false;
+  try { return m.setCallE2EERequired(String(callId), !!required) !== false; } catch { return false; }
+}
+/** Chave da ligação (base64 de 32 B). Nunca logar. */
+export function setCallE2EEKey(callId: string, keyBase64: string): boolean {
+  const m = getModule() as any;
+  if (!m || typeof m.setCallE2EEKey !== 'function') return false;
+  try { return m.setCallE2EEKey(String(callId), String(keyBase64)) !== false; } catch { return false; }
+}
+export function clearCallE2EE(callId: string): boolean {
+  const m = getModule() as any;
+  if (!m || typeof m.clearCallE2EE !== 'function') return false;
+  try { return m.clearCallE2EE(String(callId)) !== false; } catch { return false; }
+}
+/** Dica por conversa para o toque com o app morto (VoIP push / FCM → Room já cifrado). */
+export function setCallE2EEConvHint(convId: string, peerEmail: string, on: boolean): boolean {
+  const m = getModule() as any;
+  if (!m || typeof m.setCallE2EEConvHint !== 'function') return false;
+  try { return m.setCallE2EEConvHint(String(convId), String(peerEmail || ''), !!on) !== false; } catch { return false; }
+}
+export function callE2EEStatus(callId: string): { required?: boolean; hasKey?: boolean; live?: boolean; ageMs?: number } | null {
+  const m = getModule() as any;
+  if (!m || typeof m.callE2EEStatus !== 'function') return null;
+  try { return m.callE2EEStatus(String(callId)) || null; } catch { return null; }
+}
+
 export function isNativeRoomConnected(): boolean {
   const m = getModule();
   if (!m) return false;

@@ -281,6 +281,7 @@ function _onSyncResult(r) {
   } catch (_) {}
   try {
     for (const ev of (Array.isArray(r.chatyyEvents) ? r.chatyyEvents : [])) {
+      if (ev && typeof ev.eventType === 'string' && ev.eventType.startsWith('chatyy.call_')) { try { require('../callE2ee').e2ee5HandleEvent(ev); } catch (_) {} continue; } // [e2ee5 WP-13]
       if (ev && ev.eventType === 'chatyy.link.revoked') { try { require('./link').onChatyyEvent(ev); } catch (_) {} continue; } // [e2ee5 WP-12]
       if (!ev || (ev.eventType !== 'chatyy.decrypt_report' && ev.eventType !== 'chatyy.key_resend')) continue;
       let c = null;
@@ -453,6 +454,7 @@ function _applyState(k, d, prev) {
   };
   _conv.set(k, ns);
   if (!prev || prev.mode !== ns.mode) _nativeNoteConv(k, ns.mode);
+  try { require('../callE2ee').e2ee5NoteConv(k, ns); } catch (_) {} // [e2ee5 WP-13] dica nativa p/ o toque com o app morto
   if (_sess && ns.mode === 1) {
     try {
       if (prev && Array.isArray(prev.members) && prev.members.length) {
@@ -1064,6 +1066,9 @@ export function rowNeedsRefresh(m, key) {
 // ───────────────────────────────────────────────────────────── mensagens de sistema
 
 /** 'on' | 'off' | null para `{"sys":"e2ee_on"|"e2ee_off"}` (sem JSON cru na UI). */
+/** [e2ee5 WP-13] Reinjeta chatyy.* que o NATIVO consumiu (fila e2e_events do Android) no caminho normal. */
+export function dispatchChatyyEvents(list) { if (Array.isArray(list) && list.length) _onSyncResult({ chatyyEvents: list }); }
+
 export function sysKind(content) {
   try {
     const o = typeof content === 'string' ? (content.trim().charAt(0) === '{' ? JSON.parse(content) : null) : content;

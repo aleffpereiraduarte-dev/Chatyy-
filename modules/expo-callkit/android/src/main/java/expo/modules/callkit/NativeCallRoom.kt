@@ -270,6 +270,9 @@ object NativeCallRoom {
     // (this object) had E2EE; a cold-launched incoming call (CallActivity
     // builds its OWN Room) connected plaintext even with a staged key.
     internal fun buildE2EEOptionsFor(callId: String?): E2EEOptions? {
+        // [e2ee5 WP-13] Ligação cifrada v5: E2EE mesmo sem chave (quadros descartados até ela
+        // chegar). Exceção aqui sobe — quem chama NÃO pode cair para texto claro.
+        if (CallE2EE.isRequired(callId)) return CallE2EE.optionsFor(callId)
         val keyB64 = ExpoCallKitModule.pendingE2EEKey(callId) ?: return null
         if (keyB64.isEmpty()) return null
         return try {
@@ -1115,6 +1118,13 @@ object NativeCallRoom {
         callerAvatar: String,
     ) {
         Log.i(TAG, "adoptForCall: callId=$callId preconnected=${isPreconnected(callId)}")
+        // [e2ee5 WP-13] Conversa cifrada (dica do JS) ⇒ exigida. Room quente criado SEM E2EE não
+        // é adotado nem publica mic: sai dele e o CallActivity entra de novo, cifrado.
+        try { CallE2EE.noteIncoming(ctx, callId, conversationId, callerEmail) } catch (_: Throwable) {}
+        if (isPreconnected(callId) && CallE2EE.roomViolatesPolicy(callId, room)) {
+            Log.i(TAG, "adoptForCall: e2ee5 — warm Room sem E2EE; descartado callId=$callId")
+            try { disconnect() } catch (_: Throwable) {}
+        }
         if (isPreconnected(callId)) {
             // Warm path. Just attach the mic and we're done.
             // [WAVE 161B 2026-05-24] Respect the JS-persisted mute snapshot
