@@ -14,6 +14,7 @@ import CachedImage from './CachedImage';
 import { IconX, IconCheck, IconTrash } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const { width: SW, height: SH } = Dimensions.get('window');
 const COLORS = ['#ffffff', '#000000', '#FF3B30', '#FF9500', '#FFCC00', '#30D158', '#0A84FF', '#111111'];
 const WIDTHS = [3, 6, 10];
@@ -284,7 +285,7 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
     <View style={styles.wrap}>
       {/* Top bar */}
       <View style={[styles.top, { top: Platform.OS === 'ios' ? 48 : androidTopInset(18) }]}>
-        <TouchableOpacity onPress={onCancel} style={styles.topBtn}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onCancel} style={styles.topBtn}>
           <IconX size={20} color="#fff" />
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
@@ -292,7 +293,7 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
           style={[styles.topBtn, (paths.length === 0 && !current) && { opacity: 0.3 }]}>
           <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>↶</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={clear} disabled={paths.length === 0}
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} onPress={clear} disabled={paths.length === 0}
           style={[styles.topBtn, paths.length === 0 && { opacity: 0.3 }]}>
           <IconTrash size={17} color="#fff" />
         </TouchableOpacity>

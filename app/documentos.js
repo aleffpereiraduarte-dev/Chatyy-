@@ -25,6 +25,7 @@ import { docsList, docsCreate, docsRename, docsTrash, docsDuplicate, docsGet, ge
 import { getCached, setCache } from '../services/cache';
 import SwipeableRow from '../components/SwipeableRow';
 import BrandFab from '../components/BrandFab';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { usePreventRemove } from '@react-navigation/native'; // [2026-10-17 swipe-back]
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
@@ -438,7 +439,7 @@ function DocumentosScreenInner() {
             );
           })()}
         </View>
-        <TouchableOpacity
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.more', 'Mais')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           style={s.moreBtn}
           onPress={() => setContextDoc(item)}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -549,7 +550,7 @@ function DocumentosScreenInner() {
         })()} />
       ) : (
       <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           onPress={currentFolder ? goBackFolder : () => router.back()}
           style={s.headerBtn}
         >
@@ -569,7 +570,7 @@ function DocumentosScreenInner() {
               returnKeyType="search"
               onSubmitEditing={() => setSearchQuery(searchInput.trim())}
             />
-            <TouchableOpacity onPress={() => { setShowSearch(false); setSearchInput(''); setSearchQuery(''); }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowSearch(false); setSearchInput(''); setSearchQuery(''); }}>
               <IconX size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -579,10 +580,10 @@ function DocumentosScreenInner() {
               {headerTitleText}
             </Text>
             <View style={{ flex: 1 }} />
-            <TouchableOpacity onPress={() => setShowSearch(true)} style={s.headerBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.search', 'Buscar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setShowSearch(true)} style={s.headerBtn}>
               <IconSearch size={20} color={colors.textSecondary} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => fetchDocs(true)} style={s.headerBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.refresh', 'Atualizar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => fetchDocs(true)} style={s.headerBtn}>
               <IconRefresh size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </>

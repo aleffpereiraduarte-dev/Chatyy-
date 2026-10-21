@@ -37,6 +37,7 @@ import {
 import ModalHeader from '../components/ModalHeader';
 import PressableScale from '../components/PressableScale';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const PROVIDERS = [
   { id: 'gmail', label: 'Gmail', desc: 'emailImport.gmailDesc', domain: 'gmail.com', help: 'https://myaccount.google.com/apppasswords',
     steps: ['emailImport.gmailStep1', 'emailImport.gmailStep2', 'emailImport.stepPaste'] },
@@ -469,7 +470,7 @@ export default function EmailImportScreen() {
           <>
             <View style={s.histHead}>
               <Text style={[s.section, { color: c.textSecondary }]}>{t('emailImport.history')}</Text>
-              <TouchableOpacity onPress={loadHistory} hitSlop={10}><IconRefresh size={14} color={c.textSecondary} /></TouchableOpacity>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.refresh', 'Atualizar')} onPress={loadHistory} hitSlop={10}><IconRefresh size={14} color={c.textSecondary} /></TouchableOpacity>
             </View>
             <View style={[card, { paddingVertical: 2 }]}>
               {past.slice(0, 8).map((h, i) => (

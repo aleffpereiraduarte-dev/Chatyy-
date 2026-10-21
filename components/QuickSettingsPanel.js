@@ -5,6 +5,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconSun, IconMoon, IconSettings } from './Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function QuickSettingsPanel({ visible, onClose }) {
   const { colors, isDark, toggle, density, setDensity, inboxType, setInboxType } = useTheme();
   const { t } = useLanguage();
@@ -28,7 +29,7 @@ export default function QuickSettingsPanel({ visible, onClose }) {
         {/* Header */}
         <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
           <Text style={[s.title, { color: colors.text }]}>{t('quickSettings.title')}</Text>
-          <TouchableOpacity onPress={onClose} style={s.closeBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={onClose} style={s.closeBtn}>
             <IconX size={20} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>

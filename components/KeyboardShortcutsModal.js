@@ -4,6 +4,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX } from './Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const SHORTCUT_DEFS = [
   { categoryKey: 'shortcuts.navigation', items: [
     { key: 'j', descKey: 'shortcuts.nextEmail' },
@@ -43,7 +44,7 @@ export default function KeyboardShortcutsModal({ visible, onClose }) {
         <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
             <Text style={[s.title, { color: colors.text }]}>{t('shortcuts.title')}</Text>
-            <TouchableOpacity onPress={onClose} style={s.closeBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={s.closeBtn}>
               <IconX size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>

@@ -61,6 +61,7 @@ import CalendarSmartBar from '../components/calendar/CalendarSmartBar';
 import NativeCalendarView, { useNativeCalendar, argb as calArgb } from '../components/native/NativeCalendarView';
 import * as pim from '../services/pim';
 import { parseCalDate, toCalString, startOfDay as calStartOfDay, addDays as calAddDays, dayKey as calDayKey } from '../utils/calDate';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 // Try to import expo-calendar (native only)
@@ -1635,7 +1636,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
       <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.4)' }]}>
         <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
           <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-            <TouchableOpacity onPress={onClose} style={styles.modalHeaderBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={onClose} style={styles.modalHeaderBtn}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('calendar.newEvent')}</Text>
@@ -3125,7 +3126,7 @@ function CalendarScreenInner() {
           <Text style={[styles.importBannerText, { color: importResult.failed === 0 ? colors.success : colors.warning }]}>
             {t('calendar.importedCount', { success: importResult.success, total: importResult.total })}{importResult.failed > 0 ? ` (${importResult.failed} ${t('calendar.failed')})` : ''}
           </Text>
-          <TouchableOpacity onPress={() => setImportResult(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setImportResult(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <IconX size={14} color={importResult.failed === 0 ? colors.success : colors.warning} />
           </TouchableOpacity>
         </View>
@@ -3136,7 +3137,7 @@ function CalendarScreenInner() {
           <View style={styles.remindersHeader}>
             <BiaIcon size={14} color={colors.primary} />
             <Text style={[styles.remindersTitle, { color: colors.primary }]}>{t('calendar.smartReminders')}</Text>
-            <TouchableOpacity onPress={() => setAiReminders([])} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setAiReminders([])} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <IconX size={14} color={colors.textTertiary} />
             </TouchableOpacity>
           </View>
@@ -3267,7 +3268,7 @@ function CalendarScreenInner() {
               returnKeyType="search"
             />
             {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <IconX size={16} color={bandMuted} />
               </TouchableOpacity>
             )}

@@ -35,6 +35,7 @@ import FadeSlideIn from '../components/FadeSlideIn';
 import NativeResultList, { useNativeResults } from '../components/native/NativeResultList';
 import { contactTile } from '../components/native/resultListAdapter';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Tipo → glifo (selo no avatar / círculo quando não há autor).
 const NOTIF_GLYPH = {
   chat: 'message', mention: 'at', like: 'heart', feed_like: 'heart',
@@ -906,7 +907,7 @@ function NotificationsScreenInner() {
         })} />
       ) : (
       <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.surface || colors.background }]}>
-        <TouchableOpacity
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')}
           onPress={() => router.back()}
           style={styles.backBtn}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}

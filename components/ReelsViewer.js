@@ -46,6 +46,7 @@ import NativeReelsFeed, { isNativeReelsAvailable, disableNativeReelsForSession }
 import { buildAvatarUrl, avatarAuthHeaders } from '../services/avatar';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // expo-shorts powers the native player + pool. Imported lazily so a missing
 // native binary (dev only) doesn't break the import chain — fallback paths
 // degrade gracefully when these are null.
@@ -592,7 +593,7 @@ function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
               <Text style={styles.sheetTitle}>
                 {t('feed.likes') || 'Likes'}
               </Text>
-              <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <IconX size={22} color="#999" />
               </TouchableOpacity>
             </View>
@@ -1115,7 +1116,7 @@ function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExterna
             <View style={styles.sheetHandle}><View style={styles.sheetHandleBar} /></View>
             <View style={[styles.sheetHeader, { borderBottomWidth: 0, paddingBottom: 4 }]}>
               <Text style={styles.sheetTitle}>{t?.('feed.share') || 'Compartilhar'}</Text>
-              <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <IconX size={22} color="#999" />
               </TouchableOpacity>
             </View>
@@ -1169,7 +1170,7 @@ function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
             <View style={styles.sheetHandle}><View style={styles.sheetHandleBar} /></View>
             <View style={[styles.sheetHeader, { borderBottomWidth: 0, paddingBottom: 4 }]}>
               <Text style={styles.sheetTitle}>{t?.('feed.speedPicker') || 'Velocidade'}</Text>
-              <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <IconX size={22} color="#999" />
               </TouchableOpacity>
             </View>

@@ -11,6 +11,7 @@ import {
   IconMail, IconStar, IconPaperclip, IconClock, IconX,
   IconSearch, IconUser, IconFilter,
 } from './Icons';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 
 const RECENT_SEARCHES_KEY = '@onemundo_recent_searches';
 const MAX_RECENT = 5;
@@ -352,7 +353,7 @@ export default function SearchOperators({
                 <Text style={[styles.recentText, { color: colors.text }]} numberOfLines={1}>
                   {query}
                 </Text>
-                <TouchableOpacity
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.remove', 'Remover')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   onPress={() => handleRemoveRecent(query)}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   style={styles.recentRemoveBtn}

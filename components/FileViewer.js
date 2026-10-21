@@ -15,6 +15,7 @@ import { openDocumentWithSystem } from '../utils/openDocument';
 // [2026-10-18 photos-native-always] foto/vídeo do Drive → visualizador NATIVO (o Modal JS fica de reserva).
 import { nativeMediaAlways, openNativeMediaList, setNativeActionState } from '../services/nativeMediaOpen';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // [2026-10-17 viewer-pb] Visualizador do Cloud: fundo PRETO opaco (antes
 // rgba .95 num Modal transparente → a lista do Drive aparecia por trás),
 // cartão P&B para arquivos sem prévia (ícone grande, nome, tamanho, tipo,
@@ -575,7 +576,7 @@ export default function FileViewer({ visible, file, files, initialIndex, onClose
       <View style={[s.container, { paddingTop: insets.top, paddingBottom: canNav ? 0 : insets.bottom }]}>
         {/* Header */}
         <View style={s.header}>
-          <TouchableOpacity onPress={onClose} style={s.headerBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button">
+          <TouchableOpacity accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={s.headerBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityRole="button">
             <IconX size={22} color="#fff" />
           </TouchableOpacity>
           <View style={s.headerInfo}>

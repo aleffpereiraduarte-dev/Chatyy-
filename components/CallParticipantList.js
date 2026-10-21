@@ -45,6 +45,7 @@ import AvatarCircle from './AvatarCircle';
 import { useLanguage } from '../context/LanguageContext';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const BRAND_PURPLE = '#111111';
 const DANGER = '#EF4444';
 const SUCCESS = '#10B981';
@@ -233,7 +234,7 @@ export default function CallParticipantList({
               <Text style={styles.title}>
                 {t('call.group.participants') || 'Participants'} · {participants.length}
               </Text>
-              <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
                 <IconClose />
               </TouchableOpacity>
             </View>

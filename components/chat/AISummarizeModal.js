@@ -24,6 +24,7 @@ import {
   Platform,
 } from 'react-native';
 import { IconSparkles, IconX, IconCheck } from '../Icons';
+import { a11yLabel } from '../../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import BiaIcon from '../bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const BRAND = '#111111';
@@ -102,7 +103,7 @@ export default function AISummarizeModal({
                 {t?.('chatConv.summaryTitle') || 'Resumo da conversa'}
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} hitSlop={10}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={10}>
               <IconX size={20} color={colors?.textSecondary || '#666'} />
             </TouchableOpacity>
           </View>

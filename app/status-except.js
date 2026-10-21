@@ -18,6 +18,7 @@ import { IconArrowLeft, IconSearch, IconEyeOff, IconCheck } from '../components/
 import SelectionCheck from '../components/ui/SelectionCheck'; // [2026-10-18 elegance]
 import { emailToDisplayName } from '../services/api';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function StatusExceptScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
@@ -120,7 +121,7 @@ export default function StatusExceptScreen() {
         })} />
       ) : (
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: Platform.OS === 'ios' ? 50 : androidTopInset(16), paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
-        <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={{ padding: 8 }}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 4 }}>

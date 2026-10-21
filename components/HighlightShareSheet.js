@@ -20,6 +20,7 @@ import {
 import { IconX, IconLink, IconShare, IconCopy, IconCheck } from './Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 let _Clipboard = null;
 try { _Clipboard = require('expo-clipboard'); } catch (e) {}
 
@@ -109,7 +110,7 @@ export default function HighlightShareSheet({
             <Text style={{ flex: 1, fontWeight: '700', fontSize: 16, color: txt }}>
               {T('profile.shareHighlight', 'Compartilhar destaque')}
             </Text>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
               <IconX size={22} color={txt} />
             </TouchableOpacity>
           </View>

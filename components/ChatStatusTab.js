@@ -68,6 +68,7 @@ import { storyOriginRef, markStoryOrigin } from '../services/storyOrigin'; // [2
 import NativeStatusList from './status/NativeStatusList';
 import { isStatusListAvailable as _nativeStatusAvailable } from '../modules/expo-chat-conversation-list';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Android status bar safe area — `StatusBar.currentHeight` is null on iOS
 // (where the 54px ios padding already covers the notch) so we just hard-fall
 // to 24dp baseline if the runtime didn't report it. Used by the Status
@@ -3994,11 +3995,11 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
             autoFocus
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setSearchQuery('')}>
               <IconX size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={() => { setShowSearch(false); setSearchQuery(''); }} style={{ marginLeft: 8 }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowSearch(false); setSearchQuery(''); }} style={{ marginLeft: 8 }}>
             <IconX size={20} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
@@ -5001,7 +5002,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   </>
                 )}
                 {viewerReply.trim().length > 0 && (
-                  <TouchableOpacity
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.send', 'Enviar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     style={styles.replySendBtn}
                     onPress={() => handleStatusReply()}
                     disabled={sendingReply}
@@ -5554,7 +5555,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   autoFocus
                 />
                 {musicQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => { setMusicQuery(''); setMusicResults([]); }} hitSlop={12}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setMusicQuery(''); setMusicResults([]); }} hitSlop={12}>
                     <IconX size={18} color={isDark ? '#8E8E93' : '#6B7280' /* [2026-10-18 polish2] AA ≥4.5 (era #6C6C70/#9ca3af ~2.5–3.6:1) */} />
                   </TouchableOpacity>
                 )}
@@ -5689,7 +5690,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               styles.creatorHeader,
               { paddingTop: Platform.OS === 'android' ? insets.top + 8 : ((insets.top || 46) + 8) },
             ]}>
-              <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); setPhotoFilter('normal'); setStickers([]); setShowStickerPicker(false); setTextOverlays([]); setShowAddTextInput(false); setDrawMode(false); setDrawPaths([]); resetHistory(); setExceptEmails([]); setExceptPickerVisible(false); setTextAnimation('none'); setCrossPostFeed(false); }} style={styles.creatorCloseBtn}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); setPhotoFilter('normal'); setStickers([]); setShowStickerPicker(false); setTextOverlays([]); setShowAddTextInput(false); setDrawMode(false); setDrawPaths([]); resetHistory(); setExceptEmails([]); setExceptPickerVisible(false); setTextAnimation('none'); setCrossPostFeed(false); }} style={styles.creatorCloseBtn}>
                 <IconX size={26} color="#fff" />
               </TouchableOpacity>
 
@@ -6352,7 +6353,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   <Text style={styles.selectedMusicTitle} numberOfLines={1}>{selectedMusic.title}</Text>
                   <Text style={styles.selectedMusicArtist} numberOfLines={1}>{selectedMusic.artist}</Text>
                 </View>
-                <TouchableOpacity onPress={() => setSelectedMusic(null)} style={{ padding: 6 }}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setSelectedMusic(null)} style={{ padding: 6 }}>
                   <IconX size={18} color="rgba(255,255,255,0.7)" />
                 </TouchableOpacity>
               </View>

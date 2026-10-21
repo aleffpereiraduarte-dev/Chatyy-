@@ -23,6 +23,7 @@ import {
 import EmptyStateCard from '../components/EmptyStateCard';
 import Svg, { Path, Rect, Circle, Line, Polyline } from 'react-native-svg';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // ─── Brand accent ───
 // Cart icon (not in shared Icons.js)
 function IconCartLocal({ size = 24, color = "#666" }) {
@@ -340,7 +341,7 @@ function ProfileTab({ colors, isDark, user }) {
       <Modal visible={editing} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setEditing(false)}>
         <View style={[styles.modalRoot, { backgroundColor: colors.background }]}>
           <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-            <TouchableOpacity onPress={() => setEditing(false)}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setEditing(false)}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{t('profile.editProfile')}</Text>
@@ -521,7 +522,7 @@ function CatalogTab({ colors, isDark, cart, setCart }) {
       <Modal visible={editModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setEditModal(false)}>
         <View style={[styles.modalRoot, { backgroundColor: colors.background }]}>
           <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-            <TouchableOpacity onPress={() => setEditModal(false)}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setEditModal(false)}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{editProduct ? t('business.editProduct') : t('business.addProduct')}</Text>
@@ -986,7 +987,7 @@ function AutoRepliesTab({ colors, isDark }) {
       <Modal visible={qrModal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setQrModal(false)}>
         <View style={[styles.modalRoot, { backgroundColor: colors.background }]}>
           <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-            <TouchableOpacity onPress={() => setQrModal(false)}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setQrModal(false)}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{qrEditing ? t('business.editShortcut') : t('business.newShortcut')}</Text>
@@ -1135,7 +1136,7 @@ function LabelsTab({ colors, isDark }) {
       <Modal visible={modal} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setModal(false)}>
         <View style={[styles.modalRoot, { backgroundColor: colors.background }]}>
           <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-            <TouchableOpacity onPress={() => setModal(false)}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setModal(false)}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
             <Text style={[styles.modalTitle, { color: colors.text }]}>{editing ? t('business.editLabel') : t('business.newLabel')}</Text>

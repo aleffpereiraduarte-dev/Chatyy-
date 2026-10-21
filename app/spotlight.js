@@ -35,6 +35,7 @@ import {
   IconArrowLeft, IconHeart, IconHeartOutline, IconMessageCircle,
   IconShare, IconBookmark, IconBookmarkFilled, IconPlus, IconPlay,
 } from '../components/Icons';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 
 const { width: SW, height: SH } = Dimensions.get('window');
@@ -417,7 +418,7 @@ export default function SpotlightScreen() {
           at bottom-right handles creation now). Stops the user seeing
           two plus buttons at once. */}
       <View style={{ position: 'absolute', top: (insets.top || (Platform.OS === 'ios' ? 50 : 16)) + 4, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 }}>
-        <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={() => router.back()} style={{ padding: 8 }}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
         <Text style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 18, fontWeight: '800', letterSpacing: 0.2, textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 }}>

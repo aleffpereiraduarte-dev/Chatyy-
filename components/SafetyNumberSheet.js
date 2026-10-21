@@ -30,6 +30,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconX, IconLock, IconCheck, IconCamera } from './Icons';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
 
 // Lazy-load expo-camera so web doesn't crash when the camera scanner is
@@ -278,7 +279,7 @@ export default function SafetyNumberSheet({ visible, onClose, peerEmail, peerNam
                 {t('chatConv.safetyNumberTitle') || 'Verificação de segurança'}
               </Text>
             </View>
-            <TouchableOpacity onPress={onClose} hitSlop={12}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={12}>
               <IconX size={22} color={colors.text} />
             </TouchableOpacity>
           </View>

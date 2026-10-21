@@ -10,6 +10,7 @@ import { apiCall } from '../services/api';
 import { IconX, IconUser, IconMail, IconSend, IconInbox, IconAlertTriangle } from './Icons';
 import AvatarCircle from './AvatarCircle';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEBOUNCE_MS = 300;
 
@@ -286,7 +287,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
             <Text style={[styles.chipText, { color: colors.primary }]} numberOfLines={1}>
               {contact.name || contact.email}
             </Text>
-            <TouchableOpacity
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.remove', 'Remover')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               onPress={() => removeContact(contact.email)}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               style={styles.chipRemove}

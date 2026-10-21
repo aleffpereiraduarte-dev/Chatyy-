@@ -16,6 +16,7 @@ import {
   IconVideo, IconCopy, IconCheck, IconChevronDown, IconChevronUp,
 } from '../components/Icons';
 import { DateTimePickerModal } from '../components/ScheduleModals';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { RouteDragDismiss } from '../components/ui/RouteDragDismiss'; // [2026-10-20 tg-modal] arrastar p/ baixo fecha (iOS)
 import NativeSwitch from '../components/NativeSwitch'; // [2026-10-11 polish-secondary] P&B (Switch web = teal)
 
@@ -290,7 +291,7 @@ export default function MeetingCreateScreen() {
     >
       {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={12}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={s.backBtn} hitSlop={12}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>{isEditMode ? (t('meetingCreate.editTitle') || t('meetingCreate.title')) : t('meetingCreate.title')}</Text>
@@ -423,7 +424,7 @@ export default function MeetingCreateScreen() {
         {invitees.map((inv) => (
           <View key={inv.email} style={s.inviteeChip}>
             <Text style={s.inviteeEmail} numberOfLines={1}>{inv.email}</Text>
-            <TouchableOpacity onPress={() => removeInvitee(inv.email)} hitSlop={8}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.remove', 'Remover')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => removeInvitee(inv.email)} hitSlop={8}>
               <IconX size={16} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>

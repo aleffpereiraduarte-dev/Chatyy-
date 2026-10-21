@@ -37,6 +37,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconZap, IconRefresh, IconImage, IconSend } from '../Icons';
 import { tap as hapticTap, selection as hapticSelection, warning as hapticWarning } from '../../services/haptics';
 
+import { a11yLabel } from '../../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // ─── Lazy native deps (never at module eval — a missing binding must not
 // crash the chat screen import) ──────────────────────────────────────────────
 let _VC; // undefined = not tried, null = unavailable
@@ -522,7 +523,7 @@ function CameraScreen({ VC, micOk, insets, onClose, onCapture, onOpenGallery, t 
     return (
       <View style={[st.root, st.center]}>
         <ActivityIndicator color="#fff" />
-        <TouchableOpacity style={[st.topBtn, { position: 'absolute', top: insets.top + 8, left: 12 }]} onPress={onClose}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={[st.topBtn, { position: 'absolute', top: insets.top + 8, left: 12 }]} onPress={onClose}>
           <IconX size={24} color="#fff" />
         </TouchableOpacity>
       </View>

@@ -55,6 +55,7 @@ import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-16 m
 // the live-broadcast screen — unmounting auto-releases.
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Cross-platform WebRTC — same pattern as call.js
 let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn, NativeRTCView;
 if (Platform.OS === 'web') {
@@ -5491,7 +5492,7 @@ function LiveBroadcastScreen() {
                   />
                 </View>
                 {pollDraftOptions.length > 2 ? (
-                  <TouchableOpacity
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     onPress={() => setPollDraftOptions(prev => prev.filter((_, i) => i !== idx))}
                     style={{ marginLeft: 8, padding: 8 }}
                   >

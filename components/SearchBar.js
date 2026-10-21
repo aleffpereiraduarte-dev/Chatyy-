@@ -13,6 +13,7 @@ import {
 } from './Icons';
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // --- Search operator definitions for inline suggestions ---
 const SEARCH_OPERATORS = [
   { label: 'from:', key: 'op.from', example: 'from:john@example.com', hasValue: true },
@@ -242,7 +243,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
         {value || t('search.mailPlaceholder')}
       </Text>
       {value ? (
-        <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); handleClear(); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={(e) => { e.stopPropagation?.(); handleClear(); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <IconX size={14} color={colors.textTertiary} />
         </TouchableOpacity>
       ) : (
@@ -294,7 +295,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
                 autoFocus
               />
               {localValue ? (
-                <TouchableOpacity onPress={() => setLocalValue('')} style={st.inputClear}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setLocalValue('')} style={st.inputClear}>
                   <IconX size={16} color={colors.textTertiary} />
                 </TouchableOpacity>
               ) : null}
@@ -459,7 +460,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
                     >
                       <IconClock size={14} color={colors.textTertiary} />
                       <Text style={[st.recentQuery, { color: colors.text }]} numberOfLines={1}>{q}</Text>
-                      <TouchableOpacity onPress={() => handleRemoveRecent(q)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={st.recentRemove}>
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.remove', 'Remover')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => handleRemoveRecent(q)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={st.recentRemove}>
                         <IconX size={12} color={colors.textTertiary} />
                       </TouchableOpacity>
                       <IconArrowRight size={14} color={colors.textTertiary} />

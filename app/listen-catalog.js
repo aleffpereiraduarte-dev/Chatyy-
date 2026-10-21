@@ -15,6 +15,7 @@ import * as WT from '../services/watchTogether';
 import { IconPlayFill, IconHeadphones, SourceIcon } from '../components/watch/WatchIcons';
 import { IconArrowLeft, IconSearch, IconPlus, IconCheck, IconX, IconMusic } from '../components/Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // gêneros (chip do servidor → Jamendo fuzzytags). Tons P&B diferentes por cartão.
 const GENRES = [
   ['lofi', 'Lo-fi', '#1c1c1e'], ['pop', 'Pop', '#3a3a3c'], ['eletronica', 'Eletrônica', '#0b0b0c'], ['jazz', 'Jazz', '#48484a'],
@@ -270,7 +271,7 @@ export default function ListenCatalog() {
           <IconSearch size={18} color={c.muted} />
           <TextInput value={q} onChangeText={setQ} placeholder={WT.tr(t, 'listen.searchPh', 'Músicas, artistas, gêneros')} placeholderTextColor={c.muted}
             style={[st.srchIn, { color: c.text }]} returnKeyType="search" autoCorrect={false} />
-          {q ? <Pressable onPress={() => setQ('')} hitSlop={8}><IconX size={16} color={c.muted} /></Pressable> : null}
+          {q ? <Pressable accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setQ('')} hitSlop={8}><IconX size={16} color={c.muted} /></Pressable> : null}
         </View>
       </View>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 100 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">

@@ -6,6 +6,7 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconTag, IconCheck, IconPlus, IconChevronDown, IconChevronRight } from './Icons';
 import * as api from '../services/api';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Gmail-style color palette. This is a COLOR LOOKUP map (name → chip style),
 // NOT the list of labels shown in the UI. It keeps the raw palette-color keys
 // (roxo/rosa/azul/… ) so chips and EmailRow can still resolve a color by name
@@ -161,7 +162,7 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
             <IconTag size={20} color={colors.primary} style={{ marginRight: Spacing.sm }} />
             <Text style={[s.title, { color: colors.text }]}>{t('sidebar.labels')}</Text>
-            <TouchableOpacity onPress={onClose} style={s.closeBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={onClose} style={s.closeBtn}>
               <IconX size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -193,7 +194,7 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
                   onSubmitEditing={handleCreateLabel}
                 />
                 <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
-                  <TouchableOpacity onPress={() => { setShowCreate(false); setNewLabelName(''); setParentDraft(''); }} style={s.createBtn}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowCreate(false); setNewLabelName(''); setParentDraft(''); }} style={s.createBtn}>
                     <IconX size={16} color={colors.textSecondary} />
                   </TouchableOpacity>
                   <TouchableOpacity onPress={handleCreateLabel} style={s.createBtn}>

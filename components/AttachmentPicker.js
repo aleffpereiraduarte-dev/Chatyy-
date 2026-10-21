@@ -11,6 +11,7 @@ import { subscribeAttachUploads, getAttachUpload, retryAttachUpload } from '../s
 import LocalAttachmentPreview from './LocalAttachmentPreview';
 import useDragToDismiss, { DragSheetRoot, DragPanel } from './ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const DEFAULT_MAX_FILES = 10;
 const DEFAULT_MAX_SIZE = 55 * 1024 * 1024; // 55 MB
 
@@ -297,7 +298,7 @@ export default function AttachmentPicker({
           <Text style={[s.errorText, { color: colors.error }]} numberOfLines={2}>
             {error}
           </Text>
-          <TouchableOpacity onPress={() => setError(null)} hitSlop={8}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setError(null)} hitSlop={8}>
             <IconX size={14} color={colors.error} />
           </TouchableOpacity>
         </View>
@@ -435,7 +436,7 @@ export default function AttachmentPicker({
               <Text style={{ flex: 1, marginLeft: 10, fontSize: 17, fontWeight: '700', color: colors.text }}>
                 {t('attachment.driveTitle') || 'Anexar do Drive'}
               </Text>
-              <TouchableOpacity onPress={() => setShowDrive(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setShowDrive(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>

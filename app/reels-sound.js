@@ -16,6 +16,7 @@ import { useLanguage } from '../context/LanguageContext';
 const ReelsViewer = React.lazy(() => import('../components/ReelsViewer'));
 import { IconChevronLeft, IconMusic } from '../components/Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function ReelsSoundScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -48,7 +49,7 @@ export default function ReelsSoundScreen() {
       {/* Top bar — back + sound label, transparent glass overlay. */}
       <View style={[styles.topBar, { paddingTop: (insets.top || 0) + 6 }]} pointerEvents="box-none">
         <View pointerEvents="none" style={styles.glass} />
-        <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={10}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={goBack} style={styles.backBtn} hitSlop={10}>
           <IconChevronLeft size={26} color="#fff" />
         </TouchableOpacity>
         <View style={styles.titleRow}>

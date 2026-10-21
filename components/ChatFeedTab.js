@@ -40,6 +40,7 @@ import ScreenEmptyState from './ScreenEmptyState';
 import PressableScale from './PressableScale';
 import PressableRow from './PressableRow';
 import { haptic } from '../constants/theme';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
@@ -1185,7 +1186,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
           accessibilityRole="search"
         />
         {(searchQuery.length > 0 || isSearchActive) && (
-          <TouchableOpacity onPress={clearSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} onPress={clearSearch} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <IconX size={18} color={isDark ? '#8e8e93' : '#6c6c70'} />
           </TouchableOpacity>
         )}

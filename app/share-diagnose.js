@@ -23,6 +23,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconTrash } from '../components/Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 function getIntents() {
   try {
     const mod = require('../modules/expo-native-toolkit');
@@ -121,11 +122,11 @@ export default function ShareDiagnose() {
       })} />}
       {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.title, { color: colors.text }]}>{t('shareDiagnose.title')}</Text>
-        <TouchableOpacity onPress={clearAll} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} onPress={clearAll} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <IconTrash size={22} color={colors.textSecondary || '#6b7280'} />
         </TouchableOpacity>
       </View>

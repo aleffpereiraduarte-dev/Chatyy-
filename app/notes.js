@@ -47,6 +47,7 @@ import {
   loadNoteReminders, subscribeNoteReminders, getNoteRemindersSnapshot, reminderDisplayDate,
   formatNoteReminderShort, repeatLabel, reminderIsOverdue,
 } from '../services/noteReminders';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // J.2 — native date/time picker for the "Lembrar" reminder. Optional require
 // so web (which uses <input type="datetime-local">) and any build without the
 // native module degrade gracefully.
@@ -1096,7 +1097,7 @@ const NotebookCardItem = React.memo(function NotebookCardItem({ notebook, index,
 
         {/* Action buttons row */}
         <View style={s.notebookActionsRow}>
-          <TouchableOpacity
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.search', 'Buscar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             onPress={(e) => {
               e.stopPropagation();
               onFilter(notebook, isActive);
@@ -1106,7 +1107,7 @@ const NotebookCardItem = React.memo(function NotebookCardItem({ notebook, index,
           >
             <IconSearch size={14} color="rgba(255,255,255,0.7)" />
           </TouchableOpacity>
-          <TouchableOpacity
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.edit', 'Editar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             onPress={(e) => {
               e.stopPropagation();
               onEdit(notebook);
@@ -1116,7 +1117,7 @@ const NotebookCardItem = React.memo(function NotebookCardItem({ notebook, index,
           >
             <IconEdit size={14} color="rgba(255,255,255,0.7)" />
           </TouchableOpacity>
-          <TouchableOpacity
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             onPress={(e) => {
               e.stopPropagation();
               onDelete(notebook);
@@ -1955,7 +1956,7 @@ export default function NotesScreen() {
           WebkitBackdropFilter: 'blur(20px)',
         } : {}),
       }]}>
-        <TouchableOpacity onPress={() => {
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={() => {
           // If inside iframe (side panel), close by posting message to parent
           if (Platform.OS === 'web' && window.parent !== window) {
             try { window.parent.postMessage({ type: 'close-side-panel', route: '/notes' }, '*'); } catch {}
@@ -1991,7 +1992,7 @@ export default function NotesScreen() {
                 </Text>
               </View>
             )}
-            <TouchableOpacity onPress={() => { setShowSearch(false); setSearchQuery(''); handleSearch(''); }}
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowSearch(false); setSearchQuery(''); handleSearch(''); }}
               style={s.searchCloseBtn}
             >
               <IconX size={18} color={colors.textTertiary} />
@@ -2003,7 +2004,7 @@ export default function NotesScreen() {
 
         <View style={s.headerActions}>
           {!showSearch && (
-            <TouchableOpacity onPress={() => setShowSearch(true)} style={[s.headerBtn, s.headerSearchBtn, {
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.search', 'Buscar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setShowSearch(true)} style={[s.headerBtn, s.headerSearchBtn, {
               backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
             }]}>
               <IconSearch size={20} color={colors.text} />
@@ -2157,7 +2158,7 @@ export default function NotesScreen() {
               {notebooks.find(n => n.id === selectedNotebook)?.name || ''}
             </Text>
           </View>
-          <TouchableOpacity onPress={() => setSelectedNotebook(null)}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setSelectedNotebook(null)}>
             <IconX size={18} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
@@ -3250,7 +3251,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
             <IconPin size={20} color={isPinned ? (isDark ? '#FFD54F' : '#F9A825') : secondaryText} />
           </TouchableOpacity>
           {onCopyText && (
-            <TouchableOpacity onPress={onCopyText} style={s.editorHeaderBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.copy', 'Copiar')} onPress={onCopyText} style={s.editorHeaderBtn}>
               <IconCopy size={20} color={secondaryText} />
             </TouchableOpacity>
           )}
@@ -3265,7 +3266,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
             </TouchableOpacity>
           )}
           {onDelete && (
-            <TouchableOpacity onPress={onDelete} style={s.editorHeaderBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} onPress={onDelete} style={s.editorHeaderBtn}>
               <IconTrash size={20} color={secondaryText} />
             </TouchableOpacity>
           )}
@@ -3506,7 +3507,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
                 </TouchableOpacity>
               ))}
               {coverEmoji ? (
-                <TouchableOpacity
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   onPress={() => { setCoverEmoji(''); setShowEmojiPicker(false); }}
                   style={[s.emojiPickerItem, { borderRadius: 8 }]}
                 >
@@ -3640,7 +3641,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
           }]} onPress={(e) => { if (e && e.stopPropagation) e.stopPropagation(); }}>
             <View style={s.sidebarPeekHeader}>
               <Text style={[s.sidebarPeekTitle, { color: textColor }]}>{t('notes.allPages') || 'Páginas'}</Text>
-              <TouchableOpacity onPress={() => setSidebarPeekOpen(false)} style={s.sidebarPeekClose}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setSidebarPeekOpen(false)} style={s.sidebarPeekClose}>
                 <IconX size={16} color={secondaryText} />
               </TouchableOpacity>
             </View>
@@ -3736,7 +3737,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
             </TouchableOpacity>
           ))}
           <View style={{ width: 1, height: 22, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', marginHorizontal: 4 }} />
-          <TouchableOpacity onPress={() => setShowFormatBar(false)} style={s.formatBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setShowFormatBar(false)} style={s.formatBtn}>
             <IconX size={14} color={secondaryText} />
           </TouchableOpacity>
         </View>

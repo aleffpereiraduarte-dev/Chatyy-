@@ -18,6 +18,7 @@ import { IconX, IconSearch } from './Icons';
 import * as api from '../services/api';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const ACCENT = '#111111';
 
 export default function FollowersSheet({
@@ -186,7 +187,7 @@ export default function FollowersSheet({
           </View>
 
           {/* Close */}
-          <TouchableOpacity onPress={onClose} style={{ position: 'absolute', right: 10, top: 8, padding: 8, zIndex: 10 }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={{ position: 'absolute', right: 10, top: 8, padding: 8, zIndex: 10 }}>
             <IconX size={22} color={colors?.textSecondary} />
           </TouchableOpacity>
 

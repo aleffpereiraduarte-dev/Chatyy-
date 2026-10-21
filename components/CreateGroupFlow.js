@@ -16,6 +16,7 @@ import AvatarCircle from './AvatarCircle';
 import { Image as ExpoImage } from 'expo-image';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
 import { safeAlert as _sharedSafeAlert } from '../services/alerts';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { useGroupedColors } from './settings/SettingsKit'; // [2026-10-17 wa-polish] tokens P&B do tema
 
 const isWeb = Platform.OS === 'web';
@@ -388,7 +389,7 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
                 returnKeyType="search"
               />
               {searchText ? (
-                <TouchableOpacity onPress={() => { setSearchText(''); setSearchResults([]); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setSearchText(''); setSearchResults([]); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <IconX size={16} color={g.secondary} />
                 </TouchableOpacity>
               ) : null}

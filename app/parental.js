@@ -875,7 +875,7 @@ function ParentalScreenInner() {
   const wizTitle = (title, sub) => (
     <View style={w.head}>
       <Text style={[w.title, { color: gw.text }]} accessibilityRole="header" maxFontSizeMultiplier={1.3}>{title}</Text>
-      {!!sub && <Text style={[w.sub, { color: gw.secondary }]} maxFontSizeMultiplier={1.4}>{sub}</Text>}
+      {!!sub && <Text style={[w.sub, { color: gw.secondary }]} maxFontSizeMultiplier={2}>{sub}</Text>}{/* [2026-10-20 a11y] texto de leitura: Dynamic Type até 200 % (era 1,4) */}
     </View>
   );
 
@@ -968,7 +968,7 @@ function ParentalScreenInner() {
 
         <View style={[w.note, { backgroundColor: gw.fill }]}>
           <IconShield size={16} color={gw.secondary} />
-          <Text style={[w.noteText, { color: gw.secondary }]} maxFontSizeMultiplier={1.4}>{t('parentalWiz.privacyNote')}</Text>
+          <Text style={[w.noteText, { color: gw.secondary }]} maxFontSizeMultiplier={2}>{t('parentalWiz.privacyNote')}</Text>
         </View>
       </ScrollView>
     );
@@ -1953,7 +1953,7 @@ function ParentalScreenInner() {
         <Path d="M71.5 86 C71.5 80 74.6 76.6 79 76.6 C83.4 76.6 86.5 80 86.5 86 Z" fill={fc.secondary} />
       </Svg>
       <Text style={[s.emptyTitle, { color: fc.text }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.emptyTitle')}</Text>
-      <Text style={[s.emptyDesc, { color: fc.secondary }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.emptyDesc')}</Text>
+      <Text style={[s.emptyDesc, { color: fc.secondary }]} maxFontSizeMultiplier={2}>{t('parentalDash.emptyDesc')}</Text>
       <PressableScale onPress={openWizard} haptic={false} style={[s.primaryBtn, { backgroundColor: fc.pill }]} accessibilityRole="button" accessibilityLabel={t('parentalDash.addChild')}>
         <IconPlus size={18} color={fc.onPill} />
         <Text style={[s.primaryBtnText, { color: fc.onPill }]} maxFontSizeMultiplier={1.3}>{t('parentalDash.addChild')}</Text>
@@ -1967,7 +1967,7 @@ function ParentalScreenInner() {
         <IconAlertCircle size={28} color={fc.text} />
       </View>
       <Text style={[s.emptyTitle, { color: fc.text }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.errorTitle')}</Text>
-      <Text style={[s.emptyDesc, { color: fc.secondary }]} maxFontSizeMultiplier={1.4}>{t('parentalDash.errorDesc')}</Text>
+      <Text style={[s.emptyDesc, { color: fc.secondary }]} maxFontSizeMultiplier={2}>{t('parentalDash.errorDesc')}</Text>
       <PressableScale onPress={retryLoad} haptic={false} style={[s.primaryBtn, { backgroundColor: fc.pill }]} accessibilityRole="button" accessibilityLabel={t('parentalDash.retry')}>
         <IconRefresh size={18} color={fc.onPill} />
         <Text style={[s.primaryBtnText, { color: fc.onPill }]} maxFontSizeMultiplier={1.3}>{t('parentalDash.retry')}</Text>

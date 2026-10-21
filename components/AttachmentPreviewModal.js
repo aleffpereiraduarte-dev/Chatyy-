@@ -6,6 +6,7 @@ import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconX, IconChevronLeft, IconChevronRight, IconDownload } from './Icons';
 import NativeDocPreview from './NativeDocPreview';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // SVG não é renderizado de forma confiável por <Image> remoto em iOS/Android,
 // então não inclui aqui — caímos em "outro arquivo" que abre via download.
 // HEIC/HEIF added: iOS captures natively, server transcodes thumbs, RN 0.83+
@@ -71,7 +72,7 @@ export default function AttachmentPreviewModal({ visible, attachments, initialIn
             <TouchableOpacity onPress={handleDownload} style={s.headerBtn}>
               <IconDownload size={20} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={onClose} style={s.headerBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={onClose} style={s.headerBtn}>
               <IconX size={22} color="#fff" />
             </TouchableOpacity>
           </View>

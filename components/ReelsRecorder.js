@@ -59,6 +59,7 @@ import {
   IconImage,
   IconCheck,
 } from './Icons';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 
 // Haptics (graceful — `expo-haptics` may be absent in some builds).
 let _Haptics = null;
@@ -476,7 +477,7 @@ export default function ReelsRecorder({
         style={[styles.topBar, { paddingTop: (insets.top || 0) + 4 }]}
         pointerEvents="box-none"
       >
-        <TouchableOpacity onPress={handleClose} style={styles.closeBtn} hitSlop={12}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={handleClose} style={styles.closeBtn} hitSlop={12}>
           <IconX size={26} color="#fff" />
         </TouchableOpacity>
 
@@ -763,7 +764,7 @@ export default function ReelsRecorder({
                     ? (t?.('status.filters') || 'Filtros')
                     : (t?.('status.effects') || 'Efeitos')}
                 </Text>
-                <TouchableOpacity
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   onPress={() => { setFiltersOpen(false); setEffectsOpen(false); }}
                   hitSlop={10}
                 >

@@ -39,6 +39,7 @@ import {
   IconShield, IconArchive, IconPrint, IconChevronDown, IconChevronUp, IconEye, IconSend, IconMarkUnread, IconGlobe, IconCalendar,
   IconReceipt, IconUser, IconCheck, IconInbox,
 } from './Icons';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import BiaIcon from './bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
@@ -1255,7 +1256,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           <View style={s.translationHeader}>
             <IconGlobe size={14} color={colors.primary} style={{ marginRight: 6 }} />
             <Text style={[s.translationLabel, { color: colors.primary }]}>{t('reader.translatedText')}</Text>
-            <TouchableOpacity onPress={() => setShowTranslation(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setShowTranslation(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <IconX size={14} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>

@@ -31,6 +31,7 @@ import { IconX, IconTrash, IconFilm } from '../components/Icons';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { listReelDrafts, deleteReelDraft as _deleteDraft } from '../services/reelDrafts';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const { width: SCREEN_W } = Dimensions.get('window');
 const TILE_GAP = 4;
 const TILE_W = (SCREEN_W - TILE_GAP * 4) / 3;
@@ -134,7 +135,7 @@ export default function ReelsDraftsScreen() {
           <Text style={styles.tileDuration}>{fmtDuration(item.totalDurationMs)}</Text>
           <Text style={styles.tileAge}>{fmtAgo(item.savedAt, t)}</Text>
         </View>
-        <TouchableOpacity
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           onPress={() => confirmDelete(item)}
           style={styles.tileDelete}
           hitSlop={8}
@@ -151,7 +152,7 @@ export default function ReelsDraftsScreen() {
         <Text style={styles.title}>
           {t('reels.drafts') || 'Rascunhos'}
         </Text>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={10} style={styles.closeBtn}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} hitSlop={10} style={styles.closeBtn}>
           <IconX size={22} color="#fff" />
         </TouchableOpacity>
       </View>

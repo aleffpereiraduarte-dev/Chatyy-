@@ -22,6 +22,7 @@ import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14
 import NativeCommunityList from './communities/NativeCommunityList';
 import { nativeCommunitiesEnabled, markNativeCommunitiesFailed } from './communities/communityRows';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const ACCENT = '#111111';
 
 function IconCommunity({ size = 24, color = '#666' }) {
@@ -459,7 +460,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
           <View style={[styles.modalContent, { backgroundColor: colors.surface || (isDark ? '#161616' : '#fff') }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('community.create') || 'Create community'}</Text>
-              <TouchableOpacity onPress={() => setShowCreate(false)}><IconX size={22} color={isDark ? '#888' : '#666'} /></TouchableOpacity>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setShowCreate(false)}><IconX size={22} color={isDark ? '#888' : '#666'} /></TouchableOpacity>
             </View>
             <TextInput
               style={[styles.input, { color: colors.text, borderColor: isDark ? '#333' : '#ddd', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f9f9f9' }]}
@@ -502,7 +503,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
           <View style={[styles.modalContent, { backgroundColor: colors.surface || (isDark ? '#161616' : '#fff') }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('community.announcement') || 'Announcement'}</Text>
-              <TouchableOpacity onPress={() => setAnnounceCommunity(null)}><IconX size={22} color={isDark ? '#888' : '#666'} /></TouchableOpacity>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setAnnounceCommunity(null)}><IconX size={22} color={isDark ? '#888' : '#666'} /></TouchableOpacity>
             </View>
             {announceCommunity && (
               <Text style={[styles.announceTo, { color: isDark ? '#8e8e93' : '#6b7280' }]}>
@@ -541,7 +542,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
           <View style={[styles.modalContent, { backgroundColor: colors.surface || (isDark ? '#161616' : '#fff'), maxHeight: '70%' }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('community.selectGroups') || 'Select groups'}</Text>
-              <TouchableOpacity onPress={() => setAddGroupCommunity(null)}><IconX size={22} color={isDark ? '#888' : '#666'} /></TouchableOpacity>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setAddGroupCommunity(null)}><IconX size={22} color={isDark ? '#888' : '#666'} /></TouchableOpacity>
             </View>
             {loadingGroups ? (
               <ActivityIndicator size="large" color={colors.text} style={{ marginVertical: 20 }} />

@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 import { Colors, FontSize } from '../constants/theme';
 import { IconMic, IconMicOff, IconVideo, IconVideoOff, IconMonitor, IconPhoneOff, IconMessageCircle, IconUsers, IconMoreVert, IconThumbsUp, IconHeart, IconLaughFace, IconClap, IconSurpriseFace, IconFlame, IconThinkingFace, IconHundred, IconRaisedHand, IconSmileFace, IconUserPlus } from './Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const REACTIONS = [
   { key: 'thumbsup', Icon: IconThumbsUp },
   { key: 'heart', Icon: IconHeart },
@@ -100,7 +101,7 @@ export default function MeetControls({
         </TouchableOpacity>
 
         {/* More menu */}
-        <TouchableOpacity style={s.btn} onPress={onToggleMore} activeOpacity={0.7}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.more', 'Mais')} style={s.btn} onPress={onToggleMore} activeOpacity={0.7}>
           <IconMoreVert size={22} color={Colors.meetText} />
         </TouchableOpacity>
 

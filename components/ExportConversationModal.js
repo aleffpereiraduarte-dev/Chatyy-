@@ -26,6 +26,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconPackage, IconFileText, IconImage, IconX, IconCalendar, IconAlertCircle } from './Icons';
 import * as api from '../services/api';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { USE_NATIVE_SHEETS, NativeSheet } from './NativeSheet'; // [2026-10-09 native-sheets]
 
 const PURPLE = '#111111';
@@ -281,7 +282,7 @@ function ExportConversationModalInner({
                     </Text>
                   )}
                 </View>
-                <TouchableOpacity onPress={onClose} hitSlop={12} disabled={status === 'loading'} style={{ padding: 4, opacity: status === 'loading' ? 0.4 : 1 }}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={12} disabled={status === 'loading'} style={{ padding: 4, opacity: status === 'loading' ? 0.4 : 1 }}>
                   <IconX size={22} color={colors.textSecondary} />
                 </TouchableOpacity>
               </View>

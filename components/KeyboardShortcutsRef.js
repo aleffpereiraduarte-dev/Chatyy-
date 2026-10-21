@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { IconX } from './Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const WEB = Platform.OS === 'web';
 
 // macOS uses ⌘, Windows/Linux use Ctrl. Detect once at render time.
@@ -89,7 +90,7 @@ export default function KeyboardShortcutsRef({ visible, onClose, colors, isDark,
             <Text style={{ fontSize: 17, fontWeight: '700', color: colors?.text }}>
               {t?.('shortcuts.title') || 'Atalhos do teclado'}
             </Text>
-            <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={{ padding: 4 }}>
               <IconX size={22} color={colors?.textSecondary} />
             </TouchableOpacity>
           </View>

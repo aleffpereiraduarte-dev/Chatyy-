@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated }
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconSparkles, IconX } from './Icons';
 import useIsMounted from '../hooks/useIsMounted';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import BiaIcon from './bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 export default function AIEmailSummary({ email, colors, t }) {
@@ -41,7 +42,7 @@ export default function AIEmailSummary({ email, colors, t }) {
           <BiaIcon size={14} color={colors.primary} style={{ marginRight: 6 }} />
           <Text style={[s.label, { color: colors.primary }]}>{t?.('reader.summaryLabel') || 'AI Summary'}</Text>
           <View style={{ flex: 1 }} />
-          <TouchableOpacity onPress={() => setSummary('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setSummary('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <IconX size={14} color={colors.textTertiary} />
           </TouchableOpacity>
         </View>

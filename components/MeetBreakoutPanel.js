@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, Platform
 import { useLanguage } from '../context/LanguageContext';
 import { IconX } from './Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function MeetBreakoutPanel({
   visible, onClose, isHost, breakoutRooms, onCreateBreakout, onEndBreakout, onAssign,
 }) {
@@ -41,7 +42,7 @@ export default function MeetBreakoutPanel({
         {/* Header */}
         <View style={s.header}>
           <Text style={s.title}>{t('meetBreakout.title')}</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={8}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={8}>
             <IconX size={20} color="#94a3b8" />
           </TouchableOpacity>
         </View>

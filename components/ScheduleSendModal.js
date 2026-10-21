@@ -5,6 +5,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconClock, IconCalendar, IconSend } from './Icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from './NativeSheet'; // [2026-10-09 native-sheets]
 
 export default function ScheduleSendModal({ visible, onClose, onSchedule }) {
@@ -41,7 +42,7 @@ export default function ScheduleSendModal({ visible, onClose, onSchedule }) {
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
             <IconClock size={20} color={colors.primary} style={{ marginRight: Spacing.sm }} />
             <Text style={[s.title, { color: colors.text }]}>{t('schedule.title')}</Text>
-            <TouchableOpacity onPress={onClose} style={s.closeBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={onClose} style={s.closeBtn}>
               <IconX size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>

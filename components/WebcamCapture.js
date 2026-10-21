@@ -8,6 +8,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Platform } from 'react-native';
 import { IconX, IconCameraFlip } from './Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function WebcamCapture({ visible, onClose, onCapture, colors, t }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -129,7 +130,7 @@ export default function WebcamCapture({ visible, onClose, onCapture, colors, t }
       alignItems: 'center', justifyContent: 'center', padding: 16,
     }}>
       {/* Close */}
-      <TouchableOpacity
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         onPress={() => { stopRecord(); onClose?.(); }}
         style={{ position: 'absolute', top: 16, right: 16, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
       >

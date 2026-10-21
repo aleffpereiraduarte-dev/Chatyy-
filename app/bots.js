@@ -16,6 +16,7 @@ import { ListSkeleton } from '../components/SkeletonLoader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from '../components/ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Stagger entrance for bot rows. Each row drifts in 60ms after the previous,
 // translateY 16px → 0 + opacity 0 → 1. Native driver (transform + opacity).
 function StaggeredRow({ index, children }) {
@@ -258,7 +259,7 @@ export default function BotsScreen() {
       })} />}
       {!USE_NATIVE_HEADER && (
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 16), paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
-        <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={{ padding: 8 }}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={{ flex: 1, fontSize: 18, fontWeight: '700', color: colors.text, marginLeft: 4 }}>
@@ -335,10 +336,10 @@ export default function BotsScreen() {
                 <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>{item.name}</Text>
                 <Text style={{ fontSize: 13, color: colors.textSecondary }}>@{item.username}</Text>
               </View>
-              <TouchableOpacity onPress={() => handleRegenerate(item)} style={{ padding: 8 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.refresh', 'Atualizar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => handleRegenerate(item)} style={{ padding: 8 }}>
                 <IconRefresh size={18} color={colors.textSecondary} />
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleDelete(item)} style={{ padding: 8 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => handleDelete(item)} style={{ padding: 8 }}>
                 <IconTrash size={18} color="#dc2626" />
               </TouchableOpacity>
             </View>

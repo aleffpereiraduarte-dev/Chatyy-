@@ -38,6 +38,7 @@ import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
 import { haptic } from '../constants/theme';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const ROW_H = 64;
 const isWeb = Platform.OS === 'web';
 const INCLUDE_RULES = [
@@ -132,7 +133,7 @@ function ScreenHeader({ title, right, onBack, P }) {
   }
   return (
     <View style={[st.webHeader, { paddingTop: insets.top + 10, backgroundColor: P.bg, borderBottomColor: P.hair }]}>
-      <TouchableOpacity onPress={onBack} hitSlop={10} accessibilityRole="button" style={st.webHeaderSide}>
+      <TouchableOpacity accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={onBack} hitSlop={10} accessibilityRole="button" style={st.webHeaderSide}>
         <IconArrowLeft size={22} color={P.text} />
       </TouchableOpacity>
       <Text style={[st.webHeaderTitle, { color: P.text }]} numberOfLines={1}>{title}</Text>
@@ -421,7 +422,7 @@ function ChatPicker({ visible, initial, convs, onCancel, onDone }) {
             testID="folder-picker-search"
           />
           {q && Platform.OS !== 'ios' ? (
-            <TouchableOpacity onPress={() => setQ('')} hitSlop={8}><IconX size={16} color={P.sub} /></TouchableOpacity>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setQ('')} hitSlop={8}><IconX size={16} color={P.sub} /></TouchableOpacity>
           ) : null}
         </View>
         <FlatList

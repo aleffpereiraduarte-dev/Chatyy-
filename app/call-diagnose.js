@@ -25,6 +25,7 @@ import { getCallDiag, clearCallDiag } from '../services/callDiag';
 import { IconArrowLeft, IconTrash, IconPhone } from '../components/Icons';
 import { useLanguage } from '../context/LanguageContext';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 function fmtTs(ts) {
   if (!ts || typeof ts !== 'number') return '?';
   try {
@@ -112,14 +113,14 @@ export default function CallDiagnose() {
       })} />}
       {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={() => router.back()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <IconPhone size={18} color={colors.primary} />
           <Text style={[styles.title, { color: colors.text }]}>{t('settings.rd2.callDiag')}</Text>
         </View>
-        <TouchableOpacity onPress={clearAll} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ marginRight: 12 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} onPress={clearAll} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} style={{ marginRight: 12 }}>
           <IconTrash size={22} color={colors.textSecondary || '#6b7280'} />
         </TouchableOpacity>
       </View>

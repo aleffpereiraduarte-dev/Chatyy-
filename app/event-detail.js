@@ -23,6 +23,7 @@ import NativeSwitch from '../components/NativeSwitch'; // [2026-10-11 polish-sec
 // [2026-10-13 calendario] horários de evento = relógio LOCAL (parseServerDate lia como UTC → -3h no BR)
 import { parseCalDate } from '../utils/calDate';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Human-readable recurrence label — never surface the raw RRULE
 // (e.g. "FREQ=MONTHLY;BYMONTHDAY=15") to the user.
 function describeRecurrence(rule, t) {
@@ -845,7 +846,7 @@ function EventDetailScreenInner() {
           <Stack.Screen options={nativeHeaderOptions({ colors, title: t('eventDetail.title') })} />
         ) : (
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={styles.headerBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>{t('eventDetail.title')}</Text>
@@ -863,7 +864,7 @@ function EventDetailScreenInner() {
           <Stack.Screen options={nativeHeaderOptions({ colors, title: t('eventDetail.title') })} />
         ) : (
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={styles.headerBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>{t('eventDetail.title')}</Text>
@@ -949,7 +950,7 @@ function EventDetailScreenInner() {
       {/* Header */}
       {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => { if (editMode) setEditMode(false); else router.back(); }} style={styles.headerBtn}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { if (editMode) setEditMode(false); else router.back(); }} style={styles.headerBtn}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>
@@ -957,12 +958,12 @@ function EventDetailScreenInner() {
         </Text>
         <View style={styles.headerRight}>
           {!editMode && isCreator && (
-            <TouchableOpacity onPress={() => setEditMode(true)} style={styles.headerBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.edit', 'Editar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setEditMode(true)} style={styles.headerBtn}>
               <IconEdit size={20} color={colors.primary} />
             </TouchableOpacity>
           )}
           {!editMode && !isCreator && isSyncedEvent && (
-            <TouchableOpacity
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.edit', 'Editar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               onPress={openSyncedEdit}
               style={styles.headerBtn}
             >

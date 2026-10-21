@@ -33,6 +33,7 @@ import {
   IconX, IconSend, IconChevronDown, IconChevronUp,
   IconPaperclip, IconSparkles,
 } from './Icons';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import BiaIcon from './bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const DRAFT_SAVE_INTERVAL = 5000;
@@ -522,7 +523,7 @@ export default function ComposeModal({ params, onClose }) {
               {!!error && (
                 <View style={[cm.statusBar, { backgroundColor: colors.errorBg }]}>
                   <Text style={[cm.statusBarText, { color: colors.error }]}>{error}</Text>
-                  <TouchableOpacity onPress={() => setError('')}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setError('')}>
                     <IconX size={14} color={colors.error} />
                   </TouchableOpacity>
                 </View>

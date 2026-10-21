@@ -6,6 +6,7 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconPlus, IconTrash, IconFilter, IconEdit, IconCheck } from './Icons';
 import { apiCall } from '../services/api';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Multi-condition email rules engine. Each rule has:
 //   - conditions: [{field, op, value}] chained via condition_op (AND|OR)
 //   - actions: [{type, value}] chained, all execute on match
@@ -239,7 +240,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
               {editing ? (editing === 'new' ? (t('filters.createFilter') || 'Criar filtro') : (t('filters.editFilter') || 'Editar filtro'))
                 : (t('filters.title') || 'Filtros de email')}
             </Text>
-            <TouchableOpacity onPress={() => editing ? resetForm() : onClose()} style={s.closeBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => editing ? resetForm() : onClose()} style={s.closeBtn}>
               <IconX size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -304,7 +305,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
                         <Text style={[s.pickChipText, { color: colors.text }]}>{opLabel(opOk)}</Text>
                       </TouchableOpacity>
                       {conditions.length > 1 && (
-                        <TouchableOpacity
+                        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                           style={s.removeRowBtn}
                           onPress={() => setConditions(prev => prev.filter((_, idx) => idx !== i))}
                         >
@@ -347,7 +348,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
                       <Text style={[s.pickChipText, { color: colors.text }]}>{actionLabel(a.type)}</Text>
                     </TouchableOpacity>
                     {actions.length > 1 && (
-                      <TouchableOpacity
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                         style={s.removeRowBtn}
                         onPress={() => setActions(prev => prev.filter((_, idx) => idx !== i))}
                       >
@@ -461,7 +462,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
                             {summaryConds} {summaryActs ? `→ ${summaryActs}` : ''}
                           </Text>
                         </TouchableOpacity>
-                        <TouchableOpacity onPress={() => handleDelete(item.id)} style={s.itemBtn}>
+                        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => handleDelete(item.id)} style={s.itemBtn}>
                           <IconTrash size={16} color={colors.error} />
                         </TouchableOpacity>
                       </View>

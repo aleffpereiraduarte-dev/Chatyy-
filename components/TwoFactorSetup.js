@@ -6,6 +6,7 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconShield, IconCheck, IconCheckCircle, IconKey, IconCopy } from './Icons';
 import * as api from '../services/api';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function TwoFactorSetup({ visible, onClose }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
@@ -281,7 +282,7 @@ export default function TwoFactorSetup({ visible, onClose }) {
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
             <IconShield size={20} color={colors.primary} style={{ marginRight: Spacing.sm }} />
             <Text style={[s.title, { color: colors.text }]}>{t('twoFactor.title')}</Text>
-            <TouchableOpacity onPress={handleClose} style={s.closeBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={handleClose} style={s.closeBtn}>
               <IconX size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>

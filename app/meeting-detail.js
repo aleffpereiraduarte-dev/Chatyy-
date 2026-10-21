@@ -20,6 +20,7 @@ import {
   IconMapPin, IconLock, IconShare, IconSparkles, IconPlus, IconStarFilled,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 // Design-2026: ACCENT/ACCENT_DARK/ACCENT_DEEP feed the fixed purple hero
@@ -229,7 +230,7 @@ export default function MeetingDetailScreen() {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
         <View style={[styles.headerBar, { backgroundColor: colors.background }]}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={styles.backBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>{t('meetingDetail.title')}</Text>
@@ -333,7 +334,7 @@ export default function MeetingDetailScreen() {
           <View style={styles.heroGlow2} />
 
           <View style={styles.heroTopRow}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backBtnHero} activeOpacity={0.7}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={styles.backBtnHero} activeOpacity={0.7}>
               <IconArrowLeft size={22} color="#fff" />
             </TouchableOpacity>
             <View style={[styles.statusPill, { backgroundColor: statusCfg.bg }]}>

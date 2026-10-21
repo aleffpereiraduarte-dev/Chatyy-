@@ -28,6 +28,7 @@ import { IconX } from './Icons';
 import * as api from '../services/api';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const GOLD = '#fbbf24';
 const GOLD_DEEP = '#d97706';
 
@@ -149,7 +150,7 @@ export default function LiveTopGifters({
                 <IconTrophy size={20} color={GOLD} />
                 <Text style={styles.title}>{i18n.topGifters || 'Top gifters'}</Text>
               </View>
-              <TouchableOpacity onPress={() => setShowModal(false)} style={styles.closeBtn}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setShowModal(false)} style={styles.closeBtn}>
                 <IconX size={20} color="#fff" />
               </TouchableOpacity>
             </View>

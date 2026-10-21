@@ -31,6 +31,7 @@ import * as api from '../services/api';
 import { IconX, IconCheck, IconCamera, IconTrash, IconEdit } from './Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 let _ExpoImage = null;
 try { _ExpoImage = require('expo-image').Image; } catch (e) {}
 
@@ -303,7 +304,7 @@ export default function HighlightEditSheet({
 
           {/* Header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border }}>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
               <IconX size={22} color={txt} />
             </TouchableOpacity>
             <Text style={{ flex: 1, textAlign: 'center', fontWeight: '700', fontSize: 16, color: txt }}>

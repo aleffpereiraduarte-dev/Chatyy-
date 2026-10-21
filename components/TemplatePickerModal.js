@@ -6,6 +6,7 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconPlus, IconTrash, IconEdit } from './Icons';
 import * as api from '../services/api';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function TemplatePickerModal({ visible, onClose, onSelect }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
@@ -63,7 +64,7 @@ export default function TemplatePickerModal({ visible, onClose, onSelect }) {
             <Text style={[s.title, { color: colors.text }]}>
               {editing ? (editing === 'new' ? t('template.new') : t('template.edit')) : t('template.title')}
             </Text>
-            <TouchableOpacity onPress={() => editing ? setEditing(null) : onClose()} style={s.closeBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => editing ? setEditing(null) : onClose()} style={s.closeBtn}>
               <IconX size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -97,10 +98,10 @@ export default function TemplatePickerModal({ visible, onClose, onSelect }) {
                         <Text style={[s.itemName, { color: colors.text }]}>{item.name}</Text>
                         {item.subject ? <Text style={[s.itemSub, { color: colors.textSecondary }]}>{item.subject}</Text> : null}
                       </View>
-                      <TouchableOpacity onPress={() => startEdit(item)} style={s.itemBtn}>
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.edit', 'Editar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => startEdit(item)} style={s.itemBtn}>
                         <IconEdit size={16} color={colors.textTertiary} />
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleDelete(item.id)} style={s.itemBtn}>
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => handleDelete(item.id)} style={s.itemBtn}>
                         <IconTrash size={16} color={colors.error} />
                       </TouchableOpacity>
                     </TouchableOpacity>

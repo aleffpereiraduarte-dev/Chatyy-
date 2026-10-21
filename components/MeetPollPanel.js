@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Platfo
 import { useLanguage } from '../context/LanguageContext';
 import { IconX } from './Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function MeetPollPanel({ visible, onClose, polls = [], onCreatePoll, onVote, isHost }) {
   const { t } = useLanguage();
   const [creating, setCreating] = useState(false);
@@ -39,7 +40,7 @@ export default function MeetPollPanel({ visible, onClose, polls = [], onCreatePo
     <View style={[s.panel, Platform.OS === 'web' && s.panelGlass]}>
       <View style={s.header}>
         <Text style={s.headerTitle}>{t('meetPoll.title')}</Text>
-        <TouchableOpacity onPress={onClose} style={s.closeBtn}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={s.closeBtn}>
           <IconX size={18} color="#94a3b8" />
         </TouchableOpacity>
       </View>

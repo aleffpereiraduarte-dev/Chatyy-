@@ -45,6 +45,7 @@ import ChatWallpaper from './wallpaper/ChatWallpaper';
 import WallpaperPreview from './wallpaper/WallpaperPreview';
 import { THEMES, buildValue, bubbleFor, specFor, composeValue, isV2 } from './wallpaper/wallpaperSpec';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from './ui/useDragToDismiss';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 let _WpExpoImage = null; // [2026-10-08 chat-open-flicker] see WallpaperBackground
 try { _WpExpoImage = require('expo-image').Image; } catch {}
 
@@ -454,7 +455,7 @@ export default function WallpaperPicker({
         <DragPanel drag={_drag444} style={{ backgroundColor: C.background || (isDark ? '#000000' : '#F7F7F7'), borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '92%', overflow: 'hidden' }}>
           {/* Header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: rowBorder }}>
-            <TouchableOpacity onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={onClose} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <IconArrowLeft size={22} color={C.text || (isDark ? '#fff' : '#111')} />
             </TouchableOpacity>
             <Text style={{ flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '700', color: C.text || (isDark ? '#fff' : '#111'), marginRight: 40 }}>

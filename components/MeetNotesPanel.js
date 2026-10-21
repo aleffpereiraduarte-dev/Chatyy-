@@ -4,6 +4,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconX } from './Icons';
 import useIsMounted from '../hooks/useIsMounted';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function MeetNotesPanel({ visible, onClose, notes = '', onUpdateNotes }) {
   const { t } = useLanguage();
   const [text, setText] = useState(notes);
@@ -37,7 +38,7 @@ export default function MeetNotesPanel({ visible, onClose, notes = '', onUpdateN
           <Text style={s.headerTitle}>{t('meetNotes.title')}</Text>
           {saving && <Text style={s.savingLabel}>{t('meetNotes.saving')}</Text>}
         </View>
-        <TouchableOpacity onPress={onClose} style={s.closeBtn}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={s.closeBtn}>
           <IconX size={18} color="#94a3b8" />
         </TouchableOpacity>
       </View>

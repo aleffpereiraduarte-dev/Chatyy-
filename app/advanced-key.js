@@ -26,6 +26,7 @@ import { IconArrowLeft, IconShield, IconCopy, IconTrash, IconCheck, IconAlertTri
 import FadeSlideIn from '../components/FadeSlideIn';
 import * as byok from '../services/byok';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function AdvancedKeyScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
@@ -272,7 +273,7 @@ export default function AdvancedKeyScreen() {
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('byok.title') })} />
       ) : (
       <View style={[styles.header, { borderBottomColor: colors.borderLight }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.title, { color: colors.text, marginLeft: Spacing.md }]}>

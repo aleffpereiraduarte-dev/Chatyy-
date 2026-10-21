@@ -64,6 +64,7 @@ import NativeDriveList, { useNativeDrive } from '../components/native/NativeDriv
 import { driveRow } from '../components/native/driveListAdapter';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Path, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import StorageMeter, { StorageNudgeCard, meterFromDriveInfo } from '../components/storage/StorageMeter'; // [2026-10-17 smart-storage]
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
@@ -2612,7 +2613,7 @@ function FilesScreenInner() {
           borderBottomWidth: StyleSheet.hairlineWidth,
         },
       ]}>
-        <TouchableOpacity
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           onPress={() => {
             if (searchMode) {
               toggleSearchMode(false);
@@ -2649,7 +2650,7 @@ function FilesScreenInner() {
           <Text style={[styles.headerTitle, { color: colors.text, textAlign: 'left', marginLeft: 4 }]} numberOfLines={1}>{headerTitle}</Text>
         )}
         {searchMode ? (
-          <TouchableOpacity onPress={() => toggleSearchMode(false)} style={styles.headerBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => toggleSearchMode(false)} style={styles.headerBtn}>
             <IconX size={20} color={colors.text} />
           </TouchableOpacity>
         ) : (
@@ -2695,7 +2696,7 @@ function FilesScreenInner() {
                 </TouchableOpacity>
               </>
             )}
-            <TouchableOpacity onPress={() => toggleSearchMode(true)} style={styles.headerBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.search', 'Buscar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => toggleSearchMode(true)} style={styles.headerBtn}>
               <IconSearch size={20} color={colors.text} />
             </TouchableOpacity>
           </>
@@ -3526,7 +3527,7 @@ function FilesScreenInner() {
                         {s.permission === 'edit' ? (t('files.canEdit') || 'Pode editar') : (t('files.viewOnly') || 'Visualizar')}
                       </Text>
                     </View>
-                    <TouchableOpacity onPress={async () => {
+                    <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.remove', 'Remover')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={async () => {
                       try {
                         await api.fileUnshare(shareModal.file_id, s.email);
                         setShareModal(prev => ({ ...prev, shared: prev.shared.filter(x => x.email !== s.email) }));
@@ -3676,7 +3677,7 @@ function FilesScreenInner() {
                       }} style={{ padding: 6, marginRight: 2 }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
                         <IconPaperclip size={16} color={colors.primary} />
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={async () => {
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={async () => {
                         try {
                           const r = await api.fileRevokeLink(lnk.token);
                           if (r?.success) {

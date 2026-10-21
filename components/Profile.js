@@ -81,6 +81,7 @@ import {
   IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck, IconEyeOff, IconLink, IconPlay, IconImage,
   IconGiftBox, IconBrush, IconBriefcase, IconDiamond,
 } from './Icons';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const IconEdit3 = IconEdit;
 const IconTrash2 = IconTrash;
 
@@ -4812,7 +4813,7 @@ function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
             <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
           </View>
           {/* Close (X) — kept for non-gesture dismissal (web, accessibility) */}
-          <TouchableOpacity onPress={() => _commitClose()} style={{ position: 'absolute', right: 12, top: 10, padding: 8, zIndex: 10 }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => _commitClose()} style={{ position: 'absolute', right: 12, top: 10, padding: 8, zIndex: 10 }}>
             <IconX size={20} color={colors?.textSecondary || '#888'} />
           </TouchableOpacity>
           <DragScroll drag={drag}><ScrollView showsVerticalScrollIndicator={false}>{body}</ScrollView></DragScroll>

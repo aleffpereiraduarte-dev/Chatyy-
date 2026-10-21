@@ -277,7 +277,7 @@ function PackDetailModal({ pack, colors, onClose, onInstall, onUninstall, instal
         borderBottomWidth: 1, borderBottomColor: colors.border,
         backgroundColor: colors.surface,
       }}>
-        <TouchableOpacity onPress={onClose} style={{ padding: 4, marginRight: 8 }} hitSlop={8}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={onClose} style={{ padding: 4, marginRight: 8 }} hitSlop={8}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={{ flex: 1, fontSize: 17, fontWeight: '700', color: colors.text }}>
@@ -465,7 +465,7 @@ function MyPacksTab({ colors, installedPacks, onUninstall, onPackPress, uninstal
           </View>
 
           {/* Remove button */}
-          <TouchableOpacity
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             onPress={() => onUninstall(item.id)}
             disabled={uninstallingId === item.id}
             style={{
@@ -644,7 +644,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
           borderBottomWidth: 1, borderBottomColor: colors.border,
           backgroundColor: colors.surface,
         }}>
-          <TouchableOpacity onPress={onClose} style={{ padding: 4, marginRight: 8 }} hitSlop={8}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={{ padding: 4, marginRight: 8 }} hitSlop={8}>
             <IconX size={22} color={colors.text} />
           </TouchableOpacity>
           <Text style={{ flex: 1, fontSize: 17, fontWeight: '700', color: colors.text }}>
@@ -828,7 +828,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
                       </View>
                     )}
                     {!item.uploading && (
-                      <TouchableOpacity
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.remove', 'Remover')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                         onPress={() => handleRemoveSticker(item.id)}
                         style={{
                           position: 'absolute', top: 4, right: 4,
@@ -880,6 +880,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
 // ─── Missing StyleSheet import ─────────────────────────────────────────────────
 import { StyleSheet } from 'react-native';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // ─── Hero "Pack do dia" Card ──────────────────────────────────────────────────
 // Top featured pack with brand gradient + 4-sticker preview row. Used as the
 // first entry above the Em destaque rail.
@@ -1349,7 +1350,7 @@ export default function StickerStore({ visible, onClose, colors, t: _tProp, user
               <Text style={{ flex: 1, fontSize: 20, fontWeight: '800', color: colors.text }}>
                 {t('stickerStore.title')}
               </Text>
-              <TouchableOpacity onPress={onClose} style={{ padding: 6 }} hitSlop={8}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={{ padding: 6 }} hitSlop={8}>
                 <IconX size={22} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -1377,7 +1378,7 @@ export default function StickerStore({ visible, onClose, colors, t: _tProp, user
                   returnKeyType="search"
                 />
                 {search.length > 0 && (
-                  <TouchableOpacity onPress={() => handleSearch('')} hitSlop={6}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => handleSearch('')} hitSlop={6}>
                     <IconX size={14} color={colors.textTertiary} />
                   </TouchableOpacity>
                 )}
@@ -1525,7 +1526,7 @@ export default function StickerStore({ visible, onClose, colors, t: _tProp, user
                   t={t}
                 />
                 {/* "Criar pack" FAB — purple primary, bottom-right */}
-                <TouchableOpacity
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.add', 'Adicionar')} hitSlop={{ top: 22, bottom: 22, left: 22, right: 22 }}
                   onPress={() => setShowCreate(true)}
                   activeOpacity={0.85}
                   style={{

@@ -9,6 +9,7 @@ import { IconArrowLeft, IconHash } from '../components/Icons';
 import ScreenEmptyState from '../components/ScreenEmptyState'; // [2026-10-10 feed-polish]
 import * as api from '../services/api';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const ACCENT = '#111111';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -140,7 +141,7 @@ export default function HashtagScreen() {
       })} />}
       {!USE_NATIVE_HEADER && (
       <View style={[s.header, { borderBottomColor: colors.borderLight, paddingTop: Platform.OS === 'ios' ? 50 : androidTopInset(20) }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 6 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 6 }}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flex: 1, alignItems: 'center' }}>

@@ -24,6 +24,7 @@ import {
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 import { normalizePlanState, planDisplayName, formatQuotaBytes, formatGb, catalogEntry } from '../services/planState';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import StorageMeter, { StorageNudgeCard } from '../components/storage/StorageMeter'; // [2026-10-17 smart-storage]
 // Backup engine config / progress hooks. Quality toggle reads/writes the
 // shared settings store the engine consults at runtime, so flipping it here
@@ -402,7 +403,7 @@ export default function BackupScreen() {
     return (
       <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
         <View style={[s.headerRow, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={s.backBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

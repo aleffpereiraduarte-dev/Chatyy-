@@ -36,6 +36,7 @@ import {
 import * as api from '../services/api';
 import FadeSlideIn from '../components/FadeSlideIn';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const PAGE = 100;
 
 // ─── Tier + icon mapping ───────────────────────────────────────────────
@@ -437,7 +438,7 @@ export default function ActivityLogScreen() {
         })} />
       ) : (
       <View style={[styles.header, { borderBottomColor: colors.borderLight }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} hitSlop={{ top: 10, left: 10, right: 10, bottom: 10 }}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, marginLeft: Spacing.md }}>

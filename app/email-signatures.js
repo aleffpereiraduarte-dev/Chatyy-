@@ -28,6 +28,7 @@ import ModalHeader from '../components/ModalHeader';
 import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function EmailSignaturesScreen() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
@@ -233,7 +234,7 @@ export default function EmailSignaturesScreen() {
                       </Text>
                     </TouchableOpacity>
                   ) : null}
-                  <TouchableOpacity onPress={() => handleDelete(item)} style={s.rowBtnIcon}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => handleDelete(item)} style={s.rowBtnIcon}>
                     <IconTrash size={16} color={colors.error || '#dc2626'} />
                   </TouchableOpacity>
                 </View>

@@ -35,6 +35,7 @@ import { confirmWithBiometric } from '../services/biometricGate';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from './NativeSheet'; // [2026-10-09 native-sheets]
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function ChatLockSheet({ visible, conversation, locked, onClose, onChanged }) {
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
   const _drag166 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
@@ -109,7 +110,7 @@ export default function ChatLockSheet({ visible, conversation, locked, onClose, 
                 </Text>
                 <Text style={[styles.subtitle, { color: subColor }]} numberOfLines={1}>{convName}</Text>
               </View>
-              <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <IconX size={22} color={subColor} />
               </TouchableOpacity>
             </View>

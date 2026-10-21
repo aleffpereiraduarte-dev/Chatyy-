@@ -12,6 +12,7 @@ import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import { IconArrowLeft, IconPlus, IconTrash, IconDownload, IconMail, IconCheck, IconChevronLeft, IconChevronRight } from '../components/Icons';
 import * as api from '../services/api';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const isDesktop = Platform.OS === 'web' && SCREEN_W > 768;
 
@@ -1577,7 +1578,7 @@ export default function NotebookEditorScreen() {
           boxShadow: `0 2px 12px ${notebookColor}44`,
         } : {}),
       }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={styles.headerBtn}>
           <IconArrowLeft size={22} color="#fff" />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
@@ -1598,11 +1599,11 @@ export default function NotebookEditorScreen() {
         </View>
         <View style={styles.headerActions}>
           {pages.length > 1 && (
-            <TouchableOpacity onPress={deletePage} style={styles.headerBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={deletePage} style={styles.headerBtn}>
               <IconTrash size={18} color="rgba(255,255,255,0.8)" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={addPage} style={[styles.headerBtn, styles.addPageBtn]}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.add', 'Adicionar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={addPage} style={[styles.headerBtn, styles.addPageBtn]}>
             <IconPlus size={20} color="#fff" />
           </TouchableOpacity>
         </View>

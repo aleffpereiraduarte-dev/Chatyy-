@@ -91,6 +91,7 @@ import NativeContactList, { nativeContactsEnabled } from '../components/contacts
 import { buildFlatRows, contactTile } from '../components/contacts/contactListAdapter';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from '../components/ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Try to import expo-contacts (available on native, unavailable on web)
 let Contacts = null;
 try {
@@ -259,7 +260,7 @@ const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered
           <IconCheck size={14} color={colors.primary} />
         </View>
       ) : (
-        <TouchableOpacity onPress={() => onAdd(dc)} style={[s.addContactBtn, { borderColor: colors.primary }]}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.add', 'Adicionar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => onAdd(dc)} style={[s.addContactBtn, { borderColor: colors.primary }]}>
           <IconPlus size={14} color={colors.primary} />
         </TouchableOpacity>
       )}
@@ -298,7 +299,7 @@ const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t, onOpenProfile
           <IconCheck size={14} color={colors.primary} />
         </View>
       ) : (
-        <TouchableOpacity onPress={() => onAdd(user)} style={[s.addContactBtn, { borderColor: colors.primary }]}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.add', 'Adicionar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => onAdd(user)} style={[s.addContactBtn, { borderColor: colors.primary }]}>
           <IconPlus size={14} color={colors.primary} />
         </TouchableOpacity>
       )}
@@ -1734,7 +1735,7 @@ function ContactsScreenInner() {
         })} />
       ) : (
       <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/contacts" }, "*"); } catch {} } else { router.back(); } }} style={s.backBtn}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/contacts" }, "*"); } catch {} } else { router.back(); } }} style={s.backBtn}>
           <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[s.headerTitle, { color: colors.text }]}>
@@ -2074,7 +2075,7 @@ function ContactsScreenInner() {
               <Text style={[s.modalTitle, { color: colors.text }]}>
                 {editContact ? t('contacts.editContact') : t('contacts.newContact')}
               </Text>
-              <TouchableOpacity onPress={() => setShowAdd(false)}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setShowAdd(false)}>
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -2234,7 +2235,7 @@ function ContactsScreenInner() {
               <Text style={[s.modalTitle, { color: colors.text }]}>
                 {t('contacts.shareContactTo') || 'Enviar contato para'}
               </Text>
-              <TouchableOpacity onPress={() => setShareContactCard(null)}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setShareContactCard(null)}>
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>

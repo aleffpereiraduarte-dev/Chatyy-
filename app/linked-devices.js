@@ -12,6 +12,7 @@ import * as settingsCache from '../services/settingsCache'; // [2026-10-13 setti
 import { loadDeviceRegistry, installAppStateHook } from '../services/deviceRegistry';
 import FadeSlideIn from '../components/FadeSlideIn';
 import UIRefreshControl from '../components/ui/RefreshControl';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { useGroupedColors, SettingsGroup, SettingsRow, SettingsIconTile, SettingsValueText } from '../components/settings/SettingsKit'; // [2026-10-10 settings-polish] [2026-10-17 settings-wa] listas agrupadas
 
 // Lazy-load expo-camera so web doesn't crash if it's not bundled. Same
@@ -400,7 +401,7 @@ export default function LinkedDevicesScreen() {
       <Modal visible={scanOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setScanOpen(false)}>
         <View style={styles.scanRoot}>
           <View style={[styles.scanHeader, { paddingTop: Math.max(insets.top, 20) + 10 }]}>
-            <TouchableOpacity onPress={() => setScanOpen(false)} style={styles.backBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={() => setScanOpen(false)} style={styles.backBtn}>
               <IconX size={24} color="#fff" />
             </TouchableOpacity>
             <Text style={styles.scanTitle}>

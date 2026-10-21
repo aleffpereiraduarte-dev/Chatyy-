@@ -37,6 +37,7 @@ import { emailToDisplayName } from '../services/api';
 import { confirmWithBiometric } from '../services/biometricGate';
 import { regionalLocale } from '../utils/dateFormat';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 function previewText(conv, t) {
   const lm = conv?.last_message;
   if (!lm) return t('chat.noMessages') || 'Sem mensagens';
@@ -232,7 +233,7 @@ export default function LockedChatsScreen() {
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('chat.hiddenSection') })} />
       ) : (
       <View style={[styles.header, { borderBottomColor: isDark ? '#2c2c2e' : '#e5e6ea' }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>

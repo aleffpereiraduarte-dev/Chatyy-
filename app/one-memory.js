@@ -24,6 +24,7 @@ import { apiCall } from '../services/api'; // [bia-fase0 2026-10-18] one_memory_
 import { IconArrowLeft, IconTrash } from '../components/Icons';
 import NativeSheetDialog from '../components/NativeSheetDialog';
 import { safeAlert as _sharedSafeAlert } from '../services/alerts';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 const ACCENT = '#111111';
@@ -239,7 +240,7 @@ export default function OneMemoryScreen() {
       {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('oneMemory.title') })} />}
       {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} hitSlop={8}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={() => router.back()} style={styles.headerBtn} hitSlop={8}>
           <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>

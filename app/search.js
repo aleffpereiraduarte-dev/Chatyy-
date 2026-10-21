@@ -25,6 +25,7 @@ import { contactTile, photoTile, queryTokens, matchesAll, snippetAround } from '
 // [2026-10-18 search-tabs] barra de busca NATIVA no header (UISearchController /
 // SearchView) + abas estilo Telegram. Kill switch: __chatyy_native_search_header = false.
 import { USE_NATIVE_HEADER, nativeHeaderOptions, NativeHeaderSafeArea } from '../components/nativeHeader';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { SkeletonRows } from '../components/Skeleton'; // [2026-10-20 ux]
 
 
@@ -692,7 +693,7 @@ export default function SearchScreen() {
             accessibilityLabel={t('search.placeholder') || 'Pesquisar'}
           />
           {query.length > 0 && (
-            <TouchableOpacity onPress={() => setQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <IconX size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           )}

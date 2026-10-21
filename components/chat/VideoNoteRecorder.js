@@ -41,6 +41,7 @@ import {
 } from 'react-native';
 import { IconX, IconStop, IconTrash, IconLock, IconSend } from '../Icons';
 
+import { a11yLabel } from '../../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 let _camera = null;
 function loadCamera() {
   if (_camera !== null) return _camera;
@@ -518,7 +519,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
         style={s.backdrop}
       >
         {/* Top-right close. Always available so users can bail. */}
-        <TouchableOpacity onPress={() => { cancelledRef.current = true; stopRecording(true); onClose?.(); }} style={s.closeBtn} hitSlop={12}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={() => { cancelledRef.current = true; stopRecording(true); onClose?.(); }} style={s.closeBtn} hitSlop={12}>
           <IconX size={24} color="#fff" />
         </TouchableOpacity>
 

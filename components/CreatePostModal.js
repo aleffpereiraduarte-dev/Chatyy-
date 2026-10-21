@@ -20,6 +20,7 @@ import LocationPickerSheet from './LocationPickerSheet';
 import * as api from '../services/api';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Generate video thumbnail on native
 async function getVideoThumbnail(uri) {
   if (Platform.OS === 'web') return null;
@@ -384,7 +385,7 @@ function SchedulePicker({ value, onChange, colors, isDark, t }) {
             fontFamily: 'inherit',
           }}
         />
-        <TouchableOpacity onPress={() => onChange(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => onChange(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <IconX size={18} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
@@ -401,7 +402,7 @@ function SchedulePicker({ value, onChange, colors, isDark, t }) {
         onChangeText={onChange}
         maxLength={16}
       />
-      <TouchableOpacity onPress={() => onChange(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => onChange(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
         <IconX size={18} color={colors.textSecondary} />
       </TouchableOpacity>
     </View>
@@ -432,7 +433,7 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={[gs.tagModal, { backgroundColor: isDark ? '#0b0b0b' : '#fff' }]}>
         <View style={[gs.tagHeader, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-          <TouchableOpacity onPress={onClose} style={{ padding: 6 }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={onClose} style={{ padding: 6 }}>
             <IconX size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={[gs.tagTitle, { color: colors.text }]}>{t('post.tagPeople') || 'Marcar pessoas'}</Text>
@@ -1161,7 +1162,7 @@ export default function CreatePostModal({
                           )}
                         </View>
                       )}
-                      <TouchableOpacity
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.remove', 'Remover')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                         onPress={() => removeMedia(item.id)}
                         style={gs.previewStripRemove}
                         hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
@@ -1458,7 +1459,7 @@ export default function CreatePostModal({
                 accessibilityLabel={t('post.addLocation') || 'Adicionar local'}
               />
               {(location || locationCoords) ? (
-                <TouchableOpacity
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   onPress={() => { setLocation(''); setLocationCoords(null); }}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
@@ -1509,7 +1510,7 @@ export default function CreatePostModal({
                   : (t('post.addMusic') || 'Add music')}
               </Text>
               {selectedSound ? (
-                <TouchableOpacity hitSlop={8} onPress={(e) => { e.stopPropagation && e.stopPropagation(); setSelectedSound(null); }}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={8} onPress={(e) => { e.stopPropagation && e.stopPropagation(); setSelectedSound(null); }}>
                   <IconX size={16} color={colors.textTertiary} />
                 </TouchableOpacity>
               ) : (
@@ -1638,7 +1639,7 @@ export default function CreatePostModal({
                 {scheduleDate ? (t('post.scheduled') || 'Scheduled') : (t('post.schedule') || 'Schedule post')}
               </Text>
               {scheduleDate ? (
-                <TouchableOpacity onPress={() => setScheduleDate(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setScheduleDate(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                   <IconX size={16} color={colors.textSecondary} />
                 </TouchableOpacity>
               ) : (

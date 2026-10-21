@@ -29,6 +29,7 @@ import {
   IconMessageSquare, IconPhone, IconMail, IconCalendar, IconBell,
   IconFileText, IconArrowRight, IconImage, IconSettings, IconLink,
 } from '../components/Icons';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 
 const STRIPE_PK = 'pk_live_51T0hKGCEHBjnf15zZqr1xJdsIoKNmL7MrxhJEM8VLVXJ6qJHpskJ0qhS3gmyLxSY1v4vJEzKg2ON7TgIqjAQyj8G00FtweDczV';
 
@@ -2848,7 +2849,7 @@ export default function PlansScreen() {
                     )}
                   </View>
                   {isAdmin && (
-                    <TouchableOpacity onPress={() => handleRemoveMember(m.email)} style={{ padding: 6 }}>
+                    <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.remove', 'Remover')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => handleRemoveMember(m.email)} style={{ padding: 6 }}>
                       <IconX size={16} color={colors.error} />
                     </TouchableOpacity>
                   )}
@@ -3160,7 +3161,7 @@ export default function PlansScreen() {
               /* ===== Card Form ===== */
               <>
                 {/* Close button */}
-                <TouchableOpacity
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')}
                   onPress={closePaymentModal}
                   style={{ position: 'absolute', top: 0, right: 0, zIndex: 10, padding: 8 }}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}

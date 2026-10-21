@@ -12,6 +12,7 @@ import { BorderRadius, FontSize, Spacing, Shadow, Colors } from '../constants/th
 import { IconArrowLeft, IconUsers, IconClock, IconCheck, IconVideo, IconDownload, IconMessageCircle } from '../components/Icons';
 import * as api from '../services/api';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const ACCENT = '#111111';
 
 function getAvatarColor(name) {
@@ -183,7 +184,7 @@ export default function MeetingRecapScreen() {
         {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('meetingRecap.title') })} />}
         {!USE_NATIVE_HEADER && (
         <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={styles.backBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>{t('meetingRecap.title')}</Text>
@@ -205,7 +206,7 @@ export default function MeetingRecapScreen() {
       {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('meetingRecap.title') })} />}
       {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { backgroundColor: isDark ? colors.surface : '#fff', borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={styles.backBtn}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>{t('meetingRecap.title')}</Text>

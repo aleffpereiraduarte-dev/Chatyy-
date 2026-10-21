@@ -18,6 +18,7 @@ import Sheet from './ui/Sheet';
 import ActionList from './ui/ActionList';
 import { Overlay, overlayColors } from '../constants/theme';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 function _tr(t, key, fb) {
   try { const v = t ? t(key) : ''; return v && v !== key ? v : fb; } catch { return fb; }
 }
@@ -750,7 +751,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
               autoFocus
               autoCorrect={false}
             />
-            <TouchableOpacity onPress={() => { setShowSearch(false); setSearchQuery(''); }} hitSlop={8}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowSearch(false); setSearchQuery(''); }} hitSlop={8}>
               <IconX size={14} color={colors.textTertiary} />
             </TouchableOpacity>
           </View>
@@ -759,13 +760,13 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
             <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, flex: 1 }}>
               {t?.('chat.stickers') || 'Figurinhas'}
             </Text>
-            <TouchableOpacity onPress={() => { setShowSearch(true); setTimeout(() => searchRef.current?.focus(), 100); }} style={{ padding: 4 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.search', 'Buscar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowSearch(true); setTimeout(() => searchRef.current?.focus(), 100); }} style={{ padding: 4 }}>
               <IconSearch size={18} color={colors.textSecondary} />
             </TouchableOpacity>
             {/* [2026-10-13 sticker-one-create] O pill "+ Criar" do topo saiu: era o
                 3º atalho p/ a mesma folha (tile da grade + FAB). Criar = só o tile
                 "Criar figurinha" no início da grade (Recentes/Minhas). */}
-            <TouchableOpacity onPress={onClose} style={{ padding: 4 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={{ padding: 4 }}>
               <IconX size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </>
@@ -898,7 +899,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
                 maxLength={40}
               />
               <TouchableOpacity onPress={handleCreatePack}><Text style={{ color: colors.primary, fontWeight: '700', fontSize: 11 }}>{_tr(t, 'common.ok', 'OK')}</Text></TouchableOpacity>
-              <TouchableOpacity onPress={() => { setShowPackCreate(false); setNewPackName(''); }}><IconX size={12} color={colors.textTertiary} /></TouchableOpacity>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowPackCreate(false); setNewPackName(''); }}><IconX size={12} color={colors.textTertiary} /></TouchableOpacity>
             </View>
           ) : (
             <TouchableOpacity

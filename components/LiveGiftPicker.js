@@ -17,6 +17,7 @@ import {
 import Svg, { Path, Circle, Polygon, Rect, G, Ellipse } from 'react-native-svg';
 import { IconX } from './Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Gift catalog. Order = display order in the picker. Each `glyph` is a render
 // function so we keep all gift SVGs colocated and tied to their metadata.
 // `diamonds` matches the backend's expected cost — server clamps to this
@@ -139,7 +140,7 @@ export default function LiveGiftPicker({
             <View style={styles.handle} />
             <View style={styles.headerRow}>
               <Text style={styles.title}>{i18n.sendGift || 'Enviar presente'}</Text>
-              <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityRole="button">
+              <TouchableOpacity accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={styles.closeBtn} accessibilityRole="button">
                 <IconX size={18} color="#fff" />
               </TouchableOpacity>
             </View>

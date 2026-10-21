@@ -60,6 +60,7 @@ import * as api from '../services/api';
 import { classifyImportanceLocal, buildImportanceContext } from '../services/emailImportanceLocal'; // [2026-10-09 on-device-privacy]
 import CompleteProfileModal, { isProfileComplete, COMPLETE_PROFILE_SKIP_KEY } from '../components/CompleteProfileModal';
 import { canNavigateNow } from '../services/navGuard';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { confirmAsync } from '../utils/confirm'; // [2026-10-12 overlays] diálogo estilizado no web
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
@@ -2242,7 +2243,7 @@ function InboxScreenInner() {
                 >
                   <IconCompose size={14} color={colors.textSecondary} />
                 </TouchableOpacity>
-                <TouchableOpacity
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   onPress={() => setSidePanels(prev => prev.filter(r => r !== panelRoute))}
                   style={s.sideModuleCloseBtn}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -2433,7 +2434,7 @@ function InboxScreenInner() {
               <View style={[s.moveHeader, { borderBottomColor: colors.border }]}>
                 <IconFolder size={18} color={colors.primary} />
                 <Text style={[s.moveTitle, { color: colors.text }]}>{t('contextMenu.moveTo') || 'Mover para'}</Text>
-                <TouchableOpacity onPress={() => setMoveToTarget(null)}><IconX size={20} color={colors.textSecondary} /></TouchableOpacity>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setMoveToTarget(null)}><IconX size={20} color={colors.textSecondary} /></TouchableOpacity>
               </View>
               <FlatList
                 data={folders.filter(f => f.name !== currentFolder)}

@@ -56,6 +56,7 @@ import {
   suggestEmailFix, splitInternational, detectDefaultCountry, passwordHints,
   loadLastIdentifier, saveLastIdentifier, forgetLastIdentifier,
 } from '../components/login/loginSmart';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 
 // Tiny wrapper so haptic calls never throw on web or older devices.
 const safeHaptic = (fn) => { try { fn?.(); } catch {} };
@@ -3848,7 +3849,7 @@ function LoginQRScannerView({ onScan, onClose, t, colors, isDark, qrScanToken, s
           {t('login.qrScanHint') || 'Point at the QR code on the computer screen'}
         </Text>
       </View>
-      <TouchableOpacity onPress={onClose} style={{ position: 'absolute', top: 50, left: 20, padding: 12, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 25 }}>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={{ position: 'absolute', top: 50, left: 20, padding: 12, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 25 }}>
         <IconX size={24} color="#fff" />
       </TouchableOpacity>
       <TouchableOpacity

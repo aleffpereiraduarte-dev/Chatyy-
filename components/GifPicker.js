@@ -11,6 +11,7 @@ import { Overlay } from '../constants/theme';
 // e as prévias no disco durável (LRU) — não mais no store de mídia das conversas.
 import * as stkCache from '../services/stickerCache';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 let ExpoImage = null;
 try { ExpoImage = require('expo-image').Image; } catch {}
 const Img = ExpoImage || require('react-native').Image;
@@ -273,12 +274,12 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t, bottomIns
             autoCorrect={false}
           />
           {query ? (
-            <TouchableOpacity onPress={() => { setQuery(''); loadGifs(''); setActiveCategory(null); }} hitSlop={8}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setQuery(''); loadGifs(''); setActiveCategory(null); }} hitSlop={8}>
               <IconX size={14} color={colors.textTertiary} />
             </TouchableOpacity>
           ) : null}
         </View>
-        <TouchableOpacity onPress={onClose} style={{ padding: 6 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={{ padding: 6 }}>
           <IconX size={20} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>

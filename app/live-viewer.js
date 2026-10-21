@@ -65,6 +65,7 @@ import { getLiveStageView, isLiveStageAvailable, initialsOf as _lsInitials, gift
 // the wake-lock to this screen; unmount auto-releases.
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Humanize big counts the way Instagram/TikTok do: 999 → 999, 1.2K, 12.4K, 1.2M.
 // We localize the decimal separator from the user locale where possible.
 function humanizeCount(n) {
@@ -4536,7 +4537,7 @@ export default function LiveViewerScreen() {
               <Text style={styles.viewersListTitle}>
                 {t('live.whosWatching') || t('live.viewersList') || 'Quem está vendo'} · {viewerCount.toLocaleString()}
               </Text>
-              <TouchableOpacity onPress={() => setShowViewersList(false)} style={styles.viewersListClose}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setShowViewersList(false)} style={styles.viewersListClose}>
                 <IconX size={20} color="#fff" />
               </TouchableOpacity>
             </View>
@@ -4588,7 +4589,7 @@ export default function LiveViewerScreen() {
           <DragPanel drag={_drag4580} onStartShouldSetResponder={() => true} style={[styles.viewersListSheet, { maxHeight: '75%' }]} >
             <View style={styles.viewersListHeader}>
               <Text style={styles.viewersListTitle}>{t('live.chat') || 'Chat ao vivo'} · {chatMessages.length}</Text>
-              <TouchableOpacity onPress={() => setChatSheetOpen(false)} style={{ padding: 6 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setChatSheetOpen(false)} style={{ padding: 6 }}>
                 <IconX size={20} color="#fff" />
               </TouchableOpacity>
             </View>

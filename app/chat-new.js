@@ -43,6 +43,7 @@ import { nativeGroupCreateEnabled, markNativeGroupCreateFailed, setGroupDraft, G
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { sortByText } from '../utils/fastCollate'; // [2026-10-19 perf-android]
 
 // Megaphone SVG for broadcast list rows — UI rule bans emoji glyphs, so
@@ -3169,7 +3170,7 @@ export default function ChatNewScreen() {
               <Text style={[sty.qrModalTitle, { color: colors.text }]} numberOfLines={1}>
                 {broadcastComposeList?.name || (t('chat.broadcastList') || 'Lista de transmissão')}
               </Text>
-              <TouchableOpacity
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 onPress={() => { if (!broadcastSending) { setBroadcastComposeList(null); broadcastCmiRef.current = null; } }}
                 style={{ padding: 8 }}
               >

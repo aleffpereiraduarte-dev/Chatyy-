@@ -15,6 +15,7 @@ import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
 import * as api from '../services/api';
 import { useConfirm } from './ConfirmModal';
 import EmailOutboxBanner from './EmailOutboxBanner';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 
 const FOLDER_ICONS = {
@@ -574,7 +575,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
                   {f.name}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleDeleteFolder(f.name)} style={s.deleteFolderBtn}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.remove', 'Remover')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => handleDeleteFolder(f.name)} style={s.deleteFolderBtn}>
                 <IconX size={14} color={colors.textTertiary} />
               </TouchableOpacity>
             </View>
@@ -597,7 +598,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           <TouchableOpacity onPress={handleCreateFolder} style={s.newFolderBtn}>
             <IconCheck size={16} color={colors.primary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => { setShowNewFolder(false); setNewFolderName(''); }} style={s.newFolderBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowNewFolder(false); setNewFolderName(''); }} style={s.newFolderBtn}>
             <IconX size={16} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>

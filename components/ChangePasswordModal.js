@@ -6,6 +6,7 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconLock, IconCheckCircle, IconEye, IconEyeOff } from './Icons';
 import * as api from '../services/api';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function ChangePasswordModal({ visible, onClose, forced = false, onChanged }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
@@ -134,7 +135,7 @@ export default function ChangePasswordModal({ visible, onClose, forced = false, 
             <IconLock size={20} color={colors.primary} style={{ marginRight: Spacing.sm }} />
             <Text style={[s.title, { color: colors.text }]}>{t('changePassword.title')}</Text>
             {!forced && (
-              <TouchableOpacity onPress={handleClose} style={s.closeBtn}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={handleClose} style={s.closeBtn}>
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             )}

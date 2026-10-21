@@ -11,6 +11,7 @@ import React from 'react';
 import { Modal, View, Text, Pressable, ScrollView, StyleSheet, Platform, Dimensions } from 'react-native';
 import { IconX } from '../Icons';
 
+import { a11yLabel } from '../../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 let _GHRoot = null;
 function _ghRoot() {
   if (_GHRoot) return _GHRoot;
@@ -34,7 +35,7 @@ export default function NativeRowSheet({ visible, onClose, title, isDark, wallBg
           <View style={s.grabWrap}><View style={[s.grab, { backgroundColor: sub }]} /></View>
           <View style={s.head}>
             <Text style={[s.title, { color: ink }]} numberOfLines={1}>{title || ''}</Text>
-            <Pressable onPress={onClose} hitSlop={12} style={[s.close, { backgroundColor: sub }]} accessibilityRole="button">
+            <Pressable accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={12} style={[s.close, { backgroundColor: sub }]} accessibilityRole="button">
               <IconX size={16} color={ink} />
             </Pressable>
           </View>

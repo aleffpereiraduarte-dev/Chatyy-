@@ -57,6 +57,7 @@ import { boraStyleUrl } from './BoraMap';
 import { ChatyyMap, isNativeMapAvailable, nativeMapStyleUrl, nearbyPlaces } from './NativeMap';
 import { MapFab, MapSearchBar, IconLocate } from './MapControls';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // [2026-10-08 chat-fix-composer-location] P&B premium. O verde WhatsApp
 // (#25D366 no badge, CTA, chips e pin) saiu: o sheet agora usa a tinta do app
 // — colors.primary/onPrimary (preto no claro, branco no escuro neutro). A cor
@@ -815,7 +816,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
             <Text style={{ flex: 1, fontSize: 20, fontWeight: '700', color: colors.text, letterSpacing: -0.4 }} numberOfLines={1}>
               {t?.('chatConv.locationShare') || 'Compartilhar localização'}
             </Text>
-            <TouchableOpacity
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')}
               onPress={onClose}
               hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
               style={{

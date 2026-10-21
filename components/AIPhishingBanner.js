@@ -4,6 +4,7 @@ import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconShield, IconChevronDown, IconChevronUp, IconX } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function AIPhishingBanner({ email, colors, autoCheck = false }) {
   const { t } = useLanguage();
   const [checking, setChecking] = useState(false);
@@ -71,7 +72,7 @@ export default function AIPhishingBanner({ email, colors, autoCheck = false }) {
         <TouchableOpacity onPress={() => setExpanded(!expanded)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           {expanded ? <IconChevronUp size={16} color={textColor} /> : <IconChevronDown size={16} color={textColor} />}
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setDismissed(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ marginLeft: 8 }}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setDismissed(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ marginLeft: 8 }}>
           <IconX size={14} color={textColor} />
         </TouchableOpacity>
       </View>

@@ -14,6 +14,7 @@ import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import { safeAlert as _sharedSafeAlert } from '../services/alerts';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const ACCENT = '#111111';
 const isWeb = Platform.OS === 'web';
 
@@ -224,7 +225,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
       <View style={[sty.container, { backgroundColor: colors.background }]}>
         {/* Header */}
         <View style={[sty.header, { backgroundColor: isDark ? '#1c1c1e' : '#111111', paddingTop: headerPadTop }]}>
-          <TouchableOpacity onPress={onClose} style={sty.headerBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={onClose} style={sty.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
           <View style={sty.headerCenter}>
@@ -245,7 +246,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
             autoCapitalize="none"
           />
           {searchText ? (
-            <TouchableOpacity onPress={() => { setSearchText(''); loadChannels(''); }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setSearchText(''); loadChannels(''); }}>
               <IconX size={16} color={colors.textTertiary} />
             </TouchableOpacity>
           ) : null}

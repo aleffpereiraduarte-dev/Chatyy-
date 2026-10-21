@@ -13,6 +13,7 @@ import * as api from '../services/api';
 import { IconX, IconCalendar, IconClock, IconUserPlus, IconAlertTriangle } from './Icons';
 import AvatarCircle from './AvatarCircle';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 let DateTimePicker = null;
 if (Platform.OS !== 'web') {
   try { DateTimePicker = require('@react-native-community/datetimepicker').default; } catch {}
@@ -282,7 +283,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
             <Text style={[styles.title, { color: colors.text }]}>
               {t('calls.scheduleNew') || 'Agendar chamada'}
             </Text>
-            <TouchableOpacity onPress={onClose} hitSlop={10}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={10}>
               <IconX size={22} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -459,7 +460,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
                     <Text style={{ color: colors.text, fontSize: FontSize.sm, marginLeft: 6, marginRight: 4 }} numberOfLines={1}>
                       {em}
                     </Text>
-                    <TouchableOpacity onPress={() => removeParticipant(em)} hitSlop={6}>
+                    <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.remove', 'Remover')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => removeParticipant(em)} hitSlop={6}>
                       <IconX size={14} color={colors.textSecondary} />
                     </TouchableOpacity>
                   </View>

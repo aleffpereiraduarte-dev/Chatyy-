@@ -38,6 +38,7 @@ import Svg, { Path as SvgPath, Circle as SvgCircle } from 'react-native-svg';
 import { useLanguage } from '../context/LanguageContext';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const BRAND_PURPLE = '#111111';
 const DANGER = '#EF4444';
 const REC_RED = '#DC2626';
@@ -211,7 +212,7 @@ export default function HostControlsSheet({
                 </View>
                 <Text style={styles.title}>{t('call.group.hostControls') || 'Host controls'}</Text>
               </View>
-              <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
                 <IconClose />
               </TouchableOpacity>
             </View>

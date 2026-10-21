@@ -56,6 +56,7 @@ import NativePhotosGrid, { isNativePhotosGridAvailable, isNativePhotosDatasetAva
 // [2026-10-18 photos-native-always] viewer NATIVO sempre (JS = reserva); kill switch __chatyy_photos_native_always = false
 import { nativeMediaAlways, openNativeMediaList, setNativeActionState, setNativeReturnRect, closeNativeMedia } from '../services/nativeMediaOpen';
 import NativeBackupBanner from '../components/photos/NativeBackupBanner';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import BackupStatusCard from '../components/photos/BackupStatusCard'; // [2026-10-19 fotos-backup]
 import * as backupSummary from '../services/photosBackupSummary'; // [2026-10-19 fotos-backup]
 let photosBackupNative = null;
@@ -4658,7 +4659,7 @@ function PhotosScreenInner() {
                       {t('photos.downloadFromCloud')}
                     </Text>
                     {!photoRestoreRunning && (
-                      <TouchableOpacity onPress={() => setPhotoRestoreModal(false)} style={{ padding: 4 }}>
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setPhotoRestoreModal(false)} style={{ padding: 4 }}>
                         <IconX size={20} color={colors.text} />
                       </TouchableOpacity>
                     )}
@@ -4943,7 +4944,7 @@ function PhotosScreenInner() {
                 <IconStar size={24} color="#fff" />
               )}
             </TouchableOpacity>
-            <TouchableOpacity style={s.viewerBtn} onPress={() => sharePhoto(viewerPhoto)}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.share', 'Compartilhar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={s.viewerBtn} onPress={() => sharePhoto(viewerPhoto)}>
               <IconShare size={22} color="#fff" />
             </TouchableOpacity>
             {/* Print to canvas — opens a partner print service in the system
@@ -5135,7 +5136,7 @@ function PhotosScreenInner() {
                   {viewerPhoto.isDevice && !viewerPhoto.backedUp ? t('photos.localOnly') : t('photos.inCloud')}
                 </Text>
               </View>
-              <TouchableOpacity onPress={toggleInfoPanel} style={s.infoPanelClose}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={toggleInfoPanel} style={s.infoPanelClose}>
                 <IconX size={20} color="#fff" />
               </TouchableOpacity>
             </Animated.View>
@@ -5262,7 +5263,7 @@ function PhotosScreenInner() {
         {selectMode && USE_NATIVE_HEADER ? null : selectMode ? (
           // Selection header — Google Photos grade with counter chip
           <View style={s.headerRow}>
-            <TouchableOpacity onPress={clearSelection} style={s.headerBtn}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} onPress={clearSelection} style={s.headerBtn}>
               <IconX size={24} color={colors.text} />
             </TouchableOpacity>
             <View style={s.selectCounterChip}>
@@ -5296,7 +5297,7 @@ function PhotosScreenInner() {
           <>
             {!USE_NATIVE_HEADER && (
             <View style={s.headerRow}>
-              <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/photos" }, "*"); } catch {} } else { router.back(); } }} style={s.headerBtn}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/photos" }, "*"); } catch {} } else { router.back(); } }} style={s.headerBtn}>
                 <IconArrowLeft size={24} color={colors.text} />
               </TouchableOpacity>
               <IconCloud size={22} color={colors.primary} />
@@ -5379,10 +5380,10 @@ function PhotosScreenInner() {
             <Text style={{ flex: 1, fontSize: 13, color: colors.text }}>
               {t('photos.backupFailedCount', { count: backupErrorCount })}
             </Text>
-            <TouchableOpacity onPress={retryBackup} style={{ padding: 6 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.refresh', 'Atualizar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={retryBackup} style={{ padding: 6 }}>
               <IconRefresh size={16} color={colors.primary} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setBackupErrorVisible(false)} style={{ padding: 6 }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setBackupErrorVisible(false)} style={{ padding: 6 }}>
               <IconX size={16} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>

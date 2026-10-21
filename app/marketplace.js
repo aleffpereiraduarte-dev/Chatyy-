@@ -24,6 +24,7 @@ import {
 } from '../components/Icons';
 import Svg, { Path, Line, Circle, Rect, Polyline } from 'react-native-svg';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // ─── Safe alert helper ─────────────────────────────────────────────────────────
 const safeAlert = (title, message, buttons) => {
   if (Platform.OS === 'web') {
@@ -344,7 +345,7 @@ function CreateListingModal({ visible, onClose, onCreated }) {
                   keyboardType="url"
                 />
                 {photoUrls.length > 1 && (
-                  <TouchableOpacity onPress={() => setPhotoUrls(p => p.filter((_, j) => j !== i))} style={{ marginLeft: 6 }}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setPhotoUrls(p => p.filter((_, j) => j !== i))} style={{ marginLeft: 6 }}>
                     <IconX size={18} color={colors.textSecondary} />
                   </TouchableOpacity>
                 )}
@@ -841,7 +842,7 @@ function BrowseTab({ savedIds, onToggleSave, onSelectListing, onSell }) {
           onSubmitEditing={() => setSearchCommit(search)}
         />
         {search ? (
-          <TouchableOpacity onPress={() => { setSearch(''); setSearchCommit(''); }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setSearch(''); setSearchCommit(''); }}>
             <IconX size={16} color={colors.textSecondary} />
           </TouchableOpacity>
         ) : null}

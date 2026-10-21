@@ -19,6 +19,7 @@ import {
 } from './Icons';
 import * as api from '../services/api';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const { width: SW } = Dimensions.get('window');
 const CANVAS = Math.min(SW - 40, 360);
 
@@ -584,7 +585,7 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
 
           {/* Actions */}
           <View style={{ flexDirection: 'row', gap: 14, marginTop: 24 }}>
-            <TouchableOpacity
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')}
               onPress={onCancel}
               disabled={saving}
               style={{

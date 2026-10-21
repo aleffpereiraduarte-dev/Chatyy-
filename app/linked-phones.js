@@ -39,6 +39,7 @@ import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from '../components/ui/useDragToDismiss';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function LinkedPhones() {
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
   const _drag389 = useDragToDismiss({ onDismiss: () => { const f = () => setShowCountryPicker(false); f(); } });
@@ -310,7 +311,7 @@ export default function LinkedPhones() {
                 <Text style={[s.modalTitle, { color: colors.text }]}>
                   {t('linkedPhones.add') || 'Adicionar número'}
                 </Text>
-                <TouchableOpacity onPress={closeAdd} style={s.headerBtn}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={closeAdd} style={s.headerBtn}>
                   <IconX size={20} color={colors.textSecondary} />
                 </TouchableOpacity>
               </View>
@@ -400,7 +401,7 @@ export default function LinkedPhones() {
               <Text style={[s.modalTitle, { color: colors.text }]}>
                 {t('changePhone.country') || 'País'}
               </Text>
-              <TouchableOpacity onPress={() => setShowCountryPicker(false)} style={s.headerBtn}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setShowCountryPicker(false)} style={s.headerBtn}>
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>

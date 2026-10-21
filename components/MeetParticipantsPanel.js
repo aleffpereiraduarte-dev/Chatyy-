@@ -5,6 +5,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing } from '../constants/theme';
 import { IconX, IconMic, IconMicOff, IconVideo, IconVideoOff, IconUsers, IconRaisedHand, IconMoreVert } from './Icons';
 
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // [2026-10-15 meet-v2] reunião é sempre escura (preto verdadeiro), independente do tema do app
 const MEET_DARK = { surface: '#0b0b0b', text: '#fff', textSecondary: 'rgba(255,255,255,0.6)', textTertiary: 'rgba(255,255,255,0.4)', border: 'rgba(255,255,255,0.10)', error: '#FF453A', warning: '#fff' };
 
@@ -72,7 +73,7 @@ function ParticipantRow({ participant, isHost, colors, onMute, onKick, onPromote
       </View>
       {isHost && !participant.isLocal && participant.role !== 'host' && (
         <View style={styles.hostActions}>
-          <TouchableOpacity style={styles.kebab} onPress={() => setMenuOpen(!menuOpen)}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.more', 'Mais')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.kebab} onPress={() => setMenuOpen(!menuOpen)}>
             <IconMoreVert size={18} color={colors.textSecondary} />
           </TouchableOpacity>
           {menuOpen && (
@@ -113,7 +114,7 @@ export default function MeetParticipantsPanel({ visible, onClose, participants =
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <IconUsers size={18} color={colors.text} />
           <Text style={[styles.headerTitle, { color: colors.text }]}>{tc(t, 'meetParticipants.title', participants.length)}</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <IconX size={20} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>

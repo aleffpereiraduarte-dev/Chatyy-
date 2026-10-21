@@ -2655,7 +2655,7 @@ export default function OneScreen() {
             <Text style={[st.emptyHello, { color: P.fg }]} accessibilityRole="header" maxFontSizeMultiplier={1.4} numberOfLines={2}>{greet}</Text>
           </BiaFadeIn>
           <BiaFadeIn delay={150} dy={12}>
-            <Text style={[st.emptyAsk, { color: P.sub }]} maxFontSizeMultiplier={1.4}>{t('one.emptyTitle')}</Text>
+            <Text style={[st.emptyAsk, { color: P.sub }]} maxFontSizeMultiplier={2}>{t('one.emptyTitle')}</Text>{/* [2026-10-20 a11y] leitura: até 200 % (era 1,4) */}
           </BiaFadeIn>
           <BiaSuggestionGrid
             items={sugCards}

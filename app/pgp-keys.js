@@ -32,6 +32,7 @@ import {
   listContactKeys, saveContactKey, removeContactKey, passphraseStrength, passphraseOk,
   formatFingerprint, isWebStorage, MIN_PASSPHRASE,
 } from '../services/pgp';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 
 let QRCode = null;
 try { QRCode = require('react-native-qrcode-svg').default; } catch {}
@@ -419,7 +420,7 @@ export default function PgpKeysScreen() {
                       <Text style={[s.rowLabel, { color: colors.text }]} numberOfLines={1}>{email}</Text>
                       <Text style={[s.rowHint, { color: colors.textTertiary, fontFamily: MONO }]} numberOfLines={1}>{formatFingerprint(info?.fingerprint).replace('\n', ' ')}</Text>
                     </View>
-                    <TouchableOpacity onPress={() => removeContact(email)} hitSlop={10}><IconTrash size={16} color={colors.textSecondary} /></TouchableOpacity>
+                    <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => removeContact(email)} hitSlop={10}><IconTrash size={16} color={colors.textSecondary} /></TouchableOpacity>
                   </View>
                 ))}
                 <ActionRow icon={IconUpload} label={t('pgp.importContact')} onPress={() => setPanel(p => (p === 'contact' ? '' : 'contact'))} colors={colors} last />

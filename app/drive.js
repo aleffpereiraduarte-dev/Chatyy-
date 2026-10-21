@@ -57,6 +57,7 @@ import StorageMeter, { StorageNudgeCard, meterFromDriveInfo } from '../component
 import { afterRNModal } from '../components/NativeSheet';
 import { openOnDevice, sendCopy, saveToDevice, sendToChat } from '../services/driveFileActions';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
+import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
 
 // ============================================================
@@ -1530,7 +1531,7 @@ function DriveScreenInner() {
             {Boolean(item.is_starred) && <IconStarFilled size={12} color={colors.text} style={{ marginLeft: 4 }} />}
           </View>
         </View>
-        <TouchableOpacity style={styles.moreBtn} onPress={(e) => handleItemLongPress(item, e)}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.more', 'Mais')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.moreBtn} onPress={(e) => handleItemLongPress(item, e)}>
           <IconMoreVert size={18} color={colors.textSecondary} />
         </TouchableOpacity>
       </TouchableOpacity>
@@ -2420,7 +2421,7 @@ function DriveScreenInner() {
       <View style={[styles.previewPanel, { backgroundColor: colors.surface, borderLeftColor: colors.border }]}>
         <View style={[styles.previewPanelHeader, { borderBottomColor: colors.border }]}>
           <Text style={[styles.previewPanelTitle, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
-          <TouchableOpacity onPress={() => setPreviewPanelFile(null)} style={{ padding: 4 }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setPreviewPanelFile(null)} style={{ padding: 4 }}>
             <IconX size={18} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
@@ -2485,7 +2486,7 @@ function DriveScreenInner() {
             <IconShare size={16} color={colors.text} />
             <Text style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>{t('drive.share')}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.previewActionBtn, { backgroundColor: '#fef2f2' }]} onPress={() => { setPreviewPanelFile(null); handleDelete(item); }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={[styles.previewActionBtn, { backgroundColor: '#fef2f2' }]} onPress={() => { setPreviewPanelFile(null); handleDelete(item); }}>
             <IconTrash size={16} color="#dc2626" />
           </TouchableOpacity>
         </View>
@@ -2689,7 +2690,7 @@ function DriveScreenInner() {
       {!USE_NATIVE_HEADER && (
       <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.back', 'Voltar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} style={styles.backBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>Chatyy Cloud</Text>
@@ -2697,7 +2698,7 @@ function DriveScreenInner() {
             <TouchableOpacity style={styles.headerActionBtn} onPress={() => setViewMode(v => v === 'grid' ? 'list' : 'grid')}>
               {viewMode === 'grid' ? <IconMenu size={20} color={colors.textSecondary} /> : <IconGrid size={20} color={colors.textSecondary} />}
             </TouchableOpacity>
-            <TouchableOpacity style={styles.headerActionBtn} onPress={() => setSortMenuVisible(true)}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.more', 'Mais')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} style={styles.headerActionBtn} onPress={() => setSortMenuVisible(true)}>
               <IconMoreVert size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -2714,7 +2715,7 @@ function DriveScreenInner() {
             placeholderTextColor={colors.textTertiary}
           />
           {searchText.length > 0 && (
-            <TouchableOpacity onPress={() => { setSearchText(''); setSearchResults(null); }}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setSearchText(''); setSearchResults(null); }}>
               <IconX size={16} color={colors.textTertiary} />
             </TouchableOpacity>
           )}
@@ -2745,14 +2746,14 @@ function DriveScreenInner() {
       {/* Bulk Actions Bar */}
       {selectMode && (
         <View style={[styles.bulkBar, { backgroundColor: isDark ? colors.primaryLight : '#F1F3F5', borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={clearSelection} style={styles.bulkCloseBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} onPress={clearSelection} style={styles.bulkCloseBtn}>
             <IconX size={18} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.bulkText, { color: colors.text }]}>
             {selectedItems.size} {t('drive.selected')}
           </Text>
           <View style={styles.bulkActions}>
-            <TouchableOpacity style={styles.bulkActionBtn} onPress={handleBulkDelete}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} style={styles.bulkActionBtn} onPress={handleBulkDelete}>
               <IconTrash size={18} color="#dc2626" />
             </TouchableOpacity>
           </View>
