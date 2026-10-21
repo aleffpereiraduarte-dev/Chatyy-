@@ -16,6 +16,10 @@
 // Kill (OTA): globalThis.__chatyy_games_dock = false → volta a folha de 19/10 (GamePicker/GamePlaySheet).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Keyboard, Platform, BackHandler, useWindowDimensions } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming, runOnJS } from 'react-native-reanimated';
+import { grafite } from '../../constants/theme';
+import { useRM } from './motion';
 import { IconChevronUp, IconX } from '../Icons';
 import { GameTypeIcon, IconGamepad } from './GameIcons';
 import { gamePalette, hTap, hOk } from './fx';
@@ -57,8 +61,60 @@ function CollapsedBar({ mode, gid, pal, t, me, onExpand, onClose }) {
 // aberto não chega evento de "show": era o print de 20/10, Cartas por baixo do teclado e composer escondido).
 function _kbUp() { try { return !!(Keyboard.isVisible && Keyboard.isVisible()); } catch { return false; } }
 
+// [jogos 2026-10-21 painel] o painel vira FOLHA (mockup jogos2): alça, raio 30 em cima, sobe com mola ao abrir e
+// arrastar p/ baixo pela faixa de cima (alça + cabeçalho) fecha (seletor) ou recolhe na faixa fina (partida).
+// Tudo na UI thread (RNGH + Reanimated); Reduzir Movimento = sem mola (aparece pronto). O resto do painel
+// (rolagem, tabuleiro, cartas) nem vê o gesto: só toques que começam nos primeiros `zone` pt.
+const DRAG_DIST = 90;
+const GRAB_H = 19; // alça: 8 + 5 + 6
+const DRAG_VEL = 900;
+function DockSheet({ height, bg, line, isDark, rm, zone, openKey, onDragClose, children, label }) {
+  const y = useSharedValue(rm ? 0 : 46);
+  const op = useSharedValue(rm ? 1 : 0.4);
+  const closeRef = useRef(onDragClose);
+  useEffect(() => { closeRef.current = onDragClose; }, [onDragClose]);
+  useEffect(() => {
+    if (rm) { y.value = 0; op.value = 1; return; }
+    y.value = 46; op.value = 0.4;
+    y.value = withSpring(0, { damping: 18, stiffness: 210, mass: 0.9 });
+    op.value = withTiming(1, { duration: 220 });
+  }, [openKey, rm]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fire = useCallback(() => { try { closeRef.current && closeRef.current(); } catch {} }, []);
+  const pan = useMemo(() => Gesture.Pan()
+    .activeOffsetY(10)
+    .failOffsetY(-10)
+    .failOffsetX([-18, 18])
+    .onTouchesDown((e, mgr) => {
+      'worklet';
+      const t0 = e.allTouches && e.allTouches[0];
+      if (!t0 || t0.y > zone) mgr.fail();
+    })
+    .onUpdate((e) => { 'worklet'; y.value = Math.max(0, e.translationY); })
+    .onEnd((e) => {
+      'worklet';
+      if (y.value > DRAG_DIST || e.velocityY > DRAG_VEL) {
+        y.value = withTiming(height, { duration: rm ? 1 : 170 }, (fin) => { 'worklet'; if (fin) runOnJS(fire)(); });
+      } else y.value = withSpring(0, { damping: 22, stiffness: 300 });
+    }), [zone, height, rm]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ast = useAnimatedStyle(() => ({ transform: [{ translateY: y.value }], opacity: op.value }));
+  return (
+    <GestureDetector gesture={pan}>
+      <Animated.View style={[st.dock, st.sheet, { height, backgroundColor: bg }, isDark ? null : st.sheetShadow, ast]}>
+        <View style={st.grabZone} accessible accessibilityRole="adjustable" accessibilityLabel={label}
+          accessibilityActions={[{ name: 'decrement' }, { name: 'escape' }]}
+          onAccessibilityAction={(e) => { const n = e.nativeEvent.actionName; if (n === 'decrement' || n === 'escape') fire(); }}
+          onAccessibilityEscape={fire}>
+          <View style={[st.grab, { backgroundColor: line }]} />
+        </View>
+        {children}
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
 export default function GameDock({ conversationId, conversationType, members, currentEmail, t, colors, isDark, onSendText, composerFocused = false, onBlurComposer }) {
   const pal = useMemo(() => gamePalette(colors || {}, !!isDark), [colors, isDark]);
+  const rm = useRM();
   const { width: winW, height: winH } = useWindowDimensions();
   const [mode, setMode] = useState(null); // null | 'pick' | 'play'
   const [gid, setGid] = useState(0);
@@ -202,22 +258,26 @@ export default function GameDock({ conversationId, conversationType, members, cu
   // modo jogo: o painel toma a área da conversa até o composer (sobra uma tira da conversa em cima)
   const dockH = mode === 'play'
     ? Math.round(Math.max(300, Math.min(winH * 0.64, winH - 300)))
-    : Math.round(Math.max(280, Math.min(winH * 0.5, 460)));
+    : Math.round(Math.max(300, Math.min(winH * 0.6, 540)));
 
+  const G = grafite(!!isDark);
   return (
-    <View style={[st.dock, { height: dockH, backgroundColor: pal.bg, borderTopColor: pal.line }]}>
+    <DockSheet height={dockH} bg={mode === 'pick' ? G.bg : pal.bg} line={isDark ? 'rgba(255,255,255,0.22)' : 'rgba(127,127,127,0.35)'} isDark={!!isDark} rm={rm}
+      zone={mode === 'pick' ? 64 : 62} openKey={mode}
+      label={mode === 'pick' ? tr(t, 'games.panel.dragClose', 'Arraste para baixo para fechar') : tr(t, 'games.panel.dragCollapse', 'Arraste para baixo para recolher')}
+      onDragClose={mode === 'pick' ? close : () => { kbCollapsed.current = false; setCollapsed(true); }}>
       {mode === 'pick' ? (
         <GamePicker panel visible onClose={close} conversationId={conversationId} conversationType={conversationType}
           members={members} currentEmail={currentEmail} t={t} colors={colors} isDark={isDark}
           onCreated={() => {}}
           onOpenGame={(gv) => { if (gv && gv.g) openPlay(gv.g); }} />
       ) : (
-        <GamePlay key={gid} gid={gid} cid={conversationId} docked dockH={dockH}
+        <GamePlay key={gid} gid={gid} cid={conversationId} docked dockH={dockH - GRAB_H}
           onClose={close} onOpenGame={(id) => openPlay(id)}
           onCollapse={() => { kbCollapsed.current = false; setCollapsed(true); }}
           onSendText={onSendText} />
       )}
-    </View>
+    </DockSheet>
   );
 }
 
@@ -227,6 +287,13 @@ const st = StyleSheet.create({
     // integrado: sem cantos/cartão — só o filete de cima separa da conversa
     ...(Platform.OS === 'web' ? { maxWidth: 960, alignSelf: 'center' } : null),
   },
+  sheet: {
+    borderTopWidth: 0, borderTopLeftRadius: 30, borderTopRightRadius: 30,
+    ...(Platform.OS === 'web' ? { boxShadow: '0px -10px 30px rgba(0,0,0,0.12)' } : null),
+  },
+  sheetShadow: Platform.OS === 'web' ? {} : { boxShadow: '0px -10px 30px rgba(0,0,0,0.12)' },
+  grabZone: { alignItems: 'center', paddingTop: 8, paddingBottom: 6 },
+  grab: { width: 38, height: 5, borderRadius: 3 },
   bar: { flexDirection: 'row', alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, paddingLeft: 12, paddingRight: 10, paddingVertical: 6, gap: 8 },
   barMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 2 },
   barIcon: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
