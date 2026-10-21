@@ -12,6 +12,7 @@
 // Tempo real: evento WS `game_update` {conversation_id, game_id, message_id, version, content, game}
 // → store por jogo (subscribeGame) + ouvintes de conversa (onGameUpdate) que atualizam o cartão.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { NOVOS_TYPES, NOVOS_TITLES, NOVOS_SUBS, NOVOS_ERRORS, novosStatusLine } from './gamesNovos'; // [jogos2b]
 
 const CAP_KEY = 'chatyy_games_cap_v1';
 const CAP_TTL = 6 * 3600 * 1000;
@@ -146,6 +147,9 @@ export function ensureGameWs() {
 // ─── textos e cartão ────────────────────────────────────────────────────────
 export const GAME_TYPES = ['damas', 'velha', 'cartas', 'quiz', 'forca'];
 const TITLE_FB = { velha: 'Jogo da Velha', damas: 'Damas', cartas: 'Cartas Coloridas', quiz: 'Quiz', forca: 'Forca' };
+// [jogos2b 2026-10-21] Termo em dupla / Pedra, papel e tesoura / Stop / Desenha e Adivinha (servidor: games_engine_<tipo>.php)
+NOVOS_TYPES.forEach((x) => { if (!GAME_TYPES.includes(x)) GAME_TYPES.push(x); });
+Object.assign(TITLE_FB, NOVOS_TITLES);
 export function tr(t, k, fb, vars) {
   let s = fb;
   try { const v = t ? t(k, vars ? { ...vars, defaultValue: fb } : fb) : fb; if (v && v !== k) s = v; } catch {}
@@ -155,6 +159,7 @@ export function tr(t, k, fb, vars) {
 export function gameTitle(t, type) { return tr(t, 'games.title.' + type, TITLE_FB[type] || 'Jogo'); }
 export function gameSubtitle(t, type) {
   const fb = { damas: 'Regras brasileiras, dama voa', velha: 'Rapidinho, 3 em linha', cartas: 'Descarte por cor ou número, 2 a 6', quiz: 'Todos respondem ao mesmo tempo', forca: 'Adivinhe a palavra em turnos' };
+  Object.assign(fb, NOVOS_SUBS); // [jogos2b]
   return tr(t, 'games.sub.' + type, fb[type] || '');
 }
 export function parseGameContent(c) {
@@ -291,6 +296,7 @@ export function gameStatusLine(t, g, meEmail, now) {
       const i = g.info && g.info.i; const n = g.info && g.info.count;
       return i && n ? tr(t, 'games.status.quizProgress', 'Pergunta {i} de {n}', { i, n }) : tr(t, 'games.status.playing', 'Em andamento');
     }
+    { const nx = novosStatusLine(t, g, meEmail, tr, nameOf); if (nx) return nx; } // [jogos2b] termo/ppt/stop/desenho (sem vez)
     if (!g.turn) return tr(t, 'games.status.playing', 'Em andamento');
     if (_lc(g.turn) === me) return tr(t, 'games.status.yourTurn', 'Sua vez');
     return tr(t, 'games.status.turnOf', 'Vez de {name}', { name: nameOf(g, g.turn, meEmail, t) });
@@ -337,6 +343,7 @@ const ERR_FB = {
   not_pending: 'Este convite já foi respondido', draw_not_allowed: 'Este jogo não tem empate combinado', no_draw_offer: 'Não há proposta de empate',
   draw_wait: 'Jogue um lance antes de propor empate de novo', not_finished: 'A partida ainda não acabou',
 };
+Object.assign(ERR_FB, NOVOS_ERRORS); // [jogos2b]
 export function gameErrorText(t, r) {
   const code = String((r && (r.message || (r.data && r.data.error))) || '');
   if (ERR_FB[code]) return tr(t, 'games.err.' + code, ERR_FB[code]);

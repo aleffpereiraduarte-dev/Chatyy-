@@ -1236,9 +1236,9 @@ function buildGame(m, row, ctx, C, own) {
   const body = [];
   if (isRes) {
     body.push(text(G.resultHeadline(tf, g, me), { fs: 15, fw: 800, c: ink, lh: 20, m: [0, 0, 6, 0] }));
-    if (g.type === 'forca' && g.word) body.push(text(G.tr(tf, 'games.forca.wordWas', 'A palavra era {w}', { w: g.word }), { fs: 12, c: sub, m: [0, 0, 4, 0] }));
+    if ((g.type === 'forca' || g.type === 'termo') && g.word) body.push(text(G.tr(tf, 'games.forca.wordWas', 'A palavra era {w}', { w: g.word }), { fs: 12, c: sub, m: [0, 0, 4, 0] }));
     const rk = Array.isArray(g.ranking) ? g.ranking.slice(0, 3) : [];
-    const showSc = g.type === 'quiz' || g.type === 'forca';
+    const showSc = g.type === 'quiz' || g.type === 'forca' || ['ppt', 'stop', 'desenho'].includes(g.type); // [jogos2b]
     if (rk.length > 1) rk.forEach((r, i) => {
       body.push(hstack([
         text(String(i + 1), { fs: 13, fw: 800, c: i === 0 ? ink : sub, w: 14, ta: 'c' }),

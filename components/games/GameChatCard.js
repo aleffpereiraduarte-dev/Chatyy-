@@ -11,6 +11,7 @@ import {
 import GameInlineBoard, { useInlineView, inlineHasBoard } from './GameInlineBoard';
 import { gamesInlineOn, isInlineType, dockedGameId } from '../../services/gamesInline';
 import { gameAccent } from './fx';
+import { NOVOS_POINTS } from '../../services/gamesNovos'; // [jogos2b]
 
 const PRIMARY = new Set(['accept', 'join', 'start', 'play', 'rematch']);
 
@@ -83,11 +84,11 @@ function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction })
   let body;
   if (isResult) {
     const rk = Array.isArray(g.ranking) ? g.ranking.slice(0, 3) : [];
-    const showScore = g.type === 'quiz' || g.type === 'forca';
+    const showScore = g.type === 'quiz' || g.type === 'forca' || !!NOVOS_POINTS[g.type]; // [jogos2b]
     body = (
       <View style={st.body}>
         <Text style={[st.headline, { color: ink }]}>{resultHeadline(t, g, currentEmail)}</Text>
-        {g.type === 'forca' && g.word ? <Text style={[st.small, { color: sub }]}>{tr(t, 'games.forca.wordWas', 'A palavra era {w}', { w: g.word })}</Text> : null}
+        {(g.type === 'forca' || g.type === 'termo') && g.word ? <Text style={[st.small, { color: sub }]}>{tr(t, 'games.forca.wordWas', 'A palavra era {w}', { w: g.word })}</Text> : null}
         {rk.length > 1 ? rk.map((r, i) => (
           <View key={r.e} style={[st.rankRow, { borderTopColor: line }]}>
             <Text style={[st.rankN, { color: i === 0 ? ink : sub }]}>{i + 1}</Text>

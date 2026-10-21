@@ -45,6 +45,12 @@ import DamasBoard from '../../components/games/boards/DamasBoard';
 import CartasBoard from '../../components/games/boards/CartasBoard';
 import QuizBoard from '../../components/games/boards/QuizBoard';
 import ForcaBoard from '../../components/games/boards/ForcaBoard';
+// [jogos2b 2026-10-21] Termo em dupla / Pedra, papel e tesoura / Stop / Desenha e Adivinha
+import TermoBoard from '../../components/games/boards/TermoBoard';
+import PptBoard from '../../components/games/boards/PptBoard';
+import StopBoard from '../../components/games/boards/StopBoard';
+import DesenhoBoard from '../../components/games/boards/DesenhoBoard';
+import { NOVOS_POINTS } from '../../services/gamesNovos';
 import {
   getGameView, subscribeGame, gameState, gameMove, gameResign, gameRematch, gameAccept, gameDecline, gameStart, gameJoin, gameCancel, gameDraw, gameFeature,
   gameTitle, gameStatusLine, resultHeadline, gameErrorText, gameCardActions, gameActionLabel, nameOf, playerStatusLabel, isMyTurn, tr, gameEndKind, isInviteExpired,
@@ -153,6 +159,7 @@ function Seat({ e, i, view, me, pal, t, rm, compact, offset }) {
   if (view.type === 'velha') badge = <Text style={{ color: pal.ink, fontWeight: '900', fontSize: 12 }}>{i === 0 ? 'X' : 'O'}</Text>;
   if (view.type === 'cartas') badge = <Text style={{ color: pal.sub, fontWeight: '800', fontSize: 11.5 }}>{tr(t, 'games.cartas.nShort', '{n} c.', { n: (S.counts || [])[i] ?? 0 })}</Text>;
   if (view.type === 'quiz' || view.type === 'forca') badge = <Text style={{ color: pal.ink, fontWeight: '800', fontSize: 11.5 }}>{(S.sc || [])[i] || 0}</Text>;
+  if (NOVOS_POINTS[view.type]) badge = <Text style={{ color: pal.ink, fontWeight: '800', fontSize: 11.5 }}>{(S.sc || [])[i] || 0}</Text>; // [jogos2b]
   // prazo da vez (só grupo de Cartas/Forca): ts (servidor) + afk_ms, convertido p/ o relógio do app
   const endsAt = turn && view.afk_ms && view.ts ? Number(view.ts) + Number(view.afk_ms) - (offset || 0) : null;
   return (
@@ -743,6 +750,10 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
     else if (view.type === 'cartas') board = <CartasBoard {...P} />;
     else if (view.type === 'quiz') board = view.status === 'active' ? <QuizBoard {...P} /> : null;
     else if (view.type === 'forca') board = <ForcaBoard {...P} />;
+    else if (view.type === 'termo') board = <TermoBoard {...P} />; // [jogos2b]
+    else if (view.type === 'ppt') board = <PptBoard {...P} />;
+    else if (view.type === 'stop') board = <StopBoard {...P} />;
+    else if (view.type === 'desenho') board = <DesenhoBoard {...P} />;
   }
   const sendTyped = () => { const x = chatText; setChatText(''); sendQuick(x); };
   // Cartas: os adversários já sentam em volta da mesa dentro do tabuleiro (avatares + leque) → sem faixa duplicada

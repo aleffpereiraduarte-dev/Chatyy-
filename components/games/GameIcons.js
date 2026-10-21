@@ -172,6 +172,45 @@ export function IconHourglass(p) {
   );
 }
 
+// [jogos2b 2026-10-21] Termo em dupla, Pedra-papel-tesoura, Stop, Desenha e Adivinha (só Path/Rect: viram nós nativos)
+export function IconGameTermo(p) {
+  return (
+    <S {...p}>
+      <Rect x="2.5" y="8" width="5.6" height="5.6" rx="1.4" />
+      <Rect x="9.2" y="8" width="5.6" height="5.6" rx="1.4" />
+      <Rect x="15.9" y="8" width="5.6" height="5.6" rx="1.4" />
+      <Path d="M3.5 17.5h17" />
+    </S>
+  );
+}
+export function IconGamePpt(p) {
+  return (
+    <S {...p}>
+      <Path d="M5 11.5c0-2.5 1.7-4.2 3.8-4.2h3c2.5 0 4.2 1.7 4.2 4.2v1.2c0 2.6-2.1 4.6-4.6 4.6H9.6C7 17.3 5 15.3 5 12.7z" />
+      <Path d="M7.4 9.4c.6-.6 1.5-.8 2.1-.6M10.4 8.6c.6-.4 1.5-.4 2.1 0" />
+      <Path d="M17.5 4.5l2.5 2.5M20 4.5L17.5 7" />
+    </S>
+  );
+}
+export function IconGameStop(p) {
+  return (
+    <S {...p}>
+      <Path d="M8.2 3h7.6L21 8.2v7.6L15.8 21H8.2L3 15.8V8.2z" />
+      <Path d="M9.5 10.2c0-1 .9-1.6 2.3-1.6 1.2 0 2 .5 2.3 1.2M14.5 13.8c0 1-.9 1.6-2.4 1.6-1.3 0-2.2-.6-2.5-1.3M9.8 11.4c.6.5 1.4.7 2.3.9 1.2.3 2.2.6 2.4 1.5" />
+    </S>
+  );
+}
+export function IconGameDesenho(p) {
+  return (
+    <S {...p}>
+      <Path d="M14.5 4.5l5 5L9 20H4v-5z" />
+      <Path d="M12.5 6.5l5 5" />
+      <Path d="M15 20h5" />
+    </S>
+  );
+}
+const NOVOS_ICONS = { termo: IconGameTermo, ppt: IconGamePpt, stop: IconGameStop, desenho: IconGameDesenho };
+
 export function GameTypeIcon({ type, ...p }) {
   switch (type) {
     case 'damas': return <IconGameDamas {...p} />;
@@ -179,9 +218,11 @@ export function GameTypeIcon({ type, ...p }) {
     case 'cartas': return <IconGameCartas {...p} />;
     case 'quiz': return <IconGameQuiz {...p} />;
     case 'forca': return <IconGameForca {...p} />;
+    case 'termo': case 'ppt': case 'stop': case 'desenho': { const N = NOVOS_ICONS[type]; return <N {...p} />; } // [jogos2b]
     default: return <IconGamepad {...p} />;
   }
 }
 export function gameTypeIconComp(type) {
+  if (NOVOS_ICONS[type]) return NOVOS_ICONS[type]; // [jogos2b]
   return { damas: IconGameDamas, velha: IconGameVelha, cartas: IconGameCartas, quiz: IconGameQuiz, forca: IconGameForca }[type] || IconGamepad;
 }

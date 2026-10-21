@@ -6,6 +6,7 @@ import GameSheet from './GameSheet';
 import { hTap } from './fx';
 import { PressScale } from './motion';
 import { gameTitle, tr } from '../../services/games';
+import { NOVOS_RULES } from '../../services/gamesNovos'; // [jogos2b]
 
 export const RULES_FB = {
   damas: [
@@ -43,6 +44,8 @@ export const RULES_FB = {
     'Em grupo, quem demora mais de 3 minutos perde a vez.',
   ],
 };
+
+Object.assign(RULES_FB, NOVOS_RULES); // [jogos2b 2026-10-21] termo/ppt/stop/desenho
 
 export function rulesFor(t, type) {
   const fb = RULES_FB[type] || [];
