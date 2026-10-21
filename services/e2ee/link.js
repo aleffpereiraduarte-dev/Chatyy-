@@ -363,8 +363,15 @@ async function _webCheckRevoked(reason) {
   if (!gone) return;
   _log('web_revoked', { reason });
   try { await E.endSession({ wipe: true }); } catch (_) {}
-  // O próprio api.js trata o 401 (sai da conta e volta ao login) quando o bearer já foi revogado.
-  try { await _A().checkAuth(); } catch (_) {}
+  // O servidor já revogou o bearer, mas a web também tem o cookie de sessão (check_auth seguiria 200 e o
+  // AuthContext recusaria sair): encerra a sessão no servidor e avisa o app → volta ao login.
+  try { await _A().logout(); } catch (_) {}
+  try {
+    const g = _g();
+    g.__chatyy_authFailure = Date.now();
+    g.__chatyy_authFailureReason = 'e2ee5_device_revoked';
+    if (g.dispatchEvent) g.dispatchEvent(new Event('chatyy:authFailure'));
+  } catch (_) {}
 }
 
 /** Chamado pelo e2ee5.ensureSession() quando a sessão abre. */
@@ -377,6 +384,13 @@ export function onSession(sess) {
       ws.on('e2ee5_devices', () => { setTimeout(() => { _webCheckRevoked('ws').catch(() => {}); }, 300); });
       try { AppState.addEventListener('change', (st) => { if (st === 'active') _webCheckRevoked('fg').catch(() => {}); }); } catch (_) {}
     }
+    // Rede/WS perdeu o aviso: confere de tempos em tempos (só web vinculada, aba visível).
+    try {
+      setInterval(() => {
+        try { if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return; } catch (_) {}
+        if (_E().sessionSync()) _webCheckRevoked('poll').catch(() => {});
+      }, 120000);
+    } catch (_) {}
   }
 }
 
