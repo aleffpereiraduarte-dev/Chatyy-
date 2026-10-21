@@ -167,6 +167,35 @@ export async function openNativeCamera(t, opts = {}) {
 // [2026-10-21 attach-instant-tg] 1 beacon por abertura da folha armada:
 // "attach_open tgwin js=<toque JS→onArmedShown> imm=0|1 wait=<espera do
 // teclado> show=… anim=… fetch=… assets=… n=<balde da biblioteca>" (ms).
+// [2026-10-21 attach-recents-cache] REGRESSÃO 759 (attach api 12): a folha entra
+// no toque mas a grade fica só com o tile da câmera por 1,1-1,6 s na 1ª/2ª
+// abertura (beacon attach_open fetch=1601/688 → 95 quente): PhotoKit frio no
+// processo. api 12 (sem cache nativo): aquece o PhotoKit pelo expo-media-library
+// (mesma ordenação/filtro, first 1, fora do main, sem prompt) quando a conversa
+// arma a folha. api >= 13 aquece no nativo (armSheet). Kill switch OTA:
+// globalThis.__chatyy_attach_gallery_prewarm = false.
+let _galleryWarmAt = 0;
+function prewarmGalleryJS() {
+  try { if (globalThis.__chatyy_attach_gallery_prewarm === false) return; } catch {}
+  const now = Date.now();
+  if (now - _galleryWarmAt < 60000) return;
+  _galleryWarmAt = now;
+  (async () => {
+    try {
+      // eslint-disable-next-line global-require
+      const ML = require('expo-media-library');
+      if (!ML || typeof ML.getAssetsAsync !== 'function' || typeof ML.getPermissionsAsync !== 'function') return;
+      const p = await ML.getPermissionsAsync();
+      if (!p || (!p.granted && p.accessPrivileges !== 'limited')) { _galleryWarmAt = 0; return; }
+      await ML.getAssetsAsync({
+        first: 1,
+        sortBy: [[(ML.SortBy && ML.SortBy.creationTime) || 'creationTime', false]],
+        mediaType: [(ML.MediaType && ML.MediaType.photo) || 'photo', (ML.MediaType && ML.MediaType.video) || 'video'],
+      });
+    } catch { _galleryWarmAt = 0; }
+  })();
+}
+
 function reportArmMetric(mm, timing) {
   if (!mm) return;
   try { if (globalThis.__chatyy_attach_metric === false) return; } catch {}
@@ -179,7 +208,7 @@ function reportArmMetric(mm, timing) {
     parts.push('js=-');
   }
   const tm = timing && typeof timing === 'object' ? timing : null;
-  if (tm) ['show', 'anim', 'fetch', 'assets', 'n'].forEach((k) => { if (tm[k] != null) parts.push(`${k}=${Number(tm[k])}`); });
+  if (tm) ['show', 'anim', 'fetch', 'assets', 'n', 'cache'].forEach((k) => { if (tm[k] != null) parts.push(`${k}=${Number(tm[k])}`); });
   let api = 0;
   try { api = Number(getNA().apiVersion()) || 0; } catch {}
   parts.push(`api=${api}`);
@@ -419,8 +448,14 @@ export default function NativeAttachSheet({
       try { if (globalThis.__chatyy_attach_tgwin_wait === true) tgExtra.tgWaitKeyboard = true; } catch {}
       try { if (globalThis.__chatyy_attach_sync_fetch === true) tgExtra.syncFetch = true; } catch {}
     }
-    try { m.armSheet(id, { ...buildOptions(null), ...tgExtra }); } catch {}
-    return () => { try { m.armSheet(id, null); } catch {} };
+    let galleryOff = false;
+    try { galleryOff = globalThis.__chatyy_attach_gallery_prewarm === false; } catch {}
+    try { m.armSheet(id, { ...buildOptions(null), ...tgExtra, ...(galleryOff ? { galleryPrewarm: false } : null) }); } catch {}
+    // [2026-10-21 attach-recents-cache] api 12 = sem cache nativo → aquece pelo JS
+    // (depois do 1º render da conversa).
+    let warmT = null;
+    try { if (m.apiVersion() === 12) warmT = setTimeout(prewarmGalleryJS, 600); } catch {}
+    return () => { if (warmT) clearTimeout(warmT); try { m.armSheet(id, null); } catch {} };
   }, [armKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const m = getNA();

@@ -74,8 +74,12 @@ public class ChatyyAttachModule: Module {
     //     {show, anim, fetch, assets, n} (ms desde o toque); grade da galeria
     //     buscada fora do main (miniaturas entram depois). Opções:
     //     tgWaitKeyboard=true = espera antiga; syncFetch=true = fetch no main.
+    // 13 = [2026-10-21 attach-recents-cache] armSheet pré-aquece "Recentes"
+    //     (PHFetchResult fora do main, mantido por change observer): a folha
+    //     abre com a grade cheia no 1º quadro (759: 1,1-1,6 s só c/ a câmera);
+    //     câmera ao vivo espera o fetch frio (máx. 0,5 s). timing.cache=1|0.
     Function("apiVersion") { () -> Int in
-      return 12
+      return 13
     }
 
     OnCreate {
@@ -97,6 +101,7 @@ public class ChatyyAttachModule: Module {
       if let o = options, !o.isEmpty {
         self.armed = o
         self.armedId = id
+        if (o["galleryPrewarm"] as? Bool) != false { AttachRecentsCache.shared.prewarm() } // [2026-10-21 attach-recents-cache]
       } else if self.armedId == id {
         self.armed = nil
         self.armedId = ""

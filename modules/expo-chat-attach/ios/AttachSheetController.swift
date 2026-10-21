@@ -46,6 +46,7 @@ final class AttachSheetController: UIViewController,
   private var hd: Bool
   private var asFile = false
   private var cameraLive = false
+  private var cameraPending = false // [2026-10-21 attach-recents-cache]
 
   // geometria
   private var top: CGFloat = 0
@@ -183,7 +184,19 @@ final class AttachSheetController: UIViewController,
     if config.tgWindow { // [2026-10-20 attach-tgwin]
       animateInTg()
       cascadeActions()
-      startCameraIfPossible()
+      // [2026-10-21 attach-recents-cache] grade ainda sem fotos (cache frio):
+      // o startRunning da câmera espera o fetch (disputavam CPU/IO no 759) —
+      // no máx. 0,5 s.
+      if fetchResult == nil && permView.isHidden && !config.syncFetch {
+        cameraPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+          guard let self = self, self.cameraPending, !self.finished else { return }
+          self.cameraPending = false
+          self.startCameraIfPossible()
+        }
+      } else {
+        startCameraIfPossible()
+      }
       return
     }
     // [2026-10-20 attach-armed] mola curta (Telegram ~0,3 s) — antes 0,52 s.
@@ -763,10 +776,7 @@ final class AttachSheetController: UIViewController,
   }
 
   private func loadAssets() {
-    let opts = PHFetchOptions()
-    opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-    opts.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d", PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
-    opts.includeAssetSourceTypes = [.typeUserLibrary, .typeCloudShared, .typeiTunesSynced]
+    let opts = AttachSheetController.recentsOptions()
     fetchGen &+= 1
     if config.syncFetch {
       let t0 = CACurrentMediaTime()
@@ -782,16 +792,35 @@ final class AttachSheetController: UIViewController,
     // refresh de permissão/mudança no meio descarta o resultado velho.
     let gen = fetchGen
     let t0 = CACurrentMediaTime()
-    AttachSheetController.fetchQueue.async { [weak self] in
-      let r = PHAsset.fetchAssets(with: opts)
-      _ = r.count
-      DispatchQueue.main.async {
-        guard let self = self, gen == self.fetchGen, !self.finished else { return }
-        self.fetchResult = r
-        self.collectionView.reloadData()
-        self.noteFetched(t0)
-      }
+    // [2026-10-21 attach-recents-cache] REGRESSÃO do 759 (founder "voltou a ter
+    // delay", print com só o tile da câmera): a folha entrava no toque, mas o
+    // fetch em fila levava 1,1-1,6 s na 1ª/2ª abertura do processo (PhotoKit
+    // frio + startRunning da câmera disputando; beacon attach_open fetch=1601/
+    // 688/95/97 n=3). AGORA: Recentes vem do cache pré-aquecido no armSheet
+    // (mantido vivo por PHPhotoLibraryChangeObserver) → grade cheia no 1º quadro.
+    if let cached = AttachRecentsCache.shared.cached() {
+      fetchResult = cached
+      collectionView.reloadData()
+      openTiming["cache"] = 1
+      noteFetched(t0)
+      return
     }
+    openTiming["cache"] = 0
+    AttachRecentsCache.shared.load { [weak self] r in
+      guard let self = self, gen == self.fetchGen, !self.finished else { return }
+      self.fetchResult = r
+      self.collectionView.reloadData()
+      self.noteFetched(t0)
+    }
+  }
+
+  /// Opções de "Recentes" (mesmas do cache).
+  static func recentsOptions() -> PHFetchOptions {
+    let opts = PHFetchOptions()
+    opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+    opts.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d", PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
+    opts.includeAssetSourceTypes = [.typeUserLibrary, .typeCloudShared, .typeiTunesSynced]
+    return opts
   }
 
   private func noteFetched(_ t0: CFTimeInterval) {
@@ -800,6 +829,7 @@ final class AttachSheetController: UIViewController,
     openTiming["assets"] = sinceTap()
     let n = fetchResult?.count ?? 0
     openTiming["n"] = n < 100 ? 0 : (n < 1000 ? 1 : (n < 10000 ? 2 : 3))
+    if cameraPending { cameraPending = false; startCameraIfPossible() }
   }
 
   func photoLibraryDidChange(_ changeInstance: PHChange) {
@@ -1425,5 +1455,73 @@ final class CAAlbumList: NSObject, UITableViewDataSource, UITableViewDelegate {
     let row = rows[indexPath.row]
     caHaptic("select")
     onPick?(row.coll, row.title)
+  }
+}
+
+// MARK: - Cache de Recentes (attach-recents-cache)
+
+/// [2026-10-21 attach-recents-cache] PHFetchResult de "Recentes" pré-aquecido
+/// fora do main quando o JS arma a folha (conversa aberta) e mantido em dia
+/// por PHPhotoLibraryChangeObserver: abrir a folha não paga PhotoKit frio
+/// (1,1-1,6 s no 759). Vale só p/ o mesmo status de permissão em que foi
+/// buscado (negado/limitado→total refaz).
+final class AttachRecentsCache: NSObject, PHPhotoLibraryChangeObserver {
+  static let shared = AttachRecentsCache()
+  private static let queue = DispatchQueue(label: "br.com.chatyy.attach.recents", qos: .userInitiated)
+  private let lock = NSLock()
+  private var result: PHFetchResult<PHAsset>?
+  private var status: PHAuthorizationStatus = .notDetermined
+  private var loading = false
+  private var waiters: [(PHFetchResult<PHAsset>) -> Void] = []
+  private var registered = false
+
+  private static func usable(_ st: PHAuthorizationStatus) -> Bool { return st == .authorized || st == .limited }
+
+  /// Resultado pronto (main). nil = frio ou permissão mudou.
+  func cached() -> PHFetchResult<PHAsset>? {
+    let st = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    lock.lock(); defer { lock.unlock() }
+    guard AttachRecentsCache.usable(st), st == status else { return nil }
+    return result
+  }
+
+  /// Aquece sem prompt de permissão (só autorizado/limitado).
+  func prewarm() {
+    guard AttachRecentsCache.usable(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else { return }
+    if cached() != nil { return }
+    load(nil)
+  }
+
+  /// Busca fora do main; `done` no main com o resultado.
+  func load(_ done: ((PHFetchResult<PHAsset>) -> Void)?) {
+    lock.lock()
+    if let d = done { waiters.append(d) }
+    if loading { lock.unlock(); return }
+    loading = true
+    lock.unlock()
+    AttachRecentsCache.queue.async {
+      let st = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+      let r = PHAsset.fetchAssets(with: AttachSheetController.recentsOptions())
+      _ = r.count
+      if r.count > 0 { _ = r.object(at: 0) }
+      self.lock.lock()
+      self.result = r
+      self.status = st
+      self.loading = false
+      let ws = self.waiters
+      self.waiters = []
+      let needReg = !self.registered && AttachRecentsCache.usable(st)
+      if needReg { self.registered = true }
+      self.lock.unlock()
+      if needReg { PHPhotoLibrary.shared().register(self) }
+      if !ws.isEmpty { DispatchQueue.main.async { ws.forEach { $0(r) } } }
+    }
+  }
+
+  func photoLibraryDidChange(_ changeInstance: PHChange) {
+    lock.lock(); defer { lock.unlock() }
+    if let r = result, let det = changeInstance.changeDetails(for: r) {
+      result = det.fetchResultAfterChanges
+    }
   }
 }
