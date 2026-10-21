@@ -358,7 +358,7 @@ export default function CommunityScreen() {
   }
 
   const composerEl = isAdmin ? (
-            <View style={[sty.composer, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}>
+            <View style={[sty.composer, { backgroundColor: colors.surface }]}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                   <Text style={[sty.composerLabel, { color: colors.textSecondary }]}>
                     {t('community.postAnnouncement') || 'Postar anúncio'}
@@ -378,7 +378,7 @@ export default function CommunityScreen() {
                   </TouchableOpacity>
                 </View>
                 {announcePreview ? (
-                  <View style={[sty.composerInput, { borderColor: colors.border, backgroundColor: isDark ? '#101011' : '#fff' }]}>
+                  <View style={[sty.composerInput, { borderColor: colors.border, backgroundColor: colors.background }]}>
                     {renderMdPreview(announceText)}
                   </View>
                 ) : (
@@ -412,7 +412,7 @@ export default function CommunityScreen() {
                 scrolling 200+ rows in big communities just to find one mod. */}
             <View style={{
               flexDirection: 'row', alignItems: 'center',
-              backgroundColor: isDark ? '#1c1c1e' : '#f0f0f3',
+              backgroundColor: colors.surfaceVariant || colors.surface,
               borderRadius: BorderRadius.md,
               paddingHorizontal: 10, paddingVertical: 6,
               marginBottom: 6,
@@ -591,7 +591,7 @@ export default function CommunityScreen() {
             {community.announcement_conv_id && (
               <TouchableOpacity
                 onPress={() => require('../../services/openConversation').openConversation(`/chat-conversation?id=${community.announcement_conv_id}&name=${encodeURIComponent(community.name + ' — Avisos')}`)}
-                style={[sty.row, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}
+                style={[sty.row, { backgroundColor: colors.surface }]}
               >
                 <Text style={[sty.rowTitle, { color: colors.text }]}>
                   {t('community.openAnnouncements') || 'Abrir canal de avisos'}
@@ -611,7 +611,7 @@ export default function CommunityScreen() {
               <TouchableOpacity
                 key={g.conversation_id}
                 onPress={() => require('../../services/openConversation').openConversation(`/chat-conversation?id=${g.conversation_id}&type=group&name=${encodeURIComponent(g.name || '')}`)}
-                style={[sty.row, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}
+                style={[sty.row, { backgroundColor: colors.surface }]}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   {g.is_announcement && (
@@ -643,7 +643,7 @@ export default function CommunityScreen() {
               <AnimatedMemberRow key={m.email} index={idx}>
                 <Pressable
                   onLongPress={() => isAdmin && m.email !== myEmail && onChangeRole(m)}
-                  style={[sty.row, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa', flexDirection: 'row', alignItems: 'center' }]}
+                  style={[sty.row, { backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center' }]}
                 >
                   <View style={{ flex: 1 }}>
                     <Text style={[sty.rowTitle, { color: colors.text }]}>{m.display_name || m.email}</Text>

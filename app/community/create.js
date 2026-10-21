@@ -244,13 +244,13 @@ export default function CommunityCreateScreen() {
           onPress={onNext}
           disabled={!canAdvance() || submitting}
           style={[sty.primaryBtn, (!canAdvance() && !submitting)
-            ? { backgroundColor: isDark ? '#1c1c1e' : '#E5E5EA' }
+            ? { backgroundColor: colors.surfaceVariant || colors.surface }
             : { backgroundColor: colors.primary, opacity: submitting ? 0.7 : 1 }]}
         >
           {submitting ? (
             <ActivityIndicator color={colors.onPrimary || '#fff'} />
           ) : (
-            <Text style={[sty.primaryBtnText, { color: canAdvance() ? colors.onPrimary : (isDark ? '#636366' : '#8E8E93') }]}>
+            <Text style={[sty.primaryBtnText, { color: canAdvance() ? colors.onPrimary : colors.textSecondary }]}>
               {step < STEPS.length - 1
                 ? (t('community.next') || 'Continuar')
                 : (t('community.create') || 'Criar comunidade')}
