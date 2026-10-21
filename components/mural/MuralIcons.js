@@ -2,6 +2,7 @@
 // redondas), SVG puro — sem emoji. `fill` pinta o miolo (coração curtido etc.).
 import React from 'react';
 import Svg, { Path, Circle, Rect } from 'react-native-svg';
+import { v2Stroke as _v2Stroke } from '../../constants/theme';
 
 const P = {
   back: <Path d="M15 5l-7 7 7 7" />,
@@ -29,7 +30,8 @@ const P = {
 
 export const AUD_ICON = { public: 'globe', everyone: 'globe', contacts: 'users', private: 'lock' };
 
-export default function MIcon({ name, size = 24, color = '#000', fill = 'none', strokeWidth = 1.8, style }) {
+export default function MIcon({ name, size = 24, color = '#000', fill = 'none', strokeWidth: _sw, style }) {
+  const strokeWidth = _v2Stroke(_sw, 1.8); // [2026-10-20 grafite] traço 1,6
   const body = P[name];
   if (!body) return null;
   return (

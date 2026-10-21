@@ -27,7 +27,7 @@ import { IconChevronRight, IconCheck, IconArrowLeft } from '../Icons';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../nativeHeader';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet'; // [2026-10-09 native-sheets]
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragFade } from '../ui/useDragToDismiss';
-import { Typography, BorderRadius, Elevation, hairlineColor } from '../../constants/theme'; // [2026-10-18 elegance]
+import { Typography, BorderRadius, Elevation, hairlineColor, THEME_V2, Grafite, cardShadow } from '../../constants/theme'; // [2026-10-18 elegance]
 // [2026-10-18 settings-sub-native] modo "coleta": dentro de uma sub-página
 // nativa (SettingsCategoryScreen + ChatyySettingsList api ≥ 2) grupo/linha
 // não desenham — viram descritores da lista nativa (components/settings/nativeCollect.js).
@@ -37,6 +37,7 @@ import { SettingsCollectContext, CollectGroup, CollectRow } from './nativeCollec
 // the app's true-black page [2026-10-08 dark-black] and lifts the cards one step so groups read as groups.
 export function useGroupedColors() {
   const { colors = {}, isDark } = useTheme() || {};
+  if (THEME_V2) return _v2Grouped(colors, !!isDark);
   return {
     isDark: !!isDark,
     // [2026-10-15 settings-2026] claro mais limpo (cinza quase branco) e escuro
@@ -66,6 +67,56 @@ export function useGroupedColors() {
   };
 }
 
+// [2026-10-20 grafite] tema v2: fundo agrupado = colors.background (#F2F2EF /
+// #0E0E10, igual ao fundo da rota em app/_layout → sem piscar no push),
+// cartões = colors.surface com sombra macia, ícones em ladrilho grafite.
+const _v2gCache = new Map();
+function _v2Grouped(colors, isDark) {
+  const G = isDark ? Grafite.dark : Grafite.light;
+  const key = `${isDark ? 1 : 0}|${colors.background}|${colors.surface}|${colors.text}|${colors.error}|${colors.highContrast ? 1 : 0}`;
+  let v = _v2gCache.get(key);
+  if (v) return v;
+  v = {
+    isDark,
+    pageBg: colors.background || G.bg,
+    cardBg: colors.surface || G.surface,
+    cardShadow: cardShadow(isDark),
+    separator: hairlineColor(isDark),
+    header: isDark ? '#7F7F85' : '#8F8F94',
+    text: colors.text || G.text,
+    secondary: colors.textSecondary || G.muted,
+    tertiary: isDark ? '#5A5A60' : '#C4C4C0',
+    ink: G.ink,
+    onInk: G.onInk,
+    destructive: colors.error || '#dc2626',
+    tileBg: G.tile[1],
+    tileFg: G.tileText,
+    fill: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(24,24,27,0.06)',
+    chipBg: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(24,24,27,0.055)',
+    chipFg: isDark ? '#ECECE8' : '#1A1A1C',
+    ring: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(24,24,27,0.10)',
+    highlightBg: isDark ? 'rgba(255,255,255,0.20)' : 'rgba(24,24,27,0.10)',
+    v2: true,
+  };
+  if (_v2gCache.size > 16) _v2gCache.clear();
+  _v2gCache.set(key, v);
+  return v;
+}
+const _v2TileCache = {};
+/** Ladrilho grafite do tema v2: raio 10, gradiente 160° + reflexo de 1 px (objeto estável). */
+export function grafiteTileStyle(isDark, size) {
+  const k = `${isDark ? 'd' : 'l'}${size || 0}`;
+  if (_v2TileCache[k]) return _v2TileCache[k];
+  const g = isDark ? Grafite.dark : Grafite.light;
+  const grad = `linear-gradient(160deg, ${g.tile[0]} 0%, ${g.tile[1]} 100%)`;
+  const sh = 'inset 0px 1px 0px rgba(255,255,255,0.18), 0px 2px 6px rgba(0,0,0,0.12)';
+  const r = size ? Math.min(Grafite.radius.tile, Math.round(size * 0.31)) : Grafite.radius.tile;
+  _v2TileCache[k] = Platform.OS === 'web'
+    ? { backgroundColor: g.tile[1], backgroundImage: grad, boxShadow: sh, borderRadius: r }
+    : { backgroundColor: g.tile[1], experimental_backgroundImage: grad, boxShadow: sh, borderRadius: r };
+  return _v2TileCache[k];
+}
+
 // Ícone da linha num chip suave (squircle) monocromático — [2026-10-15
 // settings-2026] o quadrado preto sólido pesava demais; `solid` mantém o
 // visual antigo para quem precisar de destaque.
@@ -81,12 +132,13 @@ export function SettingsIconTile({ Icon, size = 32, muted = false, solid = false
   try { graphite = !solid && !muted && globalThis.__chatyy_tg_list !== false; } catch {}
   const bg = solid ? g.tileBg : graphite ? (g.isDark ? '#3A3A3C' : '#2C2C2E') : (muted ? g.fill : g.chipBg);
   const fg = solid ? g.tileFg : graphite ? '#FFFFFF' : g.chipFg;
+  const v2Tile = g.v2 && (graphite || solid) ? grafiteTileStyle(g.isDark, size) : null;
   return (
-    <View style={{
+    <View style={[{
       width: size, height: size, borderRadius: Math.round(size * (graphite ? 0.24 : 0.31)),
       backgroundColor: bg,
       alignItems: 'center', justifyContent: 'center',
-    }}>
+    }, v2Tile]}>
       <Icon size={Math.round(size * 0.56)} color={fg} />
     </View>
   );
@@ -158,7 +210,7 @@ function SettingsGroupJS({ header, footer, children, inset, style, cardStyle, te
         </Text>
       )}
       {items.length > 0 && (
-        <View style={[st.card, { backgroundColor: g.cardBg }, cardStyle]}>
+        <View style={[st.card, { backgroundColor: g.cardBg }, g.cardShadow, cardStyle]}>
           {items.map((child, i) => (
             <React.Fragment key={child.key ?? i}>
               {i > 0 && <View style={[st.sep, { marginLeft: inset ?? _autoInset(items[i - 1]), backgroundColor: g.separator }]} />}

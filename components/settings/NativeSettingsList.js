@@ -25,7 +25,7 @@ import { useNativeHeaderTouchGuard } from '../native/nativeHeaderTouchGuard'; //
 import { StyleSheet, View, processColor } from 'react-native';
 import { getNativeSettingsListView, settingsListApiVersion } from '../../modules/expo-chat-conversation-list';
 import { createPatcher } from '../chatlist/nativeAdapter';
-import { Spacing } from '../../constants/theme';
+import { Spacing, THEME_V2, Grafite } from '../../constants/theme';
 import { useTheme } from '../../context/ThemeContext'; // [2026-10-19 accent-real]
 
 export function isNativeSettingsListAvailable() {
@@ -91,10 +91,12 @@ function Inner(props) {
       const n = processColor(v);
       if (typeof n === 'number') out[k] = n;
     }
-    out.press = processColor(isDark ? '#2C2C2E' : '#E5E5EA'); // [2026-10-17 settings-wa] destaque do toque um degrau acima do cartão #1C1C1E
+    out.press = processColor(THEME_V2 ? (isDark ? '#2A2A2E' : '#EAEAE6') : (isDark ? '#2C2C2E' : '#E5E5EA')); // [2026-10-17 settings-wa] destaque do toque um degrau acima do cartão #1C1C1E
     out.ripple = processColor(isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
     // [2026-10-19 accent-real] destaque (switches nativos); binário antigo ignora a chave.
-    if (_accentHex) { const a = processColor(_accentHex); if (typeof a === 'number') out.accent = a; }
+    // [2026-10-20 grafite] sem destaque: switch ligado = ink do tema v2.
+    const _ac = _accentHex || (THEME_V2 ? (isDark ? Grafite.dark.ink : Grafite.light.ink) : null);
+    if (_ac) { const a = processColor(_ac); if (typeof a === 'number') out.accent = a; }
     return out;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paletteKey, _accentHex]);

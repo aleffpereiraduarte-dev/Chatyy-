@@ -2861,7 +2861,7 @@ export default function OneScreen() {
         onClose={() => setFbSheet(null)}
         animationType="slide"
         overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
-        panelStyle={[fbStyles.panel, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', paddingBottom: Math.max(16, insets.bottom + 8) }]}
+        panelStyle={[fbStyles.panel, { backgroundColor: colors.surface, paddingBottom: Math.max(16, insets.bottom + 8) }]}
       >
         <Text style={[fbStyles.title, { color: isDark ? '#F5F5F7' : '#111111' }]}>{t('one.fbTitle')}</Text>
         <Text style={[fbStyles.hint, { color: isDark ? 'rgba(245,245,247,0.6)' : 'rgba(17,17,17,0.55)' }]}>{t('one.fbHint')}</Text>

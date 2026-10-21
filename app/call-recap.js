@@ -131,7 +131,7 @@ export default function CallRecapScreen() {
               </View>
             )}
 
-            <View style={[styles.card, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7' }]}>
+            <View style={[styles.card, { backgroundColor: colors.surfaceVariant }]}>
               <Text style={[styles.cardTitle, { color: colors.text }]}>
                 {t('callRecap.summary') || 'Resumo'}
               </Text>
@@ -141,7 +141,7 @@ export default function CallRecapScreen() {
             </View>
 
             {!!recap.transcript && (
-              <View style={[styles.card, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7' }]}>
+              <View style={[styles.card, { backgroundColor: colors.surfaceVariant }]}>
                 <TouchableOpacity
                   onPress={() => setShowFullTranscript(!showFullTranscript)}
                   style={styles.transcriptHeader}

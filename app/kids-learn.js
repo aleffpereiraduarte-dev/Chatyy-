@@ -173,7 +173,7 @@ function KidsLearnScreenInner() {
           <BounceIn key={i} delay={i * 60}>
             <TouchableOpacity
               style={[s.videoCard, {
-                backgroundColor: isDark ? '#161618' : '#fff',
+                backgroundColor: colors.surface,
                 borderColor: isDark ? '#161618' : '#e5e7eb',
                 ...(Platform.OS === 'web' ? { boxShadow: '0 4px 16px rgba(0,0,0,0.06)' } : {}),
               }]}
@@ -198,7 +198,7 @@ function KidsLearnScreenInner() {
 
         {/* AI Tutor - large card with playful design */}
         <View style={[s.tutorCard, {
-          backgroundColor: isDark ? '#161618' : '#fff',
+          backgroundColor: colors.surface,
           borderColor: '#11111140',
           ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(17, 17, 17,0.1)' } : {}),
         }]}>

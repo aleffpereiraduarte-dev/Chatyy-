@@ -33,7 +33,8 @@ class ChatyyConversationListModule : Module() {
     // 10 = [2026-10-19 tg-list] density "telegram" (linha 78 / avatar 58 /
     //      prévia 2 linhas, ✓✓ junto da hora, remetente do grupo em linha
     //      própria, alfinete no lugar do contador) + prop `accent` ("#RRGGBB").
-    Function("apiVersion") { 10 }
+    // 11 = [2026-10-20 grafite] prop `palette` (cores do tema Grafite suave).
+    Function("apiVersion") { 11 }
 
     View(ChatyyConversationListView::class) {
       Events(
@@ -54,6 +55,7 @@ class ChatyyConversationListModule : Module() {
 
       Prop("rowsPatch") { view: ChatyyConversationListView, v: Map<String, Any?>? -> view.setRowsPatch(v) }
       Prop("dark") { view: ChatyyConversationListView, v: Boolean? -> view.setDark(v ?: false) }
+      Prop("palette") { view: ChatyyConversationListView, v: Map<String, Any?>? -> view.setPaletteProp(v) }
       Prop("selectionMode") { view: ChatyyConversationListView, v: Boolean? -> view.setSelectionModeProp(v ?: false) }
       Prop("labels") { view: ChatyyConversationListView, v: Map<String, Any?>? -> view.setLabelsProp(v) }
       Prop("density") { view: ChatyyConversationListView, v: String? -> view.setDensityProp(v) }

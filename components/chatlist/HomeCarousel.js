@@ -21,6 +21,7 @@ import BiaOrb from '../bia/BiaOrb';
 import { useLanguageOptional } from '../../context/LanguageContext';
 import { useBiaDaily, biaGreetingKey } from '../../services/biaDaily';
 import { useReducedMotion, isReduceMotionEnabled } from '../reducedMotion';
+import { THEME_V2, Grafite } from '../../constants/theme'; // [2026-10-20 grafite]
 
 export function homeCarouselOn() {
   try { return globalThis.__chatyy_home_carousel !== false; } catch { return true; }
@@ -87,8 +88,8 @@ export const ThoughtBubble = memo(function ThoughtBubble({ text, isDark, full = 
     a.start();
     return () => { try { a.stop(); } catch {} };
   }, [text, rm, op, ty]);
-  const bg = isDark ? '#2C2C2E' : '#FFFFFF';
-  const ink = isDark ? '#F5F5F7' : '#111111';
+  const bg = THEME_V2 ? (isDark ? Grafite.dark.surface2 : Grafite.light.surface) : (isDark ? '#2C2C2E' : '#FFFFFF');
+  const ink = THEME_V2 ? (isDark ? Grafite.dark.text : Grafite.light.text) : (isDark ? '#F5F5F7' : '#111111');
   const edge = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
   const shadow = Platform.select({
     ios: { shadowColor: '#000', shadowOpacity: isDark ? 0.35 : 0.12, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
@@ -169,7 +170,7 @@ export function CarouselDivider({ color }) {
 export function PinBadge({ isDark }) {
   return (
     <View pointerEvents="none" style={[hs.pin, {
-      backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF',
+      backgroundColor: THEME_V2 ? (isDark ? Grafite.dark.surface : Grafite.light.surface) : (isDark ? '#1C1C1E' : '#FFFFFF'),
       borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
     }, Platform.select({
       ios: { shadowColor: '#000', shadowOpacity: isDark ? 0 : 0.12, shadowRadius: 3, shadowOffset: { width: 0, height: 1 } },
@@ -225,9 +226,9 @@ function _mix(a, b, k) {
 }
 /** Arcos do anel cônico (preto → cinza → branco → cinza → preto) a partir de 210°. */
 function _conicArcs(isDark, n = 36) {
-  const stops = isDark
+  const stops = THEME_V2 ? (isDark ? Grafite.dark.ring : Grafite.light.ring) : (isDark
     ? ['#FFFFFF', '#6A6A70', '#1C1C1E', '#6A6A70', '#FFFFFF']
-    : ['#000000', '#9A9AA0', '#FFFFFF', '#9A9AA0', '#000000'];
+    : ['#000000', '#9A9AA0', '#FFFFFF', '#9A9AA0', '#000000']);
   const rs = HC.ring; const r = rs / 2 - 1.5; const cx = rs / 2;
   const out = [];
   for (let i = 0; i < n; i++) {
@@ -280,8 +281,8 @@ export const BiaCarouselItem = memo(function BiaCarouselItem({ isDark, t, router
   const voiceLabel = tc(t, 'one.voiceConversation', 'Conversa por voz');
   const name = tc(t, 'one.title', 'Bia');
   const ia = tc(t, 'chat.aiBadge', 'IA');
-  const card = isDark ? '#000000' : '#FFFFFF';
-  const ink = isDark ? '#F5F5F7' : '#0A0A0A';
+  const card = THEME_V2 ? (isDark ? Grafite.dark.surface : Grafite.light.surface) : (isDark ? '#000000' : '#FFFFFF');
+  const ink = THEME_V2 ? (isDark ? Grafite.dark.text : Grafite.light.text) : (isDark ? '#F5F5F7' : '#0A0A0A');
   return (
     <CarouselSlot
       bubble={line ? <ThoughtBubble text={line} isDark={isDark} /> : null}

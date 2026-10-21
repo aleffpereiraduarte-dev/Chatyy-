@@ -382,7 +382,7 @@ export default function KidsLearnTab() {
       <FlatList ref={flatListRef} data={messages} renderItem={renderMessage} keyExtractor={item => item.id}
         contentContainerStyle={{ padding: 16, paddingBottom: 8 }} showsVerticalScrollIndicator={false}
         ListFooterComponent={loading ? (
-          <View style={[s.bubble, s.aiBubble, { backgroundColor: isDark ? '#161618' : '#fff' }]}>
+          <View style={[s.bubble, s.aiBubble, { backgroundColor: colors.surface }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
               <AvatarIcon size={36} />
               <Text style={{ fontSize: 15, fontWeight: '800', color: colors.primary }}>{t('kids.teacherOne')}</Text>
@@ -497,7 +497,7 @@ export default function KidsLearnTab() {
       )}
 
       {/* Input bar - large touch targets for kids */}
-      <View style={[s.inputBar, { backgroundColor: isDark ? '#161618' : '#fff', borderTopColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(0,0,0,0.06)' }]}>
+      <View style={[s.inputBar, { backgroundColor: colors.surface, borderTopColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(0,0,0,0.06)' }]}>
         {ImagePicker && (
           <TouchableOpacity style={s.iconBtn} onPress={async () => {
             try {

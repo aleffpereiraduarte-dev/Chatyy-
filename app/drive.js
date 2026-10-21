@@ -1500,7 +1500,7 @@ function DriveScreenInner() {
         style={[
           styles.listItem,
           { backgroundColor: isSelected ? (isDark ? colors.selectedBg : '#F1F3F5') : 'transparent', borderBottomColor: colors.border },
-          isDragTarget && { backgroundColor: isDark ? '#2C2C2E' : '#F1F3F5', borderColor: isDark ? '#F5F5F7' : '#111111', borderWidth: 2, borderRadius: 8 },
+          isDragTarget && { backgroundColor: colors.surfaceVariant, borderColor: isDark ? '#F5F5F7' : '#111111', borderWidth: 2, borderRadius: 8 },
           isFocused && !isSelected && { backgroundColor: colors.surfaceVariant },
         ]}
         onPress={(e) => { setFocusedIndex(index); handleItemPress(item, e); }}
@@ -1613,7 +1613,7 @@ function DriveScreenInner() {
               backgroundColor: colors.surfaceVariant,
               transform: [{ translateY: -1 }],
             },
-            isDragTarget && { borderColor: isDark ? '#F5F5F7' : '#111111', borderWidth: 2, backgroundColor: isDark ? '#2C2C2E' : '#F1F3F5' },
+            isDragTarget && { borderColor: isDark ? '#F5F5F7' : '#111111', borderWidth: 2, backgroundColor: colors.surfaceVariant },
             isFocused && !isSelected && !isDragTarget && { borderColor: colors.primary, borderWidth: 2 },
             Platform.OS === 'web' && { transition: 'all 0.15s ease' },
           ]}

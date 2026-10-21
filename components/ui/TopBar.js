@@ -13,7 +13,7 @@ import React from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconArrowLeft, IconChevronLeft, IconX } from '../Icons';
-import { Layout, Type } from '../../constants/theme';
+import { Layout, Type, THEME_V2 } from '../../constants/theme';
 import { IconButton } from './Button';
 import useSurface from './useSurface';
 import { useLanguageOptional } from '../../context/LanguageContext';
@@ -44,7 +44,7 @@ export default function TopBar({
         {leftNode ? <View style={styles.side}>{leftNode}</View> : (centered ? <View style={styles.sideSpacer} /> : null)}
         <View style={[styles.titleBox, centered ? styles.titleCenter : { paddingLeft: leftNode ? 4 : 8 }]}>
           {largeTitle ? (
-            <Text accessibilityRole="header" numberOfLines={1} maxFontSizeMultiplier={1.3} style={[Type.title1, { color: s.text }]}>
+            <Text accessibilityRole="header" numberOfLines={1} maxFontSizeMultiplier={1.3} style={[THEME_V2 ? Type.largeTitle : Type.title1, { color: s.text }]} /* [2026-10-20 grafite] título grande 34/800 */>
               {largeTitle}
             </Text>
           ) : title ? (

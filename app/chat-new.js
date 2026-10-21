@@ -1757,7 +1757,7 @@ export default function ChatNewScreen() {
                 onPress={() => handleOpenHashtag(tag)}
                 style={[
                   sty.discoverChip,
-                  { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7', borderColor: colors.border },
+                  { backgroundColor: colors.surfaceVariant, borderColor: colors.border },
                 ]}
                 activeOpacity={0.7}
                 accessibilityRole="button"
@@ -1800,7 +1800,7 @@ export default function ChatNewScreen() {
                   sty.discoverChip,
                   active
                     ? { backgroundColor: colors.primary, borderColor: colors.primary }
-                    : { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7', borderColor: colors.border },
+                    : { backgroundColor: colors.surfaceVariant, borderColor: colors.border },
                 ]}
                 activeOpacity={0.7}
               >
@@ -1909,7 +1909,7 @@ export default function ChatNewScreen() {
     // padding so the on-Chatyy list breathes between letters.
     if (section._letterBucket) {
       return (
-        <View style={[sty.letterHeader, { backgroundColor: isDark ? '#0d0d0d' : '#fafafc' }]}>
+        <View style={[sty.letterHeader, { backgroundColor: colors.background }]}>
           <Text style={[sty.letterHeaderText, { color: isDark ? '#F5F5F7' : '#111111' }]}>
             {section.title}
           </Text>
@@ -1917,7 +1917,7 @@ export default function ChatNewScreen() {
       );
     }
     return (
-      <View style={[sty.sectionHeader, { backgroundColor: isDark ? '#111' : '#f8f8fa' }]}>
+      <View style={[sty.sectionHeader, { backgroundColor: colors.background }]}>
         <View style={sty.sectionAccentLine} />
         <Text style={[sty.sectionTitle, { color: isDark ? '#F5F5F7' : '#111111' }]}>{section.title}</Text>
       </View>
@@ -2167,7 +2167,7 @@ export default function ChatNewScreen() {
           tap to connect (consent + OS prompt happen on tap, never
           silently). Hidden once access is granted. */}
       {Platform.OS !== 'web' && !pickMode && contactsAccess === 'denied' && phoneContacts.length === 0 && !syncingContacts && (
-        <View style={[sty.findCta, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
+        <View style={[sty.findCta, { backgroundColor: colors.surfaceVariant }]}>
           <Text style={[sty.findCtaTitle, { color: colors.text }]}>{t('chat.findContactsCtaTitle')}</Text>
           <Text style={[sty.findCtaDesc, { color: colors.textSecondary }]}>{t('chat.findContactsCtaDesc')}</Text>
           <TouchableOpacity
@@ -2288,7 +2288,7 @@ export default function ChatNewScreen() {
         {showInviteInput && (
           <View style={[sty.inviteInputWrap, { backgroundColor: colors.surface }]}>
             <TextInput
-              style={[sty.inviteInput, { color: colors.text, backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7', borderColor: isDark ? '#333' : '#e0e0e0' }]}
+              style={[sty.inviteInput, { color: colors.text, backgroundColor: colors.surfaceVariant, borderColor: isDark ? '#333' : '#e0e0e0' }]}
               placeholder={t('chat.emailPlaceholder')}
               placeholderTextColor={colors.textTertiary}
               value={inviteEmail}
@@ -2363,7 +2363,7 @@ export default function ChatNewScreen() {
             marginBottom: 4,
             padding: 14,
             borderRadius: 12,
-            backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
+            backgroundColor: colors.surfaceVariant,
             flexDirection: 'row',
             alignItems: 'center',
             gap: 12,
@@ -2415,7 +2415,7 @@ export default function ChatNewScreen() {
             style={{
               flexDirection: 'row', alignItems: 'center',
               padding: 12, borderRadius: 12, gap: 12,
-              backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
+              backgroundColor: colors.surfaceVariant,
             }}
           >
             <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
@@ -2621,7 +2621,7 @@ export default function ChatNewScreen() {
 
       {/* Mode Toggle — [2026-10-15 native-group-create] fluxo nativo: some (atalhos + rotas próprias, como o WhatsApp) */}
       {!_ngc && (
-      <View style={[sty.toggleRow, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
+      <View style={[sty.toggleRow, { backgroundColor: colors.surfaceVariant }]}>
         <TouchableOpacity
           style={[sty.toggleBtn, mode === 'direct' && [sty.toggleBtnActive, { backgroundColor: colors.primary }]]}
           onPress={() => { setMode('direct'); setSelectedMembers([]); }}
@@ -2656,7 +2656,7 @@ export default function ChatNewScreen() {
       {(mode === 'channel' || (mode === 'group' && !_ngc)) && (
         <View style={[sty.groupNameWrap, { borderBottomColor: colors.border }]}>
           <TextInput
-            style={[sty.groupNameInput, { color: colors.text, borderColor: groupNameError ? (colors.error || '#E5484D') : 'transparent', backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}
+            style={[sty.groupNameInput, { color: colors.text, borderColor: groupNameError ? (colors.error || '#E5484D') : 'transparent', backgroundColor: colors.surfaceVariant }]}
             ref={groupNameInputRef}
             placeholder={mode === 'channel' ? (t('chat.channelName') || 'Nome do canal') : t('chat.groupNamePlaceholder')}
             placeholderTextColor={colors.textTertiary}
@@ -2727,7 +2727,7 @@ export default function ChatNewScreen() {
         style={[
           sty.searchWrap,
           {
-            backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
+            backgroundColor: colors.surfaceVariant,
             borderWidth: 1.5,
             borderColor: searchBorderAnim.interpolate({
               inputRange: [0, 1],
@@ -3115,7 +3115,7 @@ export default function ChatNewScreen() {
                       {t('chat.qrScanDesc')}
                     </Text>
                     <TextInput
-                      style={[sty.inviteInput, { color: colors.text, backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7', borderColor: isDark ? '#333' : '#e0e0e0', width: '100%' }]}
+                      style={[sty.inviteInput, { color: colors.text, backgroundColor: colors.surfaceVariant, borderColor: isDark ? '#333' : '#e0e0e0', width: '100%' }]}
                       placeholder={t('chat.qrEnterEmail')}
                       placeholderTextColor={colors.textTertiary}
                       autoCapitalize="none"
@@ -3181,7 +3181,7 @@ export default function ChatNewScreen() {
               {(broadcastComposeList?.recipients || []).length} {t('chat.broadcastMembers') || 'membros'}
             </Text>
             <TextInput
-              style={[sty.inviteInput, { color: colors.text, backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7', borderColor: isDark ? '#333' : '#e0e0e0', width: '100%', minHeight: 80, textAlignVertical: 'top' }]}
+              style={[sty.inviteInput, { color: colors.text, backgroundColor: colors.surfaceVariant, borderColor: isDark ? '#333' : '#e0e0e0', width: '100%', minHeight: 80, textAlignVertical: 'top' }]}
               placeholder={t('chat.broadcastSend') || 'Mensagem para a lista'}
               placeholderTextColor={colors.textTertiary}
               value={broadcastComposeText}

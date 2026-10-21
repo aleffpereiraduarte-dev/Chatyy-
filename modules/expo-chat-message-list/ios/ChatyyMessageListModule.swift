@@ -47,9 +47,12 @@ public class ChatyyMessageListModule: Module {
     // 13 = [2026-10-19 perf-scroll + store-rev] células sem UIVisualEffectView/sombra sem
     //     shadowPath (pílulas tg-style chapadas; desfoque só na flutuante) · store.dl
     //     {m, loc} → rótulos de dia da foto recalculados ao pintar (rev do JS sem o dia).
+    // 14 = [2026-10-20 grafite] tema: `ownGradient` [ARGB…] (+ `ownGradientStops`)
+    //     → bolha própria em gradiente + reflexo 1 px + sombra (shadowPath);
+    //     `otherShadow` (bool) → recebida com sombra leve.
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 13
+      return 14
       #else
       return 3
       #endif

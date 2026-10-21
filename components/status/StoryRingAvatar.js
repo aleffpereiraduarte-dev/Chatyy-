@@ -34,6 +34,16 @@ import Svg, { Defs, LinearGradient, Stop, Circle as SvgCircle } from 'react-nati
 import AvatarCircle from '../AvatarCircle';
 import { TextStatusThumb } from './textStatus'; // [status-texto 2026-10-14]
 import { IconPlus, IconReply, IconStarFilled } from '../Icons';
+import { THEME_V2, Grafite } from '../../constants/theme';
+
+// [2026-10-20 grafite] anel prateado: gradiente "cônico" aproximado (diagonal
+// com 5 paradas grafite↔prata, Grafite.ring). Só p/ o anel padrão (sem cor do
+// chamador, sem melhores amigos). Kill switch: __chatyy_theme_v2 = false.
+const _RING_OFFS = [0, 0.3, 0.55, 0.78, 1];
+function _silverStops(isDark) {
+  const r = (isDark ? Grafite.dark : Grafite.light).ring;
+  return r.map((c, i) => <Stop key={i} offset={String(_RING_OFFS[i])} stopColor={c} />);
+}
 
 function StoryRingAvatar({
   name,
@@ -81,6 +91,7 @@ function StoryRingAvatar({
   const _face = textPreview && textPreview.text
     ? <TextStatusThumb text={textPreview.text} bg={textPreview.bg} font={textPreview.font} size={size} />
     : <AvatarCircle name={name} email={email} size={size} />;
+  const _silver = THEME_V2 && !closeFriends && ringColor === '#111111';
   const _dim = dimmedColor || (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)');
   const _badgeBorder = colors?.background || (isDark ? '#000' : '#fff');
   // [2026-10-10 polish-list] P&B: the default ink ring/badge (#111111) vanished
@@ -186,17 +197,18 @@ function StoryRingAvatar({
                     swapped in whenever `closeFriends` is true so the viewer
                     knows at a glance the post is restricted. Default is the
                     brand purple gradient. */}
-                <LinearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-                  <Stop offset="0" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />
-                  <Stop offset="0.5" stopColor={_cfInk || _ink} />
-                  <Stop offset="1" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />
+                <LinearGradient id={_silver ? `${gid}_v2${isDark ? 'd' : 'l'}` : gid} x1="0" y1="0" x2="1" y2="1">
+                  {_silver ? _silverStops(isDark) : [
+                  <Stop key="a" offset="0" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />,
+                  <Stop key="b" offset="0.5" stopColor={_cfInk || _ink} />,
+                  <Stop key="c" offset="1" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />]}
                 </LinearGradient>
               </Defs>
               <SvgCircle
                 cx={ringSize / 2}
                 cy={ringSize / 2}
                 r={radius}
-                stroke={`url(#${gid})`}
+                stroke={`url(#${_silver ? `${gid}_v2${isDark ? 'd' : 'l'}` : gid})`}
                 strokeWidth={2.5}
                 fill="none"
               />
@@ -246,10 +258,11 @@ function StoryRingAvatar({
                   gradient when `closeFriends` is set so the restricted
                   audience scope is visible at a glance — same per-segment
                   dimming as the purple variant once that item is viewed. */}
-              <LinearGradient id={segGid} x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />
-                <Stop offset="0.5" stopColor={_cfInk || _ink} />
-                <Stop offset="1" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />
+              <LinearGradient id={_silver ? `${segGid}_v2${isDark ? 'd' : 'l'}` : segGid} x1="0" y1="0" x2="1" y2="1">
+                {_silver ? _silverStops(isDark) : [
+                <Stop key="a" offset="0" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />,
+                <Stop key="b" offset="0.5" stopColor={_cfInk || _ink} />,
+                <Stop key="c" offset="1" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />]}
               </LinearGradient>
             </Defs>
             {Array.from({ length: count }).map((_, i) => {
@@ -266,7 +279,7 @@ function StoryRingAvatar({
                   r={radius}
                   stroke={segViewed
                     ? _dim
-                    : `url(#${segGid})`}
+                    : `url(#${_silver ? `${segGid}_v2${isDark ? 'd' : 'l'}` : segGid})`}
                   strokeWidth={_sw}
                   fill="none"
                   strokeDasharray={`${_drawLen} ${circumference - _drawLen}`}

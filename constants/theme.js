@@ -860,6 +860,30 @@ export const Overlay = {
 // escuro (#1c1c1e, igual iOS) — o #0b0b0b da lista sumia contra o backdrop.
 export function overlayColors(colors, isDark) {
   const c = colors || {};
+  // [2026-10-20 grafite] folha/menu/fundo de grupo nos cinzas quentes.
+  if (THEME_V2) {
+    return {
+      sheetBg: isDark ? '#151517' : '#FFFFFF',
+      menuBg: isDark ? '#232327' : '#FFFFFF',
+      handle: isDark ? 'rgba(242,242,239,0.26)' : 'rgba(24,24,27,0.20)',
+      separator: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(24,24,27,0.07)',
+      groupGap: isDark ? '#0E0E10' : '#F2F2EF',
+      pressed: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(24,24,27,0.05)',
+      text: c.text || (isDark ? '#F2F2EF' : '#18181B'),
+      textSecondary: c.textSecondary || (isDark ? '#7F7F85' : '#8F8F94'),
+      icon: isDark ? '#C2C2C6' : '#3E3E43',
+      danger: isDark ? '#FF453A' : '#E5484D',
+      dangerTint: isDark ? 'rgba(255,69,58,0.16)' : 'rgba(229,72,77,0.10)',
+      neutralButton: isDark ? 'rgba(255,255,255,0.09)' : 'rgba(24,24,27,0.06)',
+      primaryButton: isDark ? '#ECECE8' : '#2A2A2E',
+      onPrimaryButton: isDark ? '#121214' : '#FFFFFF',
+      toastBg: isDark ? '#ECECE8' : '#2A2A2E',
+      toastText: isDark ? '#121214' : '#F7F7F5',
+      toastAction: isDark ? '#121214' : '#FFFFFF',
+      toastActionBg: isDark ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.14)',
+      border: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(24,24,27,0.06)',
+    };
+  }
   return {
     sheetBg: isDark ? '#1c1c1e' : '#ffffff',
     menuBg: isDark ? '#2c2c2e' : '#ffffff',
@@ -1098,3 +1122,236 @@ export const Hairline = {
   darkOpaque: '#38383A',
 };
 export function hairlineColor(isDark) { return isDark ? Hairline.dark : Hairline.light; }
+
+// ═════════════════════════════════════════════════════════════════════════
+// [2026-10-20 grafite] TEMA V2 "GRAFITE SUAVE" (aprovado pelo founder no
+// mockup /preview-2026/visual.html). Cinzas quentes no lugar de branco/preto
+// puros, cartões claros sobre fundo levemente cinza, sombras macias, vidro
+// (72% + blur 22) na barra de abas/cabeçalho, bolha própria grafite com
+// gradiente + reflexo de 1 px, recebida branca com sombra, papel de parede
+// padrão #EDEDEA com pontos de 18 px, raios 22/20/30/10, traço 1,6.
+//
+// Aplicado NO CARREGAMENTO deste módulo, por cima das paletas acima (mesmas
+// chaves → nenhuma tela precisa mudar p/ herdar; StyleSheet.create estático
+// também herda, porque isto roda antes de qualquer importador). A cor de
+// destaque do usuário continua por cima (ThemeContext._composeThemeColors).
+//
+// KILL SWITCH (OTA): globalThis.__chatyy_theme_v2 = false ANTES deste módulo
+// carregar → tema antigo intacto (o caminho mais simples é trocar o padrão
+// abaixo, THEME_V2_DEFAULT = false). Componentes que desenham algo novo
+// (gradiente da bolha, anel prateado, pulso, brilho da Bia) consultam
+// themeV2On() e voltam ao visual antigo também.
+// ═════════════════════════════════════════════════════════════════════════
+const THEME_V2_DEFAULT = true;
+export const THEME_V2 = (() => {
+  try {
+    if (globalThis.__chatyy_theme_v2 === false) return false;
+    if (globalThis.__chatyy_theme_v2 === true) return true;
+  } catch {}
+  return THEME_V2_DEFAULT;
+})();
+try { if (globalThis.__chatyy_theme_v2 === undefined) globalThis.__chatyy_theme_v2 = THEME_V2; } catch {}
+/** true = Grafite suave ligado (decidido no carregamento; estável na sessão). */
+export function themeV2On() { return THEME_V2; }
+// Traço de ícone 2,0 → 1,6: sem valor = 1,6; explícito > 1,6 escala ×0,8 (2 → 1,6).
+export function v2Stroke(sw, def) {
+  if (sw == null) return THEME_V2 ? 1.6 : (def == null ? 1.9 : def);
+  const n = Number(sw);
+  if (!THEME_V2 || !(n > 1.6)) return sw;
+  return Math.max(1.6, Math.round(n * 80) / 100);
+}
+
+// Paleta crua do Grafite (claro / escuro). Componentes novos leem daqui via
+// grafite(isDark); o resto do app herda pelos tokens de Colors/DarkColors.
+export const Grafite = {
+  light: {
+    bg: '#F2F2EF', surface: '#FFFFFF', surface2: '#EAEAE6',
+    text: '#18181B', text2: '#4A4A4F', muted: '#8F8F94', line: 'rgba(24,24,27,0.06)',
+    ink: '#2A2A2E', onInk: '#F7F7F5',
+    ownGradient: ['#45454B', '#2B2B30', '#232327'], ownGradientStops: [0, 0.55, 1], ownMid: '#34343A',
+    ownText: '#F6F6F3', ownMeta: 'rgba(246,246,243,0.55)',
+    recv: '#FFFFFF', recvText: '#18181B',
+    wall: '#EDEDEA', wallDot: 'rgba(24,24,27,0.07)', wallDotSpacing: 18,
+    glass: 'rgba(242,242,239,0.72)', glassBorder: 'rgba(255,255,255,0.9)',
+    tabBg: 'rgba(255,255,255,0.72)', tabBorder: 'rgba(255,255,255,0.9)', tabActive: 'rgba(24,24,27,0.07)',
+    ring: ['#18181B', '#B9B9BD', '#18181B', '#8F8F94', '#18181B'],
+    avatarNone: ['#D9D9D5', '#A9A9A6'],
+    tile: ['#4C4C52', '#26262A'], tileText: '#FFFFFF',
+    biaCard: ['#2E2E33', '#18181B'], biaCardText: '#F2F2EF',
+    sheet: '#FFFFFF',
+  },
+  dark: {
+    bg: '#0E0E10', surface: '#1A1A1D', surface2: '#232327',
+    text: '#F2F2EF', text2: '#C2C2C6', muted: '#7F7F85', line: 'rgba(255,255,255,0.06)',
+    ink: '#ECECE8', onInk: '#121214',
+    ownGradient: ['#4A4A51', '#36363C', '#2F2F34'], ownGradientStops: [0, 0.6, 1], ownMid: '#3B3B41',
+    ownText: '#F6F6F3', ownMeta: 'rgba(246,246,243,0.5)',
+    recv: '#1C1C1F', recvText: '#F2F2EF',
+    wall: '#0E0E10', wallDot: 'rgba(255,255,255,0.05)', wallDotSpacing: 18,
+    glass: 'rgba(14,14,16,0.72)', glassBorder: 'rgba(255,255,255,0.08)',
+    tabBg: 'rgba(30,30,33,0.72)', tabBorder: 'rgba(255,255,255,0.08)', tabActive: 'rgba(255,255,255,0.09)',
+    ring: ['#F2F2EF', '#5A5A60', '#F2F2EF', '#8F8F94', '#F2F2EF'],
+    avatarNone: ['#4A4A50', '#2A2A2E'],
+    tile: ['#5A5A61', '#38383D'], tileText: '#FFFFFF',
+    biaCard: ['#2B2B30', '#1A1A1D'], biaCardText: '#F2F2EF',
+    sheet: '#151517',
+  },
+  radius: { card: 22, bubble: 20, bubbleTail: 6, sheet: 30, tile: 10, chip: 999 },
+  iconStroke: 1.6,
+  // Título grande: 34 px, peso 750 (RN: '800'), −0,035em.
+  largeTitle: { fontSize: 34, fontWeight: '800', letterSpacing: -1.19 },
+  nameWeight: '600', // nomes 650 → '600'
+  glass: { alpha: 0.72, blur: 22 },
+  springMs: 350,
+};
+/** Paleta Grafite do modo atual. */
+export function grafite(isDark) { return isDark ? Grafite.dark : Grafite.light; }
+
+// Sombra de cartão do Grafite: 0 1 2 /3,5% + 0 8 24 /4,5% (claro); escuro =
+// só o reflexo interno de 1 px (a separação vem do nível de cinza).
+const _V2_CARD_SH_L = '0px 1px 2px rgba(0,0,0,0.035), 0px 8px 24px rgba(0,0,0,0.045)';
+const _V2_CARD_SH_D = 'inset 0px 1px 0px rgba(255,255,255,0.04)';
+const _cardShadowCache = { l: null, d: null };
+/** Estilo de sombra de cartão (objeto ESTÁVEL; {} com o tema antigo). */
+export function cardShadow(isDark) {
+  if (!THEME_V2) return _EMPTY_STYLE;
+  const k = isDark ? 'd' : 'l';
+  if (!_cardShadowCache[k]) {
+    _cardShadowCache[k] = Platform.OS === 'web'
+      ? { boxShadow: isDark ? _V2_CARD_SH_D : _V2_CARD_SH_L }
+      : (isDark ? { boxShadow: _V2_CARD_SH_D } : { boxShadow: _V2_CARD_SH_L });
+  }
+  return _cardShadowCache[k];
+}
+const _EMPTY_STYLE = Object.freeze({});
+
+// Bolha própria: gradiente 165° + reflexo interno de 1 px + sombra leve.
+// RN 0.83 (nova arquitetura) desenha experimental_backgroundImage/boxShadow
+// no JS (OTA); web usa backgroundImage. backgroundColor = cor do meio (fallback).
+const _bubbleOwnCache = { l: null, d: null };
+export function bubbleOwnStyle(isDark) {
+  if (!THEME_V2) return _EMPTY_STYLE;
+  const k = isDark ? 'd' : 'l';
+  if (_bubbleOwnCache[k]) return _bubbleOwnCache[k];
+  const g = grafite(isDark);
+  const grad = `linear-gradient(165deg, ${g.ownGradient[0]} 0%, ${g.ownGradient[1]} ${Math.round(g.ownGradientStops[1] * 100)}%, ${g.ownGradient[2]} 100%)`;
+  const sh = isDark
+    ? 'inset 0px 1px 0px rgba(255,255,255,0.10), 0px 4px 14px rgba(0,0,0,0.30)'
+    : 'inset 0px 1px 0px rgba(255,255,255,0.12), 0px 4px 14px rgba(0,0,0,0.12)';
+  const s = Platform.OS === 'web'
+    ? { backgroundColor: g.ownMid, backgroundImage: grad, boxShadow: sh }
+    : { backgroundColor: g.ownMid, experimental_backgroundImage: grad, boxShadow: sh };
+  _bubbleOwnCache[k] = s;
+  return s;
+}
+// Bolha recebida: branca com sombra leve (escuro: reflexo interno).
+const _bubbleRecvCache = { l: null, d: null };
+export function bubbleRecvStyle(isDark) {
+  if (!THEME_V2) return _EMPTY_STYLE;
+  const k = isDark ? 'd' : 'l';
+  if (!_bubbleRecvCache[k]) {
+    _bubbleRecvCache[k] = { boxShadow: isDark ? 'inset 0px 1px 0px rgba(255,255,255,0.04)' : '0px 1px 1px rgba(0,0,0,0.04), 0px 4px 14px rgba(0,0,0,0.05)' };
+  }
+  return _bubbleRecvCache[k];
+}
+// Vidro (barra de abas / cabeçalho): 72% + blur 22. No nativo o blur vem do
+// NativeBlur/expo-blur do componente; aqui só a tinta + borda (+ blur no web).
+const _glassCache = { l: null, d: null };
+export function glassStyle(isDark) {
+  const k = isDark ? 'd' : 'l';
+  if (_glassCache[k]) return _glassCache[k];
+  const g = grafite(isDark);
+  const s = Platform.OS === 'web'
+    ? { backgroundColor: g.glass, backdropFilter: 'blur(22px) saturate(140%)', WebkitBackdropFilter: 'blur(22px) saturate(140%)' }
+    : { backgroundColor: g.glass };
+  _glassCache[k] = s;
+  return s;
+}
+
+if (THEME_V2) {
+  const L = Grafite.light; const D = Grafite.dark;
+  // ── claro ──
+  Object.assign(Colors, {
+    primary: L.ink, primaryDark: L.ink, primaryLight: L.surface2, primaryContainer: L.surface2, onPrimary: '#FFFFFF', onPrimaryContainer: L.text,
+    background: L.bg, surface: L.surface, surfaceVariant: L.surface2, surfaceHover: '#ECECE8',
+    surfaceElevated: L.surface, surfaceGlass: L.glass, surfaceGlassBorder: L.glassBorder,
+    headerBg: L.glass, headerBgSolid: L.bg, headerBorder: L.line, sidebarActiveBg: 'rgba(24,24,27,0.07)',
+    text: L.text, textSecondary: L.muted, textTertiary: '#9D9DA2', textStrong2: L.text2,
+    border: 'rgba(24,24,27,0.09)', borderLight: 'rgba(24,24,27,0.05)', divider: L.line,
+    chipBg: L.surface, chipText: L.text2, chipActiveBg: L.ink, chipActiveText: L.onInk, chipBorder: 'rgba(24,24,27,0.06)',
+    unreadBg: L.surface2, unreadAccent: L.ink, selectedBg: L.surface2, starColor: L.ink, starEmpty: '#C9C9C5',
+    composeBg: L.ink, composeText: '#FFFFFF',
+    sidebarBg: L.bg, folderActive: L.surface2, folderHover: '#ECECE8', badge: L.ink, onBadge: '#FFFFFF',
+    avatarBg: '#A9A9A6', avatarColors: ['#6E6E6B', '#5C5C5A', '#7A7A77', '#535351'],
+    chatPrimary: L.ink, chatBubbleOwn: L.ownMid, chatBubbleOwnBorder: 'rgba(255,255,255,0.08)',
+    chatBubbleOther: L.recv, chatBubbleOtherBorder: 'rgba(24,24,27,0.04)', chatBubbleOwnText: L.ownText,
+    chatBackground: L.wall, chatInputBg: L.surface, chatInputBorder: 'rgba(24,24,27,0.06)',
+    hoverActionBg: 'rgba(24,24,27,0.04)', toastBg: L.ink, toastText: '#F7F7F5', checkboxColor: '#77777C',
+    selectedCheckbox: L.ink, focusBorder: L.ink, bulkToolbarBg: L.surface2, gradientStart: L.ink, gradientEnd: L.ink,
+    loginPanelBg: L.surface2, focusGlow: 'rgba(24,24,27,0.12)',
+    secondary: L.ink, secondaryLight: L.surface2, secondaryDark: L.ink, tertiary: L.ink, tertiaryLight: L.surface2, tertiaryDark: L.ink,
+    brandPrimary: L.ink, brandSecondary: L.ink, brandAccent: L.ink,
+    authBg: L.bg, authBgSubtle: L.surface2, authAccent: L.ink, authCardBg: L.surface, authInputBorder: 'rgba(24,24,27,0.12)',
+    authInputFocusBorder: L.ink, authLabelFloatColor: L.ink, authFooterLink: L.ink, authBtnGradientStart: L.ink, authBtnGradientEnd: L.ink,
+    authDividerColor: 'rgba(24,24,27,0.08)', authSecondaryBtnBorder: 'rgba(24,24,27,0.08)',
+    authStepDoneBg: L.ink, authStepActiveBg: L.ink, authStepConnectorDone: L.ink, authChipBg: L.surface2, authChipBorder: 'rgba(24,24,27,0.08)',
+    authLeftPanelBg: L.surface2, authLeftPanelAccent: L.ink,
+    // novos (aditivos)
+    surface2: L.surface2, line: L.line, glass: L.glass, cardShadowColor: '#000000', themeV2: true,
+  });
+  // ── escuro ──
+  Object.assign(DarkColors, {
+    primary: D.ink, primaryDark: D.ink, primaryLight: D.surface2, primaryContainer: D.surface2, onPrimary: D.onInk, onPrimaryContainer: D.text,
+    background: D.bg, surface: D.surface, surfaceVariant: D.surface2, surfaceHover: '#1F1F22',
+    surfaceElevated: D.surface2, surfaceGlass: D.glass, surfaceGlassBorder: D.glassBorder,
+    headerBg: D.glass, headerBgSolid: D.bg, headerBorder: D.line, sidebarActiveBg: 'rgba(255,255,255,0.08)',
+    text: D.text, textSecondary: D.muted, textTertiary: '#6A6A70', textOnPrimary: D.onInk, textStrong2: D.text2,
+    border: 'rgba(255,255,255,0.09)', borderLight: 'rgba(255,255,255,0.05)', divider: D.line,
+    chipBg: D.surface, chipText: D.text2, chipActiveBg: D.ink, chipActiveText: D.onInk, chipBorder: 'rgba(255,255,255,0.06)',
+    unreadBg: D.surface, unreadAccent: D.ink, selectedBg: D.surface2, starColor: D.ink,
+    composeBg: D.surface2, sidebarBg: D.bg, folderActive: D.surface2, folderHover: D.surface, badge: D.ink, onBadge: D.onInk,
+    avatarBg: '#4A4A50', avatarColors: ['#5A5A58', '#4A4A48', '#656562', '#424240'],
+    chatPrimary: D.ink, chatBubbleOwn: D.ownMid, chatBubbleOwnBorder: 'rgba(255,255,255,0.06)',
+    chatBubbleOther: D.recv, chatBubbleOtherBorder: 'rgba(255,255,255,0.04)', chatBubbleOwnText: D.ownText,
+    chatBackground: D.wall, chatInputBg: D.surface, chatInputBorder: 'rgba(255,255,255,0.06)',
+    toastBg: D.ink, toastText: D.onInk, selectedCheckbox: D.ink, focusBorder: D.ink, bulkToolbarBg: D.surface,
+    gradientStart: D.surface2, gradientEnd: D.surface, loginPanelBg: D.bg,
+    secondary: D.ink, secondaryLight: D.surface2, secondaryDark: D.ink, tertiary: D.ink, tertiaryLight: D.surface2, tertiaryDark: D.ink,
+    brandPrimary: D.ink, brandSecondary: D.ink, brandAccent: D.ink,
+    authBg: D.bg, authBgSubtle: '#141416', authCardBg: D.surface, authInputBg: D.bg, authLeftPanelBg: D.surface,
+    authInputFocusBorder: D.ink, authLabelFloatColor: D.ink, authFooterLink: D.ink, authStepDoneBg: D.ink, authStepConnectorDone: D.ink, authLeftPanelAccent: D.ink,
+    surface2: D.surface2, line: D.line, glass: D.glass, cardShadowColor: '#000000', themeV2: true,
+  });
+  // ── raios / tipografia / sombras ──
+  Object.assign(BorderRadius, { card: Grafite.radius.card, sheet: Grafite.radius.sheet, chip: 999, tile: Grafite.radius.tile, bubble: Grafite.radius.bubble });
+  Object.assign(Radius, { card: Grafite.radius.card, sheet: Grafite.radius.sheet, tile: Grafite.radius.tile, bubble: Grafite.radius.bubble });
+  Object.assign(Overlay, { sheetRadius: Grafite.radius.sheet, cardRadius: 22, dialogRadius: 22, menuRadius: 16, toastRadius: 18 });
+  Object.assign(Layout, { iconStroke: Grafite.iconStroke });
+  Object.assign(Typography.largeTitle, { fontWeight: Grafite.largeTitle.fontWeight, letterSpacing: Grafite.largeTitle.letterSpacing });
+  Object.assign(Type.largeTitle, { fontSize: 34, lineHeight: 41, fontWeight: Grafite.largeTitle.fontWeight, letterSpacing: Grafite.largeTitle.letterSpacing });
+  Object.assign(Shadow.cardRest, { shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.045, shadowRadius: 24, elevation: 2 });
+  Object.assign(Shadow.sm, { shadowOpacity: 0.035, shadowRadius: 2 });
+  Object.assign(Shadow.bubble, { shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 14 });
+  Object.assign(Gradients, {
+    primary: [L.ink, L.ink], accent: [L.ink, L.ink], purple: [L.ink, L.ink], star: [L.ink, L.ink], unreadDot: [L.ink, L.ink],
+    statusRing: [Grafite.light.ring[0], Grafite.light.ring[1]], chatSend: [Grafite.light.ownGradient[0], Grafite.light.ownGradient[2]],
+    primaryButton: [L.ink, L.ink], tabIndicator: [L.ink, L.ink], sendButton: [Grafite.light.ownGradient[0], Grafite.light.ownGradient[1], Grafite.light.ownGradient[2]],
+    dark: ['#18181B', '#18181B'], headerDark: [D.surface, D.surface],
+  });
+  // ── superfícies semânticas (components/ui) ──
+  Object.assign(SurfaceTokens.light, {
+    bg: L.bg, bgGrouped: L.bg, surface: L.surface, surfaceRaised: L.surface, surfaceMuted: L.surface2,
+    fill: 'rgba(24,24,27,0.06)', pressed: 'rgba(24,24,27,0.05)', hover: 'rgba(24,24,27,0.035)',
+    separator: 'rgba(24,24,27,0.07)', border: 'rgba(24,24,27,0.07)', text: L.text, textSecondary: '#77777C', textTertiary: L.muted,
+    icon: '#3E3E43', iconMuted: L.muted, ink: L.ink, onInk: '#FFFFFF', unread: L.ink, focusRing: 'rgba(24,24,27,0.30)',
+    shadow: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.045, shadowRadius: 24, elevation: 1 },
+  });
+  Object.assign(SurfaceTokens.dark, {
+    bg: D.bg, bgGrouped: D.bg, surface: D.surface, surfaceRaised: D.surface2, surfaceMuted: D.surface2,
+    separator: 'rgba(255,255,255,0.07)', border: 'rgba(255,255,255,0.07)', text: D.text, textSecondary: '#A3A3A8', textTertiary: D.muted,
+    icon: '#E4E4E0', ink: D.ink, onInk: D.onInk, unread: D.ink, focusRing: 'rgba(242,242,239,0.40)',
+  });
+  Object.assign(Elevation.light, { base: L.bg, grouped: L.bg, card: L.surface, elevated: L.surface, fill: 'rgba(24,24,27,0.06)', fillPressed: 'rgba(24,24,27,0.11)' });
+  Object.assign(Elevation.dark, { base: D.bg, grouped: D.bg, card: D.surface, elevated: D.surface2, fill: 'rgba(255,255,255,0.07)', fillPressed: 'rgba(255,255,255,0.12)' });
+  Object.assign(Hairline, { light: 'rgba(24,24,27,0.08)', dark: 'rgba(255,255,255,0.07)', lightOpaque: '#DCDCD8', darkOpaque: '#2C2C30' });
+}

@@ -367,7 +367,7 @@ const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t,
               accessibilityRole="button"
               accessibilityLabel={t?.('statusTab.newTextStatus') || 'Novo status de texto'}
             >
-              <View style={{ width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)' }}>
+              <View style={{ width: 58, height: 58, borderRadius: 29, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)' }}>
                 <IconPencil size={22} color={colors.text} />
               </View>
               <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '600', letterSpacing: -0.1 }} numberOfLines={1}>

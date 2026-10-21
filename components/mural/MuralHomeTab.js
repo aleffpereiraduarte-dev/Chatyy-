@@ -21,6 +21,7 @@ import Svg, { Rect, Path } from 'react-native-svg';
 import FastImage from '../FastImage';
 import { PostSkeleton } from '../SkeletonLoader';
 import { useMuralTheme } from './muralTheme';
+import { THEME_V2, cardShadow } from '../../constants/theme';
 import MIcon from './MuralIcons';
 import { Avatar, sharePost } from './parts';
 import { MuralCommentsHost } from './CommentsSheet';
@@ -129,7 +130,7 @@ const ReelsRail = memo(function ReelsRail({ th, t, lang, onOpen, enabled }) {
   }, [enabled]);
   if (!items.length) return null;
   return (
-    <View style={[s.rail, { backgroundColor: th.card }]}>
+    <View style={[s.rail, { backgroundColor: th.card }, THEME_V2 && cardShadow(th.isDark)]}>
       <View style={s.railHead}>
         <ReelGlyph size={17} color={th.text} />
         <Text style={[s.railTitle, { color: th.text }]} accessibilityRole="header">{t('mural.feed.reelsForYou', 'Reels para você')}</Text>
@@ -284,7 +285,8 @@ function MuralHomeTab(props) {
     return (pendingRaw || []).map(normPost).filter((p) => p && !ids.has(String(p.id)));
   }, [pendingRaw, feed.posts]);
 
-  const shadow = th.isDark ? null : (Platform.OS === 'web' ? { boxShadow: '0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06)' } : { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 1 });
+  // [2026-10-20 grafite] sombra de cartão do tema v2 (0 1 2 /3,5% + 0 8 24 /4,5%; escuro = reflexo interno)
+  const shadow = THEME_V2 ? cardShadow(th.isDark) : th.isDark ? null : (Platform.OS === 'web' ? { boxShadow: '0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06)' } : { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 1 });
 
   // [mural-cerebro 2026-10-20] "Não tenho interesse" / ocultar autor somem na hora (o servidor tira da sessão também)
   const [hidden, setHidden] = useState(() => ({ ids: new Set(), authors: new Set() }));
@@ -483,20 +485,20 @@ const s = StyleSheet.create({
   root: { flex: 1 },
   head: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 2 },
   title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.6 },
-  seg: { flexDirection: 'row', gap: 4, marginHorizontal: 16, marginTop: 8, borderRadius: 12, padding: 3 },
-  segBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7, borderRadius: 9 },
+  seg: { flexDirection: 'row', gap: 4, marginHorizontal: 16, marginTop: 8, borderRadius: THEME_V2 ? 999 : 12, padding: 3 },
+  segBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7, borderRadius: THEME_V2 ? 999 : 9 },
   segOnShadow: Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,.12)' } : { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
   segTxt: { fontSize: 14, fontWeight: '600' },
   stories: { marginBottom: 2 },
-  compose: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 10, marginTop: 6, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 18 },
+  compose: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 10, marginTop: 6, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: THEME_V2 ? 22 : 18 },
   composePh: { flex: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
   composeIb: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   note: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 18, paddingBottom: 8 },
-  rail: { marginHorizontal: 10, marginBottom: 8, borderRadius: 18, paddingTop: 12, paddingBottom: 12 },
+  rail: { marginHorizontal: 10, marginBottom: 8, borderRadius: THEME_V2 ? 22 : 18, paddingTop: 12, paddingBottom: 12 },
   railHead: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 14, marginBottom: 10 },
   railTitle: { flex: 1, fontSize: 15, fontWeight: '700' },
   railMore: { fontSize: 13.5, fontWeight: '600' },
-  railTile: { width: 104, height: 168, borderRadius: 12, overflow: 'hidden' },
+  railTile: { width: 104, height: 168, borderRadius: THEME_V2 ? 14 : 12, overflow: 'hidden' },
   railMeta: { position: 'absolute', left: 7, bottom: 6, flexDirection: 'row', alignItems: 'center', gap: 3 },
   railMetaTxt: { color: '#fff', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 3, textShadowOffset: { width: 0, height: 1 } },
   empty: { alignItems: 'center', paddingHorizontal: 32, paddingTop: 48 },

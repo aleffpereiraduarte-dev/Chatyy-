@@ -185,29 +185,29 @@ extension UIColor {
 /// Paleta P&B da lista — espelha LP_LIGHT / LP_DARK do ChatListTab.js.
 struct CLTheme {
   let dark: Bool
-  let bg: UIColor
-  let text: UIColor
-  let sub: UIColor
-  let subStrong: UIColor
-  let faint: UIColor
-  let icon: UIColor
-  let hair: UIColor
-  let press: UIColor
-  let pinnedBg: UIColor
-  let pillBg: UIColor
-  let pillTxt: UIColor
-  let mutedPillBg: UIColor
-  let mutedPillTxt: UIColor
-  let card: UIColor
-  let selectedBg: UIColor
-  let checkBorder: UIColor
-  let receiptSent: UIColor
-  let receiptGray: UIColor
-  let receiptRead: UIColor
-  let danger: UIColor
-  let ringHot: UIColor
-  let ringCold: UIColor
-  let online: UIColor
+  var bg: UIColor
+  var text: UIColor
+  var sub: UIColor
+  var subStrong: UIColor
+  var faint: UIColor
+  var icon: UIColor
+  var hair: UIColor
+  var press: UIColor
+  var pinnedBg: UIColor
+  var pillBg: UIColor
+  var pillTxt: UIColor
+  var mutedPillBg: UIColor
+  var mutedPillTxt: UIColor
+  var card: UIColor
+  var selectedBg: UIColor
+  var checkBorder: UIColor
+  var receiptSent: UIColor
+  var receiptGray: UIColor
+  var receiptRead: UIColor
+  var danger: UIColor
+  var ringHot: UIColor
+  var ringCold: UIColor
+  var online: UIColor
 
   init(dark: Bool) {
     self.dark = dark
@@ -257,6 +257,61 @@ struct CLTheme {
     receiptRead = UIColor(clHex: 0x53BDEB)
     danger = dark ? UIColor(clHex: 0xFF453A) : UIColor(clHex: 0xFF3B30)
     online = UIColor(clHex: 0x22C55E)
+  }
+
+  /// [2026-10-20 grafite, apiVersion 10] prop `palette`: sobrescreve chaves do
+  /// tema. Valor = número ARGB (processColor do RN) ou "#RRGGBB" / "#RRGGBBAA" /
+  /// "rgba(r,g,b,a)". Chave ausente/inválida = valor padrão (sem palette = idêntico).
+  init(dark: Bool, palette: [String: Any]?) {
+    self.init(dark: dark)
+    guard let p = palette, !p.isEmpty else { return }
+    func c(_ k: String, _ cur: UIColor) -> UIColor { return CLTheme.paletteColor(p[k]) ?? cur }
+    bg = c("bg", bg)
+    text = c("text", text)
+    sub = c("sub", sub)
+    subStrong = c("subStrong", subStrong)
+    faint = c("faint", faint)
+    icon = c("icon", icon)
+    hair = c("hair", hair)
+    press = c("press", press)
+    pinnedBg = c("pinnedBg", pinnedBg)
+    pillBg = c("pillBg", pillBg)
+    pillTxt = c("pillTxt", pillTxt)
+    mutedPillBg = c("mutedPillBg", mutedPillBg)
+    mutedPillTxt = c("mutedPillTxt", mutedPillTxt)
+    card = c("card", card)
+    selectedBg = c("selectedBg", selectedBg)
+    ringHot = c("ringHot", ringHot)
+    ringCold = c("ringCold", ringCold)
+    online = c("online", online)
+  }
+
+  static func paletteColor(_ v: Any?) -> UIColor? {
+    if let n = v as? NSNumber {
+      let d = n.doubleValue
+      if !d.isFinite { return nil }
+      let u = UInt32(truncatingIfNeeded: Int64(d))
+      let a = CGFloat((u >> 24) & 0xFF) / 255
+      return UIColor(clHex: u & 0xFFFFFF, alpha: a)
+    }
+    guard var s = (v as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), !s.isEmpty else { return nil }
+    if s.hasPrefix("#") {
+      s.removeFirst()
+      if s.count == 6, let n = UInt32(s, radix: 16) { return UIColor(clHex: n) }
+      if s.count == 8, let n = UInt32(s, radix: 16) {
+        return UIColor(clHex: n >> 8, alpha: CGFloat(n & 0xFF) / 255)
+      }
+      return nil
+    }
+    if s.hasPrefix("rgba(") || s.hasPrefix("rgb(") {
+      guard let open = s.firstIndex(of: "("), let close = s.lastIndex(of: ")"), open < close else { return nil }
+      let inner = s[s.index(after: open)..<close]
+      let parts: [Double] = inner.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+      if parts.count < 3 { return nil }
+      let a: Double = parts.count >= 4 ? parts[3] : 1
+      return UIColor(red: CGFloat(parts[0] / 255), green: CGFloat(parts[1] / 255), blue: CGFloat(parts[2] / 255), alpha: CGFloat(max(0, min(1, a))))
+    }
+    return nil
   }
 
   /// Gradientes das iniciais — mesmos 8 pares cinza do AvatarCircle.js.

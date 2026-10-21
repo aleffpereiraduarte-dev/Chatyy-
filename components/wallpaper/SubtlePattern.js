@@ -8,8 +8,9 @@
 // Desligar (OTA): globalThis.__chatyy_wp_subtle = false → volta ao liso.
 import React, { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
-import Svg, { Defs, Pattern, G, Path, Rect } from 'react-native-svg';
+import Svg, { Defs, Pattern, G, Path, Rect, Circle } from 'react-native-svg';
 import { patternById } from './wallpaperSpec';
+import { THEME_V2, grafite } from '../../constants/theme';
 
 export function subtlePatternOn() {
   try { return globalThis.__chatyy_wp_subtle !== false; } catch { return true; }
@@ -41,6 +42,25 @@ function SubtlePattern({ isDark, style }) {
     });
     return out;
   }, [pat]);
+  // [2026-10-20 grafite] tema v2: papel de parede PADRÃO = pontos de 18 px
+  // (rgba(24,24,27,.07) no claro / branco 5% no escuro) sobre #EDEDEA/#0E0E10.
+  // Só o padrão ('none'); papéis escolhidos pelo usuário não passam por aqui.
+  if (THEME_V2) {
+    const g = grafite(isDark);
+    const S = g.wallDotSpacing;
+    return (
+      <View style={[StyleSheet.absoluteFill, style]} pointerEvents="none">
+        <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
+          <Defs>
+            <Pattern id={id} patternUnits="userSpaceOnUse" x="0" y="0" width={S} height={S}>
+              <Circle cx={S / 2} cy={S / 2} r={1.05} fill={g.wallDot} />
+            </Pattern>
+          </Defs>
+          <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${id})`} />
+        </Svg>
+      </View>
+    );
+  }
   if (!pat || !items.length) return null;
   const T = pat.tile * SCALE;
   const stroke = isDark ? '#FFFFFF' : '#000000';

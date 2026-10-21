@@ -8,7 +8,7 @@
 import React from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import PressableScale from '../PressableScale';
-import { Radius } from '../../constants/theme';
+import { Radius, THEME_V2, cardShadow } from '../../constants/theme';
 import useSurface from './useSurface';
 
 export default function Card({
@@ -16,7 +16,8 @@ export default function Card({
   radius = Radius.card, style, accessibilityLabel, testID,
 }) {
   const s = useSurface();
-  const showBorder = bordered != null ? bordered : !s.isDark;
+  // [2026-10-20 grafite] tema v2: cartão sem borda, com a sombra macia do Grafite.
+  const showBorder = bordered != null ? bordered : (!THEME_V2 && !s.isDark);
   const base = [{
     backgroundColor: elevated ? s.surfaceRaised : s.surface,
     borderRadius: radius,
@@ -25,7 +26,7 @@ export default function Card({
     ...(showBorder ? { borderWidth: StyleSheet.hairlineWidth, borderColor: s.border } : null),
     ...(elevated && !s.isDark ? s.shadow : null),
     ...(elevated && !s.isDark && Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.04)' } : null),
-  }, style];
+  }, THEME_V2 && !showBorder ? cardShadow(s.isDark) : null, style];
   if (onPress || onLongPress) {
     return (
       <PressableScale onPress={onPress} onLongPress={onLongPress} scaleTo={0.985} style={base}

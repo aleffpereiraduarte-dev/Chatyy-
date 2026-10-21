@@ -3,13 +3,17 @@
 
 import React from 'react';
 import Svg, { Line, Circle, Path, Polyline, Polygon, Rect, G, Ellipse } from 'react-native-svg';
+import { v2Stroke } from '../constants/theme';
 
 // Base wrapper.
 // Why: bumped default stroke from 2 → 1.9 (Lucide-standard) so icons read
 // less industrial and match the polished feel of the rest of the UI.
 // Added strokeMiterlimit=10 so sharp corners (e.g. chevrons) don't spike
 // when react-native-svg falls back to the platform default of 4.
-function I({ children, size = 24, color = 'currentColor', fill = 'none', style, strokeWidth = 1.9, viewBox = '0 0 24 24', ...props }) {
+// [2026-10-20 grafite] traço 2,0 → 1,6 (v2Stroke em constants/theme).
+export { v2Stroke };
+function I({ children, size = 24, color = 'currentColor', fill = 'none', style, strokeWidth: _sw, viewBox = '0 0 24 24', ...props }) {
+  const strokeWidth = v2Stroke(_sw);
   return (
     <Svg
       width={size}

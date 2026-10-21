@@ -53,6 +53,7 @@ function WebSwitch({ value, onValueChange, disabled, onTrack, offTrack, onThumb,
   );
 }
 import { useTheme } from '../context/ThemeContext';
+import { THEME_V2 as _V2 } from '../constants/theme';
 import { selection } from '../services/haptics';
 
 export default function NativeSwitch({
@@ -67,13 +68,14 @@ export default function NativeSwitch({
   const { isDark, colors } = useTheme() || {};
   // [2026-10-19 accent-real] cor de destaque escolhida → trilho ligado no destaque (knob branco).
   const _acc = colors && colors.accentOn ? colors.accent : null;
-  const onTrack = _acc || (isDark ? '#F5F5F7' : '#111111');
+  // [2026-10-20 grafite] tema v2: trilho ligado = ink (#2A2A2E / #ECECE8), knob branco no claro.
+  const onTrack = _acc || (_V2 ? (isDark ? '#ECECE8' : '#2A2A2E') : (isDark ? '#F5F5F7' : '#111111'));
   // [2026-10-14 dark-contrast] escuro: trilho desligado #39393D sobre célula
   // #1C1C1E sumia (≈1.3:1) → #636366 (systemGray do iOS, ≈2.6:1 + knob branco).
   const offTrack = Platform.OS === 'ios'
     ? (isDark ? '#636366' : '#E9E9EA')
     : (isDark ? '#5F6368' : '#C7C9CC');
-  const onThumb = _acc ? '#ffffff' : (isDark ? '#0b0b0b' : '#ffffff');
+  const onThumb = _acc ? '#ffffff' : (isDark ? (_V2 ? '#121214' : '#0b0b0b') : '#ffffff');
   const offThumb = Platform.OS === 'android' ? (isDark ? '#9AA0A6' : '#ffffff') : '#ffffff';
 
   const handleChange = (v) => {

@@ -11,6 +11,11 @@ final class CMLCell: UICollectionViewCell {
   /// Tudo que desliza no arrastar-p/-responder.
   let slide = UIView()
   let bubble = CAShapeLayer()
+  /// [2026-10-20 grafite] gradiente da bolha própria (máscara = caminho da bolha,
+  /// com rabicho) + reflexo de 1 px no topo. Só existem quando o tema pede.
+  private var ownGrad: CAGradientLayer?
+  private var ownGradMask: CAShapeLayer?
+  private var ownShine: CAShapeLayer?
   let highlight = UIView()
   let nameView = CMLTextView()
   let fwdView = CMLTextView()
@@ -323,9 +328,11 @@ final class CMLCell: UICollectionViewCell {
       bubble.isHidden = false
       bubble.path = p
       bubble.fillColor = (row.own ? th.ownBubble : (row.bubbleBg.map { CMLTheme.uiColor($0) } ?? th.otherBubble)).cgColor
+      applyGrafite(row: row, theme: th, path: p)
     } else {
       bubble.isHidden = true
       bubble.path = nil
+      applyGrafite(row: nil, theme: th, path: nil)
     }
     let o = L.bubbleFrame.origin
 
@@ -816,6 +823,72 @@ final class CMLCell: UICollectionViewCell {
   }
 
   // MARK: hit test (ponto em coordenadas do contentView)
+
+  /// [2026-10-20 grafite, apiVersion 14] gradiente + reflexo + sombra (shadowPath
+  /// explícito → sem passe offscreen). Sem as chaves no tema = nada muda.
+  private func applyGrafite(row: CMLRow?, theme th: CMLTheme, path p: CGPath?) {
+    let ownG: [UIColor]? = (row?.own == true && row?.bubbleBg == nil) ? th.ownGradient : nil
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    if let cols = ownG, let path = p {
+      let box = path.boundingBoxOfPath
+      let g: CAGradientLayer
+      if let e = ownGrad { g = e } else {
+        g = CAGradientLayer()
+        let m = CAShapeLayer()
+        g.mask = m
+        ownGradMask = m
+        slide.layer.insertSublayer(g, above: bubble)
+        ownGrad = g
+      }
+      g.isHidden = false
+      g.frame = box
+      g.colors = cols.map { $0.cgColor }
+      g.locations = th.ownGradientStops
+      // ~165° (CSS): de cima (levemente à esquerda) para baixo (levemente à direita)
+      g.startPoint = CGPoint(x: 0.37, y: 0)
+      g.endPoint = CGPoint(x: 0.63, y: 1)
+      var t = CGAffineTransform(translationX: -box.origin.x, y: -box.origin.y)
+      ownGradMask?.path = path.copy(using: &t)
+      // reflexo interno de 1 px no topo (linha reta entre os cantos)
+      let sh: CAShapeLayer
+      if let e = ownShine { sh = e } else {
+        sh = CAShapeLayer()
+        sh.fillColor = UIColor.clear.cgColor
+        sh.strokeColor = UIColor(white: 1, alpha: 0.12).cgColor
+        sh.lineWidth = 1
+        sh.lineCap = .round
+        g.addSublayer(sh)
+        ownShine = sh
+      }
+      let inset: CGFloat = min(18, box.height / 2)
+      let line = CGMutablePath()
+      if box.width > inset * 2 + 2 {
+        line.move(to: CGPoint(x: inset, y: 0.5))
+        line.addLine(to: CGPoint(x: box.width - inset, y: 0.5))
+      }
+      sh.frame = CGRect(origin: .zero, size: box.size)
+      sh.path = line
+      bubble.shadowPath = path
+      bubble.shadowColor = UIColor.black.cgColor
+      bubble.shadowOpacity = 0.12
+      bubble.shadowRadius = 7
+      bubble.shadowOffset = CGSize(width: 0, height: 4)
+    } else {
+      ownGrad?.isHidden = true
+      if row != nil && row?.own == false && th.otherShadow, let path = p {
+        bubble.shadowPath = path
+        bubble.shadowColor = UIColor.black.cgColor
+        bubble.shadowOpacity = 0.06
+        bubble.shadowRadius = 5
+        bubble.shadowOffset = CGSize(width: 0, height: 2)
+      } else if bubble.shadowPath != nil || bubble.shadowOpacity != 0 {
+        bubble.shadowPath = nil
+        bubble.shadowOpacity = 0
+      }
+    }
+    CATransaction.commit()
+  }
 
   enum Part { case bubble, media(Int), reply, link(String, Int), audio, audioRate, file, reaction(Int), action(String, CGRect, CGFloat), retry, vnote(Int), spoiler, xfer(Int), none }
 

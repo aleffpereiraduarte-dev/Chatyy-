@@ -170,29 +170,31 @@ internal class CLLabels(src: Map<String, Any?>? = null) {
 }
 
 /** Paleta P&B — espelha LP_LIGHT / LP_DARK do ChatListTab.js. */
-internal class CLTheme(val dark: Boolean) {
-  val bg: Int
-  val text: Int
-  val sub: Int
-  val subStrong: Int
-  val faint: Int
-  val icon: Int
-  val press: Int
-  val pinnedBg: Int
-  val pillBg: Int
-  val pillTxt: Int
-  val mutedPillBg: Int
-  val mutedPillTxt: Int
-  val card: Int
-  val selectedBg: Int
+internal class CLTheme(val dark: Boolean, palette: Map<String, Any?>? = null) {
+  var bg: Int
+  var text: Int
+  var sub: Int
+  var subStrong: Int
+  var faint: Int
+  var icon: Int
+  var press: Int
+  var pinnedBg: Int
+  var pillBg: Int
+  var pillTxt: Int
+  var mutedPillBg: Int
+  var mutedPillTxt: Int
+  var card: Int
+  var selectedBg: Int
   val checkBorder: Int
   val receiptSent: Int
   val receiptGray: Int
   val receiptRead: Int = Color.parseColor("#53BDEB")
   val danger: Int = if (dark) Color.parseColor("#FF453A") else Color.parseColor("#FF3B30")
-  val ringHot: Int
-  val ringCold: Int
-  val online: Int = Color.parseColor("#22C55E")
+  var ringHot: Int
+  var ringCold: Int
+  var online: Int = Color.parseColor("#22C55E")
+  // [2026-10-20 grafite] linha entre as conversas (antes fixa na view).
+  var hair: Int = if (dark) 0x17FFFFFF else 0x14000000
 
   init {
     if (dark) {
@@ -238,7 +240,54 @@ internal class CLTheme(val dark: Boolean) {
     }
   }
 
+  // [2026-10-20 grafite, apiVersion 11] prop `palette`: sobrescreve chaves do
+  // tema. Valor = número ARGB (processColor do RN) ou "#RRGGBB" / "#AARRGGBB"
+  // (formato Android) / "rgba(r,g,b,a)". Ausente/inválido = padrão.
+  init {
+    if (palette != null && palette.isNotEmpty()) {
+      bg = paletteColor(palette["bg"]) ?: bg
+      text = paletteColor(palette["text"]) ?: text
+      sub = paletteColor(palette["sub"]) ?: sub
+      subStrong = paletteColor(palette["subStrong"]) ?: subStrong
+      faint = paletteColor(palette["faint"]) ?: faint
+      icon = paletteColor(palette["icon"]) ?: icon
+      hair = paletteColor(palette["hair"]) ?: hair
+      press = paletteColor(palette["press"]) ?: press
+      pinnedBg = paletteColor(palette["pinnedBg"]) ?: pinnedBg
+      pillBg = paletteColor(palette["pillBg"]) ?: pillBg
+      pillTxt = paletteColor(palette["pillTxt"]) ?: pillTxt
+      mutedPillBg = paletteColor(palette["mutedPillBg"]) ?: mutedPillBg
+      mutedPillTxt = paletteColor(palette["mutedPillTxt"]) ?: mutedPillTxt
+      card = paletteColor(palette["card"]) ?: card
+      selectedBg = paletteColor(palette["selectedBg"]) ?: selectedBg
+      ringHot = paletteColor(palette["ringHot"]) ?: ringHot
+      ringCold = paletteColor(palette["ringCold"]) ?: ringCold
+      online = paletteColor(palette["online"]) ?: online
+    }
+  }
+
   companion object {
+    /** [2026-10-20 grafite] cor da prop `palette` (número ARGB ou texto). */
+    fun paletteColor(v: Any?): Int? {
+      if (v is Number) {
+        val d = v.toDouble()
+        if (d.isNaN() || d.isInfinite()) return null
+        return d.toLong().toInt()
+      }
+      val s = (v as? String)?.trim()?.lowercase() ?: return null
+      if (s.isEmpty()) return null
+      if (s.startsWith("rgb")) {
+        val o = s.indexOf('(')
+        val e = s.lastIndexOf(')')
+        if (o < 0 || e <= o) return null
+        val parts = s.substring(o + 1, e).split(',').mapNotNull { it.trim().toDoubleOrNull() }
+        if (parts.size < 3) return null
+        val a = if (parts.size >= 4) parts[3].coerceIn(0.0, 1.0) else 1.0
+        return Color.argb((a * 255).toInt(), parts[0].toInt().coerceIn(0, 255), parts[1].toInt().coerceIn(0, 255), parts[2].toInt().coerceIn(0, 255))
+      }
+      return try { Color.parseColor(s) } catch (e: IllegalArgumentException) { null }
+    }
+
     /** Mesmos 8 pares cinza do AvatarCircle.js. */
     private val GRADIENTS = arrayOf(
       intArrayOf(0x5C5C5C, 0x333333),

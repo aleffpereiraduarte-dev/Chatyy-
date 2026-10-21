@@ -204,4 +204,20 @@ class MLTheme(private val d: Map<String, Any?> = emptyMap()) {
   // [2026-10-18 tg-list, apiVersion 11] realce da busca (todas / atual)
   val search = c("search", 0x59FFD60A)
   val searchCur = c("searchCur", 0xB3FFD60A.toInt())
+  // [2026-10-20 grafite, apiVersion 14] bolha própria em gradiente (2–3 cores
+  // ARGB, ~165°) + reflexo 1 px + sombra; `otherShadow` = recebida com sombra.
+  val ownGradient: IntArray? = (d["ownGradient"] as? List<*>)
+    ?.mapNotNull { MLRow.color(it) }
+    ?.takeIf { it.size >= 2 }
+    ?.toIntArray()
+  val ownGradientStops: FloatArray? = run {
+    val g = ownGradient ?: return@run null
+    val st = (d["ownGradientStops"] as? List<*>)?.mapNotNull { (it as? Number)?.toFloat() } ?: return@run null
+    if (st.size == g.size) st.toFloatArray() else null
+  }
+  val otherShadow: Boolean = when (val v = d["otherShadow"]) {
+    is Boolean -> v
+    is Number -> v.toInt() != 0
+    else -> false
+  }
 }

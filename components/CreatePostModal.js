@@ -253,7 +253,7 @@ function MentionDropdown({ query, onSelect, colors, isDark }) {
 
   return (
     <View style={[gs.mentionDrop, {
-      backgroundColor: isDark ? '#1c1c1e' : '#fff',
+      backgroundColor: colors.surface,
       borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
     }]}>
       {loading && <ActivityIndicator size="small" color={colors.primary} style={{ paddingVertical: 8 }} />}
@@ -330,7 +330,7 @@ function AudienceModal({ visible, onClose, selected, onSelect, colors, isDark, t
       <DragSheetRoot>
       <Pressable style={[gs.overlay, { backgroundColor: 'transparent' }]} onPress={onClose}>
         <DragBackdrop drag={_drag326} color="rgba(0,0,0,0.5)" />
-        <DragPanel drag={_drag326} onStartShouldSetResponder={() => true} style={[gs.audienceSheet, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
+        <DragPanel drag={_drag326} onStartShouldSetResponder={() => true} style={[gs.audienceSheet, { backgroundColor: colors.surface }]}>
           <Text style={[gs.audienceTitle, { color: colors.text }]}>
             {t('post.audience') || 'Audience'}
           </Text>
@@ -431,7 +431,7 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={[gs.tagModal, { backgroundColor: isDark ? '#0b0b0b' : '#fff' }]}>
+      <View style={[gs.tagModal, { backgroundColor: colors.surface }]}>
         <View style={[gs.tagHeader, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={onClose} style={{ padding: 6 }}>
             <IconX size={24} color={colors.text} />
@@ -1743,7 +1743,7 @@ export default function CreatePostModal({
           <DragBackdrop drag={_drag1723} color="rgba(0,0,0,0.55)" />
           <DragPanel drag={_drag1723} onStartShouldSetResponder={() => true}
             style={{
-              backgroundColor: isDark ? '#0b0b0b' : '#fff',
+              backgroundColor: colors.surface,
               borderTopLeftRadius: 18,
               borderTopRightRadius: 18,
               paddingBottom: 28,

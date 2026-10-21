@@ -904,7 +904,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {/* Header */}
       <View style={[styles.channelHeader, {
-        backgroundColor: isDark ? '#000000' : '#fff',
+        backgroundColor: colors.background,
         borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
       }]}>
         <PressableScale onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
@@ -985,7 +985,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
       {/* Admin post input */}
       {isAdmin && (
         <View style={[styles.postInput, {
-          backgroundColor: isDark ? '#000000' : '#fff',
+          backgroundColor: colors.background,
           borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         }]}>
           <PressableScale
@@ -1006,7 +1006,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
             onChangeText={setNewPost}
             placeholder={t('channel.writeSomething') || 'Write something...'}
             placeholderTextColor={isDark ? '#8e8e93' : '#9ca3af'}
-            style={[styles.postTextInput, { color: colors.text, backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6' }]}
+            style={[styles.postTextInput, { color: colors.text, backgroundColor: colors.surfaceVariant }]}
             multiline
             maxLength={5000}
           />
@@ -1082,7 +1082,7 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
             onChangeText={setName}
             placeholder={t('channel.namePlaceholder') || 'e.g. Tech News'}
             placeholderTextColor={isDark ? '#8e8e93' : '#9ca3af'}
-            style={[styles.modalInput, { color: colors.text, backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6' }]}
+            style={[styles.modalInput, { color: colors.text, backgroundColor: colors.surfaceVariant }]}
             maxLength={100}
           />
 
@@ -1092,7 +1092,7 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
             onChangeText={setDescription}
             placeholder={t('channel.descPlaceholder') || 'What is this channel about?'}
             placeholderTextColor={isDark ? '#8e8e93' : '#9ca3af'}
-            style={[styles.modalInput, { color: colors.text, backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6', height: 80 }]}
+            style={[styles.modalInput, { color: colors.text, backgroundColor: colors.surfaceVariant, height: 80 }]}
             multiline
             maxLength={1000}
           />

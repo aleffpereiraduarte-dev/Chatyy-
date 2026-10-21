@@ -1613,7 +1613,7 @@ function ParentalScreenInner() {
   const renderSummaryModal = () => (
     <Modal visible={summaryModal} transparent animationType="fade" onRequestClose={() => setSummaryModal(false)}>
       <View style={s.modalOverlay}>
-        <View style={[s.modalContent, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
+        <View style={[s.modalContent, { backgroundColor: colors.surface }]}>
           <View style={s.modalHeader}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
               {summaryChild && <AvatarCircle email={summaryChild.child_email} name={summaryChild.child_name} size={36} />}

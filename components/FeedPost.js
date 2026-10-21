@@ -1296,7 +1296,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           <DragBackdrop drag={_drag1291} color="rgba(0,0,0,0.5)" />
           <DragPanel drag={_drag1291} onStartShouldSetResponder={() => true}
             
-            style={{ backgroundColor: isDark ? '#0b0b0b' : '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 12, paddingBottom: 24, maxHeight: '80%' }}
+            style={{ backgroundColor: colors.surface, borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingTop: 12, paddingBottom: 24, maxHeight: '80%' }}
           >
             <View style={{ alignItems: 'center', marginBottom: 10 }}>
               <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? '#2c2c2e' : '#e5e7eb' }} />
@@ -2244,7 +2244,7 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
         <DragPanel drag={_drag2235} onStartShouldSetResponder={() => true}
           
           style={{
-            backgroundColor: isDark ? '#0b0b0b' : '#fff',
+            backgroundColor: colors.surface,
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
             paddingHorizontal: 18, paddingTop: 14, paddingBottom: 28,
           }}

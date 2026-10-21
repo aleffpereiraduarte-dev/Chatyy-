@@ -766,7 +766,7 @@ const makeStyles = (colors, isDark) => StyleSheet.create({
   photoWrap: {
     position: 'absolute', bottom: -40, left: 16,
     width: 88, height: 88, borderRadius: 44,
-    backgroundColor: isDark ? '#1c1c1e' : '#fff', padding: 3,
+    backgroundColor: colors.surface, padding: 3,
     ...Shadow.md,
   },
   photo: { width: 82, height: 82, borderRadius: 41 },

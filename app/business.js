@@ -320,7 +320,7 @@ function ProfileTab({ colors, isDark, user }) {
           </View>
 
           {!profile?.is_verified && (
-            <View style={[styles.verifyBanner, { backgroundColor: isDark ? '#1c1c1e' : '#f5f5f7', borderColor: colors.border, borderCurve: 'continuous' }]}>
+            <View style={[styles.verifyBanner, { backgroundColor: colors.surfaceVariant, borderColor: colors.border, borderCurve: 'continuous' }]}>
               <IconVerified size={16} color={colors.text} />
               <Text style={[styles.verifyText, { color: colors.textSecondary }]}>
                 {t('business.verifyHint')}

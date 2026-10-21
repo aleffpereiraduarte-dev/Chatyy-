@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, haptic, Colors } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, getCachedSync, setCache, getCachedEntrySync, hasCacheUser } from '../services/cache';
 
@@ -3643,8 +3643,8 @@ function CalendarScreenInner() {
 // [2026-10-11 polish-secondary] Overrides da banda do topo no modo claro.
 const calLightBand = StyleSheet.create({
   headerBand: {
-    backgroundColor: '#ffffff',
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#eef0f1',
+    backgroundColor: Colors.background, // [2026-10-20 grafite]
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.divider,
     ...Platform.select({
       ios: { shadowOpacity: 0 },
       android: { elevation: 0 },
@@ -3653,31 +3653,31 @@ const calLightBand = StyleSheet.create({
   },
   headerBtnActive: { backgroundColor: 'rgba(0,0,0,0.06)' },
   headerFab: {
-    backgroundColor: '#111111',
+    backgroundColor: Colors.primary,
     ...Platform.select({
-      web: { background: '#111111', boxShadow: '0 2px 8px rgba(0,0,0,0.14)' },
+      web: { background: Colors.primary, boxShadow: '0 2px 8px rgba(0,0,0,0.14)' },
       default: { shadowOpacity: 0.12 },
     }),
   },
-  headerSearchInner: { backgroundColor: '#F0F1F3', borderColor: 'transparent' },
-  headerSearchInput: { color: '#111b21' },
-  monthBandChevron: { backgroundColor: '#F4F5F6', borderColor: '#eef0f1' },
-  monthBandLabel: { color: '#111b21' },
-  monthBandYear: { color: '#667781' },
-  todayPill: { backgroundColor: '#111111' },
+  headerSearchInner: { backgroundColor: Colors.surfaceVariant, borderColor: 'transparent' },
+  headerSearchInput: { color: Colors.text },
+  monthBandChevron: { backgroundColor: Colors.surfaceVariant, borderColor: Colors.divider },
+  monthBandLabel: { color: Colors.text },
+  monthBandYear: { color: Colors.textSecondary },
+  todayPill: { backgroundColor: Colors.primary },
   todayPillText: { color: '#ffffff' },
-  viewSegment: { backgroundColor: '#F0F1F3', borderColor: 'transparent' },
+  viewSegment: { backgroundColor: Colors.surfaceVariant, borderColor: 'transparent' },
   viewSegmentBtnActive: {
-    backgroundColor: '#ffffff',
+    backgroundColor: Colors.surface,
     ...Platform.select({ web: { boxShadow: '0 1px 4px rgba(0,0,0,0.10)' }, default: { shadowOpacity: 0.08 } }),
   },
-  viewSegmentText: { color: '#667781' },
-  tzGhostBtn: { backgroundColor: '#F4F5F6', borderColor: '#eef0f1' },
-  tzGhostBtnActive: { backgroundColor: '#E6E8EB' },
-  tzGhostBtnText: { color: '#111b21' },
+  viewSegmentText: { color: Colors.textSecondary },
+  tzGhostBtn: { backgroundColor: Colors.surfaceVariant, borderColor: Colors.divider },
+  tzGhostBtnActive: { backgroundColor: Colors.surfaceVariant },
+  tzGhostBtnText: { color: Colors.text },
   weekStripPillToday: {},
-  weekStripText: { color: '#8696a0' },
-  weekStripTextToday: { color: '#111b21' },
+  weekStripText: { color: Colors.textTertiary },
+  weekStripTextToday: { color: Colors.text },
 });
 
 const styles = StyleSheet.create({

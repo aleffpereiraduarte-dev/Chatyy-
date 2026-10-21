@@ -44,9 +44,10 @@ public class ChatyyConversationListModule: Module {
     //     prévia em 2 linhas, ✓✓ junto da hora, remetente do grupo em linha
     //     própria, alfinete no lugar do contador, swipe com glifo cheio) +
     //     prop `accent` ("#RRGGBB": cor do "digitando…").
+    // [2026-10-20 grafite] 10 = prop `palette` (cores do tema Grafite suave).
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 9
+      return 10
       #else
       return 1
       #endif
@@ -74,6 +75,9 @@ public class ChatyyConversationListModule: Module {
       }
       Prop("dark") { (view: ChatyyConversationListView, value: Bool?) in
         view.setDark(value ?? false)
+      }
+      Prop("palette") { (view: ChatyyConversationListView, value: [String: Any]?) in
+        view.setPalette(value)
       }
       Prop("selectionMode") { (view: ChatyyConversationListView, value: Bool?) in
         view.setSelectionMode(value ?? false)

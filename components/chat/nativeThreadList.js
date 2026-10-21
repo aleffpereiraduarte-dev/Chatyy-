@@ -2296,7 +2296,13 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
   const nativeTheme = useMemo(() => {
     const th = theme || {};
     const o = {};
-    for (const k of Object.keys(th)) o[k] = toArgb(th[k]);
+    for (const k of Object.keys(th)) {
+      const v = th[k];
+      // [2026-10-20 grafite] api 14: ownGradient (cores) / ownGradientStops (0–1) / otherShadow (bool)
+      if (Array.isArray(v)) o[k] = /Stops$/.test(k) ? v.map((x) => Number(x) || 0) : v.map((x) => toArgb(x));
+      else if (typeof v === 'boolean') o[k] = v;
+      else o[k] = toArgb(v);
+    }
     return o;
   }, [theme]);
 

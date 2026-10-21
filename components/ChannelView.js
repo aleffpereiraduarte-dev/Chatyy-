@@ -661,7 +661,7 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
             placeholderTextColor={isDark ? '#555' : '#9ca3af'}
             style={[styles.composeInput, {
               color: colors.text,
-              backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6',
+              backgroundColor: colors.surfaceVariant,
             }]}
             multiline
             maxLength={5000}

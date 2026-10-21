@@ -25,6 +25,8 @@ import { View, Text, StyleSheet, Platform, Image as RNImage } from 'react-native
 import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
 import PressableScale from '../PressableScale';
+import SilverRing from '../ui/SilverRing';
+import { THEME_V2 } from '../../constants/theme';
 import { useGroupedColors } from './SettingsKit';
 import { IconSearch, IconCamera, IconChevronDown, IconChevronLeft, IconArrowLeft } from '../Icons';
 import { getNativeBlurView } from '../NativeBlur';
@@ -329,7 +331,13 @@ export default function MeHeader({
             testID="settings-profile-card"
             style={cover ? [st.ring, { backgroundColor: g.pageBg }] : null}
           >
-            <AvatarCircle key={avatarKey} email={user?.email} uri={profile?.avatar_url || undefined} name={name || user?.email} size={AVATAR} />
+            {THEME_V2 && !cover ? (
+              <SilverRing size={AVATAR} isDark={g.isDark} width={2} gap={3} style={{ margin: -5 }}>
+                <AvatarCircle key={avatarKey} email={user?.email} uri={profile?.avatar_url || undefined} name={name || user?.email} size={AVATAR} />
+              </SilverRing>
+            ) : (
+              <AvatarCircle key={avatarKey} email={user?.email} uri={profile?.avatar_url || undefined} name={name || user?.email} size={AVATAR} />
+            )}
           </PressableScale>
           <PressableScale
             onPress={onChangePhoto || onEdit}

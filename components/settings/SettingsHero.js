@@ -13,7 +13,7 @@ import AvatarCircle from '../AvatarCircle';
 import PressableScale from '../PressableScale';
 import { useLanguage } from '../../context/LanguageContext';
 import { useReducedMotion } from '../reducedMotion';
-import { useGroupedColors, SettingsGroup, SettingsRow } from './SettingsKit';
+import { useGroupedColors, SettingsGroup, SettingsRow, grafiteTileStyle } from './SettingsKit';
 import Svg, { Path } from 'react-native-svg';
 import { IconEdit, IconRepeat, IconSparkles, IconMonitor, IconUsers, IconChevronRight, IconStar } from '../Icons';
 import { PLAN_NAME } from '../../services/brandPlan'; // [2026-10-17 brand-plan]
@@ -156,9 +156,9 @@ function FeatureTile({ icon: Icon, title, subtitle, onPress, testID }) {
   const g = useGroupedColors();
   return (
     <View style={{ flex: 1, minWidth: 0 }}>
-    <PressableScale onPress={onPress} haptic="light" scaleTo={0.97} accessibilityRole="button" accessibilityLabel={subtitle ? `${title}, ${subtitle}` : title} testID={testID} containerStyle={st.tileFill} style={[st.tile, st.tileFill, { backgroundColor: g.cardBg }]}>
+    <PressableScale onPress={onPress} haptic="light" scaleTo={0.97} accessibilityRole="button" accessibilityLabel={subtitle ? `${title}, ${subtitle}` : title} testID={testID} containerStyle={st.tileFill} style={[st.tile, st.tileFill, { backgroundColor: g.cardBg }, g.cardShadow]}>
       <View style={st.tileTop}>
-        <View style={[st.tileIcon, { backgroundColor: g.chipBg }]}><Icon size={17} color={g.chipFg} /></View>
+        <View style={[st.tileIcon, { backgroundColor: g.chipBg }, g.v2 && grafiteTileStyle(g.isDark)]}><Icon size={17} color={g.v2 ? g.tileFg : g.chipFg} /></View>
         <IconChevronRight size={15} color={g.tertiary} />
       </View>
       <Text style={[st.tileTitle, { color: g.text }]} numberOfLines={1}>{title}</Text>

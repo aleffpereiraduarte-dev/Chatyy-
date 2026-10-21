@@ -15,6 +15,7 @@ import { View, Animated, Easing, Platform, TurboModuleRegistry } from 'react-nat
 import Svg, { Defs, RadialGradient, Stop, Circle, Ellipse } from 'react-native-svg';
 import { KEYBOARD_CONTROLLER_ACTIVE } from '../../utils/threadKeyboard';
 import { useReducedMotion } from '../reducedMotion';
+import { THEME_V2 } from '../../constants/theme';
 
 let Rea = null;
 if (KEYBOARD_CONTROLLER_ACTIVE) {
@@ -22,6 +23,7 @@ if (KEYBOARD_CONTROLLER_ACTIVE) {
 }
 const REA_OK = !!(Rea && Rea.useSharedValue && Rea.useDerivedValue && Rea.useFrameCallback && Rea.withTiming);
 
+const V2 = THEME_V2;
 const MODE_ENERGY = { idle: 0.12, thinking: 0.55, listening: 0.32, speaking: 0.5 };
 const MODE_NUM = { idle: 0, thinking: 1, listening: 2, speaking: 3 };
 
@@ -144,7 +146,8 @@ function SkiaOrb({ size, mode, getLevel, isDark, reduceMotion, paused, Sk, effec
     const m = modeSV.value;
     let lv = level.value;
     if (m === 3 && hasLevel.value === 0) lv = 0.3 + 0.22 * Math.sin(t * 7.3) * Math.sin(t * 3.1);
-    const breath = m === 1 ? 0.045 * (0.5 + 0.5 * Math.sin(t * 2.4)) : 0.014 * Math.sin(t * 0.9);
+    // [2026-10-20 grafite] "respirando": ciclo de 4 s, escala 1 → 1,03 (tema v2)
+    const breath = m === 1 ? 0.045 * (0.5 + 0.5 * Math.sin(t * 2.4)) : (V2 ? 0.015 + 0.015 * Math.sin(t * 1.5708) : 0.014 * Math.sin(t * 0.9));
     const scale = 1 + breath + lv * 0.11;
     return { r: R * scale, e: energy.value + lv * 0.7, t };
   });
@@ -153,7 +156,7 @@ function SkiaOrb({ size, mode, getLevel, isDark, reduceMotion, paused, Sk, effec
   }));
   const shapeR = Rea.useDerivedValue(() => geo.value.r + 1);
   const glowR = Rea.useDerivedValue(() => geo.value.r * (1.02 + geo.value.e * 0.1));
-  const glowOpacity = Rea.useDerivedValue(() => (darkSV.value ? 0.16 : 0.22) + geo.value.e * 0.28);
+  const glowOpacity = Rea.useDerivedValue(() => (darkSV.value ? 0.16 : 0.22) + geo.value.e * 0.28 + (V2 && modeSV.value === 0 ? 0.08 * (0.5 + 0.5 * Math.sin(geo.value.t * 1.5708)) : 0));
 
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }} pointerEvents="none">
@@ -186,15 +189,17 @@ export const BiaOrbLite = memo(function BiaOrbLite({ size = 40, mode = 'idle', i
     spin.setValue(0);
     const s = Animated.loop(Animated.timing(spin, { toValue: 1, duration: fast ? 3200 : 9000, easing: Easing.linear, useNativeDriver: true }));
     const b = Animated.loop(Animated.sequence([
-      Animated.timing(breath, { toValue: 1, duration: fast ? 700 : 2200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      Animated.timing(breath, { toValue: 0, duration: fast ? 700 : 2200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(breath, { toValue: 1, duration: fast ? 700 : (V2 ? 2000 : 2200), easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(breath, { toValue: 0, duration: fast ? 700 : (V2 ? 2000 : 2200), easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
     ]));
     s.start(); b.start();
     return () => { s.stop(); b.stop(); };
   }, [run, fast, spin, breath]);
   const rot = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
   const rotB = spin.interpolate({ inputRange: [0, 1], outputRange: ['360deg', '0deg'] });
-  const scale = breath.interpolate({ inputRange: [0, 1], outputRange: [1, fast ? 1.06 : 1.025] });
+  const scale = breath.interpolate({ inputRange: [0, 1], outputRange: [1, fast ? 1.06 : (V2 ? 1.03 : 1.025)] });
+  // [2026-10-20 grafite] brilho que acompanha a respiração (filter: brightness 1 → 1,18 do mockup)
+  const glow = V2 ? breath.interpolate({ inputRange: [0, 1], outputRange: [0, 0.12] }) : null;
   const r = size / 2;
   return (
     <Animated.View
@@ -243,6 +248,7 @@ export const BiaOrbLite = memo(function BiaOrbLite({ size = 40, mode = 'idle', i
         <Circle cx={r} cy={r} r={r} fill={`url(#${id}h)`} />
         <Circle cx={r} cy={r} r={r} fill={`url(#${id}r)`} />
       </Svg>
+      {glow ? <Animated.View style={{ position: 'absolute', width: size, height: size, borderRadius: r, backgroundColor: '#FFFFFF', opacity: glow }} /> : null}
     </Animated.View>
   );
 });

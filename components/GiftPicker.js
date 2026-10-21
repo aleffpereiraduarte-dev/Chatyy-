@@ -93,7 +93,7 @@ export default function GiftPicker({ visible, onClose, receiverEmail, sessionId,
         <DragBackdrop drag={_drag87} color="rgba(0,0,0,0.4)" />
         <DragPanel drag={_drag87} onStartShouldSetResponder={() => true}
           style={[styles.sheet, {
-            backgroundColor: isDark ? '#1c1c1e' : '#fff',
+            backgroundColor: colors.surface,
             transform: [{ translateY: slideAnim }],
           }]}
         >

@@ -4,6 +4,8 @@ import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'reac
 import { getAvatarUrlForEmail } from '../services/api'; // collage tiles (= buildAvatarUrl)
 import ChatyyOneAvatar from './ChatyyOneAvatar';
 import { useLanguageOptional } from '../context/LanguageContext';
+import { useTheme } from '../context/ThemeContext';
+import { THEME_V2 } from '../constants/theme';
 // Disk-persistent avatar cache (documentDirectory/avatar-saved). Survives
 // OS cache evictions so a contact's profile photo paints from disk on
 // cold-start / offline — even if expo-image's NSURLCache got purged.
@@ -177,8 +179,25 @@ function hashInt(s) {
   for (let i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
   return Math.abs(h);
 }
-function gradientFor(seed) {
-  const [c1, c2] = AVATAR_GRADIENTS[hashInt(seed) % AVATAR_GRADIENTS.length];
+// [2026-10-20 grafite] tema v2: avatar sem foto = gradiente quente claro
+// (#D9D9D5→#A9A9A6, iniciais #4A4A4F) / escuro (#4A4A50→#2A2A2E, iniciais
+// #C2C2C6), com leve variação de luminosidade por contato.
+const AVATAR_GRADIENTS_V2_L = [
+  ['#D9D9D5', '#A9A9A6'], ['#D3D3CF', '#A1A19E'], ['#DEDEDA', '#B0B0AD'], ['#CFCFCB', '#9B9B98'],
+  ['#D6D6D2', '#A6A6A3'], ['#E1E1DD', '#B4B4B1'], ['#D1D1CD', '#9E9E9B'], ['#DBDBD7', '#ACACA9'],
+];
+const AVATAR_GRADIENTS_V2_D = [
+  ['#4A4A50', '#2A2A2E'], ['#505056', '#2E2E32'], ['#45454B', '#27272B'], ['#55555B', '#323236'],
+  ['#4D4D53', '#2C2C30'], ['#58585E', '#34343A'], ['#48484E', '#29292D'], ['#525258', '#303034'],
+];
+const AVATAR_INK_V2 = { l: '#4A4A4F', d: '#C2C2C6' };
+function _useAvatarDark() {
+  if (!THEME_V2) return false;
+  try { return !!useTheme().isDark; } catch { try { return !!globalThis.__chatyy_app_is_dark; } catch { return false; } }
+}
+function gradientFor(seed, isDark) {
+  const _set = THEME_V2 ? (isDark ? AVATAR_GRADIENTS_V2_D : AVATAR_GRADIENTS_V2_L) : AVATAR_GRADIENTS;
+  const [c1, c2] = _set[hashInt(seed) % _set.length];
   // id keyed by the colors → identical pairs dedup into one <Defs> (important
   // on web where SVG ids are document-global), distinct pairs never collide.
   return { c1, c2, gid: `avg${c1.slice(1)}${c2.slice(1)}` };
@@ -297,7 +316,8 @@ function _CollageTile({ member, size, width, height }) {
     }
   }
   const initials = getInitials(memberName, memberEmail);
-  const grad = gradientFor((memberName || memberEmail || '').toLowerCase());
+  const _avDk = _useAvatarDark();
+  const grad = gradientFor((memberName || memberEmail || '').toLowerCase(), _avDk);
   const bg = grad.c2; // solid fallback behind the gradient layer
   // Allow non-square tiles (WhatsApp 1+2 layout has a full-height left tile).
   // Default to square when only `size` is passed.
@@ -313,7 +333,7 @@ function _CollageTile({ member, size, width, height }) {
           edge and the pair read as one word ("APQA"). One letter per narrow
           tile, slightly smaller glyph. */}
       <Text
-        style={{ color: '#fff', fontWeight: '700', fontSize: Math.max(8, Math.min(w, h) * (w < h ? 0.6 : 0.36)), position: 'absolute' }}
+        style={{ color: THEME_V2 ? AVATAR_INK_V2[_avDk ? 'd' : 'l'] : '#fff', fontWeight: '700', fontSize: Math.max(8, Math.min(w, h) * (w < h ? 0.6 : 0.36)), position: 'absolute' }}
         allowFontScaling={false}
         numberOfLines={1}
       >
@@ -391,8 +411,11 @@ function _GroupCollage({ members, size, style }) {
   );
 }
 
+const _INK_V2_L = { color: AVATAR_INK_V2.l };
+const _INK_V2_D = { color: AVATAR_INK_V2.d };
 function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#111111', showStatus = false, members, onPress, prefetchFull = false, offlineFirst = false }) {
   const _lang = useLanguageOptional();
+  const _avDk2 = _useAvatarDark(); // [2026-10-20 grafite]
   const [imgError, setImgError] = useState(false);
   const _imgErrRef = useRef(null);
   _imgErrRef.current = () => setImgError(true);
@@ -616,7 +639,7 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // at all when only `style`/parent identity changed.
   const initials = getInitials(name, email);
   const _colorSeed = (displayName || email || '').toLowerCase();
-  const _grad = gradientFor(_colorSeed);
+  const _grad = gradientFor(_colorSeed, _avDk2);
   const bgColor = _grad.c2; // solid fallback behind the premium gradient layer
   // [2026-10-11 qa-sweep2] Was hardcoded English ("Avatar of Qa2") for every
   // screen reader user, whatever the app language.
@@ -649,7 +672,7 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
           blob with no initials" rendering for users without a profile photo
           (parental child cards, fresh signups, etc). */}
       <Text
-        style={[styles.initials, { fontSize: size * 0.38, position: 'absolute' }]}
+        style={[styles.initials, THEME_V2 && (_avDk2 ? _INK_V2_D : _INK_V2_L), { fontSize: size * 0.38, position: 'absolute' }]}
         allowFontScaling={false}
         accessibilityElementsHidden
       >

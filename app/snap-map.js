@@ -2269,7 +2269,7 @@ export default function SnapMapScreen() {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 90 }} contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8, gap: 8 }}>
           {pendingReqs.map((r) => (
             <View key={r.email} style={{
-              backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
+              backgroundColor: colors.surfaceVariant,
               borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10,
               flexDirection: 'row', alignItems: 'center', gap: 10,
               borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)',
@@ -2592,7 +2592,7 @@ export default function SnapMapScreen() {
             style={{
               position: 'absolute', left: 0, right: 0, bottom: 0,
               maxHeight: listExpanded ? SH * 0.6 : 130,
-              backgroundColor: isDark ? '#111111' : '#fff',
+              backgroundColor: colors.surface,
               borderTopLeftRadius: 22, borderTopRightRadius: 22,
               borderTopWidth: StyleSheet.hairlineWidth,
               borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',

@@ -18,6 +18,8 @@ import { buildRow, buildLabels, createPatcher, presenceEmailOf } from './nativeA
 import { buildPeekItems, buildPeekBg, peekHeightFraction, PEEK_MAX } from './peekItems';
 import { listMetrics, tgListOn, listAccentHex } from './listDensity';
 import { useTheme } from '../../context/ThemeContext';
+import { THEME_V2 as _THEME_V2, grafite as _grafite } from '../../constants/theme'; // [2026-10-20 grafite]
+import { toArgb as _toArgb } from '../chat/argb';
 
 class NativeListBoundary extends React.Component {
   constructor(props) {
@@ -412,6 +414,15 @@ function NativeConversationListInner(props) {
     }
   } catch {}
 
+  // [2026-10-20 grafite] binário com a prop `palette` (iOS api >= 10 / Android
+  // api >= 11): cinzas quentes do tema v2. Antigo: nem recebe (cores nativas).
+  let paletteProps = null;
+  try {
+    if (_THEME_V2 && _clApiVersion() >= (Platform.OS === 'android' ? 11 : 10)) {
+      paletteProps = isDark ? _PALETTE_D : _PALETTE_L;
+    }
+  } catch {}
+
   if (!Native) return null;
   return (
     <Native
@@ -434,6 +445,7 @@ function NativeConversationListInner(props) {
       {...wave8Props}
       {...peekHeightProps}
       {...densityProps}
+      {...paletteProps}
       {...handlers}
     >
       <View collapsable={false} style={styles.slot} onLayout={onHeaderLayout} {...headerTouchGuard}>
@@ -454,6 +466,22 @@ export default function NativeConversationList(props) {
     </NativeListBoundary>
   );
 }
+
+function _mkPalette(dark) {
+  if (!_THEME_V2) return null;
+  const g = _grafite(dark);
+  const raw = {
+    bg: dark ? g.bg : g.surface, text: g.text, sub: g.muted, subStrong: g.text2, faint: dark ? '#5E5E64' : '#B4B4B8',
+    hair: g.line, press: dark ? 'rgba(255,255,255,0.05)' : 'rgba(24,24,27,0.04)', pinnedBg: dark ? g.surface : '#FAFAF8',
+    pillBg: g.ink, pillTxt: g.onInk, mutedPillBg: dark ? '#3A3A3F' : '#C9C9C5', mutedPillTxt: dark ? g.text : '#FFFFFF',
+    card: g.surface2, selectedBg: g.surface2, online: g.text,
+  };
+  const out = {};
+  for (const k of Object.keys(raw)) out[k] = _toArgb(raw[k]);
+  return { palette: out };
+}
+const _PALETTE_L = _mkPalette(false);
+const _PALETTE_D = _mkPalette(true);
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },

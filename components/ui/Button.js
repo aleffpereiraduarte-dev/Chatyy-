@@ -13,7 +13,7 @@
 import React from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 import PressableScale from '../PressableScale';
-import { Layout, Radius, Type } from '../../constants/theme';
+import { Layout, Radius, Type, THEME_V2, bubbleOwnStyle } from '../../constants/theme';
 import useSurface from './useSurface';
 
 const HEIGHTS = { sm: 36, md: 44, lg: 52 };
@@ -78,6 +78,8 @@ export default function Button({
           opacity: disabled && !loading ? 0.4 : 1,
           alignSelf: fullWidth ? 'stretch' : 'auto',
         },
+        // [2026-10-20 grafite] primário no claro = grafite com gradiente + reflexo de 1 px (mockup)
+        THEME_V2 && variant === 'primary' && !s.isDark ? bubbleOwnStyle(false) : null,
         Platform.OS === 'web' ? { cursor: isDisabled ? 'default' : 'pointer', userSelect: 'none' } : null,
         style,
       ]}

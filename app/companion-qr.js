@@ -281,7 +281,7 @@ export default function CompanionQRScreen() {
           </View>
         ) : status === 'approved' ? (
           <View style={s.approvedBox}>
-            <View style={[s.bigIconBox, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7' }]}>
+            <View style={[s.bigIconBox, { backgroundColor: colors.surfaceVariant }]}>
               <IconShield size={48} color={colors.text} />
             </View>
             <Text style={[s.approvedTitle, { color: colors.text }]}>
@@ -339,7 +339,7 @@ export default function CompanionQRScreen() {
           </View>
         ) : (
           <>
-            <View style={[s.iconBox, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7' }]}>
+            <View style={[s.iconBox, { backgroundColor: colors.surfaceVariant }]}>
               <IconSmartphone size={32} color={colors.text} />
             </View>
             <Text style={[s.heroTitle, { color: colors.text }]}>

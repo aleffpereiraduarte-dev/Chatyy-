@@ -115,7 +115,7 @@ export default function DeclineWithMessageSheet() {
       <Pressable style={[styles.overlay, { backgroundColor: 'transparent' }]} onPress={onClose}>
         <DragBackdrop drag={_drag108} color="rgba(0,0,0,0.5)" />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ width: '100%' }}>
-          <DragPanel drag={_drag108} onStartShouldSetResponder={() => true}  style={[styles.sheet, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
+          <DragPanel drag={_drag108} onStartShouldSetResponder={() => true}  style={[styles.sheet, { backgroundColor: colors.surface }]}>
             <View style={styles.handle} />
             <Text style={[styles.title, { color: colors.text }]}>
               {t('call.declineWithMessageTitle') || 'Responder com mensagem'}

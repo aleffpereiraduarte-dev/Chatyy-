@@ -16,7 +16,7 @@ import React from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { SafeAreaListener } from 'react-native-safe-area-context'; // [2026-10-08 header-inset-all] JS-only (usa o RNCSafeAreaProvider nativo já no binário)
 import { HeaderHeightContext } from '@react-navigation/elements'; // [2026-10-07 native-ui-build] (dep do expo-router, cópia única)
-import { haptic } from '../constants/theme';
+import { haptic, THEME_V2, Grafite } from '../constants/theme';
 import { IconChevronLeft, IconArrowLeft } from './Icons';
 
 export const USE_NATIVE_HEADER = Platform.OS !== 'web';
@@ -150,7 +150,7 @@ export function nativeHeaderOptions({
     headerShown: true,
     title: title || '',
     headerTintColor: fg,
-    headerTitleStyle: { color: fg },
+    headerTitleStyle: THEME_V2 ? { color: fg, fontWeight: '600' } : { color: fg },
     headerStyle: bg ? { backgroundColor: bg } : undefined,
     headerShadowVisible: true,
     headerBackButtonDisplayMode: 'minimal',
@@ -161,7 +161,7 @@ export function nativeHeaderOptions({
     opts.headerLargeTitle = true;
     opts.headerLargeTitleShadowVisible = false;
     opts.headerLargeStyle = bg ? { backgroundColor: bg } : undefined;
-    opts.headerLargeTitleStyle = { color: fg };
+    opts.headerLargeTitleStyle = THEME_V2 ? { color: fg, fontWeight: Grafite.largeTitle.fontWeight } : { color: fg }; // [2026-10-20 grafite] 34/800
   }
   if (blur && USE_BLUR_HEADER) {
     opts.headerTransparent = true;

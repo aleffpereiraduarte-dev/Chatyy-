@@ -21,7 +21,7 @@ import { SearchReveal, searchRevealEnabled } from '../components/chatlist/Search
 import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop } from 'react-native-svg';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { WALLET_ENABLED } from '../constants/featureFlags';
-import { haptic, Motion, Typography } from '../constants/theme';
+import { haptic, Motion, Typography, THEME_V2 as _V2, Grafite as _GF } from '../constants/theme';
 import { Springs } from '../constants/motion'; // [2026-10-18 elegance]
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 import ChatListTab from '../components/ChatListTab';
@@ -271,9 +271,18 @@ const ACCENT2 = '#111111';
 // brand constant (same in light/dark, like WhatsApp itself).
 const WA_GREEN = '#25D366';
 // [2026-10-08 chat-beauty-list] B&W shell tokens (header / tab bar).
-const SHELL_DARK = '#0b0b0b';
-const TAB_ON_LIGHT = '#0b0b0b';
-const TAB_ON_DARK = '#f5f5f5';
+// [2026-10-20 grafite] tema v2: cinzas quentes (fundo #F2F2EF / #0E0E10).
+const SHELL_DARK = _V2 ? _GF.dark.bg : '#0b0b0b';
+const SHELL_LIGHT = _V2 ? _GF.light.bg : '#ffffff';
+const TAB_ON_LIGHT = _V2 ? _GF.light.text : '#0b0b0b';
+const TAB_ON_DARK = _V2 ? _GF.dark.text : '#f5f5f5';
+// vidro da barra (72%), aba ativa em cápsula, hairline
+const TAB_GLASS_LIGHT = _V2 ? _GF.light.tabBg : 'rgba(255,255,255,0.42)';
+const TAB_GLASS_DARK = _V2 ? _GF.dark.tabBg : 'rgba(28,28,30,0.30)';
+const TAB_PILL_LIGHT = _V2 ? _GF.light.tabActive : 'rgba(0,0,0,0.07)';
+const TAB_PILL_DARK = _V2 ? _GF.dark.tabActive : 'rgba(255,255,255,0.14)';
+const TAB_HAIR_LIGHT = _V2 ? 'rgba(24,24,27,0.07)' : 'rgba(0,0,0,0.12)';
+const TAB_HAIR_DARK = _V2 ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.10)';
 // [2026-10-19 accent-real] aba ativa / badge na cor de destaque (Grafite = P&B de sempre).
 function _tabOn(dark) {
   try {
@@ -291,13 +300,13 @@ function _tabOnInk(dark) {
     const h = snap && snap.on ? T.resolveAccent(snap.value, dark) : null;
     if (h) return T.onAccentFor(h);
   } catch {}
-  return dark ? '#0b0b0b' : '#ffffff';
+  return dark ? SHELL_DARK : SHELL_LIGHT;
 }
 function _reduceTransparency() { try { return !!require('../services/a11yPrefs').getA11y().reduceTransparency; } catch { return false; } }
 // [2026-10-13 design-system] inativos com contraste AA (era #9a9a9e 2.8:1 /
 // #7c7c80) — o estado ativo agora se distingue por ícone PREENCHIDO + pílula.
-const TAB_OFF_LIGHT = '#6e6e73';
-const TAB_OFF_DARK = '#8e8e93';
+const TAB_OFF_LIGHT = _V2 ? _GF.light.muted : '#6e6e73';
+const TAB_OFF_DARK = _V2 ? _GF.dark.muted : '#8e8e93';
 const DESKTOP_BREAKPOINT = 900;
 
 // Mobile bottom bar: 4 tabs — Reels + Chats + Calls + Apps.
@@ -1507,15 +1516,15 @@ function ChatHub() {
   // [2026-10-08 chat-beauty-list] B&W premium shell: near-black #0b0b0b in
   // dark (was WhatsApp navy #111b21/#0e1621), neutral hairlines (no blue cast).
   const glassHeader = {
-    backgroundColor: isDark ? SHELL_DARK : '#ffffff',
+    backgroundColor: isDark ? SHELL_DARK : SHELL_LIGHT,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: isDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.08)',
+    borderBottomColor: isDark ? TAB_HAIR_DARK : TAB_HAIR_LIGHT,
   };
 
   const glassTabBar = {
-    backgroundColor: isDark ? SHELL_DARK : '#ffffff',
+    backgroundColor: isDark ? SHELL_DARK : SHELL_LIGHT,
   };
-  const searchFieldBg = isDark ? '#1c1c1e' : '#f2f2f2';
+  const searchFieldBg = _V2 ? (isDark ? _GF.dark.surface : _GF.light.surface2) : (isDark ? '#1c1c1e' : '#f2f2f2');
   const searchIconC = isDark ? '#8e8e93' : '#8a8a8e';
 
   // ── DESKTOP LAYOUT (side rail + content) ──
@@ -1730,7 +1739,7 @@ function ChatHub() {
   const showDiscoverRow = false && !LIST_LARGE_TITLE && !isKids && activeTab === 'chats' && !searchOpen && !reelsImmersive;
   return (
     <View onLayout={onHomeRootLayout} style={[styles.container, {
-      backgroundColor: reelsImmersive ? '#000' : (isDark ? SHELL_DARK : '#ffffff'),
+      backgroundColor: reelsImmersive ? '#000' : (isDark ? SHELL_DARK : SHELL_LIGHT),
       // [2026-10-13 reels-visual] Aba Reels = vídeo de borda a borda (TikTok/Instagram):
       // começa atrás da status bar; o ReelsViewer aplica o inset no cabeçalho + gradiente.
       paddingTop: (activeTab === 'reels' || muralShell) ? 0 : insets.top,
@@ -1960,8 +1969,8 @@ function ChatHub() {
           bottomInset={insets.bottom}
           activeColor={_tabOn(barDark)}
           inactiveColor={barDark ? TAB_OFF_DARK : TAB_OFF_LIGHT}
-          backgroundColor={barDark ? SHELL_DARK : '#ffffff'}
-          hairlineColor={barDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.12)'}
+          backgroundColor={barDark ? SHELL_DARK : SHELL_LIGHT}
+          hairlineColor={barDark ? TAB_HAIR_DARK : TAB_HAIR_LIGHT}
           onTabPress={handleTabPress}
           onTabLongPress={(key) => { if (key === 'chats') requestNewStatus(); /* [2026-10-09 status-composer] segurar = câmera do status */ else if (key === 'apps' && TABS_V2) handleTabPress('email'); /* [tabs-v2 2026-10-20] */ }}
           onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined}
@@ -1977,20 +1986,20 @@ function ChatHub() {
         // iOS 26: a cápsula fica ~insets-10 acima da borda (home indicator por baixo).
         paddingBottom: insets.bottom > 0 ? Math.max(insets.bottom - 10, 8) : 10,
       }] : [styles.tabBar, {
-        backgroundColor: GLASS_TAB_BAR ? 'transparent' : (barDark ? SHELL_DARK : '#ffffff'),
+        backgroundColor: GLASS_TAB_BAR ? 'transparent' : (barDark ? SHELL_DARK : SHELL_LIGHT),
         ...(GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : {}),
         paddingBottom: Platform.OS === 'web' ? (insets.bottom || 10) : Math.max(insets.bottom, Platform.OS === 'android' ? 12 : 8),
         ...(Platform.OS !== 'web' ? {
           borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: barDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.12)',
+          borderTopColor: barDark ? TAB_HAIR_DARK : TAB_HAIR_LIGHT,
         } : {
           // [2026-10-08 chat-beauty-list] web: flat bar + hairline (same as
           // native) instead of a rounded floating card with a drop shadow.
           borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: barDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)',
-          backdropFilter: 'blur(24px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-          backgroundColor: barDark ? 'rgba(11, 11, 11, 0.94)' : 'rgba(255, 255, 255, 0.94)',
+          borderTopColor: barDark ? TAB_HAIR_DARK : TAB_HAIR_LIGHT,
+          backdropFilter: _V2 ? 'blur(22px) saturate(140%)' : 'blur(24px) saturate(180%)',
+          WebkitBackdropFilter: _V2 ? 'blur(22px) saturate(140%)' : 'blur(24px) saturate(180%)',
+          backgroundColor: _V2 ? (barDark ? TAB_GLASS_DARK : TAB_GLASS_LIGHT) : (barDark ? 'rgba(11, 11, 11, 0.94)' : 'rgba(255, 255, 255, 0.94)'),
         }),
       }]}>
         {/* [beauty 2026-10-01] WhatsApp-style sliding active indicator. The
@@ -2002,7 +2011,7 @@ function ChatHub() {
         {/* [2026-10-07 native-ui-build] iOS: material translúcido do sistema
             (systemChromeMaterial, igual UITabBar) atrás dos itens. */}
         <FloatingTabCapsule enabled={FLOAT_TAB_BAR} isDark={barDark}>
-        {!FLOAT_TAB_BAR && GLASS_TAB_BAR && <BarMaterial isDark={barDark} solidColor={barDark ? SHELL_DARK : '#ffffff'} />}
+        {!FLOAT_TAB_BAR && GLASS_TAB_BAR && <BarMaterial isDark={barDark} solidColor={barDark ? SHELL_DARK : SHELL_LIGHT} />}
         {/* [2026-10-13 design-system] A barrinha deslizante de 3px no topo
             (Android/web) foi trocada pela pílula M3 atrás do ícone ativo
             (TabBarItem). A barra ficava "estacionada" sob Conversas quando a
@@ -2301,7 +2310,7 @@ function PulseBadge({ badge, isDark, style }) {
       // [2026-10-08 chat-beauty-list] B&W, inverted in dark (#111 on the dark
       // bar was invisible) + a ring in the bar colour so it cuts the icon.
       backgroundColor: _tabOn(isDark),
-      borderWidth: 2, borderColor: isDark ? SHELL_DARK : '#ffffff',
+      borderWidth: 2, borderColor: isDark ? SHELL_DARK : SHELL_LIGHT,
       transform: [{ scale: pulseAnim }],
     }, style]}>
       <Text style={[styles.badgeText, { color: _tabOnInk(isDark) }]}>{badge > 99 ? '99+' : badge}</Text>
@@ -2313,14 +2322,15 @@ function PulseBadge({ badge, isDark, style }) {
 // [2026-10-18 tabbar-glass] Cápsula flutuante iOS 26 em volta dos itens da barra
 // JS: sombra suave (fora) + vidro recortado (dentro: blur thin material + véu
 // translúcido + hairline). Sem expo-blur no binário → véu quase opaco.
+const _TAB_FLOAT_SH_V2 = { shadowOffset: { width: 0, height: 10 }, shadowRadius: 30 }; // [2026-10-20 grafite] 0 10 30 /10%
 function FloatingTabCapsule({ enabled, isDark, children }) {
   if (!enabled) return <>{children}</>;
   const hasBlur = canNativeBlur();
   return (
-    <View style={[styles.tabFloatShadow, { shadowOpacity: isDark ? 0.38 : 0.14 }]}>
-      <View style={[styles.tabFloatClip, { borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.08)' }]}>
-        <BarMaterial isDark={isDark} intensity={90} tint={isDark ? 'systemThinMaterialDark' : 'systemThinMaterialLight'} solidColor={isDark ? 'rgba(28,28,30,0.97)' : 'rgba(250,250,252,0.97)'} />
-        {hasBlur && <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: isDark ? 'rgba(28,28,30,0.30)' : 'rgba(255,255,255,0.42)' }]} />}
+    <View style={[styles.tabFloatShadow, { shadowOpacity: _V2 ? (isDark ? 0.5 : 0.10) : (isDark ? 0.38 : 0.14) }, _V2 && _TAB_FLOAT_SH_V2]}>
+      <View style={[styles.tabFloatClip, { borderColor: _V2 ? (isDark ? _GF.dark.tabBorder : _GF.light.tabBorder) : (isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.08)') }]}>
+        <BarMaterial isDark={isDark} intensity={_V2 ? 70 : 90} tint={isDark ? 'systemThinMaterialDark' : 'systemThinMaterialLight'} solidColor={_V2 ? (isDark ? 'rgba(30,30,33,0.97)' : 'rgba(250,250,248,0.97)') : (isDark ? 'rgba(28,28,30,0.97)' : 'rgba(250,250,252,0.97)')} />
+        {hasBlur && <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: isDark ? TAB_GLASS_DARK : TAB_GLASS_LIGHT }]} />}
         {children}
       </View>
     </View>
@@ -2390,7 +2400,7 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
     >
       {floating && (
         <Animated.View pointerEvents="none" style={[styles.tabPillFloat, {
-          backgroundColor: isDark ? 'rgba(255,255,255,0.13)' : 'rgba(120,120,128,0.16)',
+          backgroundColor: _V2 ? (isDark ? TAB_PILL_DARK : TAB_PILL_LIGHT) : (isDark ? 'rgba(255,255,255,0.13)' : 'rgba(120,120,128,0.16)'),
           opacity: pillAnim,
           transform: [{ scale: pillAnim.interpolate({ inputRange: [0, 1], outputRange: [0.86, 1] }) }],
         }]} />
@@ -2401,7 +2411,7 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
       }]}>
         {showPill && !floating && (
           <Animated.View pointerEvents="none" style={[styles.tabPill, {
-            backgroundColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.07)',
+            backgroundColor: isDark ? TAB_PILL_DARK : TAB_PILL_LIGHT,
             opacity: pillAnim,
             transform: [{ scaleX: pillAnim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }],
           }]} />
@@ -2423,7 +2433,7 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
             position: 'absolute', top: 2, right: 12,
             width: 8, height: 8, borderRadius: 4,
             backgroundColor: colors.badge,
-            borderWidth: 1.5, borderColor: isDark ? SHELL_DARK : '#ffffff', // [2026-10-10 polish-list] was navy #0f1115
+            borderWidth: 1.5, borderColor: isDark ? SHELL_DARK : SHELL_LIGHT, // [2026-10-10 polish-list] was navy #0f1115
           }} />
         )}
       </Animated.View>

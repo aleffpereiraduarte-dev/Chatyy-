@@ -349,6 +349,15 @@ class MLCellView(context: Context) : ViewGroup(context) {
   private val ringText = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD) }
 
   private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+  // [2026-10-20 grafite] pincéis da bolha em gradiente / sombra (só com as chaves no tema)
+  private val gradFill = Paint(Paint.ANTI_ALIAS_FLAG)
+  private val shadowFill = Paint(Paint.ANTI_ALIAS_FLAG)
+  private val shineStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    strokeCap = Paint.Cap.ROUND
+    color = 0x1FFFFFFF
+  }
+  private var gradKey: String = ""
   private val edgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE } // [2026-10-18 media-edge]
   private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
   private val tmpRect = RectF()
@@ -986,7 +995,42 @@ class MLCellView(context: Context) : ViewGroup(context) {
     if (!snap && !L.failFrame.isEmpty) drawFail(c, L.failFrame, s)
     if (r.failed) c.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), 128)
     if (L.showBubble) {
-      L.bubblePath?.let { fill.color = if (r.own) th.ownBubble else (r.bubbleBg ?: th.otherBubble); c.drawPath(it, fill) }
+      L.bubblePath?.let { bp ->
+        val grad = if (r.own && r.bubbleBg == null) th.ownGradient else null
+        val shadowOk = Build.VERSION.SDK_INT >= 28 && !snap
+        if (grad != null) {
+          // [2026-10-20 grafite] sombra 0,4,14 12% + gradiente ~165° + reflexo de 1 px
+          if (shadowOk) {
+            shadowFill.color = grad[grad.size - 1]
+            shadowFill.setShadowLayer(s.dp(7f), 0f, s.dp(4f), 0x1F000000)
+            c.drawPath(bp, shadowFill)
+          }
+          val b = L.bubble
+          val key = "${b.left},${b.top},${b.width()},${b.height()},${grad.contentHashCode()},${th.ownGradientStops?.contentHashCode() ?: 0}"
+          if (key != gradKey || gradFill.shader == null) {
+            gradFill.shader = LinearGradient(
+              b.left + b.width() * 0.37f, b.top, b.left + b.width() * 0.63f, b.bottom,
+              grad, th.ownGradientStops, Shader.TileMode.CLAMP
+            )
+            gradKey = key
+          }
+          c.drawPath(bp, gradFill)
+          val inset = min(s.dp(18f), b.height() / 2)
+          if (b.width() > inset * 2 + s.dp(2f)) {
+            shineStroke.strokeWidth = s.dp(1f)
+            val y = b.top + s.dp(0.5f)
+            c.drawLine(b.left + inset, y, b.right - inset, y, shineStroke)
+          }
+        } else {
+          fill.color = if (r.own) th.ownBubble else (r.bubbleBg ?: th.otherBubble)
+          if (!r.own && th.otherShadow && shadowOk) {
+            shadowFill.color = fill.color
+            shadowFill.setShadowLayer(s.dp(5f), 0f, s.dp(2f), 0x0F000000)
+            c.drawPath(bp, shadowFill)
+          }
+          c.drawPath(bp, fill)
+        }
+      }
     }
     c.save()
     c.translate(L.bubble.left, L.bubble.top)

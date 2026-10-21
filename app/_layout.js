@@ -539,6 +539,7 @@ import { initAutoBackup } from '../services/autoBackup';
 import { trackPageview, trackAppOpen } from '../services/analytics';
 import { prefetch, warmCache } from '../services/cache';
 import { useTheme } from '../context/ThemeContext';
+import { THEME_V2 as _THEME_V2, grafite as _grafite } from '../constants/theme'; // [2026-10-20 grafite]
 
 // [2026-10-16 wave10-C boot] Overlays que NÃO aparecem no 1º frame (mini
 // player de áudio, YouTube, desfazer e-mail, confete, avisos/gates, banners,
@@ -672,7 +673,7 @@ function ThemedStatusBar() {
   return (
     <StatusBar
       style={isDark ? 'light' : 'dark'}
-      backgroundColor={isDark ? (colors?.background || '#000000') : '#ffffff'}
+      backgroundColor={isDark ? (colors?.background || '#000000') : (colors?.background || '#ffffff')}
       translucent={Platform.OS === 'android'}
     />
   );
@@ -2097,7 +2098,9 @@ export default function RootLayout() {
     return () => { try { sub && sub.remove(); } catch {} };
   }, []);
   // [2026-10-08 dark-black] = DarkColors.background (true black, no navy).
-  const _navBg = _navIsDark ? '#000000' : '#ffffff';
+  // [2026-10-20 grafite] tema v2: cinzas quentes (= Colors/DarkColors.background).
+  const _g2nav = _THEME_V2 ? _grafite(_navIsDark) : null;
+  const _navBg = _g2nav ? _g2nav.bg : (_navIsDark ? '#000000' : '#ffffff');
   // [2026-10-04] Reduce Motion: swap directional slides for a quick cross-fade
   // (Apple HIG: replace slide transitions with a dissolve under Reduce Motion).
   const _reduceMotion = useReducedMotion();
@@ -2177,8 +2180,8 @@ export default function RootLayout() {
   const _NATIVE_HDR = Platform.OS === 'web' ? {} : {
     headerShown: true, title: '', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: true,
     // [2026-10-08 dark-black] dark = DarkColors.headerBgSolid/text (neutral, no navy).
-    headerStyle: { backgroundColor: _navIsDark ? '#0b0b0b' : '#ffffff' },
-    headerTintColor: _navIsDark ? '#F5F5F7' : '#111b21',
+    headerStyle: { backgroundColor: _g2nav ? _g2nav.bg : (_navIsDark ? '#0b0b0b' : '#ffffff') },
+    headerTintColor: _g2nav ? _g2nav.text : (_navIsDark ? '#F5F5F7' : '#111b21'),
   };
   // [2026-10-14 piscada-nav] Sub-telas de Ajustes (<SettingsScreen>, components/
   // settings/SettingsKit.js) trocavam DEPOIS do 1º frame: header opaco → vidro
@@ -2186,7 +2189,7 @@ export default function RootLayout() {
   // barra) e fundo #fff → agrupado #F2F2F7. Isso acontecia já com o push em
   // andamento = "piscada" no topo/fundo. Agora a rota já nasce com a MESMA
   // config que a tela aplica (nativeHeaderOptions blur:true) → nada troca.
-  const _GROUPED_BG = _navIsDark ? '#000000' : '#F2F2F7';
+  const _GROUPED_BG = _g2nav ? _g2nav.bg : (_navIsDark ? '#000000' : '#F2F2F7');
   const _NATIVE_HDR_GROUPED = Platform.OS === 'web' ? {} : {
     ..._NATIVE_HDR,
     contentStyle: { backgroundColor: _GROUPED_BG },
@@ -2216,8 +2219,9 @@ export default function RootLayout() {
   // nasciam claras no modo escuro).
   const _navTheme = React.useMemo(() => {
     const base = _navIsDark ? NavDarkTheme : NavDefaultTheme;
+    if (_g2nav) return { ...base, dark: _navIsDark, colors: { ...base.colors, background: _navBg, card: _g2nav.bg, text: _g2nav.text, border: _navIsDark ? '#2C2C30' : '#DCDCD8' } };
     return { ...base, dark: _navIsDark, colors: { ...base.colors, background: _navBg, card: _navIsDark ? '#0b0b0b' : '#ffffff', text: _navIsDark ? '#F5F5F7' : '#111b21', border: _navIsDark ? '#1f1f1f' : '#e5e5ea' } };
-  }, [_navIsDark, _navBg]);
+  }, [_navIsDark, _navBg, _g2nav]);
   // Cache-ready gate: services/mmkv.js hydrates the in-memory cache from
   // AsyncStorage asynchronously at module load. Before that finishes,
   // SmartCache.getCachedMessagesSync / getCachedConversationsSync return

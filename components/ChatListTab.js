@@ -28,7 +28,7 @@ import { emailToDisplayName, BASE_URL } from '../services/api';
 import { cacheConversations, getCachedConversations, prewarmConversationsCache, prefetchConversation } from '../services/chatCache';
 import { prefetchAvatarsForList } from '../services/avatarCache';
 import { userScopedKey } from '../services/cache';
-import { RECONNECT_BANNER_GRACE_MS, Typography } from '../constants/theme';
+import { RECONNECT_BANNER_GRACE_MS, Typography, THEME_V2 as _V2, Grafite as _GF } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, CONTENT_MAX_WIDTH } from '../utils/responsive';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
@@ -202,6 +202,31 @@ const LP_DARK = {
   pillBg: '#f5f5f5', pillTxt: '#0b0b0b', mutedPillBg: '#3a3a3c', mutedPillTxt: '#d1d1d6',
   card: '#1c1c1e', surface: '#141414',
 };
+// [2026-10-20 grafite] tema v2: cinzas quentes. Linhas = folha (branco /
+// #0E0E10 ≈ fundo da lista nativa, que só troca de cor no build), chips em
+// cápsula brancos com borda + sombra leve, ativo = grafite #2A2A2E.
+if (_V2) {
+  const L = _GF.light; const D = _GF.dark;
+  Object.assign(LP_LIGHT, {
+    bg: L.surface, text: L.text, sub: L.muted, subStrong: L.text2, faint: '#A9A9A6',
+    icon: 'rgba(24,24,27,0.36)', hair: L.line, press: 'rgba(24,24,27,0.045)', pinnedBg: '#FAFAF8',
+    chipBg: L.surface, chipTxt: L.text2, chipCount: 'rgba(24,24,27,0.07)', chipBorder: 'rgba(24,24,27,0.08)',
+    pillBg: L.ink, pillTxt: L.onInk, mutedPillBg: L.surface2, mutedPillTxt: L.text2,
+    card: L.surface2, surface: L.surface,
+  });
+  Object.assign(LP_DARK, {
+    bg: D.bg, text: D.text, sub: D.muted, subStrong: D.text2, faint: '#5E5E64',
+    icon: 'rgba(242,242,239,0.40)', hair: D.line, press: 'rgba(255,255,255,0.06)', pinnedBg: '#141416',
+    chipBg: D.surface, chipTxt: D.text2, chipCount: 'rgba(255,255,255,0.10)', chipBorder: 'rgba(255,255,255,0.06)',
+    pillBg: D.ink, pillTxt: D.onInk, mutedPillBg: D.surface2, mutedPillTxt: D.text2,
+    card: D.surface, surface: D.surface,
+  });
+}
+// Chip em cápsula do v2: borda hairline + sombra 0 1 2 /3% (objetos estáveis).
+const _CHIP_V2 = _V2 ? {
+  l: { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(24,24,27,0.08)', boxShadow: '0px 1px 2px rgba(0,0,0,0.03)' },
+  d: { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.06)' },
+} : null;
 // Swipe actions: escala de cinzas + vermelho só no destrutivo.
 // 44pt icon buttons in the multi-select toolbar (WCAG/HIG touch target).
 const _selBtnStyle = { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' };
@@ -898,22 +923,30 @@ function TypingDotsInline({ color }) {
 // driver nativo (UI thread) e o loop PARA quando a tela perde o foco.
 const _webHaloKf = [{ '0%': { transform: 'scale(1)', opacity: 0.6 }, '40%': { transform: 'scale(1.64)', opacity: 0.28 }, '100%': { transform: 'scale(2.6)', opacity: 0 } }];
 const _webPipKf = [{ '0%': { transform: 'scale(1)' }, '50%': { transform: 'scale(1.08)' }, '100%': { transform: 'scale(1)' } }];
-function PulsingOnlineDotWeb({ colors }) {
+function PulsingOnlineDotWeb({ colors, isDark }) {
   return (
-    <View style={[s.onlineDot, { borderColor: colors.background, animationKeyframes: _webPipKf, animationDuration: '1600ms', animationIterationCount: 'infinite', animationTimingFunction: 'ease-in-out' }]}>
+    <View style={[s.onlineDot, { borderColor: _V2 ? (isDark ? LP_DARK.bg : LP_LIGHT.bg) : colors.background, animationKeyframes: _webPipKf, animationDuration: _V2 ? '2400ms' : '1600ms', animationIterationCount: 'infinite', animationTimingFunction: 'ease-in-out' }, _onlineV2(colors, isDark)]}>
       <View
         pointerEvents="none"
         style={{
           position: 'absolute',
           left: -2.5, top: -2.5,
           width: 13, height: 13, borderRadius: 6.5,
-          backgroundColor: '#22c55e',
+          backgroundColor: _V2 ? _onlineV2(colors, isDark).backgroundColor : '#22c55e',
           opacity: 0,
-          animationKeyframes: _webHaloKf, animationDuration: '1600ms', animationIterationCount: 'infinite', animationTimingFunction: 'ease-in-out',
+          animationKeyframes: _webHaloKf, animationDuration: _V2 ? '2400ms' : '1600ms', animationIterationCount: 'infinite', animationTimingFunction: 'ease-in-out',
         }}
       />
     </View>
   );
+}
+// [2026-10-20 grafite] tema v2: ponto "online" na cor do texto (grafite /
+// claro no escuro) pulsando a cada 2,4 s; Reduzir Movimento = ponto parado.
+const _ONLINE_V2 = _V2 ? { l: { backgroundColor: _GF.light.text }, d: { backgroundColor: _GF.dark.text } } : null;
+function _onlineV2(colors, isDark) {
+  if (!_ONLINE_V2) return null;
+  const dk = typeof isDark === 'boolean' ? isDark : String((colors && colors.background) || '').toUpperCase() === _GF.dark.bg;
+  return dk ? _ONLINE_V2.d : _ONLINE_V2.l;
 }
 function PulsingOnlineDot(props) {
   if (Platform.OS === 'web') return <PulsingOnlineDotWeb {...props} />;
@@ -922,9 +955,10 @@ function PulsingOnlineDot(props) {
 function PulsingOnlineDotNative({ colors, isDark }) {
   const pulse = useRef(new Animated.Value(0)).current;
   useFocusEffect(useCallback(() => {
+    if (_V2) { try { if (require('./reducedMotion').isReduceMotionEnabled()) return undefined; } catch {} }
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 1600, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: _V2 ? 2400 : 1600, useNativeDriver: true }),
         Animated.timing(pulse, { toValue: 0, duration: 0, useNativeDriver: true }),
       ])
     );
@@ -935,8 +969,8 @@ function PulsingOnlineDotNative({ colors, isDark }) {
   const haloOpacity = pulse.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0.6, 0.28, 0] });
   const innerScale = pulse.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.08, 1] });
   return (
-    <Animated.View style={[s.onlineDot, {
-      borderColor: colors.background,
+    <Animated.View style={[s.onlineDot, _onlineV2(colors, isDark), {
+      borderColor: _V2 ? (isDark ? LP_DARK.bg : LP_LIGHT.bg) : colors.background,
       transform: [{ scale: innerScale }],
       // [2026-10-08 chat-beauty-list] flat pip (no glow/elevation) — the
       // pulsing halo below already carries "live"; shadows per row cost GPU.
@@ -947,7 +981,7 @@ function PulsingOnlineDotNative({ colors, isDark }) {
           position: 'absolute',
           left: -2.5, top: -2.5,
           width: 13, height: 13, borderRadius: 6.5,
-          backgroundColor: '#22c55e',
+          backgroundColor: _V2 ? _onlineV2(colors, isDark).backgroundColor : '#22c55e',
           opacity: haloOpacity,
           transform: [{ scale: haloScale }],
         }}
@@ -3419,7 +3453,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                 {unread > 0 ? (
                   <View pointerEvents="none" style={{
                     position: 'absolute', top: -4, right: -6, minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5,
-                    backgroundColor: _accBg(isDark ? LP_DARK : LP_LIGHT), borderWidth: 2, borderColor: isDark ? '#000000' : '#FFFFFF',
+                    backgroundColor: _accBg(isDark ? LP_DARK : LP_LIGHT), borderWidth: 2, borderColor: (isDark ? LP_DARK : LP_LIGHT).bg,
                     alignItems: 'center', justifyContent: 'center',
                   }}>
                     <Text maxFontSizeMultiplier={1} style={{ color: _accTx(isDark ? LP_DARK : LP_LIGHT), fontSize: 10.5, fontWeight: '800' }}>{unread > 99 ? '99+' : unread}</Text>
@@ -8684,6 +8718,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       <TouchableOpacity
         style={[
           s.chip,
+          _CHIP_V2 && (isDark ? _CHIP_V2.d : _CHIP_V2.l),
           { backgroundColor: pillBg },
           isWeb && { transition: 'background-color 0.18s cubic-bezier(0.4,0,0.2,1)', cursor: 'pointer' },
         ]}
@@ -8759,7 +8794,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         key={key || value}
         value={value}
         active={filter === value}
-        style={s.chip}
+        style={_CHIP_V2 ? (isDark ? _CHIP_RAIL_V2.d : _CHIP_RAIL_V2.l) : s.chip}
         baseBg={P.chipBg}
         activeBg={_accBg(P)}
         renderContent={content}
@@ -9055,7 +9090,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                           style={({ pressed }) => ({
                             position: 'absolute', top: -4, left: -4,
                             width: 24, height: 24, borderRadius: 12,
-                            backgroundColor: isDark ? '#0b0b0b' : '#fff',
+                            backgroundColor: (isDark ? LP_DARK : LP_LIGHT).bg,
                             borderWidth: 1.5, borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.12)',
                             alignItems: 'center', justifyContent: 'center',
                             zIndex: 5,
@@ -9077,8 +9112,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                         <View style={{
                           position: 'absolute', bottom: -2, right: -2,
                           width: 22, height: 22, borderRadius: 11,
-                          backgroundColor: isDark ? '#0b0b0b' : '#fff',
-                          borderWidth: 2, borderColor: isDark ? '#0b0b0b' : '#fff',
+                          backgroundColor: (isDark ? LP_DARK : LP_LIGHT).bg,
+                          borderWidth: 2, borderColor: (isDark ? LP_DARK : LP_LIGHT).bg,
                           alignItems: 'center', justifyContent: 'center',
                         }}>
                           <View style={{
@@ -9096,7 +9131,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
                           minWidth: 22, height: 22, borderRadius: 11,
                           paddingHorizontal: 5,
                           backgroundColor: isDark ? '#F2F3F5' : '#111111',
-                          borderWidth: 2, borderColor: isDark ? '#0b0b0b' : '#fff',
+                          borderWidth: 2, borderColor: (isDark ? LP_DARK : LP_LIGHT).bg,
                           alignItems: 'center', justifyContent: 'center',
                         }}>
                           <Text style={{ color: isDark ? '#111111' : '#fff', fontSize: 11, fontWeight: '800' }}>
@@ -9904,7 +9939,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         {_renderChip({ label: t('chat.filterArchived') || 'Arquivadas', value: 'archived', count: archivedCount })}
         {/* [2026-10-16 wave12-B pastas] "+" no fim → tela de listas (criar/ordenar/editar) */}
         <TouchableOpacity
-          style={[s.chip, { backgroundColor: P.chipBg, paddingHorizontal: 11 }, isWeb && { cursor: 'pointer' }]}
+          style={[s.chip, _CHIP_V2 && (isDark ? _CHIP_V2.d : _CHIP_V2.l), { backgroundColor: P.chipBg, paddingHorizontal: 11 }, isWeb && { cursor: 'pointer' }]}
           onPress={() => { try { haptic.light?.(); } catch {} router.push(chatFolders.length ? '/chat-folders' : '/chat-folders?new=1'); }}
           activeOpacity={0.7}
           accessibilityRole="button"
@@ -11923,11 +11958,11 @@ const s = StyleSheet.create({
   listEmpty: { flexGrow: 1 },
   // [2026-10-07 native-ui-build] large title nativo (34pt bold, iOS HIG).
   largeTitle: {
-    fontSize: 34, fontWeight: '700', letterSpacing: -0.9,
+    fontSize: 34, fontWeight: _V2 ? _GF.largeTitle.fontWeight : '700', letterSpacing: _V2 ? _GF.largeTitle.letterSpacing : -0.9, // [2026-10-20 grafite]
     paddingHorizontal: 16, paddingTop: 2, paddingBottom: 8,
   },
   largeTitleWrap: { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 8 },
-  largeTitleText: { fontSize: 34, fontWeight: '700', letterSpacing: -0.9 },
+  largeTitleText: { fontSize: 34, fontWeight: _V2 ? _GF.largeTitle.fontWeight : '700', letterSpacing: _V2 ? _GF.largeTitle.letterSpacing : -0.9 },
   fab: {
     position: 'absolute',
     right: 20,
@@ -11986,6 +12021,8 @@ const s = StyleSheet.create({
     letterSpacing: 0.1,
   },
 });
+// [2026-10-20 grafite] chip da fileira deslizante (estável).
+const _CHIP_RAIL_V2 = _CHIP_V2 ? { l: [s.chip, _CHIP_V2.l], d: [s.chip, _CHIP_V2.d] } : null;
 
 // PERF: the chats tab is ALWAYS mounted inside chat.js, which hosts a SyncBar
 // that ticks on an interval plus badge/search-animation state. Without memo,

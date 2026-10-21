@@ -91,7 +91,7 @@ export default function UnknownSenderCard({ conversationId, conversationType, my
   return (
     <View
       style={[s.card, {
-        backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+        backgroundColor: colors.surface,
         borderColor: isDark ? '#262628' : 'rgba(0,0,0,0.12)',
       }]}
       accessible

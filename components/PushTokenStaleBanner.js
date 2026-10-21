@@ -195,7 +195,7 @@ export default function PushTokenStaleBanner() {
     <View pointerEvents="box-none" style={[s.wrap, { bottom: (insets.bottom || 0) + 74 }]}>
       <View
         style={[s.card, {
-          backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
+          backgroundColor: colors.surface,
           borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
         }]}
         accessibilityLiveRegion="polite"

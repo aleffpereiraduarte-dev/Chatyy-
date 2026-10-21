@@ -196,7 +196,7 @@ import AttachSheetNative, { ATTACH_SHEET_NATIVE } from '../components/chat/Attac
 import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 native-ui-build] group info toggles
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { BorderRadius, FontSize, Spacing, Shadow, ChatBubble, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, ChatBubble, RECONNECT_BANNER_GRACE_MS, THEME_V2 as _THEME_V2, grafite as _grafite, bubbleOwnStyle as _bubbleOwnStyle, bubbleRecvStyle as _bubbleRecvStyle } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, isNativeTabletSplit } from '../utils/responsive';
 import { SCAN_DOCUMENT_ENABLED, DIAMONDS_ENABLED } from '../constants/featureFlags';
 // [2026-10-13 diamantes] presente no chat 1:1 (diamond_gift_send context 'chat';
@@ -284,6 +284,7 @@ import VoiceLiveMeter from '../components/chat/VoiceLiveMeter';
 import { resampleVoiceLevels } from '../components/chat/VoiceBars';
 import Profile from '../components/Profile';
 import { MentionAutocomplete, isMentioning, insertMention, isUserMentioned } from '../components/MentionInput';
+import OnlinePulse from '../components/ui/OnlinePulse'; // [2026-10-20 grafite]
 import NativeComposerBridge, { shouldUseNativeComposer } from '../components/chat/NativeComposerBridge'; // [2026-10-14 native-composer]
 import ComposerLinkPreviewStrip from '../components/chat/ComposerLinkPreviewStrip'; // [linkpreview 2026-10-18]
 import { previewForMessage as _lpForMsg, isFreshMessage as _lpIsFresh, composerSendDecision as _lpSendDecision, setLocalPreviewForCmi as _lpSetLocal, parseLinkPreview as _lpParse, LP_SKELETON as _LP_SK } from '../components/chat/linkPreviewState'; // [linkpreview 2026-10-18]
@@ -10622,6 +10623,9 @@ const ConvHeaderTitleStack = React.memo(function ConvHeaderTitleStack({
                 {/* [2026-10-08 chat-beauty-chrome] monocromático: status em
                     cinza secundário; "digitando…" sobe pra cor do texto (sem
                     itálico). */}
+                {/* [2026-10-20 grafite] ponto "online" pulsando (tema v2) */}
+                {_THEME_V2 && !isTyping && presence && presence.status === 'online' && presenceText === (t('chatConv.online') || 'online')
+                  ? <OnlinePulse color={colors.text} size={7} /> : null}
                 <PresenceTextFade
                   text={presenceText}
                   style={[styles.headerSubtitle, {
@@ -12245,17 +12249,21 @@ function ChatConversationInnerBody() {
   // RECEBIDA = cinza claro #EEEEF0 (claro) / #1C1C1E (escuro). Fundo da
   // conversa = branco puro / preto puro. Contraste AA: texto ≥ 12:1; meta
   // (hora/✓) ≥ 4.5:1 nas 4 combinações.
-  let ownBubbleBg = isDark ? '#333336' : '#111111'; // [2026-10-15 native-wallpaper] let: tema pode derivar (após wallpaperColor)
-  const otherBubbleBg = isDark ? '#1C1C1E' : '#EEEEF0';
-  const chatWallBg = isDark ? '#000000' : '#FFFFFF';
-  let ownTextColor = isDark ? '#F5F5F7' : '#FFFFFF';
+  // [2026-10-20 grafite] tema v2: própria = grafite (cor do meio do gradiente;
+  // o gradiente em si vem de bubbleOwnStyle no JS / build no nativo), recebida
+  // branca (#1C1C1F no escuro), fundo #EDEDEA / #0E0E10.
+  const _g2 = _THEME_V2 ? _grafite(isDark) : null;
+  let ownBubbleBg = _g2 ? _g2.ownMid : (isDark ? '#333336' : '#111111'); // [2026-10-15 native-wallpaper] let: tema pode derivar (após wallpaperColor)
+  const otherBubbleBg = _g2 ? _g2.recv : (isDark ? '#1C1C1E' : '#EEEEF0');
+  const chatWallBg = _g2 ? _g2.wall : (isDark ? '#000000' : '#FFFFFF');
+  let ownTextColor = _g2 ? _g2.ownText : (isDark ? '#F5F5F7' : '#FFFFFF');
   // [2026-10-19 tg-style] hora/✓ mais leves (Telegram); kill switch __chatyy_tg_bubbles = false
   const _tgB = tgBubblesOn();
   let ownMetaColor = isDark ? (_tgB ? 'rgba(245,245,247,0.56)' : 'rgba(245,245,247,0.62)') : (_tgB ? 'rgba(255,255,255,0.58)' : 'rgba(255,255,255,0.62)');
   const otherMetaColor = isDark ? (_tgB ? 'rgba(235,235,245,0.50)' : 'rgba(235,235,245,0.55)') : (_tgB ? 'rgba(60,60,67,0.64)' : 'rgba(60,60,67,0.74)');
   // Tinta de destaque dentro da bolha RECEBIDA (links/ícones/menções). Antes
   // era colors.primary (#111 nos DOIS temas) → sumia no escuro.
-  const otherInk = isDark ? '#F5F5F7' : '#111111';
+  const otherInk = _g2 ? _g2.recvText : (isDark ? '#F5F5F7' : '#111111');
   // AudioPlayer (componente de voz — intocado) deduz claro/escuro de
   // colors.background. A bolha própria agora é escura nos 2 temas → passa um
   // colors com fundo escuro SÓ pra ela, e os controles saem brancos.
@@ -12270,7 +12278,7 @@ function ChatConversationInnerBody() {
   // `tailRadius` is the value used for the bubble's tail corner (own =
   // bottom-right, other = bottom-left) so the tail stays visually attached
   // regardless of the overall radius.
-  const bubbleRadius = bubbleShape === 'square' ? 4 : (bubbleShape === 'classic' ? 10 : 18);
+  const bubbleRadius = bubbleShape === 'square' ? 4 : (bubbleShape === 'classic' ? 10 : (_THEME_V2 ? 20 : 18)); // [2026-10-20 grafite] bolha 20
   const bubbleTailRadius = bubbleShape === 'square' ? 2 : (bubbleShape === 'classic' ? 4 : 5);
   // [2026-10-12 bubble-wa-tail] Cantos por posição no grupo (WhatsApp):
   // 1ª do grupo = rabicho no topo do lado do autor (canto de cima reto, o SVG
@@ -35737,10 +35745,10 @@ function ChatConversationInnerBody() {
               // sutil) pra descolar do fundo sem glow. Zero cor.
               // [2026-10-08 chat-beauty-bubbles] P&B: enviada = superfície
               // escura chapada (sem hairline/sombra — flat iMessage/Telegram).
-              ? [styles.bubbleOwn, { backgroundColor: _bubbleBg }]
+              ? [styles.bubbleOwn, { backgroundColor: _bubbleBg }, _g2 && _bubbleBg === _g2.ownMid && !_bubbleBare && !isDeleted && _bubbleOwnStyle(isDark) /* [2026-10-20 grafite] gradiente + reflexo */]
               // RECEBIDO = cinza claro / grafite. Menção = tom um pouco mais
               // forte do mesmo cinza (sem verde).
-              : [styles.bubbleOther, { backgroundColor: _bubbleBg }, !isDark && !_bubbleBare && styles.bubbleOtherLift],
+              : [styles.bubbleOther, { backgroundColor: _bubbleBg }, !isDark && !_bubbleBare && (_g2 ? _bubbleRecvStyle(false) : styles.bubbleOtherLift)],
             // Bubble shape (settings.js `bubble_shape`). Layered AFTER the
             // default bubbleOwn/bubbleOther corner radii so it overrides them.
             // [2026-10-12 bubble-wa-tail] cantos por posição no grupo (tabela memo).
@@ -35760,7 +35768,7 @@ function ChatConversationInnerBody() {
             msg._pending && { opacity: 0.7 },
             msg._failed && { opacity: 0.5 },
           ]}>
-          {_showTail && <BubbleTail own={isOwn} tg={_tgRow} color={_bubbleBg} />}
+          {_showTail && <BubbleTail own={isOwn} tg={_tgRow} color={(_g2 && isOwn && _bubbleBg === _g2.ownMid && !isDeleted) ? _g2.ownGradient[_tgRow ? 2 : 0] : _bubbleBg} />}
           {/* Jump-to-message flash — animated green wash pulse (was a static
               amber border that snapped on/off). Overlay inside the bubble so
               it clips to the rounded corners; pointerEvents none. */}
@@ -36629,14 +36637,18 @@ function ChatConversationInnerBody() {
     pillBg: isDark ? 'rgba(44,44,46,0.88)' : 'rgba(236,236,240,0.92)', pillText: isDark ? 'rgba(235,235,245,0.78)' : 'rgba(60,60,67,0.86)',
     // [2026-10-19 tg-style] binário api 12 desenha a cápsula com DESFOQUE atrás → tinta translúcida
     ...(nativeTgStyleOn() ? { pillBg: isDark ? 'rgba(44,44,46,0.66)' : 'rgba(228,228,234,0.74)', pillText: isDark ? 'rgba(235,235,245,0.86)' : 'rgba(60,60,67,0.90)' } : null),
-    systemText: colors.textTertiary || (isDark ? '#8E8E93' : '#6B6B70'), accent: isDark ? '#F5F5F7' : '#111111',
+    // [2026-10-20 grafite] pílula de data em vidro claro/grafite sobre os pontos
+    ...(_g2 ? { pillBg: isDark ? 'rgba(35,35,39,0.78)' : 'rgba(255,255,255,0.78)', pillText: isDark ? 'rgba(242,242,239,0.82)' : 'rgba(24,24,27,0.70)' } : null),
+    systemText: colors.textTertiary || (isDark ? '#8E8E93' : '#6B6B70'), accent: _g2 ? _g2.ink : (isDark ? '#F5F5F7' : '#111111'),
     ownQuote: 'rgba(255,255,255,0.12)', otherQuote: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
     unreadBg: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', unreadText: isDark ? '#D1D1D6' : '#3C3C43',
-    reactBg: isDark ? '#2C2C2E' : '#FFFFFF', reactBorder: chatWallBg,
+    reactBg: _g2 ? (isDark ? '#232327' : '#FFFFFF') : (isDark ? '#2C2C2E' : '#FFFFFF'), reactBorder: chatWallBg,
     selection: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)', highlight: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)',
     failed: '#E5484D',
     // [tg-list] realce da busca na lista nativa (api 11): termo / resultado atual
     search: isDark ? 'rgba(255,214,10,0.30)' : 'rgba(255,204,0,0.38)', searchCur: isDark ? 'rgba(255,214,10,0.62)' : 'rgba(255,204,0,0.75)',
+    // [2026-10-20 grafite] binário api 14: bolha própria em gradiente + reflexo; recebida com sombra.
+    ...((_g2 && ownBubbleBg === _g2.ownMid && nativeListApi() >= 14) ? { ownGradient: _g2.ownGradient, ownGradientStops: _g2.ownGradientStops, otherShadow: !isDark } : null),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [isDark, colors.textTertiary, ownBubbleBg, ownTextColor, ownMetaColor, otherBubbleBg, otherInk, otherMetaColor, chatWallBg, colors.tickRead, colors.highContrast, colors.onAccent, colors.accent]); // [2026-10-15 native-wallpaper] bolhas derivadas do tema · [2026-10-17 polish-chat] + recebida/fundo (trocar papel de parede no mesmo tema deixava borda da reação velha)
   // [2026-10-15 native-store] foto da conversa no store NATIVO (services/nativeChatStore):

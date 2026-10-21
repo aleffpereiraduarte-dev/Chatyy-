@@ -23,6 +23,8 @@ import ChatWallpaper from '../wallpaper/ChatWallpaper';
 import { buildValue, bubbleFor, resolve as resolveWallpaper, specFor } from '../wallpaper/wallpaperSpec';
 import { IconCheck, IconSend, IconPencil } from '../Icons';
 import { useGroupedColors } from './SettingsKit';
+import { THEME_V2, grafite, bubbleOwnStyle, bubbleRecvStyle } from '../../constants/theme';
+import SubtlePattern from '../wallpaper/SubtlePattern';
 import { feedback, isReduceMotionEnabled } from '../../constants/motion';
 import { ACCENT_PALETTE, resolveAccent, onAccentFor, normalizeAccent, luminance } from '../../context/ThemeContext';
 
@@ -48,6 +50,22 @@ export function emitAppearanceChanged() {
 // Tokens reais da bolha (app/chat-conversation.js [2026-10-08 chat-beauty-bubbles]).
 function bubbleTokens(isDark, wallpaper, accentHex, accentBubbles) {
   const tint = bubbleFor(wallpaper, isDark);
+  // [2026-10-20 grafite] tema v2: mesmos tokens da conversa (grafite / branca / #EDEDEA).
+  const G2 = THEME_V2 ? grafite(isDark) : null;
+  if (G2) {
+    const accOwn = !tint && accentHex && accentBubbles;
+    const on = accOwn ? onAccentFor(accentHex) : null;
+    return {
+      ownBg: tint ? tint.bg : (accOwn ? accentHex : G2.ownMid),
+      ownText: tint ? tint.text : (accOwn ? on : G2.ownText),
+      ownMeta: tint ? tint.meta : (accOwn ? (on === '#111111' ? 'rgba(17,17,17,0.62)' : 'rgba(255,255,255,0.72)') : G2.ownMeta),
+      ownGrad: !tint && !accOwn,
+      otherBg: G2.recv, otherText: G2.recvText,
+      otherMeta: isDark ? 'rgba(235,235,245,0.50)' : 'rgba(60,60,67,0.64)',
+      wall: G2.wall, read: accOwn ? on : (accentHex || '#53BDEB'),
+      link: accentHex && !accOwn ? accentHex : G2.recvText, v2: true, isDark: !!isDark,
+    };
+  }
   // [2026-10-19 accent-real] mesmas regras da conversa: ✓✓ lido no destaque;
   // "Balões na cor do destaque" pinta só a bolha enviada (tema colorido vence).
   if (!tint && accentHex && accentBubbles) {
@@ -75,7 +93,7 @@ function bubbleTokens(isDark, wallpaper, accentHex, accentBubbles) {
 function shapeRadius(shape) {
   if (shape === 'square') return { r: 4, tail: 2 };
   if (shape === 'classic') return { r: 10, tail: 4 };
-  return { r: 18, tail: 5 };
+  return THEME_V2 ? { r: 20, tail: 6 } : { r: 18, tail: 5 };
 }
 
 function WallpaperLayer({ value, isDark, patternScale = 0.62 }) {
@@ -96,13 +114,13 @@ function PreviewBubble({ own, text, link, time, tk, fontPx, shape, last }) {
   const corner = last ? tail : r;
   return (
     <View style={{ alignSelf: own ? 'flex-end' : 'flex-start', maxWidth: '82%', marginTop: last ? 2 : 6 }}>
-      <View style={{
+      <View style={[{
         backgroundColor: own ? tk.ownBg : tk.otherBg,
         borderRadius: r,
         ...(own ? { borderBottomRightRadius: corner } : { borderBottomLeftRadius: corner }),
         paddingLeft: 11, paddingRight: 8, paddingTop: 6, paddingBottom: 5,
         flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end',
-      }}>
+      }, tk.v2 ? (own ? (tk.ownGrad ? bubbleOwnStyle(tk.isDark) : null) : (tk.isDark ? null : bubbleRecvStyle(false))) : null]}>
         <Text style={{ color: own ? tk.ownText : tk.otherText, fontSize: fs, lineHeight: lh, flexShrink: 1 }}>
           {text}
           {link ? <Text style={{ color: tk.link, textDecorationLine: 'underline' }}>{' ' + link}</Text> : null}
@@ -125,14 +143,15 @@ function PreviewBubble({ own, text, link, time, tk, fontPx, shape, last }) {
 export function ChatPreviewCard({ isDark, wallpaper, bubbleShape, fontPx, tx, accentHex = null, accentBubbles = false }) {
   const tk = bubbleTokens(isDark, wallpaper, accentHex, accentBubbles);
   const px = normFontPx(fontPx) || FONT_DEFAULT;
-  const sendBg = accentHex || (isDark ? '#FFFFFF' : '#111111');
-  const sendFg = accentHex ? onAccentFor(accentHex) : (isDark ? '#111111' : '#FFFFFF');
+  const sendBg = accentHex || (THEME_V2 ? grafite(isDark).ink : (isDark ? '#FFFFFF' : '#111111'));
+  const sendFg = accentHex ? onAccentFor(accentHex) : (THEME_V2 ? grafite(isDark).onInk : (isDark ? '#111111' : '#FFFFFF'));
   return (
     <View
       style={{ backgroundColor: tk.wall, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 12, overflow: 'hidden' }}
       accessible
       accessibilityLabel={tx('settings.appear.previewA11y', 'Prévia da conversa')}
     >
+      {THEME_V2 && (!wallpaper || wallpaper === 'none') ? <SubtlePattern isDark={isDark} /> : null}
       <WallpaperLayer value={wallpaper} isDark={isDark} />
       <View style={{ alignSelf: 'center', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10, backgroundColor: isDark ? 'rgba(44,44,46,0.92)' : 'rgba(255,255,255,0.92)', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', marginBottom: 4 }}>
         <Text style={{ fontSize: 12, fontWeight: '600', color: isDark ? '#EBEBF5' : '#3C3C43' }}>{tx('settings.appear.previewToday', 'Hoje')}</Text>

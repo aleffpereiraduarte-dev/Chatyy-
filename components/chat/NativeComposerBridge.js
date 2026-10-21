@@ -24,6 +24,7 @@ import { Platform, processColor } from 'react-native';
 import { kbResumeGuardOn } from '../../utils/kbResumeGuard';
 import { threadKbNoteComposerBlur, threadKbNoteComposerFocus, threadKbAttachFreezeOn, composerNativeDockOn } from '../../utils/threadKeyboard'; // [2026-10-19 kb-heal] · [2026-10-19 attach-hold]
 import { kbNativeTransitionsOn, reportKeyboardSync, attachInstantOn, attachRestoreMode, kbRestoreGuardOn, nativeComposerApi, androidAttachInstantOn, attachLegacyNoneActive, attachHoldOn, attachOverKeyboardOn, attachInputPanelOn, androidAttachPanelOn, attachInWindowOn } from '../../utils/kbNativeTransitions'; // [2026-10-19 kb-native] · [2026-10-19 attach-instant]
+import { THEME_V2 as _THEME_V2, grafite as _grafite } from '../../constants/theme'; // [2026-10-20 grafite]
 
 let _failed = false;
 
@@ -300,6 +301,25 @@ const NativeComposerInner = forwardRef(function NativeComposerInner(props, ref) 
       replyCard: _pc(isDark ? '#1c1c1e' : '#ffffff'),
       replyCardBorder: _pc(isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.10)'),
       recording: _pc('#ff3b30'),
+      // [2026-10-20 grafite] tema v2: barra no tom do papel de parede, campo
+      // branco/cartão, botão enviar/gravar = grafite da bolha própria.
+      ...(_THEME_V2 ? (() => {
+        const g = _grafite(isDark);
+        return {
+          surface: _pc(g.wall),
+          pill: _pc(g.surface),
+          pillBorder: _pc(isDark ? 'rgba(255,255,255,0.06)' : 'rgba(24,24,27,0.06)'),
+          text: _pc(g.text),
+          placeholder: _pc(g.muted),
+          icon: _pc(isDark ? '#9A9AA0' : '#77777C'),
+          iconActive: _pc(colors?.text || g.text),
+          action: _pc(colors?.accentOn ? colors.accent : g.ownMid),
+          actionIcon: _pc(colors?.accentOn ? (colors.onAccent || '#ffffff') : g.ownText),
+          hairline: _pc(g.line),
+          replyCard: _pc(g.surface),
+          replyCardBorder: _pc(g.line),
+        };
+      })() : null),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeKey]);

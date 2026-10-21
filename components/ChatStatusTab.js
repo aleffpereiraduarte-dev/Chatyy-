@@ -3531,7 +3531,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           <View style={styles.statusMeta}>
             <Text style={[styles.statusTime, { color: colors.textSecondary }]}>{time}</Text>
             {count > 1 && (
-              <View style={[styles.countPill, { backgroundColor: isDark ? '#2c2c2e' : '#f0f0f0' }]}>
+              <View style={[styles.countPill, { backgroundColor: colors.surfaceVariant }]}>
                 <Text style={[styles.countPillText, { color: colors.textSecondary }]}>{count}</Text>
               </View>
             )}
@@ -5116,7 +5116,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setHighlightSheet(null)}>
           <DragBackdrop drag={_drag5059} color="rgba(0,0,0,0.55)" />
           <DragPanel drag={_drag5059} onStartShouldSetResponder={() => true} style={{
-            backgroundColor: isDark ? '#111' : '#fff',
+            backgroundColor: colors.surface,
             borderTopLeftRadius: 22, borderTopRightRadius: 22,
             paddingTop: 18, paddingBottom: Platform.OS === 'ios' ? 36 : androidBottomInset(22),
             paddingHorizontal: 20,
@@ -5136,7 +5136,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                       width: 60, height: 60, borderRadius: 30,
                       borderWidth: 2, borderColor: isDark ? '#444' : '#ddd',
                       alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
-                      backgroundColor: isDark ? '#1c1c1e' : '#f4f4f5',
+                      backgroundColor: colors.surfaceVariant,
                     }}>
                       {h.cover_url ? (
                         <FastImage source={{ uri: h.cover_url.startsWith('http') ? h.cover_url : ('https://chatyy.com.br' + (h.cover_url.startsWith('/') ? '' : '/') + h.cover_url) }} style={{ width: 60, height: 60 }} recyclingKey={h.cover_url} />
@@ -5160,7 +5160,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 style={{
                   flex: 1, paddingHorizontal: 14, paddingVertical: 10,
                   borderRadius: 12, fontSize: 14,
-                  backgroundColor: isDark ? '#1c1c1e' : '#f4f4f5',
+                  backgroundColor: colors.surfaceVariant,
                   color: isDark ? '#fff' : '#111', height: 38, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
                 }}
                 editable={!highlightSaving}
@@ -5209,7 +5209,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         >
           <DragBackdrop drag={_drag5148} color="rgba(0,0,0,0.55)" />
           <DragPanel drag={_drag5148} onStartShouldSetResponder={() => true} style={{
-            backgroundColor: isDark ? '#1c1c1e' : '#fff',
+            backgroundColor: colors.surface,
             borderTopLeftRadius: 20, borderTopRightRadius: 20,
             paddingHorizontal: 20, paddingTop: 12, paddingBottom: Platform.OS === 'android' ? androidBottomInset(16) : 36, // [2026-10-11 android-e2e]
             minHeight: 360,
@@ -5426,7 +5426,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         >
           <DragBackdrop drag={_drag5238} color="rgba(0,0,0,0.55)" />
           <DragPanel drag={_drag5238} onStartShouldSetResponder={() => true} style={{
-            backgroundColor: isDark ? '#1c1c1e' : '#fff',
+            backgroundColor: colors.surface,
             borderTopLeftRadius: 20, borderTopRightRadius: 20,
             paddingHorizontal: 16, paddingTop: 12, paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 28, // [2026-10-11 android-e2e]
             maxHeight: '78%',
@@ -5445,7 +5445,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         <DragSheetRoot>
         <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => { setForwardModalVisible(false); setIsPaused(false); }}>
           <DragBackdrop drag={_drag5376} color="rgba(0,0,0,0.5)" />
-          <DragPanel drag={_drag5376} onStartShouldSetResponder={() => true} style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '60%', paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 34 }}>
+          <DragPanel drag={_drag5376} onStartShouldSetResponder={() => true} style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '60%', paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 34 }}>
             <View style={{ alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
               <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 12 }} />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -5510,7 +5510,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         <KeyboardAvoidingView style={[{ flex: 1 }, creatorKb > 0 ? { paddingBottom: creatorKb } : null]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           {/* ─── Music Picker (rendered INSIDE creator modal to avoid iOS stacking issues) ─── */}
           {musicPickerVisible ? (
-            <View style={{ flex: 1, backgroundColor: isDark ? '#1c1c1e' : '#fff' }}>
+            <View style={{ flex: 1, backgroundColor: colors.surface }}>
               {/* Header with back button — same Android translucent fix as
                   the parent composer header. Uses runtime insets.top instead
                   of the stale ANDROID_TOP_INSET module-load constant. */}
@@ -5524,7 +5524,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
               </View>
 
               {/* Search input */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginVertical: 12, backgroundColor: isDark ? '#2c2c2e' : '#f3f4f6', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginVertical: 12, backgroundColor: colors.surfaceVariant, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 }}>
                 <IconSearch size={18} color={isDark ? '#8E8E93' : '#6B7280' /* [2026-10-18 polish2] AA ≥4.5 (era #6C6C70/#9ca3af ~2.5–3.6:1) */} />
                 <TextInput
                   style={{ flex: 1, marginLeft: 8, fontSize: 15, color: isDark ? '#fff' : '#111', paddingVertical: 0 }}
@@ -6440,7 +6440,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         <DragSheetRoot>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
           <View style={{
-            backgroundColor: isDark ? '#161618' : '#fff',
+            backgroundColor: colors.surface,
             borderTopLeftRadius: 22, borderTopRightRadius: 22,
             paddingHorizontal: 18, paddingTop: 14, paddingBottom: Platform.OS === 'android' ? androidBottomInset(12) : 28, // [2026-10-11 android-e2e]
             maxHeight: '72%',

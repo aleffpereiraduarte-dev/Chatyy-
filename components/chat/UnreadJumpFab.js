@@ -24,7 +24,7 @@ function UnreadJumpFab({ count, onPress, isDark, colors, t, bottom = 142 }) {
         accessibilityLabel={label}
         testID="chat-first-unread-jump"
         style={[styles.fab, {
-          backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
+          backgroundColor: colors.surface,
           borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)',
         }]}
       >

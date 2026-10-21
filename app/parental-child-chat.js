@@ -181,7 +181,7 @@ function ParentalChildChatScreenInner() {
           s.msgBubble,
           fromChild
             ? { backgroundColor: isDark ? '#111111' : '#F1F3F5', borderBottomRightRadius: 4 }
-            : { backgroundColor: isDark ? '#1c1c1e' : '#fff', borderBottomLeftRadius: 4 },
+            : { backgroundColor: colors.surface, borderBottomLeftRadius: 4 },
           flagged && { borderWidth: 2, borderColor: '#ef4444' },
         ]}>
           {!fromChild && <Text style={[s.msgSender, { color: (colors?.primary || ACCENT) }]}>{senderName}</Text>}

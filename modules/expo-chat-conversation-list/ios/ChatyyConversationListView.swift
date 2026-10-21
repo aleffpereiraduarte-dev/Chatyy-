@@ -296,7 +296,18 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
 
   func setDark(_ dark: Bool) {
     if dark == theme.dark && !themeDirty { return }
-    theme = CLTheme(dark: dark)
+    theme = CLTheme(dark: dark, palette: palette)
+    themeDirty = true
+  }
+
+  // [2026-10-20 grafite, apiVersion 10] prop `palette` (ver CLTheme.init(dark:palette:)).
+  private var palette: [String: Any]?
+  func setPalette(_ p: [String: Any]?) {
+    let next: [String: Any]? = (p?.isEmpty ?? true) ? nil : p
+    if next == nil && palette == nil { return }
+    if let a = next, let b = palette, NSDictionary(dictionary: a).isEqual(to: b) { return }
+    palette = next
+    theme = CLTheme(dark: theme.dark, palette: palette)
     themeDirty = true
   }
 

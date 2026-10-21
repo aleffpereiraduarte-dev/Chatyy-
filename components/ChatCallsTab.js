@@ -23,7 +23,9 @@ import { useTheme } from '../context/ThemeContext'; // [2026-10-08 polish-leftov
 import { PLAN_NAME } from '../services/brandPlan'; // [2026-10-17 brand-plan]
 import { ensureContactIndex, lookupName as lookupDeviceContactName, noteContactsPermission, contactsDeniedForever, openContactsSettings, alertContactsDenied } from '../services/deviceContactLookup';
 import { CallListSkeleton } from './SkeletonLoader';
-import { haptic, Typography, BorderRadius, hairlineColor } from '../constants/theme';
+import { haptic, Typography, BorderRadius, hairlineColor, Colors as _LC, DarkColors as _DC } from '../constants/theme';
+// [2026-10-20 grafite] tokens do tema fora do contexto (subcomponentes só recebem isDark).
+const _tc = (d) => (d ? _DC : _LC);
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
 import { LargeTitle, useLargeTitleCollapse } from './LargeTitleHeader'; // [2026-10-15 nav-motion]
 import PressableScale from './PressableScale'; // [2026-10-15 nav-motion]
@@ -670,7 +672,7 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
             size={44}
           />
         ) : (
-          <View style={[s.historyAvatar, { backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }]}>
+          <View style={[s.historyAvatar, { backgroundColor: _tc(isDark).surfaceVariant }]}>
             {/* [2026-10-16 polish-calls] sem emoji de bandeira na UI → glifo de linha */}
             <IconPhone size={20} color={subColor} />
           </View>
@@ -908,7 +910,7 @@ function PlanBadge({ minutesInfo, isDark, t }) {
       ? (t?.('calls.unlimited') || 'Chamadas ilimitadas')
       : `${used}/${limit} min`;
     return (
-      <View style={[s.planBadge, { backgroundColor: isDark ? '#1c1c1e' : '#ffffff' }]}>
+      <View style={[s.planBadge, { backgroundColor: _tc(isDark).surface }]}>
         <IconCheckCircle size={16} color={blueInk(isDark)} />
         <Text style={[s.planBadgeText, { color: blueInk(isDark) }]}>
           {badgeText}
@@ -918,7 +920,7 @@ function PlanBadge({ minutesInfo, isDark, t }) {
   }
 
   return (
-    <View style={[s.planBadge, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }]}>
+    <View style={[s.planBadge, { backgroundColor: _tc(isDark).surfaceVariant }]}>
       <Text style={[s.planBadgeText, { color: isDark ? '#8e8e93' : '#6c6c70', fontSize: 12 }]}>
         {t?.('calls.needsPlan') || ('Assine o ' + PLAN_NAME + ' para chamadas ilimitadas')}
       </Text>
@@ -1717,7 +1719,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
               </View>
 
               {/* Method toggle: SMS (default) vs voice call */}
-              <View style={{ flexDirection: 'row', backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7', borderRadius: 10, padding: 3, marginBottom: 14 }}>
+              <View style={{ flexDirection: 'row', backgroundColor: _tc(isDark).surfaceVariant, borderRadius: 10, padding: 3, marginBottom: 14 }}>
                 <TouchableOpacity
                   onPress={() => setMethod('sms')}
                   style={{ flex: 1, paddingVertical: 9, borderRadius: 8, alignItems: 'center', backgroundColor: method === 'sms' ? (isDark ? '#3a3a3c' : '#fff') : 'transparent' }}
@@ -1735,7 +1737,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
               {phone ? (
                 <View style={{
                   flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-                  backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7', borderRadius: 10,
+                  backgroundColor: _tc(isDark).surfaceVariant, borderRadius: 10,
                   paddingVertical: 11, paddingHorizontal: 14, marginBottom: 14, gap: 8,
                 }}>
                   <IconSmartphone size={18} color={txt} />
@@ -1747,7 +1749,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <TouchableOpacity
                   onPress={onClose}
-                  style={{ flex: 1, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }}
+                  style={{ flex: 1, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: _tc(isDark).surfaceVariant }}
                 >
                   <Text style={{ color: txt, fontWeight: '600' }}>{t?.('common.notNow') || 'Agora não'}</Text>
                 </TouchableOpacity>
@@ -1781,7 +1783,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                 placeholder="000000"
                 placeholderTextColor={sub}
                 style={{
-                  backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
+                  backgroundColor: _tc(isDark).surfaceVariant,
                   borderRadius: 16, paddingVertical: 22, paddingHorizontal: 20,
                   textAlign: 'center', marginBottom: 16,
                   borderWidth: 2, borderColor: ink,
@@ -1795,7 +1797,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
                 <TouchableOpacity
                   onPress={() => { setStep('intro'); setPin(''); setError(''); }}
-                  style={{ flex: 1, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }}
+                  style={{ flex: 1, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: _tc(isDark).surfaceVariant }}
                 >
                   <Text style={{ color: txt, fontWeight: '600' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
                 </TouchableOpacity>
@@ -2261,7 +2263,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isDark ? '#111111' : '#fff' }} />
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: _tc(isDark).surface }} />
               <Text style={{ color: isDark ? '#111111' : '#fff', fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
                 {activeCall?.contactName || activeCall?.number || t?.('call.inProgress') || 'Em ligação'}
               </Text>
@@ -2355,7 +2357,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
 
           {/* T9 suggestions + Contact matches */}
           {(t9Suggestions.length > 0 || contacts.length > 0) && (
-            <View style={[s.dialerContacts, { backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }]}>
+            <View style={[s.dialerContacts, { backgroundColor: _tc(isDark).surfaceVariant }]}>
               {/* T9 suggestions (local, instant) — combines server + iPhone contacts.
                   The badge differentiates: green "Chatyy" = registered user
                   (in-app call, free), gray "iPhone" = phone contact (SIP/PSTN). */}
@@ -2455,7 +2457,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
 
           {/* [2026-10-17 p2] agenda negada de vez → explica + "Abrir ajustes" */}
           {!number && showContacts && phoneContactsList.length === 0 && Platform.OS !== 'web' && contactsDeniedForever() && (
-            <View style={{ marginHorizontal: 16, paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7', alignItems: 'center', gap: 8 }}>
+            <View style={{ marginHorizontal: 16, paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, backgroundColor: _tc(isDark).surfaceVariant, alignItems: 'center', gap: 8 }}>
               <Text style={{ fontSize: 13, color: subColor, textAlign: 'center' }}>
                 {t?.('chatConv.contactsPermission') || 'Permita acesso aos contatos nas configurações.'}
               </Text>
@@ -2470,7 +2472,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             <FlatList
               data={phoneContactsList.slice(0, 50)}
               keyExtractor={(item, idx) => item.id || String(idx)}
-              style={{ maxHeight: 200, marginHorizontal: 16, borderRadius: 10, backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7' }}
+              style={{ maxHeight: 200, marginHorizontal: 16, borderRadius: 10, backgroundColor: _tc(isDark).surfaceVariant }}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#2c2c2e' : '#e5e7eb' }}
@@ -3525,7 +3527,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
   const _headerChrome = (
     <>
       {/* Header with tabs */}
-      <View style={[s.header, { backgroundColor: isDark ? '#000000' : '#f2f2f7' }]}>
+      <View style={[s.header, { backgroundColor: _tc(isDark).background }]}>
         {/* [2026-10-11 visual polish] Chip row scrolls horizontally from the
             16px gutter. It was a right-aligned (flex-end) row that overflowed
             on phones: "Agendar" was clipped against the left screen edge. */}

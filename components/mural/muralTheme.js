@@ -2,6 +2,7 @@
 // Vermelho #ff2d55 SÓ no coração curtido.
 import { useMemo } from 'react';
 import { useTheme } from '../../context/ThemeContext';
+import { THEME_V2, Grafite } from '../../constants/theme';
 
 export const LIKE = '#ff2d55';
 
@@ -16,7 +17,20 @@ const DARK = {
   paper: '#2c2c2e', paperInk: '#f5f5f7', ink: '#f5f5f7', inkInk: '#000000', isDark: true,
 };
 
-export function muralTokens(isDark) { return isDark ? DARK : LIGHT; }
+// [2026-10-20 grafite] tema v2: cinzas quentes + cartões com sombra, grade gap 4 / raio 10.
+const _GL = Grafite.light; const _GD = Grafite.dark;
+const LIGHT_V2 = {
+  ...LIGHT, bg: _GL.bg, card: _GL.surface, text: _GL.text, muted: _GL.muted, line: _GL.line,
+  accent: _GL.ink, accentInk: _GL.onInk, chip: _GL.surface2, paper: _GL.surface2, paperInk: _GL.text, ink: _GL.ink, inkInk: _GL.onInk,
+  v2: true, cardRadius: Grafite.radius.card, tileRadius: Grafite.radius.tile, gridGap: 4,
+};
+const DARK_V2 = {
+  ...DARK, bg: _GD.bg, card: _GD.surface, text: _GD.text, muted: _GD.muted, line: _GD.line,
+  accent: _GD.ink, accentInk: _GD.onInk, chip: _GD.surface2, paper: _GD.surface2, paperInk: _GD.text, ink: _GD.ink, inkInk: _GD.onInk,
+  v2: true, cardRadius: Grafite.radius.card, tileRadius: Grafite.radius.tile, gridGap: 4,
+};
+
+export function muralTokens(isDark) { return THEME_V2 ? (isDark ? DARK_V2 : LIGHT_V2) : (isDark ? DARK : LIGHT); }
 
 export function useMuralTheme() {
   const th = useTheme() || {};

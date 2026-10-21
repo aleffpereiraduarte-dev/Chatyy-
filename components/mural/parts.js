@@ -5,6 +5,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withSequence, withTiming, w
 import AvatarCircle from '../AvatarCircle';
 import MIcon, { AUD_ICON } from './MuralIcons';
 import { LIKE, fmtCount } from './muralTheme';
+import { THEME_V2 } from '../../constants/theme';
 
 // ─── Texto / tempo ──────────────────────────────────────────────────────────
 function _d(v) { if (!v) return null; const d = new Date(v); return isNaN(d.getTime()) ? null : d; }
@@ -108,8 +109,10 @@ export function AnimatedHeart({ liked, size = 24, color, strokeWidth = 1.8 }) {
     if (liked) {
       s.value = withSequence(
         withTiming(0.7, { duration: 110, easing: Easing.out(Easing.quad) }),
-        withSpring(1.32, { damping: 6, stiffness: 420, mass: 0.6 }),
-        withSpring(1, { damping: 12, stiffness: 300 }),
+        // [2026-10-20 grafite] mola de 0,35 s
+        ...(THEME_V2
+          ? [withSpring(1.22, { duration: 175, dampingRatio: 0.6 }), withSpring(1, { duration: 350, dampingRatio: 0.5 })]
+          : [withSpring(1.32, { damping: 6, stiffness: 420, mass: 0.6 }), withSpring(1, { damping: 12, stiffness: 300 })]),
       );
     } else {
       s.value = withSequence(withTiming(0.85, { duration: 80 }), withTiming(1, { duration: 120 }));

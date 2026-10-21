@@ -23,7 +23,12 @@
 // Zero native deps — RN Animated only (no Reanimated), so it ships via OTA.
 import React, { useRef } from 'react';
 import { TouchableOpacity, Animated } from 'react-native';
-import { haptic as themeHaptic } from '../constants/theme';
+import { haptic as themeHaptic, THEME_V2 } from '../constants/theme';
+
+// [2026-10-20 grafite] tema v2: "mola de 0,35 s" — volta com leve overshoot
+// (ω≈20,5, ζ≈0,54 → assenta em ~0,35 s). Native driver = UI thread, sem render.
+const V2_PRESS = { stiffness: 600, damping: 38, mass: 1 };
+const V2_RELEASE = { stiffness: 420, damping: 22, mass: 1 };
 import { isReduceMotionEnabled } from './reducedMotion';
 import { Springs, PressScale, motionEnabled } from '../constants/motion';
 
@@ -54,7 +59,7 @@ export default function PressableScale({
         Animated.spring(scaleAnim, {
           toValue: scaleTo,
           useNativeDriver: true,
-          ...Springs.press,
+          ...(THEME_V2 ? V2_PRESS : Springs.press),
         }).start();
       }
       // Tactile tick on press-in — feels instant, like iMessage / WhatsApp.
@@ -71,7 +76,7 @@ export default function PressableScale({
       Animated.spring(scaleAnim, {
         toValue: 1,
         useNativeDriver: true,
-        ...Springs.release,
+        ...(THEME_V2 && !isReduceMotionEnabled() ? V2_RELEASE : Springs.release),
       }).start();
     }
     onPressOut?.(e);

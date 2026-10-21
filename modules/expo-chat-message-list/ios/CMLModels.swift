@@ -308,6 +308,13 @@ struct CMLTheme {
   /// [2026-10-18 tg-list, apiVersion 11] realce da busca (termos / resultado atual)
   var search = UIColor(red: 1, green: 0.839, blue: 0.039, alpha: 0.35)
   var searchCur = UIColor(red: 1, green: 0.839, blue: 0.039, alpha: 0.70)
+  /// [2026-10-20 grafite, apiVersion 14] bolha própria em gradiente (2–3 cores
+  /// ARGB, ~165°) + reflexo interno de 1 px + sombra leve. nil = cor sólida.
+  var ownGradient: [UIColor]? = nil
+  /// posições 0…1 de cada cor (opcional; mesmo tamanho de ownGradient)
+  var ownGradientStops: [NSNumber]? = nil
+  /// [2026-10-20 grafite] recebida com sombra leve
+  var otherShadow = false
 
   static func uiColor(_ argb: UInt32) -> UIColor {
     let a = CGFloat((argb >> 24) & 0xFF) / 255
@@ -365,5 +372,15 @@ struct CMLTheme {
     failed = c("failed", failed)
     search = c("search", search)
     searchCur = c("searchCur", searchCur)
+    if let arr = dict["ownGradient"] as? [Any] {
+      let cols: [UIColor] = arr.compactMap { v in CMLRow.color(v).map { CMLTheme.uiColor($0) } }
+      ownGradient = cols.count >= 2 ? cols : nil
+    }
+    if let g = ownGradient, let st = dict["ownGradientStops"] as? [Any] {
+      let nums: [NSNumber] = st.compactMap { v in (v as? NSNumber) }
+      ownGradientStops = nums.count == g.count ? nums : nil
+    }
+    if let b = dict["otherShadow"] as? Bool { otherShadow = b }
+    else if let n = dict["otherShadow"] as? NSNumber { otherShadow = n.boolValue }
   }
 }

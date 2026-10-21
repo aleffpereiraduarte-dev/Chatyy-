@@ -9,6 +9,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import MIcon from './MuralIcons';
 import { useMuralTheme, LIKE } from './muralTheme';
+import { THEME_V2, cardShadow } from '../../constants/theme';
 import { Avatar, AnimatedHeart, LikersStack, fullWhen, audienceIcon, count, displayName, handle, sharePost } from './parts';
 import { CommentsBody, CommentBar, quickReplies } from './CommentsList';
 import { usePostMenu } from './PostViewer';
@@ -62,7 +63,7 @@ export default function TextPostView({ postId, onBack, onEdit, onReport, onDelet
       </View>
       <View style={{ flex: 1 }}>
         <ScrollView ref={scrollRef} style={{ flex: 1 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" contentContainerStyle={{ paddingBottom: 16, maxWidth: 680, width: '100%', alignSelf: 'center' }}>
-          <View style={{ backgroundColor: th.card, marginTop: 12, marginHorizontal: 12, borderRadius: 22, paddingTop: 18, paddingHorizontal: 18, paddingBottom: 8, ...(th.isDark ? {} : { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 1 }) }}>
+          <View style={{ backgroundColor: th.card, marginTop: 12, marginHorizontal: 12, borderRadius: 22, paddingTop: 18, paddingHorizontal: 18, paddingBottom: 8, ...(THEME_V2 ? cardShadow(th.isDark) : th.isDark ? {} : { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 1 }) }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <Avatar email={post.author_email} name={name} uri={post.author_avatar} size={40} />
               <View style={{ flex: 1, minWidth: 0 }}>

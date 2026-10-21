@@ -378,7 +378,17 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
 
   fun setDark(dark: Boolean) {
     if (dark == theme.dark && !themeDirty) return
-    theme = CLTheme(dark)
+    theme = CLTheme(dark, palette)
+    themeDirty = true
+  }
+
+  // [2026-10-20 grafite, apiVersion 11] prop `palette` (ver CLTheme).
+  private var palette: Map<String, Any?>? = null
+  fun setPaletteProp(p: Map<String, Any?>?) {
+    val next = if (p.isNullOrEmpty()) null else p
+    if (next == palette) return
+    palette = next
+    theme = CLTheme(theme.dark, palette)
     themeDirty = true
   }
 
@@ -1310,7 +1320,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
 
     /** Linha fina a partir do nome (16 + 54 + 14 dp), como o iOS (sep inset). */
     private fun drawSeparators(c: Canvas, parent: RecyclerView) {
-      hairPaint.color = if (theme.dark) 0x17FFFFFF else 0x14000000
+      hairPaint.color = theme.hair
       val hh = max(1f, density * 0.5f)
       // [2026-10-19 tg-list] Telegram: 12 + 58 + 10 = 80 (x do texto).
       val lead = ((if (selectionMode) 36f else 0f) + (if (tgDensity) 12f + 58f + 10f else 16f + (if (compactDensity) 52f + 12f else 54f + 14f))) * density

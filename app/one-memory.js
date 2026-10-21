@@ -296,7 +296,7 @@ export default function OneMemoryScreen() {
         onClose={() => setEditing(null)}
         animationType="slide"
         overlayStyle={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
-        panelStyle={[styles.sheet, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', paddingBottom: Math.max(16, insets.bottom + 8) }]}
+        panelStyle={[styles.sheet, { backgroundColor: colors.surface, paddingBottom: Math.max(16, insets.bottom + 8) }]}
       >
         <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 4 }}>
           {editing ? catLabel(editing.item.category, t) : ''}

@@ -369,7 +369,7 @@ export default function ChangePhone() {
                 </Text>
 
                 {/* Warning banner */}
-                <View style={[styles.warnBanner, { backgroundColor: isDark ? '#1c1c1e' : '#F2F2F7', borderColor: isDark ? '#2c2c2e' : '#E5E5EA' }]}>
+                <View style={[styles.warnBanner, { backgroundColor: colors.surfaceVariant, borderColor: isDark ? '#2c2c2e' : '#E5E5EA' }]}>
                   <IconAlertTriangle size={18} color={colors.text} />
                   <Text style={[styles.warnText, { color: colors.text }]}>
                     {t('changePhone.warning') || 'Após a troca, o login passa a ser feito pelo novo número.'}
@@ -380,7 +380,7 @@ export default function ChangePhone() {
                 <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>
                   {t('changePhone.currentLabel') || 'Número atual'}
                 </Text>
-                <View style={[styles.readonlyBox, { backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6', borderColor: _hairline }]}>
+                <View style={[styles.readonlyBox, { backgroundColor: colors.surfaceVariant, borderColor: _hairline }]}>
                   {loadingProfile
                     ? <ActivityIndicator size="small" color={colors.primary} />
                     : (
@@ -665,7 +665,7 @@ export default function ChangePhone() {
                 style={[
                   {
                     fontSize: 15, paddingVertical: 12, paddingHorizontal: 14,
-                    borderRadius: 10, backgroundColor: isDark ? '#1c1c1e' : '#f3f4f6',
+                    borderRadius: 10, backgroundColor: colors.surfaceVariant,
                     color: colors.text, height: 43, paddingTop: 0, paddingBottom: 0 /* [2026-10-17 input-align] altura fixa: texto centrado no iOS */,
                   },
                   Platform.OS === 'web' && { outlineStyle: 'none' },

@@ -23,6 +23,20 @@ import { Platform, StyleSheet, Text, View } from 'react-native';
 import PressableRow from '../PressableRow';
 import { IconChevronRight } from '../Icons';
 import { Layout, Radius, Type } from '../../constants/theme';
+import { THEME_V2, Grafite } from '../../constants/theme';
+// [2026-10-20 grafite] ícone em ladrilho grafite (raio 10, gradiente + reflexo de 1 px).
+const _tileC = {};
+function _grafiteTile(dark) {
+  const k = dark ? 'd' : 'l';
+  if (_tileC[k]) return _tileC[k];
+  const g = dark ? Grafite.dark : Grafite.light;
+  const grad = `linear-gradient(160deg, ${g.tile[0]} 0%, ${g.tile[1]} 100%)`;
+  const sh = 'inset 0px 1px 0px rgba(255,255,255,0.18), 0px 2px 6px rgba(0,0,0,0.12)';
+  _tileC[k] = Platform.OS === 'web'
+    ? { backgroundColor: g.tile[1], backgroundImage: grad, boxShadow: sh, borderRadius: Grafite.radius.tile }
+    : { backgroundColor: g.tile[1], experimental_backgroundImage: grad, boxShadow: sh, borderRadius: Grafite.radius.tile };
+  return _tileC[k];
+}
 import useSurface from './useSurface';
 
 export default function ListRow({
@@ -36,8 +50,8 @@ export default function ListRow({
   const icColor = iconColor || (destructive ? s.danger : s.icon);
   const lead = leading || (Icon ? (
     iconTile ? (
-      <View style={[styles.tile, { backgroundColor: s.fill }]}>
-        <Icon size={18} color={icColor} />
+      <View style={[styles.tile, { backgroundColor: s.fill }, THEME_V2 && !destructive && !iconColor ? _grafiteTile(s.isDark) : null]}>
+        <Icon size={18} color={THEME_V2 && !destructive && !iconColor ? '#FFFFFF' : icColor} />
       </View>
     ) : (
       <View style={styles.iconBox}><Icon size={Layout.iconSize} color={icColor} /></View>

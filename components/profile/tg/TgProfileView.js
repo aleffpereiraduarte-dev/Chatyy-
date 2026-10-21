@@ -27,6 +27,7 @@ import { tgT, useTgLang, presenceLine, relTime } from './tgStrings';
 import { useTgProfileData, normPost, likePost, deletePost, reportPost, absUrl } from './useTgProfileData';
 import { GridRow, MediaRow, PostCard, fmtN } from './TgPostTiles';
 import { useMuralTheme } from '../../mural/muralTheme';
+import { THEME_V2, Grafite, cardShadow } from '../../../constants/theme';
 import { useTheme } from '../../../context/ThemeContext';
 import { useStatusRing, openStatusFor } from '../../status/statusRingStore';
 import { usePendingProfilePosts, mergePendingPosts, openPendingPostMenu } from '../../ProfilePostProgress';
@@ -90,8 +91,8 @@ function Avatar({ size, email, name, uri, headers, th, ring, onPress, label }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => { setFailed(false); }, [uri]);
   const inner = (
-    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: th.isDark ? '#3a3a3c' : '#2c2c2e', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-      <Text style={{ color: '#fff', fontSize: size * 0.36, fontWeight: '600' }}>{_initials(name, email)}</Text>
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: THEME_V2 ? (th.isDark ? Grafite.dark.avatarNone[0] : Grafite.light.avatarNone[1]) : (th.isDark ? '#3a3a3c' : '#2c2c2e'), alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+      <Text style={{ color: THEME_V2 ? (th.isDark ? Grafite.dark.text2 : '#FFFFFF') : '#fff', fontSize: size * 0.36, fontWeight: '600' }}>{_initials(name, email)}</Text>
       {uri && !failed ? <FastImage source={headers ? { uri, headers } : { uri }} style={StyleSheet.absoluteFill} resizeMode="cover" onError={() => setFailed(true)} /> : null}
     </View>
   );
@@ -100,11 +101,18 @@ function Avatar({ size, email, name, uri, headers, th, ring, onPress, label }) {
     <View style={{ width: outer, height: outer, alignItems: 'center', justifyContent: 'center' }}>
       <Svg width={outer} height={outer} style={StyleSheet.absoluteFill}>
         <Defs>
-          <LinearGradient id="tgRing" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={ring === 'seen' ? th.muted : th.text} />
-            <Stop offset="0.5" stopColor={th.muted} />
-            <Stop offset="1" stopColor={ring === 'seen' ? th.muted : th.text} />
-          </LinearGradient>
+          {THEME_V2 && ring !== 'seen' ? (
+            // [2026-10-20 grafite] anel prateado (aproxima o gradiente cônico do mockup)
+            <LinearGradient id="tgRing" x1="0.15" y1="0" x2="0.85" y2="1">
+              {(th.isDark ? Grafite.dark.ring : Grafite.light.ring).map((c, i, a) => <Stop key={i} offset={String(i / (a.length - 1))} stopColor={c} />)}
+            </LinearGradient>
+          ) : (
+            <LinearGradient id="tgRing" x1="0" y1="0" x2="1" y2="1">
+              <Stop offset="0" stopColor={ring === 'seen' ? th.muted : th.text} />
+              <Stop offset="0.5" stopColor={th.muted} />
+              <Stop offset="1" stopColor={ring === 'seen' ? th.muted : th.text} />
+            </LinearGradient>
+          )}
         </Defs>
         <Circle cx={outer / 2} cy={outer / 2} r={outer / 2 - 1.5} stroke="url(#tgRing)" strokeWidth={3} fill="none" />
       </Svg>
@@ -120,6 +128,20 @@ function SmallAvatar({ size, email, name, th }) {
   return <Avatar size={size} email={email} name={name} uri={ref && ref.uri} headers={ref && ref.headers} th={th} />;
 }
 
+// [2026-10-20 grafite] ícone em ladrilho grafite (raio 10, gradiente + reflexo de 1 px).
+const _tileCache = {};
+function _tileStyle(dark) {
+  const k = dark ? 'd' : 'l';
+  if (_tileCache[k]) return _tileCache[k];
+  const g = dark ? Grafite.dark : Grafite.light;
+  const grad = `linear-gradient(160deg, ${g.tile[0]} 0%, ${g.tile[1]} 100%)`;
+  const sh = 'inset 0px 1px 0px rgba(255,255,255,0.18), 0px 2px 6px rgba(0,0,0,0.12)';
+  _tileCache[k] = Platform.OS === 'web'
+    ? { backgroundColor: g.tile[1], backgroundImage: grad, boxShadow: sh, borderRadius: Grafite.radius.tile }
+    : { backgroundColor: g.tile[1], experimental_backgroundImage: grad, boxShadow: sh, borderRadius: Grafite.radius.tile };
+  return _tileCache[k];
+}
+
 // ── Linha agrupada (cartão) ─────────────────────────────────────────────────
 function Row({ th, icon, title, sub, value, dest, chevron = true, onPress, right, first, inset }) {
   const color = dest ? th.danger : th.text;
@@ -127,8 +149,8 @@ function Row({ th, icon, title, sub, value, dest, chevron = true, onPress, right
     <Pressable onPress={onPress} disabled={!onPress && !right} style={({ pressed }) => [s.row, pressed && onPress && { backgroundColor: th.chip }]} accessibilityRole={onPress ? 'button' : undefined}>
       {!first ? <View style={[s.sep, { left: icon ? 56 : 14, backgroundColor: th.line }]} /> : null}
       {icon ? (
-        <View style={[s.icBox, { backgroundColor: dest ? 'rgba(229,72,77,0.12)' : th.chip }]}>
-          <TgIcon name={icon} size={18} color={color} />
+        <View style={[s.icBox, { backgroundColor: dest ? 'rgba(229,72,77,0.12)' : th.chip }, THEME_V2 && !dest && _tileStyle(th.isDark)]}>
+          <TgIcon name={icon} size={18} color={THEME_V2 && !dest ? Grafite.light.tileText : color} />
         </View>
       ) : null}
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -176,7 +198,7 @@ export default function TgProfileView(props) {
   const em = data.email || String(email || '').toLowerCase();
   const name = ident.name || seed.name || String(em).split('@')[0] || String(username || '');
   const handle = ident.username || '';
-  const shadow = th.isDark ? null : (Platform.OS === 'web' ? { boxShadow: '0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06)' } : { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 1 });
+  const shadow = THEME_V2 ? cardShadow(th.isDark) : th.isDark ? null : (Platform.OS === 'web' ? { boxShadow: '0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06)' } : { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 1 });
 
   // ── estado da tela ──
   const [tab, setTab] = useState(props.initialTab === 'media' ? 'media' : 'posts');
@@ -784,14 +806,14 @@ const s = StyleSheet.create({
   h1: { fontSize: 24, fontWeight: '700', letterSpacing: -0.4, marginTop: 12, textAlign: 'center' },
   un: { fontSize: 15, marginTop: 1 },
   seen: { fontSize: 13, marginTop: 4 },
-  note: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, maxWidth: '90%' },
+  note: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10, paddingHorizontal: 12, paddingVertical: 7, borderRadius: THEME_V2 ? 999 : 16, maxWidth: '90%' },
   noteDot: { width: 6, height: 6, borderRadius: 3, opacity: 0.5 },
   noteTxt: { fontSize: 13.5, flexShrink: 1 },
   acts: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 18 },
-  act: { flex: 1, height: 62, borderRadius: 14, alignItems: 'center', justifyContent: 'center', gap: 4 },
+  act: { flex: 1, height: 62, borderRadius: THEME_V2 ? 18 : 14, alignItems: 'center', justifyContent: 'center', gap: 4 },
   actTxt: { fontSize: 12.5, fontWeight: '500' },
-  grp: { marginHorizontal: 16, marginTop: 16, borderRadius: 14, overflow: Platform.OS === 'android' ? 'hidden' : 'visible' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 11, minHeight: 48, borderRadius: 14 },
+  grp: { marginHorizontal: 16, marginTop: 16, borderRadius: THEME_V2 ? Grafite.radius.card : 14, overflow: Platform.OS === 'android' ? 'hidden' : 'visible' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 11, minHeight: 48, borderRadius: THEME_V2 ? Grafite.radius.card : 14 },
   sep: { position: 'absolute', top: 0, right: 0, height: StyleSheet.hairlineWidth },
   icBox: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   rowV: { fontSize: 15.5 },
@@ -810,7 +832,7 @@ const s = StyleSheet.create({
   seg: { flexDirection: 'row', borderRadius: 10, padding: 2 },
   segBtn: { width: 38, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   segOn: Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,.12)' } : { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
-  compose: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 10, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 18 },
+  compose: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 10, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: THEME_V2 ? 22 : 18 },
   composePh: { flex: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
   mgroup: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6, fontSize: 13, fontWeight: '600' },
   lrow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10 },

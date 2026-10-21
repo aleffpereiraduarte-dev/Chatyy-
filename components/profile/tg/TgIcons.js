@@ -2,6 +2,7 @@
 // 1.8, pontas redondas, SVG puro — nada de emoji.
 import React from 'react';
 import Svg, { Path, Circle, Rect } from 'react-native-svg';
+import { v2Stroke as _v2Stroke } from '../../../constants/theme';
 
 const P = {
   back: <Path d="M15 5l-7 7 7 7" />,
@@ -58,7 +59,8 @@ const P = {
 P.palette = P.wall;
 
 /** <TgIcon name="phone" size={24} color="#000" fill?="#f00" width?={1.8} /> */
-export default function TgIcon({ name, size = 24, color = '#000', fill = 'none', strokeWidth = 1.8, style }) {
+export default function TgIcon({ name, size = 24, color = '#000', fill = 'none', strokeWidth: _sw, style }) {
+  const strokeWidth = _v2Stroke(_sw, 1.8); // [2026-10-20 grafite] traço 1,6
   const body = P[name] || P.chev;
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" color={color} style={style}>

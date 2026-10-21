@@ -4,6 +4,7 @@
 // estilo do nó — nenhum render React por quadro. prefers-reduced-motion → parado.
 import React, { memo, useEffect, useRef } from 'react';
 import { useReducedMotion } from '../reducedMotion';
+import { THEME_V2 } from '../../constants/theme';
 
 const CSS = `
 .bia-orb{position:relative;flex-shrink:0;pointer-events:none}
@@ -18,6 +19,8 @@ const CSS = `
 .bia-orb .bo-edge{position:absolute;inset:0;border-radius:50%;box-shadow:0 0 0 1px rgba(255,255,255,var(--edge))}
 @keyframes bo-spin{to{transform:rotate(360deg)}}
 @keyframes bo-breathe{0%,100%{transform:scale(1)}50%{transform:scale(var(--bs))}}
+@keyframes bo-breathe2{0%,100%{transform:scale(1);filter:brightness(1)}50%{transform:scale(var(--bs));filter:brightness(1.18)}}
+.bia-orb[data-v2="1"] .bo-breathe{animation-name:bo-breathe2}
 .bia-orb[data-rm="1"] *,.bia-orb[data-rm="1"]{animation:none!important;transition:none!important}
 @media (prefers-reduced-motion: reduce){.bia-orb *{animation:none!important;transition:none!important}}
 `;
@@ -29,7 +32,8 @@ function inject() {
 }
 
 const MODE = {
-  idle: { sp: '14s', bd: '5.5s', bs: 1.02, go: 0.32 },
+  // [2026-10-20 grafite] tema v2: respira em 4 s até 1,03 (+ brilho, CSS abaixo)
+  idle: THEME_V2 ? { sp: '14s', bd: '4s', bs: 1.03, go: 0.32 } : { sp: '14s', bd: '5.5s', bs: 1.02, go: 0.32 },
   thinking: { sp: '3.6s', bd: '1.6s', bs: 1.055, go: 0.5 },
   listening: { sp: '7s', bd: '3s', bs: 1.03, go: 0.42 },
   speaking: { sp: '4.2s', bd: '1.2s', bs: 1.04, go: 0.55 },
@@ -72,7 +76,7 @@ function BiaOrb({ size = 120, mode = 'idle', getLevel, isDark = false, paused = 
     '--edge': isDark ? 0.14 : 0,
   };
   return (
-    <div className="bia-orb" data-rm={still ? '1' : '0'} style={style} aria-hidden="true">
+    <div className="bia-orb" data-rm={still ? '1' : '0'} data-v2={THEME_V2 ? '1' : '0'} style={style} aria-hidden="true">
       <div className="bo-glow" />
       <div className="bo-scale" ref={scaleRef}>
         <div className="bo-breathe">

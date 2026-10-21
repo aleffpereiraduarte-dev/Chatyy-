@@ -3271,7 +3271,7 @@ function PhotosScreenInner() {
       const deviceCount = deviceTotalCount || devicePhotos.length;
       const pct = deviceCount > 0 ? Math.min((backedUpTotal / deviceCount) * 100, 100) : 0;
       return (
-        <View style={[s.backupBanner, { backgroundColor: isDark ? '#1C1C1E' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
+        <View style={[s.backupBanner, { backgroundColor: colors.surfaceVariant, borderColor: colors.primary + '40' }]}>
           <View style={s.backupBannerLeft}>
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
@@ -3322,7 +3322,7 @@ function PhotosScreenInner() {
       if (deviceCount === 0) {
         // Still loading device count — show "checking..."
         return (
-          <View style={[s.backupBanner, { backgroundColor: isDark ? '#1C1C1E' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
+          <View style={[s.backupBanner, { backgroundColor: colors.surfaceVariant, borderColor: colors.primary + '40' }]}>
             <View style={s.backupBannerLeft}>
               <ActivityIndicator size="small" color={colors.primary} />
               <View style={{ marginLeft: 10, flex: 1 }}>
@@ -3435,7 +3435,7 @@ function PhotosScreenInner() {
 
       // Has pending photos - show start button
       return (
-        <View style={[s.backupBanner, { backgroundColor: isDark ? '#1C1C1E' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
+        <View style={[s.backupBanner, { backgroundColor: colors.surfaceVariant, borderColor: colors.primary + '40' }]}>
           <View style={s.backupBannerLeft}>
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
@@ -5336,7 +5336,7 @@ function PhotosScreenInner() {
             "Backup completo" the founder flagged. Keep it only for the tabs
             (Albums/Pessoas/Mapa) that have no inline banner. */}
         {activeTab !== 'photos' && backupStatus === 'backing_up' && (
-          <View style={{ backgroundColor: isDark ? '#1C1C1E' : '#F1F3F5', paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={{ backgroundColor: colors.surfaceVariant, paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <ActivityIndicator size="small" color={colors.primary} />
             <View style={{ flex: 1 }}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>

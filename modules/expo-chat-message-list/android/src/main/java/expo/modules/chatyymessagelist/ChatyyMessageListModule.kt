@@ -31,7 +31,7 @@ class ChatyyMessageListModule : Module() {
     //      13sp regular, citação com cantos 6
     // 13 = [2026-10-19 perf-scroll + store-rev] pool de células pré-aquecido, Path do recorte
     //      reaproveitado · store.dl {m, loc} → rótulos de dia da foto recalculados ao pintar
-    Function("apiVersion") { 13 } // 9 = [vthumb] media.vf → 1º frame nativo (MLVideoFrames); 8 = [voz-wa] setAudioState {rl} → pílula 1×/1,5×/2× na onda; toque → action au:rate
+    Function("apiVersion") { 14 } // 14 = [2026-10-20 grafite] tema ownGradient/ownGradientStops/otherShadow (bolha em gradiente + sombra); 9 = [vthumb] media.vf → 1º frame nativo (MLVideoFrames); 8 = [voz-wa] setAudioState {rl} → pílula 1×/1,5×/2× na onda; toque → action au:rate
 
     // [native-media-dl] pasta do cache do mediaCache + matriz de auto-download +
     // economia de dados + modelo "{a} de {b}" traduzido.
