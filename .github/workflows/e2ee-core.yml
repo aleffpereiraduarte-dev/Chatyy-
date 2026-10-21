@@ -1,25 +1,219 @@
-name: E2EE core nativo (vodozemac Rust/UniFFI)
+name: E2EE core (chatyy-crypto v5 + legado v4)
 
-# [2026-10-10] Compila e TESTA o núcleo E2EE v4 nativo, sem tocar no app:
-#   - Linux: cargo test (inclui vetores wasm↔nativo), checagem dos vetores no
-#     wasm do web, núcleo JS + adaptador, .so Android (cargo-ndk, 16 KB) e
-#     bindings Kotlin rodando de verdade na JVM (JNA).
-#   - macOS: ChatyyE2EECore.xcframework + bindings Swift, e um smoke test Swift
-#     que abre um vetor cifrado pelo wasm.
-# Só roda à mão (workflow_dispatch). Os builds do app NÃO dependem disto; eles
-# só incluem o módulo com o input e2ee_native=true (ios/android-build-local.yml).
+# [2026-10-21 WP-02] Núcleo E2EE v5 `native/chatyy-crypto` (matrix-sdk-crypto =0.18.0):
+#   test     cargo test do núcleo (Linux)
+#   android  .so arm64/armv7/x86_64 (16 KB) + bindings Kotlin + smoke Kotlin/JVM (JNA, coroutines)
+#   wasm     wasm + glue (wasm-bindgen) + smoke em Node
+#   ios      ChatyyCryptoCore.xcframework + bindings Swift + smoke Swift (macOS) + link app/NSE arm64
+#   package  junta tudo, tamanhos no resumo, SHA256SUMS; release=true publica os assets que os
+#            builds do app baixam (ci/prebuilt.lock). O APP não depende disto até o input
+#            chatyy_crypto=true (ios/android-build-local.yml), que recusa submit.
+# core=prova = núcleo TEMPORÁRIO (ci/prova-core) até o WP-01 exportar a API; depois core=real
+# (ou a variável do repo CHATYY_CRYPTO_CORE=real).
+# v4=true roda também os jobs antigos do E2EE v4 (native/e2ee), sem mudança.
 
 on:
   workflow_dispatch:
+    inputs:
+      core:
+        description: 'Núcleo (auto = variável do repo ou prova; real = native/chatyy-crypto)'
+        required: false
+        default: 'auto'
+        type: choice
+        options: ['auto', 'prova', 'real']
+      release:
+        description: 'Publicar release pré-compilado (só core=real)?'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      v4:
+        description: 'Rodar também os jobs do E2EE v4 (legado)?'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+  push:
+    branches: [main]
+    paths:
+      - 'native/chatyy-crypto/**'
+      - 'vendor/chatyy-crypto-wasm/rust/**'
+      - '.github/workflows/e2ee-core.yml'
+
+concurrency:
+  group: e2ee-core-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: never
+  CHATYY_CRYPTO_CORE: ${{ (inputs.core && inputs.core != 'auto') && inputs.core || vars.CHATYY_CRYPTO_CORE || 'prova' }}
+  CHATYY_RUST_TOOLCHAIN: '1.95.0'
 
 jobs:
-  linux:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../cc-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ${{ github.workspace }}/../cc-target
+          key: cc-test-${{ env.CHATYY_CRYPTO_CORE }}-${{ env.CHATYY_RUST_TOOLCHAIN }}-${{ hashFiles('native/chatyy-crypto/Cargo.lock', 'native/chatyy-crypto/ci/prova-core/Cargo.lock') }}
+          restore-keys: cc-test-${{ env.CHATYY_CRYPTO_CORE }}-${{ env.CHATYY_RUST_TOOLCHAIN }}-
+      - name: cargo test
+        run: bash native/chatyy-crypto/ci/test.sh
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../cc-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/bin/cargo-ndk
+            ${{ runner.tool_cache }}/chatyy-crypto-tools
+            ${{ github.workspace }}/../cc-target
+          key: cc-android-${{ env.CHATYY_CRYPTO_CORE }}-${{ env.CHATYY_RUST_TOOLCHAIN }}-${{ hashFiles('native/chatyy-crypto/Cargo.lock', 'native/chatyy-crypto/ci/prova-core/Cargo.lock', 'native/chatyy-crypto/ci/uniffi-bindgen/Cargo.lock') }}
+          restore-keys: cc-android-${{ env.CHATYY_CRYPTO_CORE }}-${{ env.CHATYY_RUST_TOOLCHAIN }}-
+      - name: .so (3 ABIs, 16 KB) + bindings Kotlin + AAR
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          echo "NDK: $ANDROID_NDK_HOME"
+          bash native/chatyy-crypto/build-android.sh
+      - name: Smoke Kotlin/JVM (bindings + JNA + coroutines)
+        run: bash native/chatyy-crypto/ci/smoke-kotlin.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cc-android
+          path: |
+            native/chatyy-crypto/dist/android
+            native/chatyy-crypto/dist/bindings/kotlin
+          retention-days: 14
+
+  wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../cc-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/bin/wasm-bindgen
+            ${{ github.workspace }}/../cc-target
+          key: cc-wasm-${{ env.CHATYY_CRYPTO_CORE }}-${{ env.CHATYY_RUST_TOOLCHAIN }}-${{ hashFiles('vendor/chatyy-crypto-wasm/rust/Cargo.lock', 'native/chatyy-crypto/ci/prova-core/Cargo.lock') }}
+          restore-keys: cc-wasm-${{ env.CHATYY_CRYPTO_CORE }}-${{ env.CHATYY_RUST_TOOLCHAIN }}-
+      - name: binaryen (wasm-opt)
+        run: sudo apt-get install -y -qq binaryen >/dev/null || true
+      - name: wasm + glue (web e nodejs)
+        run: bash native/chatyy-crypto/build-wasm.sh
+      - name: Smoke wasm em Node
+        run: bash native/chatyy-crypto/ci/smoke-wasm.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cc-wasm
+          path: native/chatyy-crypto/dist/wasm
+          retention-days: 14
+
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../cc-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ${{ github.workspace }}/../cc-target
+          key: cc-ios-${{ env.CHATYY_CRYPTO_CORE }}-${{ env.CHATYY_RUST_TOOLCHAIN }}-${{ hashFiles('native/chatyy-crypto/Cargo.lock', 'native/chatyy-crypto/ci/prova-core/Cargo.lock', 'native/chatyy-crypto/ci/uniffi-bindgen/Cargo.lock') }}
+          restore-keys: cc-ios-${{ env.CHATYY_CRYPTO_CORE }}-${{ env.CHATYY_RUST_TOOLCHAIN }}-
+      - name: xcframework + bindings Swift + link arm64 (app e NSE)
+        run: bash native/chatyy-crypto/build-ios.sh
+      - name: Smoke Swift (macOS, async real)
+        run: bash native/chatyy-crypto/ci/smoke-swift.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cc-ios
+          path: |
+            native/chatyy-crypto/dist/ios/ChatyyCryptoCore.xcframework
+            native/chatyy-crypto/dist/ios/size-report.txt
+            native/chatyy-crypto/dist/bindings/swift
+          retention-days: 14
+
+  package:
+    needs: [test, android, wasm, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: cc-android, path: native/chatyy-crypto/dist }
+      - uses: actions/download-artifact@v4
+        with: { name: cc-wasm, path: native/chatyy-crypto/dist/wasm }
+      - uses: actions/download-artifact@v4
+        with: { name: cc-ios, path: native/chatyy-crypto/dist }
+      - name: Pacotes + SHA256SUMS + tamanhos
+        id: pkg
+        run: |
+          VER="$(grep -m1 '^version' native/chatyy-crypto/Cargo.toml | cut -d'"' -f2)-${CHATYY_CRYPTO_CORE}-${GITHUB_SHA::7}"
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          bash native/chatyy-crypto/ci/package.sh "$VER"
+          D=native/chatyy-crypto/dist
+          {
+            echo "## chatyy-crypto ($CHATYY_CRYPTO_CORE) $VER"
+            echo '```'
+            cat $D/ios/size-report.txt 2>/dev/null || true
+            for a in arm64-v8a armeabi-v7a x86_64; do echo "android $a: $(wc -c < $D/android/jniLibs/$a/libchatyy_crypto.so) B"; done
+            cat $D/wasm/size-report.txt 2>/dev/null || true
+            echo; cat $D/release/SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chatyy-crypto-release
+          path: native/chatyy-crypto/dist/release
+          retention-days: 30
+      - name: Release pré-compilado (release=true e core=real)
+        if: ${{ inputs.release == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ "$CHATYY_CRYPTO_CORE" = real ] || { echo "::error::release só com core=real"; exit 1; }
+          TAG="chatyy-crypto-v${{ steps.pkg.outputs.ver }}"
+          gh release create "$TAG" native/chatyy-crypto/dist/release/* --prerelease --target "$GITHUB_SHA" \
+            --title "$TAG" --notes "Núcleo E2EE v5 pré-compilado (WP-02). Fixar em native/chatyy-crypto/ci/prebuilt.lock."
+          echo "TAG=\"$TAG\"" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------------------
+  # Legado E2EE v4 (native/e2ee), conteúdo sem mudança — só com v4=true.
+  # ---------------------------------------------------------------------------------------
+  v4-linux:
+    if: ${{ inputs.v4 == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
@@ -78,7 +272,8 @@ jobs:
             ${{ runner.temp }}/e2ee-mod/android/src/main/java/expo/modules/chatyye2ee/core
           retention-days: 14
 
-  ios:
+  v4-ios:
+    if: ${{ inputs.v4 == 'true' }}
     runs-on: macos-latest
     timeout-minutes: 40
     env:

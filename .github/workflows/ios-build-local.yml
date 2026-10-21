@@ -37,6 +37,16 @@ on:
         options:
           - 'false'
           - 'true'
+      # [2026-10-21 WP-02] E2EE v5: núcleo chatyy-crypto PRÉ-COMPILADO (ci/prebuilt.lock;
+      # sem lock compila da fonte) → modules/expo-chatyy-crypto (WP-03). Só build de teste.
+      chatyy_crypto:
+        description: 'E2EE v5: incluir núcleo chatyy-crypto? Só teste, submit=false.'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
   push:
     paths:
       - '.github/triggers/ios-build.txt'
@@ -282,6 +292,22 @@ jobs:
           bash native/e2ee/rust/build-ios.sh modules/expo-chatyy-e2ee
           test -d modules/expo-chatyy-e2ee/ios/ChatyyE2EECore.xcframework
           test -s modules/expo-chatyy-e2ee/ios/Generated/ChatyyE2EECore.swift
+
+      - name: E2EE v5 — núcleo chatyy-crypto → modules/expo-chatyy-crypto (só com chatyy_crypto=true)
+        # [2026-10-21 WP-02] OFF por padrão. Baixa o release fixado em
+        # native/chatyy-crypto/ci/prebuilt.lock e confere o sha256 (sem lock: compila da fonte,
+        # aceitável porque este input é só de build de TESTE e recusa submit=true).
+        if: ${{ inputs.chatyy_crypto == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CARGO_TARGET_DIR: ${{ runner.temp }}/chatyy-crypto-target
+          CHATYY_CRYPTO_BUILD_FALLBACK: '1'
+        run: |
+          if [ "${{ inputs.submit }}" = "true" ]; then
+            echo "::error::chatyy_crypto=true é só build de teste — rode com submit=false"; exit 1
+          fi
+          test -d modules/expo-chatyy-crypto || { echo "::error::modules/expo-chatyy-crypto (WP-03) ainda não existe"; exit 1; }
+          bash native/chatyy-crypto/ci/fetch-prebuilt.sh ios modules/expo-chatyy-crypto
 
       - name: Run expo prebuild
         env:

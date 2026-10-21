@@ -1,0 +1,8 @@
+# Núcleo pré-compilado que os builds do APP usam (input chatyy_crypto=true).
+# Preencher a partir do SHA256SUMS de um release do e2ee-core.yml (release=true) VERDE,
+# SÓ com o núcleo real (core=real). Vazio = builds do app recusam (ou compilam da fonte
+# com CHATYY_CRYPTO_BUILD_FALLBACK=1, só build de teste).
+TAG=""
+SHA256_IOS=""
+SHA256_ANDROID=""
+SHA256_WASM=""

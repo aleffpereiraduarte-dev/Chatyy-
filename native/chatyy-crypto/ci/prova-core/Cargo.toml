@@ -1,0 +1,55 @@
+# NÚCLEO TEMPORÁRIO (WP-02): a prova /root/e2ee-2026-10-21/prova embrulhada com UniFFI e
+# wasm-bindgen, com o MESMO nome de lib (`chatyy_crypto`) e as mesmas dependências pesadas do
+# núcleo real (matrix-sdk-crypto =0.18.0 + SQLite / IndexedDB). Serve para exercitar toda a
+# esteira (xcframework, .so 16 KB, wasm, bindings, smokes, orçamento de tamanho) enquanto o
+# WP-01 não exporta a API. NUNCA vai para app de usuário: só `CHATYY_CRYPTO_CORE=prova`.
+[package]
+name = "chatyy-crypto-prova"
+version = "0.0.1"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[lib]
+name = "chatyy_crypto"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[features]
+default = []
+uniffi = ["dep:uniffi"]
+wasm = ["dep:wasm-bindgen", "dep:wasm-bindgen-futures", "matrix-sdk-crypto/js", "getrandom/js", "dep:getrandom3"]
+
+[dependencies]
+matrix-sdk-crypto = { version = "=0.18.0" }
+ruma = { version = "=0.16.0", features = ["client-api-c"] }
+http = "1"
+serde_json = "1"
+thiserror = "2"
+getrandom = "0.2"
+getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"], optional = true }
+uniffi = { version = "=0.29.5", optional = true, features = ["tokio"] }
+wasm-bindgen = { version = "=0.2.129", optional = true }
+wasm-bindgen-futures = { version = "=0.4.79", optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+matrix-sdk-sqlite = { version = "=0.18.0", default-features = false, features = ["crypto-store", "bundled"] }
+rusqlite = { version = "=0.37.0", features = ["bundled"] }
+tokio = { version = "1", features = ["rt"] }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+matrix-sdk-indexeddb = { version = "=0.18.0", default-features = false, features = ["e2e-encryption"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[workspace]

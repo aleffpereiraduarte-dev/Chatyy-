@@ -1,0 +1,16 @@
+# Binário só do host: gera as bindings Swift/Kotlin a partir da lib (modo --library).
+# Workspace próprio (não entra no workspace do núcleo). Versão = a do `uniffi` do núcleo.
+[package]
+name = "uniffi-bindgen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "main.rs"
+
+[dependencies]
+uniffi = { version = "=0.29.5", features = ["cli"] }
+
+[workspace]

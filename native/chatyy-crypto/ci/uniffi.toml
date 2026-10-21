@@ -1,0 +1,10 @@
+# Nomes FIXOS das bindings (WP-02 → WP-03/08/10/11/13 importam estes nomes).
+[bindings.swift]
+module_name = "ChatyyCryptoCore"
+ffi_module_name = "ChatyyCryptoCoreFFI"
+ffi_module_filename = "ChatyyCryptoCoreFFI"
+generate_immutable_records = false
+
+[bindings.kotlin]
+package_name = "com.chatyy.crypto.core"
+cdylib_name = "chatyy_crypto"
