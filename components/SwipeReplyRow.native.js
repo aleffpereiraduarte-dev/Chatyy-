@@ -90,6 +90,8 @@ export default function SwipeReplyRow({ children, onReply, onInfo, style, iconRe
       .enabled(hasReply || hasInfo)
       .activeOffsetX(activeX)
       .failOffsetY([-8, 8])
+      // [2026-10-21 swipe-intent] borda esquerda = voltar (navegação), nunca responder
+      .hitSlop({ left: -44 })
       .onUpdate((e) => {
         'worklet';
         let x = e.translationX;

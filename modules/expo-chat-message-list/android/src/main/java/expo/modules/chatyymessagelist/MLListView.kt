@@ -1399,7 +1399,7 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
           }
           val c = cell ?: return false
           val r = c.row ?: return false
-          if (abs(dx) > slop && abs(dx) > abs(dy) * 1.3f && downX > dp(28f) && r.kind == MLKind.MSG && r.sel == 0) {
+          if (abs(dx) > slop && abs(dx) > abs(dy) * 1.5f && downX > dp(40f) && downX < rv.width - dp(40f) && r.kind == MLKind.MSG && r.sel == 0) {
             if (dx < 0 && (!r.own || r.deleted)) return false
             dir = if (dx > 0) 1f else -1f
             swiping = true

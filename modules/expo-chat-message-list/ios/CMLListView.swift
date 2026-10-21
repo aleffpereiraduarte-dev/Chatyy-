@@ -1486,11 +1486,19 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
   func swipeShouldBegin() -> Bool {
     if !storeInteractive { return false }
     let v = swipe.velocity(in: cv)
-    let pSelf = swipe.location(in: self)
-    if pSelf.x < 28 { return false } // borda = voltar (navegação)
-    guard abs(v.x) > abs(v.y) * 1.3 else { return false }
-    guard let hit = cellAt(swipe), let row = hit.0.row, row.kind == .msg, row.sel == 0 else { return false }
-    let cell = hit.0
+    // [2026-10-21 swipe-intent] decide pelo ponto onde o dedo COMEÇOU (location − translation):
+    // começou na borda (44 pt), fora da bolha, ou peteleco rápido p/ a direita perto da esquerda
+    // = voltar de tela cheia (ele espera este gesto falhar). Responder só arrastando a bolha.
+    let tr = swipe.translation(in: cv)
+    let pNow = swipe.location(in: cv)
+    let pStart = CGPoint(x: pNow.x - tr.x, y: pNow.y - tr.y)
+    let startSelf = convert(pStart, from: cv)
+    if startSelf.x < 44 { return false } // borda = voltar (navegação)
+    guard abs(v.x) > abs(v.y) * 1.5 else { return false }
+    if v.x > 0 && startSelf.x < bounds.width * 0.3 && v.x > 1100 { return false }
+    guard let ip = cv.indexPathForItem(at: pStart), let cell = cv.cellForItem(at: ip) as? CMLCell,
+          let row = cell.row, row.kind == .msg, row.sel == 0 else { return false }
+    if case .none = cell.part(at: cell.contentView.convert(pStart, from: cv)) { return false }
     if v.x > 0 {
       swipeDir = 1
     } else {
