@@ -15352,4 +15352,11 @@ export default {
   "photos.bk.pause": "Pausar envio",
   "call.cameraPermTitle": "Permitir câmera",
   "call.cameraPermMsg": "O Chatyy precisa da câmera para você aparecer na chamada.",
+  "chatConv.rsvpError": "Não foi possível enviar sua resposta. Tente de novo.",
+  "chat.reportFailed": "Não foi possível enviar a denúncia. Tente de novo.",
+  "chatConv.playlistNeedSong": "Adicione pelo menos uma música",
+  "chatConv.photosUnreadable": "Nenhuma das fotos selecionadas pôde ser lida.",
+  "chatConv.fileBlockedTitle": "Arquivo não permitido",
+  "chatConv.fileBlockedMsg": "Arquivos \".{ext}\" não podem ser enviados: executáveis são bloqueados por segurança.",
+  "chatConv.muteFailed": "Não foi possível alterar o silêncio da conversa.",
 };

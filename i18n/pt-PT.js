@@ -13821,4 +13821,11 @@ export default {
   "chatConv.keyboard": "Teclado",
   "chatConv.linkPreviewA11y": "Pré-visualização da ligação",
   "chatConv.removeLinkPreview": "Remover pré-visualização da ligação",
+  "chatConv.rsvpError": "Não foi possível enviar a sua resposta. Tente novamente.",
+  "chat.reportFailed": "Não foi possível enviar a denúncia. Tente novamente.",
+  "chatConv.playlistNeedSong": "Adicione pelo menos uma música",
+  "chatConv.photosUnreadable": "Nenhuma das fotografias selecionadas pôde ser lida.",
+  "chatConv.fileBlockedTitle": "Ficheiro não permitido",
+  "chatConv.fileBlockedMsg": "Ficheiros \".{ext}\" não podem ser enviados: executáveis são bloqueados por segurança.",
+  "chatConv.muteFailed": "Não foi possível alterar o silêncio da conversa.",
 };

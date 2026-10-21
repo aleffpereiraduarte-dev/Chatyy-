@@ -6404,6 +6404,7 @@ function CreatorSheetShell({ native, kavEnabled, onClose, colors, insets, childr
 }
 
 function PollCreatorModal({ colors, t, conversationId, onClose, onCreated, replyToId = null, native = false }) {
+  const _pollBusyRef = useRef(false); // [2026-10-21 polish-conv]
   const _PL = require('../components/chat/pollLook');
   const MAX_OPTS = _PL.POLL_MAX_OPTIONS; // = servidor (chat.php: 10)
   const [question, setQuestion] = useState('');
@@ -6434,6 +6435,9 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated, reply
     const opts = options.map(o => o.trim()).filter(o => o !== '');
     if (!q) return;
     if (opts.length < 2) return;
+    // [2026-10-21 polish-conv] trava síncrona: toque duplo rápido criava 2 enquetes.
+    if (_pollBusyRef.current) return;
+    _pollBusyRef.current = true;
     setSending(true);
     try {
       const r = await api.chatCreatePoll(conversationId, q, opts, multipleChoice, null, replyToId); // [2026-10-12 reply-media]
@@ -6452,6 +6456,7 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated, reply
       } catch {}
       onClose();
     }
+    _pollBusyRef.current = false;
     setSending(false);
   };
 
@@ -6921,7 +6926,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
     if (selectedSongs.length === 0) {
       // Don't create empty playlists — bug repro: user creates a 0-song playlist
       // and there was no way to add tracks afterwards.
-      try { (typeof window !== 'undefined' ? window : global).alert?.('Adicione pelo menos uma música'); } catch {}
+      try { safeAlert(_mt('chatConv.playlistNeedSong', 'Adicione pelo menos uma música')); } catch {}
       return;
     }
     if (sending) return;
@@ -12713,6 +12718,7 @@ function ChatConversationInnerBody() {
   // producing N duplicate server rows (prod: one msg saved 6×). A ref flips
   // instantly, so the 2nd..Nth invocation in the same frame bail immediately.
   const sendingRef = useRef(false);
+  const loadMoreSeqRef = useRef(0); // [2026-10-21 polish-conv] watchdog do loadMore por rodada
   // hasMore starts true if we painted from native cache — there are
   // probably more messages on the server. The first onReachTop will sort
   // it out: if the server returns nothing, hasMore flips to false.
@@ -15286,10 +15292,12 @@ function ChatConversationInnerBody() {
   const submitReport = async (reason) => {
     setShowReportModal(false);
     try {
-      await api.chatReportUser(reportTargetEmail, reason, reportMessageId);
+      const _rr = await api.chatReportUser(reportTargetEmail, reason, reportMessageId);
+      // [2026-10-21 polish-conv] apiCall resolve {success:false} em erro HTTP → antes dizia "denunciado" mesmo falhando.
+      if (_rr && _rr.success === false) throw new Error('report_failed');
       runAfterNativeSheet(() => safeAlert(t('chat.userReported'))); // [native-sheets-v2] alerta só depois do sheet descer
     } catch (e) {
-      runAfterNativeSheet(() => safeAlert(t('common.error'), e.message || 'Failed to report user'));
+      runAfterNativeSheet(() => safeAlert(t('common.error'), _mt('chat.reportFailed', 'Não foi possível enviar a denúncia. Tente de novo.')));
     }
     setReportTargetEmail('');
     setReportMessageId(null);
@@ -20672,7 +20680,11 @@ function ChatConversationInnerBody() {
     } else {
       InteractionManager.runAfterInteractions(() => { run(); });
     }
+    // [2026-10-21 polish-conv] watchdog por rodada: um timer antigo soltava a
+    // trava de um loadMore posterior ainda em andamento (páginas concorrentes).
+    const _lmSeq = (loadMoreSeqRef.current = (loadMoreSeqRef.current || 0) + 1);
     setTimeout(() => {
+      if (loadMoreSeqRef.current !== _lmSeq) return;
       if (loadingMoreRef.current) { loadingMoreRef.current = false; setLoadingMore(false); }
     }, 15000);
   }, [hasMore, messages, loadMessages, conversationId]);
@@ -20803,7 +20815,10 @@ function ChatConversationInnerBody() {
           conversationId,
         });
       } catch {}
-      throw e;
+      // [2026-10-21 polish-conv] exceção fora dos try internos deixava a trava
+      // síncrona ligada (compositor mudo) e virava rejeição não tratada nos onPress.
+      try { sendingRef.current = false; setSending(false); } catch {}
+      return undefined;
     }
   };
   const _handleSendInner = async () => {
@@ -20866,8 +20881,10 @@ function ChatConversationInnerBody() {
     // duplicate sends on rapid double-tap. Just ignore the second tap.
     // Synchronous ref guard FIRST (state `sending` lags a frame — see decl).
     if (sendingRef.current) return;
-    sendingRef.current = true;
+    // [2026-10-21 polish-conv] checa o state ANTES de armar a trava (antes saía
+    // com a trava ligada → todo envio seguinte era ignorado até sair da tela).
     if (sending) return;
+    sendingRef.current = true;
     // Light haptic the instant the send button registers — tactile feedback
     // that the message is on its way (before the bubble even appears).
     // Matches iMessage's subtle send tick.
@@ -22978,7 +22995,7 @@ function ChatConversationInnerBody() {
   const handleAttachSendDirect = async (files, opts = {}) => {
     const list = Array.isArray(files) ? files.filter(Boolean) : [];
     if (list.length === 0) {
-      safeAlert(t('common.error') || 'Erro', 'Nenhuma das fotos selecionadas pôde ser lida.');
+      safeAlert(t('common.error') || 'Erro', _mt('chatConv.photosUnreadable', 'Nenhuma das fotos selecionadas pôde ser lida.'));
       return;
     }
     if (!(await confirmLargeMediaFiles(list))) return;
@@ -23064,7 +23081,7 @@ function ChatConversationInnerBody() {
         }
       }
       if (builtFiles.length === 0) {
-        safeAlert(t('common.error') || 'Erro', 'Nenhuma das fotos selecionadas pôde ser lida.');
+        safeAlert(t('common.error') || 'Erro', _mt('chatConv.photosUnreadable', 'Nenhuma das fotos selecionadas pôde ser lida.'));
         return;
       }
       // Large file warning — without this, a 200MB video on 3G would silently
@@ -23159,7 +23176,7 @@ function ChatConversationInnerBody() {
     const BLOCKED_EXTENSIONS = /\.(exe|sh|bat|cmd|com|scr|vbs|jar|apk|dll|msi|app|bin|so|dylib|sys|drv|php|phtml|phar)$/i;
     const fileName = file.name || '';
     if (BLOCKED_EXTENSIONS.test(fileName)) {
-      safeAlert('File Not Allowed', `Cannot send files with "${fileName.split('.').pop()}" extension. Executable files are blocked for security.`);
+      safeAlert(_mt('chatConv.fileBlockedTitle', 'Arquivo não permitido'), _mt('chatConv.fileBlockedMsg', 'Arquivos ".{ext}" não podem ser enviados: executáveis são bloqueados por segurança.').replace('{ext}', String(fileName.split('.').pop() || '')));
       return;
     }
 
@@ -27288,17 +27305,17 @@ function ChatConversationInnerBody() {
         { text: t('chatConv.inviteRotate') || 'Gerar novo', onPress: () => safeAlert('', t('chatConv.inviteRotateConfirm') || 'Redefinir o link? Quem tiver o link atual não vai mais conseguir entrar.', [
           { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
           { text: t('chatConv.inviteRotate') || 'Gerar novo', style: 'destructive', onPress: async () => {
-            const rr = await api.chatGroupInviteLinkV2(conversationId, 'rotate');
+            let rr = null; try { rr = await api.chatGroupInviteLinkV2(conversationId, 'rotate'); } catch {} // [2026-10-21 polish-conv] rede caída = rejeição sem aviso
             if (rr?.success) { setInviteLink(rr?.data?.url || null); safeAlert(t('common.success') || 'OK', t('chatConv.inviteRotated') || 'Link anterior invalidado'); }
-            else safeAlert(t('common.error') || 'Erro', rr?.message || 'Falha');
+            else safeAlert(t('common.error') || 'Erro', rr?.message || _mt('common.genericError', 'Algo deu errado'));
           } },
         ]) },
         { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: () => safeAlert('', t('chatConv.inviteRevokeConfirm') || 'Revogar o link? Ninguém mais vai entrar por ele.', [
           { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
           { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: async () => {
-            const rv = await api.chatGroupInviteLinkV2(conversationId, 'revoke');
+            let rv = null; try { rv = await api.chatGroupInviteLinkV2(conversationId, 'revoke'); } catch {} // [2026-10-21 polish-conv] rede caída = rejeição sem aviso
             if (rv?.success) { setInviteLink(null); safeAlert(t('common.success') || 'OK', t('chatConv.inviteRevoked') || 'Link revogado. Ninguém mais entra por ele.'); }
-            else safeAlert(t('common.error') || 'Erro', rv?.message || 'Falha');
+            else safeAlert(t('common.error') || 'Erro', rv?.message || _mt('common.genericError', 'Algo deu errado'));
           } },
         ]) },
       ]);
@@ -27774,6 +27791,8 @@ function ChatConversationInnerBody() {
     // null = unmute
     try {
       const r = await api.chatMute(conversationId, muteUntil);
+      // [2026-10-21 polish-conv] falha era calada (usuário achava que silenciou).
+      if (!r || !r.success) { errRetry(_mt('chatConv.muteFailed', 'Não foi possível alterar o silêncio da conversa.'), () => handleMuteChat(duration)); return; }
       if (r.success) {
         setMutedUntil(muteUntil);
         // Mirror to chat_user_conv_settings so the bottom-sheet picker
@@ -27792,7 +27811,9 @@ function ChatConversationInnerBody() {
           setTimeout(() => setScheduleToast(''), 2000);
         } catch {}
       }
-    } catch {} finally {
+    } catch {
+      errRetry(_mt('chatConv.muteFailed', 'Não foi possível alterar o silêncio da conversa.'), () => handleMuteChat(duration));
+    } finally {
       muteInflightRef.current = false;
     }
   };
@@ -34363,7 +34384,10 @@ function ChatConversationInnerBody() {
           const meetupDate = new Date(meetup.datetime);
           const dateStr = !isNaN(meetupDate.getTime()) ? meetupDate.toLocaleString(t('_locale') || undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : meetup.datetime;
           const handleRsvp = async (status) => {
-            const r = await api.chatMeetupRsvp(msg.id, status);
+            // [2026-10-21 polish-conv] offline lança (apiCall) → rejeição sem aviso; success:false calado.
+            let r = null;
+            try { r = await api.chatMeetupRsvp(msg.id, status); } catch { r = null; }
+            if (!r || !r.success) { safeAlert(t('common.error') || 'Erro', _mt('chatConv.rsvpError', 'Não foi possível enviar sua resposta. Tente de novo.')); return; }
             if (r.success) {
               // [bug 2026-05-15] User reported "mando resposta e não atualiza WS".
               // Backend WS fanout shows `to=0` (channel mismatch / sub state),
@@ -44714,18 +44738,18 @@ function ChatConversationInnerBody() {
                                 try { Clipboard.setStringAsync(url); } catch {}
                               }},
                               { text: t('chatConv.inviteRotate') || 'Gerar novo', onPress: async () => {
-                                const rr = await api.chatGroupInviteLinkV2(conversationId, 'rotate');
+                                let rr = null; try { rr = await api.chatGroupInviteLinkV2(conversationId, 'rotate'); } catch {} // [2026-10-21 polish-conv] rede caída = rejeição sem aviso
                                 if (rr?.success) {
                                   setInviteLink(rr?.data?.url || null);
                                   safeAlert(t('common.success') || 'OK', t('chatConv.inviteRotated') || 'Link anterior invalidado');
-                                } else safeAlert(t('common.error') || 'Erro', rr?.message || 'Falha');
+                                } else safeAlert(t('common.error') || 'Erro', rr?.message || _mt('common.genericError', 'Algo deu errado'));
                               }},
                               { text: t('chatConv.inviteRevoke') || 'Revogar link', style: 'destructive', onPress: async () => {
-                                const rv = await api.chatGroupInviteLinkV2(conversationId, 'revoke');
+                                let rv = null; try { rv = await api.chatGroupInviteLinkV2(conversationId, 'revoke'); } catch {} // [2026-10-21 polish-conv] rede caída = rejeição sem aviso
                                 if (rv?.success) {
                                   setInviteLink(null);
                                   safeAlert(t('common.success') || 'OK', t('chatConv.inviteRevoked') || 'Link revogado. Ninguém mais entra por ele.');
-                                } else safeAlert(t('common.error') || 'Erro', rv?.message || 'Falha');
+                                } else safeAlert(t('common.error') || 'Erro', rv?.message || _mt('common.genericError', 'Algo deu errado'));
                               }},
                             ]
                           );

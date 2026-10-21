@@ -15274,4 +15274,11 @@ export default {
   "photos.bk.pause": "Pause upload",
   "call.cameraPermTitle": "Allow camera",
   "call.cameraPermMsg": "Chatyy needs the camera so you can appear on the call.",
+  "chatConv.rsvpError": "Couldn't send your response. Try again.",
+  "chat.reportFailed": "Couldn't send the report. Try again.",
+  "chatConv.playlistNeedSong": "Add at least one song",
+  "chatConv.photosUnreadable": "None of the selected photos could be read.",
+  "chatConv.fileBlockedTitle": "File not allowed",
+  "chatConv.fileBlockedMsg": "\".{ext}\" files can't be sent: executables are blocked for security.",
+  "chatConv.muteFailed": "Couldn't change this chat's mute setting.",
 };
