@@ -169,16 +169,17 @@ public actor ChatyyCrypto {
   // MARK: ciclo de vida
 
   /// Abre (ou cria) o store do uid. Sem rede. Exige `e2ee5_native` = true gravado pelo `status()`.
-  public func open(uid: String, prefix: String = "P") async throws -> (deviceId: String, created: Bool) {
+  /// `makeCurrent` = vira a conta "atual" das chamadas do JS (só o `open` do JS usa true).
+  public func open(uid: String, prefix: String = "P", makeCurrent: Bool = true) async throws -> (deviceId: String, created: Bool) {
     guard ChatyyCryptoStore.isValidUid(uid) else { throw ChatyyCryptoHostError("invalid_input", ["field": "uid"]) }
     guard ChatyyCryptoFlags.native(uid: uid) else { throw ChatyyCryptoHostError("disabled", ["why": "e2ee5_native"]) }
     if let c = cores[uid] {
-      currentUid = uid
+      if makeCurrent { currentUid = uid }
       return (c.deviceId(), false)
     }
     if let t = opening[uid] {
       let (c, created) = try await t.value
-      currentUid = uid
+      if makeCurrent { currentUid = uid }
       return (c.deviceId(), created)
     }
     let role = self.role
@@ -199,18 +200,27 @@ public actor ChatyyCrypto {
     defer { opening.removeValue(forKey: uid) }
     let (core, created) = try await t.value
     cores[uid] = core
-    currentUid = uid
+    if makeCurrent { currentUid = uid }
     return (core.deviceId(), created)
   }
 
-  /// Núcleo aberto (uid nil = o atual). Para os chamadores nativos: abre se preciso.
-  public func core(uid: String? = nil) async throws -> CryptoCore {
-    if let u = uid ?? currentUid ?? lastUid(), let c = cores[u] { return c }
+  /// Núcleo do uid (nil = o atual / último) para os chamadores NATIVOS: reusa ou abre, e por
+  /// padrão NÃO troca a conta atual do JS (`makeCurrent: false`), então serve a qualquer conta
+  /// logada (multi-conta). Um CryptoCore por uid no processo; a trava entre processos
+  /// (app × NSE × extensão) é do próprio núcleo (CrossProcessLock no SQLite).
+  public func core(uid: String? = nil, makeCurrent: Bool = false) async throws -> CryptoCore {
     guard let u = uid ?? currentUid ?? lastUid() else { throw ChatyyCryptoHostError("not_open") }
-    _ = try await open(uid: u)
+    if let c = cores[u] {
+      if makeCurrent { currentUid = u }
+      return c
+    }
+    _ = try await open(uid: u, makeCurrent: makeCurrent)
     guard let c = cores[u] else { throw ChatyyCryptoHostError("not_open") }
     return c
   }
+
+  /// Núcleo já aberto neste processo, sem abrir nem trocar a conta atual (nil = não aberto).
+  public func peekCore(uid: String) -> CryptoCore? { return cores[uid] }
 
   private nonisolated func lastUid() -> String? {
     let u = UserDefaults(suiteName: ChatyyCryptoConst.appGroup)?.string(forKey: "chatyy.e2ee5.lastUid") ?? ""

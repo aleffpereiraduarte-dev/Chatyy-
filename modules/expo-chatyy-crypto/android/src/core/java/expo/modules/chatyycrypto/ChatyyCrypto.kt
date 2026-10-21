@@ -148,12 +148,13 @@ object ChatyyCrypto {
   class Opened(val deviceId: String, val created: Boolean)
 
   /** Abre (ou cria) o store do uid. Sem rede. Exige `e2ee5_native` = true gravado pelo `status()`. */
-  suspend fun open(ctx: Context, uid: String, prefix: String = "P", role: ProcessRole = ProcessRole.APP): Opened {
+  /** `makeCurrent` = vira a conta "atual" das chamadas do JS (só o `open` do JS usa true). */
+  suspend fun open(ctx: Context, uid: String, prefix: String = "P", role: ProcessRole = ProcessRole.APP, makeCurrent: Boolean = true): Opened {
     val app = ctx.applicationContext
     if (!ChatyyCryptoFiles.isValidUid(uid)) throw ChatyyCryptoHostException.of("invalid_input", "field" to "uid")
     if (!ChatyyCryptoFlags.native(app, uid)) throw ChatyyCryptoHostException.of("disabled", "why" to "e2ee5_native")
     return openLock.withLock {
-      cores[uid]?.let { currentUid = uid; return@withLock Opened(it.deviceId(), false) }
+      cores[uid]?.let { if (makeCurrent) currentUid = uid; return@withLock Opened(it.deviceId(), false) }
       val pfx = when (prefix) { "X" -> "X"; "T" -> "T"; else -> "P" }
       val sec = withContext(Dispatchers.IO) {
         ChatyyCryptoSecrets.get(app, uid) { com.chatyy.crypto.core.newDeviceId(pfx) }
@@ -165,18 +166,25 @@ object ChatyyCrypto {
       )
       val core = CryptoCore.open(opts, ChatyyE2EETransport(app, uid, sec.deviceId, role == ProcessRole.PUSH))
       cores[uid] = core
-      currentUid = uid
+      if (makeCurrent) currentUid = uid
       Opened(core.deviceId(), sec.created)
     }
   }
 
-  /** Núcleo aberto (uid null = o atual / último). Para os chamadores nativos: abre se preciso. */
-  suspend fun core(ctx: Context, uid: String? = null, role: ProcessRole = ProcessRole.APP): CryptoCore {
+  /**
+   * Núcleo do uid (null = o atual / último) para os chamadores NATIVOS: reusa ou abre e, por
+   * padrão, NÃO troca a conta atual do JS (serve a qualquer conta logada). Um CryptoCore por uid
+   * no processo; a trava entre processos é do próprio núcleo (CrossProcessLock no SQLite).
+   */
+  suspend fun core(ctx: Context, uid: String? = null, role: ProcessRole = ProcessRole.APP, makeCurrent: Boolean = false): CryptoCore {
     val u = uid ?: currentUid ?: ChatyyCryptoFlags.lastUid(ctx.applicationContext) ?: throw ChatyyCryptoHostException("not_open")
-    cores[u]?.let { return it }
-    open(ctx, u, "P", role)
+    cores[u]?.let { if (makeCurrent) currentUid = u; return it }
+    open(ctx, u, "P", role, makeCurrent)
     return cores[u] ?: throw ChatyyCryptoHostException("not_open")
   }
+
+  /** Núcleo já aberto neste processo, sem abrir nem trocar a conta atual (null = não aberto). */
+  fun peekCore(uid: String): CryptoCore? = cores[uid]
 
   /** Já aberto, sem abrir (o JS chama `open` antes). */
   private fun opened(): CryptoCore = currentUid?.let { cores[it] } ?: throw ChatyyCryptoHostException("not_open")
