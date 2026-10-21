@@ -1,5 +1,5 @@
 // components/games/boards/DesenhoBoard.js — [jogos2b 2026-10-21] Desenha e Adivinha.
-// 3 rodadas alternando quem desenha, 60 s cada (relógio do servidor). Quem desenha vê a palavra; quem
+// 4 rodadas alternando quem desenha, 60 s cada (relógio do servidor). Quem desenha vê a palavra; quem
 // adivinha só a categoria e o tamanho (o servidor não manda a palavra para ele antes da revelação).
 // Quadro: react-native-svg + gesto (RNGH Pan). O traço VIVO roda na UI thread (Path animado, worklet);
 // ao levantar o dedo os pontos (0..1000, já reduzidos) vão em lotes pelo HTTP do jogo (chat_game_move

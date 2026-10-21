@@ -39,7 +39,7 @@ export const NOVOS_RULES = {
     'Pontos por categoria: 10 resposta única, 5 resposta igual à do outro, 0 vazia, com letra errada ou contestada.',
   ],
   desenho: [
-    '3 rodadas, alternando quem desenha. Quem desenha vê a palavra; o outro vê só a categoria e o tamanho.',
+    '4 rodadas, alternando quem desenha. Quem desenha vê a palavra; o outro vê só a categoria e o tamanho.',
     'Desenhe com o dedo (sem escrever a palavra!). Dá para trocar a cor, desfazer, limpar ou pular a palavra.',
     'Quem adivinha digita os chutes; acento e maiúsculas não importam. Cada rodada tem 60 segundos.',
     'Acertou: quem adivinhou ganha 50 pontos e quem desenhou 25, mais bônus pela rapidez. Vence quem somar mais.',
