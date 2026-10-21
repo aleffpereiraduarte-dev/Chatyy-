@@ -167,34 +167,160 @@ function _alert(a, b) {
   try { require('react-native').Alert.alert(a, b); } catch {}
 }
 
-export function openChatWith(c, router, resolvedEmail) {
-  const em = resolvedEmail || (c && c.email) || '';
-  try {
-    if (em) router.push(`/chat-new?email=${encodeURIComponent(em)}`);
-    else if (c && c.phone) router.push(`/chat-new?phone=${encodeURIComponent(c.phone)}`);
-  } catch {}
+// ─── [2026-10-21 contato-msg] estado por cartão (carregando / salvo) ─────────
+// "Mensagem" abre DIRETO a conversa 1:1 (get-or-create via openDirectConversation,
+// o mesmo caminho do "Fala oi"/seguir) — antes ia p/ /chat-new, que ignorava
+// ?email= e só mostrava a tela "Nova conversa" vazia. Cartão JS e nativo leem o
+// mesmo estado daqui (subscribeContactState → re-render / bump do nativo).
+const _subs = new Set();
+const _busy = new Map(); // key → 'msg' | 'call'
+const _book = new Map(); // key → { saved, id }
+function _emit() { _subs.forEach((fn) => { try { fn(); } catch {} }); }
+export function subscribeContactState(fn) { _subs.add(fn); return () => { _subs.delete(fn); }; }
+export function contactBusy(c) { return _busy.get(_key(c)) || ''; }
+function _setBusy(c, v) { const k = _key(c); if (v) _busy.set(k, v); else _busy.delete(k); _emit(); }
+
+function _myEmail(opts) {
+  const m = String((opts && opts.myEmail) || '').trim().toLowerCase();
+  if (m) return m;
+  try { return String(require('../../services/api').getSavedEmail() || '').trim().toLowerCase(); } catch { return ''; }
+}
+function _toastErr(t, msg) {
+  try { require('../ui/Toast').showErrorToast({ message: msg || _tr(t, 'shareContact.openChatError', 'Não foi possível abrir a conversa. Tente de novo.') }); return; } catch {}
+  _alert(_tr(t, 'common.error', 'Erro'), msg || '');
 }
 
-export function callContact(c, router, t, resolvedEmail) {
+/**
+ * "Mensagem": resolve a pessoa (e-mail do cartão ou busca por telefone) e abre
+ * a conversa direta, criando se não existir. Contato = você → Mensagens Salvas.
+ * Sem Chatyy → convite. Feedback: contactBusy(c) === 'msg' enquanto resolve.
+ */
+export async function openChatWith(c, router, resolvedEmail, opts = {}) {
+  if (!c) return false;
+  if (_busy.get(_key(c))) return false; // toque duplo
+  const t = opts.t;
+  _setBusy(c, 'msg');
+  try {
+    let em = String(resolvedEmail || '').trim().toLowerCase();
+    if (!em) {
+      if (!c.email && !c.phone) { _toastErr(t, _tr(t, 'chatConv.contactNoTarget', 'Sem telefone ou email para iniciar conversa')); return false; }
+      const r = await resolveChatyy(c);
+      if (r && r.has) em = String(r.email || c.email || '').trim().toLowerCase();
+      else { inviteContact(c, t); return false; }
+    }
+    if (em === _myEmail(opts)) {
+      try { (router || require('expo-router').router).push('/saved-messages'); } catch {}
+      return true;
+    }
+    const res = await require('../../services/openConversation').openDirectConversation(em, c.name ? { name: c.name } : {});
+    return res !== 'noop';
+  } catch {
+    _toastErr(t);
+    return false;
+  } finally {
+    _setBusy(c, '');
+  }
+}
+
+/**
+ * "Ligar": quem tem Chatyy → ligação de voz Chatyy (mesmo voipNative.startOutgoingCall
+ * do botão do cabeçalho) com confirmação; sem Chatyy + número → telefone do aparelho.
+ */
+export function callContact(c, router, t, resolvedEmail, opts = {}) {
   if (!c) return;
   let pstn = false;
   try { pstn = require('../../constants/featureFlags').isPstnEnabled() === true; } catch {}
-  if (pstn && c.phone) { Linking.openURL(`tel:${c.phone.replace(/[^+\d]/g, '')}`).catch(() => {}); return; }
-  try {
-    const em = resolvedEmail || '';
-    if (em) require('../../services/chatyyOnlyCalls').startChatyyCall({ email: em, name: c.name, router });
-    else require('../../services/chatyyOnlyCalls').callPhoneViaChatyy({ phone: c.phone, email: c.email, name: c.name, router, t });
-  } catch {}
+  const em = String(resolvedEmail || '').trim().toLowerCase();
+  const name = c.name || c.phone || em;
+  const title = _tr(t, 'shareContact.callConfirmTitle', 'Ligar para {name}?').split('{name}').join(name);
+  const confirm = (body, onYes) => {
+    const buttons = [
+      { text: _tr(t, 'common.cancel', 'Cancelar'), style: 'cancel' },
+      { text: _tr(t, 'chatConv.callContact', 'Ligar'), onPress: onYes },
+    ];
+    try { require('../../services/alerts').safeAlert(title, body, buttons); } catch { onYes(); }
+  };
+  if (em && !pstn) {
+    if (em === _myEmail(opts)) return;
+    confirm(_tr(t, 'shareContact.callConfirmChatyy', 'Ligação de voz pelo Chatyy.'), () => {
+      (async () => {
+        let ok = false;
+        try { ok = await require('../../services/chatyyOnlyCalls').startChatyyCall({ email: em, name: c.name, router }); } catch {}
+        if (!ok) _toastErr(t, _tr(t, 'shareContact.callError', 'Não foi possível iniciar a ligação.'));
+      })();
+    });
+    return;
+  }
+  if (c.phone) {
+    const num = c.phone.replace(/[^+\d]/g, '');
+    confirm(_tr(t, 'shareContact.callConfirmPhone', 'A ligação será feita pelo telefone do aparelho.'), () => { Linking.openURL(`tel:${num}`).catch(() => {}); });
+    return;
+  }
+  try { require('../../services/chatyyOnlyCalls').callPhoneViaChatyy({ phone: c.phone, email: c.email, name: c.name, router, t }); } catch {}
 }
 
 export async function inviteContact(c, t) {
-  const msg = `${c && c.name ? c.name + ', ' : ''}${_tr(t, 'chat.inviteShareMessage', 'instala o Chatyy: https://chatyy.com.br')}`;
+  // [2026-10-21 contato-msg] link pessoal (chatyy.com.br/baixar?ref=<código>) do inviteContact.
+  let msg = '';
+  try { const inv = require('../../services/inviteContact'); try { await inv.prefetchInviteRef(); } catch {} msg = inv.buildInviteMessage(t, c && c.name); } catch {}
+  if (!msg) msg = `${c && c.name ? c.name + ', ' : ''}${_tr(t, 'chat.inviteShareMessage', 'instala o Chatyy: https://chatyy.com.br')}`;
   if (c && c.phone && Platform.OS !== 'web') {
     const clean = c.phone.replace(/[^+\d]/g, '');
     const sep = Platform.OS === 'ios' ? '&' : '?';
     try { await Linking.openURL(`sms:${clean}${sep}body=${encodeURIComponent(msg)}`); return; } catch {}
   }
   try { await Share.share({ message: msg, title: 'Chatyy' }); } catch {}
+}
+
+// ─── "já está na agenda?" (só consulta se a permissão JÁ foi dada; nunca pede) ──
+function _digits(s) { return String(s || '').replace(/\D+/g, ''); }
+function _sameNum(a, b) { const x = _digits(a); const y = _digits(b); if (x.length < 7 || y.length < 7) return false; return x.slice(-8) === y.slice(-8); }
+async function _findInPhonebook(c) {
+  if (Platform.OS === 'web' || !c) return null;
+  const Contacts = require('expo-contacts');
+  const perm = await Contacts.getPermissionsAsync();
+  if (!perm || perm.status !== 'granted') return null;
+  const phones = (c.phones && c.phones.length ? c.phones : (c.phone ? [c.phone] : []));
+  const em = String(c.email || '').toLowerCase();
+  const nm = String(c.name || '').trim();
+  if (!nm || (!phones.length && !em)) return null;
+  const { data } = await Contacts.getContactsAsync({ name: nm, fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Emails], pageSize: 25 });
+  for (const x of (data || [])) {
+    const hitE = em && (x.emails || []).some((e) => String((e && e.email) || '').toLowerCase() === em);
+    const hitP = phones.length && (x.phoneNumbers || []).some((p) => phones.some((q) => _sameNum(p && (p.number || p.digits), q)));
+    if (hitE || hitP) return { saved: true, id: x.id || x.lookupKey || '' };
+  }
+  return { saved: false, id: '' };
+}
+/** Estado síncrono (null = ainda não sabe). */
+export function phonebookStateSync(c) { return _book.get(_key(c)) || null; }
+/** Checa a agenda em 2º plano (cache); avisa os cartões quando muda. */
+export function checkPhonebook(c, force) {
+  const k = _key(c);
+  const cur = _book.get(k);
+  if (cur && !force) return Promise.resolve(cur);
+  if (!cur) _book.set(k, { saved: false, id: '', pending: true });
+  return (async () => {
+    let r = null;
+    try { r = await _findInPhonebook(c); } catch { r = null; }
+    const next = r || { saved: false, id: '' };
+    const prev = _book.get(k);
+    _book.set(k, next);
+    if (_book.size > 400) { const k0 = _book.keys().next().value; if (k0 !== k) _book.delete(k0); }
+    if (!prev || prev.saved !== next.saved) _emit();
+    return next;
+  })();
+}
+
+/** "Adicionar": já salvo → abre o contato na agenda; senão formulário do sistema. */
+export async function addOrOpenContact(c, t) {
+  if (!c) return;
+  const st = phonebookStateSync(c);
+  if (st && st.saved && st.id && Platform.OS !== 'web') {
+    try { await require('expo-contacts').presentFormAsync(st.id); return; } catch {}
+  }
+  await saveToPhonebook(c, t);
+  if (Platform.OS !== 'web') { try { await checkPhonebook(c, true); } catch {} }
 }
 
 /** Formulário do sistema já preenchido (todos os números); fallback addContactAsync / .vcf no web. */

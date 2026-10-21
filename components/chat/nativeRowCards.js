@@ -39,7 +39,7 @@ import {
   IconCheck, IconMic, IconImage, IconVideoNote, IconGlobe, IconDiamond, IconX,
   IconFile, IconFilm, IconMessageCircle, IconChevronRight, IconSmile, IconUsers,
 } from '../Icons';
-import { parseContactPayload, contactTitle } from './contactShare'; // [2026-10-17 share-contact]
+import { parseContactPayload, contactTitle, contactBusy, phonebookStateSync, checkPhonebook, subscribeContactState } from './contactShare'; // [2026-10-17 share-contact]
 import { previewForMessage, isFreshMessage, LP_SKELETON } from './linkPreviewState'; // [linkpreview 2026-10-18]
 import { IconTrophy as _IconGameTrophy, gameTypeIconComp as _gameIconComp } from '../games/GameIcons'; // [jogos 2026-10-18]
 
@@ -536,6 +536,15 @@ function buildJsonLocation(j, row, C) {
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
 
+// [2026-10-21 contato-msg] cartão → objeto de contato da contactShare (mesma chave e-mail|telefone do cartão JS).
+function _ctObj(ct) { return (ct.parsed && ct.parsed.first) || { name: ct.name, email: ct.email, phone: ct.phone, phones: ct.phones }; }
+let _ctBump = null; let _ctUnsub = null;
+function _ctWatch(C) {
+  if (C && typeof C.bump === 'function') _ctBump = C.bump;
+  if (_ctUnsub) return;
+  try { _ctUnsub = subscribeContactState(() => { try { _ctBump && _ctBump(); } catch {} }); } catch {}
+}
+
 function buildContact(m, row, ctx, C, own) {
   const ct = _contact(m, C);
   if (ct.count > 1 && ct.parsed) { buildContactMulti(ct, row, C, own); return; }
@@ -555,17 +564,28 @@ function buildContact(m, row, ctx, C, own) {
   }
   if (ct.email) info.push(text(ct.email, { fs: 12.5, c: own ? C.ownMeta : C.otherMeta, ml: 1, m: [pretty ? 2 : 4, 0, 0, 0] }));
   const chk = _ctFor(ct.email, ct.phone, C, ct.chatyy);
+  // [2026-10-21 contato-msg] estado compartilhado c/ o cartão JS: abrindo conversa (loader) e "já salvo na agenda".
+  _ctWatch(C);
+  const cto = _ctObj(ct);
+  const busy = contactBusy(cto);
+  let book = phonebookStateSync(cto);
+  if (!book && Platform.OS !== 'web') { try { checkPhonebook(cto); } catch {} book = null; }
+  const saved = !!(book && book.saved);
   const btn = (kids, a) => hstack(kids, { fl: 1, jc: 'c', al: 'c', g: 6, p: [11, 0, 11, 0], a });
   const vdiv = () => vstack([], { w: 0.5, h: 40, bg: dividerColor });
-  const first = chk.loading
+  const first = (chk.loading || busy === 'msg')
     ? btn([loader({ s: 20, c: accent })], undefined)
     : (chk.has
       ? btn([icon(IconUser, { s: 14, c: accent }), text(_tr(C, 'chatConv.sendMessage', 'Mensagem'), { fs: 13, fw: 600, c: accent })], 'ct_msg')
       : btn([icon(IconUserPlus, { s: 14, c: accent }), text(_tr(C, 'chat.invite', 'Convidar'), { fs: 13, fw: 600, c: accent })], 'ct_inv'));
-  const actions = [first, vdiv(), btn([icon(IconPlus, { s: 14, c: accent }), text(_tr(C, 'chatConv.addContact', 'Adicionar'), { fs: 13, fw: 600, c: accent })], 'ct_save')];
-  // [2026-10-17 sem-pstn] "Ligar" só p/ quem tem Chatyy (ligação app-a-app); tel: só c/ kill switch.
+  const actions = [first, vdiv(), saved
+    ? btn([icon(IconCheck, { s: 14, c: accent }), text(_tr(C, 'shareContact.saved', 'Salvo'), { fs: 13, fw: 600, c: accent })], 'ct_save')
+    : btn([icon(IconPlus, { s: 14, c: accent }), text(_tr(C, 'chatConv.addContact', 'Adicionar'), { fs: 13, fw: 600, c: accent })], 'ct_save')];
+  // [2026-10-17 sem-pstn] "Ligar" = ligação Chatyy p/ quem tem conta; [2026-10-21 contato-msg] sem Chatyy
+  // + número → telefone do aparelho (com confirmação). tel: direto só c/ kill switch.
   const _pstnOn = _pstnEnabled();
-  if (_pstnOn ? !!ct.phone : (!chk.loading && chk.has && !!(chk.email || ct.email))) actions.push(vdiv(), btn([icon(IconPhone, { s: 14, c: accent }), text(_tr(C, 'chatConv.callContact', 'Ligar'), { fs: 13, fw: 600, c: accent })], 'ct_call'));
+  const _isMe = !!(ctx && ctx.myEmail) && String(chk.email || ct.email || '').toLowerCase() === String(ctx.myEmail).toLowerCase();
+  if (!_isMe && (_pstnOn ? !!ct.phone : (!chk.loading && (chk.has ? !!(chk.email || ct.email) : !!ct.phone)))) actions.push(vdiv(), btn([icon(IconPhone, { s: 14, c: accent }), text(_tr(C, 'chatConv.callContact', 'Ligar'), { fs: 13, fw: 600, c: accent })], 'ct_call'));
   const w = _clampW(250, 300, 12 + 56 + 12 + 12 + Math.max(Math.min(_estW(ct.name, 16, true), 180), _estW(pretty, 13.5) + (flag ? 24 : 0), _estW(ct.email, 12.5)));
   row.bl = [vstack([
     hstack([_avatarNode(ct.name, ct.email, 56), vstack(info, { fl: 1 })], { g: 12, p: [12, 12, 10, 12], al: 'c', a: 'ct_open' }),
@@ -1812,67 +1832,20 @@ export function runCardAction(item, action, D) {
         return;
       }
       case 'ct_msg': case 'ct_inv': case 'ct_save': case 'ct_call': {
+        // [2026-10-21 contato-msg] ações do cartão = contactShare (mesmas do cartão JS e da folha).
         const ct = _contact(m, { t });
+        const cs = require('./contactShare');
+        const cto = _ctObj(ct);
+        const chk = _ctMap.get(String(ct.email || '') + '|' + String(ct.phone || ''));
+        const target = chk && !chk.loading && chk.has ? (chk.email || ct.email) : '';
         if (kind === 'ct_call') {
           if (_pstnEnabled()) { if (ct.phone) D.Linking.openURL(`tel:${ct.phone.replace(/[^+\d]/g, '')}`).catch?.(() => {}); return; }
-          const chk = _ctMap.get(String(ct.email || '') + '|' + String(ct.phone || ''));
-          const target = chk && chk.has ? (chk.email || ct.email) : '';
-          try {
-            if (target) require('../../services/chatyyOnlyCalls').startChatyyCall({ email: target, name: ct.name, router: D.router });
-            else if (ct.phone || ct.email) require('../../services/chatyyOnlyCalls').callPhoneViaChatyy({ phone: ct.phone, email: ct.email, name: ct.name, router: D.router, t });
-          } catch {}
+          cs.callContact(cto, D.router, t, target, { myEmail: D.currentEmail });
           return;
         }
-        if (kind === 'ct_msg') {
-          const chk = _ctMap.get(String(ct.email || '') + '|' + String(ct.phone || ''));
-          const target = (chk && chk.email) || ct.email;
-          if (target) D.router.push(`/chat-new?email=${encodeURIComponent(target)}`);
-          else if (ct.phone) D.router.push(`/chat-new?phone=${encodeURIComponent(ct.phone)}`);
-          return;
-        }
-        if (kind === 'ct_inv') {
-          const inviteMsg = `${ct.name ? ct.name + ', ' : ''}${tt('chat.inviteShareMessage', 'instala o Chatyy: https://chatyy.com.br')}`;
-          (async () => {
-            if (ct.phone && Platform.OS !== 'web') {
-              const clean = ct.phone.replace(/[^+\d]/g, '');
-              const sep = Platform.OS === 'ios' ? '&' : '?';
-              try { await D.Linking.openURL(`sms:${clean}${sep}body=${encodeURIComponent(inviteMsg)}`); }
-              catch { try { await D.Share.share({ message: inviteMsg, title: 'Chatyy' }); } catch {} }
-            } else { try { await D.Share.share({ message: inviteMsg, title: 'Chatyy' }); } catch {} }
-          })();
-          return;
-        }
-        // [2026-10-17 share-contact] ct_save → todos os números do cartão (contactShare.saveToPhonebook)
-        try { const cs = require('./contactShare'); if (ct.parsed && ct.parsed.first) { cs.saveToPhonebook(ct.parsed.first, t); return; } } catch {}
-        // ct_save — mesmo fluxo do cartão JS (formulário do sistema → fallback addContactAsync)
-        (async () => {
-          try {
-            const Contacts = require('expo-contacts');
-            const form = {
-              [Contacts.Fields.FirstName]: ct.name,
-              ...(ct.phone ? { [Contacts.Fields.PhoneNumbers]: [{ label: 'mobile', number: ct.phone }] } : {}),
-              ...(ct.email ? { [Contacts.Fields.Emails]: [{ label: 'home', email: ct.email }] } : {}),
-            };
-            if (typeof Contacts.presentFormAsync === 'function') {
-              let ok = false;
-              try {
-                if (Platform.OS !== 'ios') {
-                  const perm = await Contacts.requestPermissionsAsync();
-                  if (perm?.status !== 'granted') { D.safeAlert(tt('chatConv.permission', 'Permissão'), tt('chatConv.contactsPermission', 'Permita acesso aos contatos.')); return; }
-                }
-                await Contacts.presentFormAsync(null, form, { isNew: true });
-                ok = true;
-              } catch {}
-              if (ok) return;
-            }
-            const { status } = await Contacts.requestPermissionsAsync();
-            if (status !== 'granted') { D.safeAlert(tt('chatConv.permission', 'Permissão'), tt('chatConv.contactsPermission', 'Permita acesso aos contatos.')); return; }
-            await Contacts.addContactAsync(form);
-            D.safeAlert(tt('common.success', 'Sucesso'), tt('chatConv.contactSaved', 'Contato salvo'));
-          } catch {
-            D.safeAlert(tt('common.error', 'Erro'), tt('chatConv.contactSaveError', 'Não foi possível salvar o contato'));
-          }
-        })();
+        if (kind === 'ct_msg') { cs.openChatWith(cto, D.router, target, { t, myEmail: D.currentEmail }); return; }
+        if (kind === 'ct_inv') { cs.inviteContact(cto, t); return; }
+        cs.addOrOpenContact(cto, t);
         return;
       }
       case 'watch': { // [assistir-junto 2026-10-20] cartão do convite → sala

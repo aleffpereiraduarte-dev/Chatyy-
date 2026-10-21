@@ -5977,7 +5977,7 @@ html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#000}
 // the contact is registered on Chatyy and swaps "Mensagem" for "Convidar"
 // when they aren't. WhatsApp-style: contact-card primary action depends on
 // account status, not a static button.
-function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat, onInvite, onSave, onCall, onChatyyCall, hasPhone, knownChatyy }) {
+function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat, onInvite, onSave, onCall, onChatyyCall, hasPhone, knownChatyy, contact }) {
   // [2026-10-17 share-contact] cartão v2 com chatyy:true → "Mensagem" na hora; senão cache compartilhado (contactShare.resolveChatyy).
   const [check, setCheck] = React.useState(() => {
     try {
@@ -6001,13 +6001,28 @@ function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat
     return () => { alive = false; };
   }, [email, phone, knownChatyy]);
 
+  // [2026-10-21 contato-msg] estado compartilhado (contactShare): abrindo a conversa / já salvo na agenda.
+  const [, _setCsTick] = React.useState(0);
+  const _ctKey = contact ? `${String(contact.email || '').toLowerCase()}|${contact.phone || ''}` : '';
+  React.useEffect(() => {
+    const cs = require('../components/chat/contactShare');
+    const off = cs.subscribeContactState(() => _setCsTick((n) => n + 1));
+    if (contact && Platform.OS !== 'web') { try { cs.checkPhonebook(contact); } catch {} }
+    return off;
+  }, [_ctKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const _cs = require('../components/chat/contactShare');
+  const _busyMsg = !!contact && _cs.contactBusy(contact) === 'msg';
+  const _book = contact ? _cs.phonebookStateSync(contact) : null;
+  const _saved = !!(_book && _book.saved);
   const showMessage = check.has_chatyy;
   // [2026-10-17 sem-pstn] "Ligar" só pelo Chatyy: aparece se o contato TEM Chatyy
   // (ligação app-a-app); quem não tem fica com "Convidar". tel: só com o kill
   // switch isPstnEnabled() ligado.
   const _pstnOn = (() => { try { return require('../constants/featureFlags').isPstnEnabled(); } catch { return false; } })();
-  const showCall = _pstnOn ? hasPhone : (!check.loading && check.has_chatyy && !!(check.resolvedEmail || email) && typeof onChatyyCall === 'function');
-  const _onCallPress = _pstnOn ? onCall : () => onChatyyCall?.(check.resolvedEmail || email);
+  // [2026-10-21 contato-msg] sem Chatyy + número → "Ligar" pelo telefone do aparelho (onCall, com confirmação).
+  const _chatyyCall = !check.loading && check.has_chatyy && !!(check.resolvedEmail || email) && typeof onChatyyCall === 'function';
+  const showCall = _pstnOn ? hasPhone : (_chatyyCall || (!check.loading && !check.has_chatyy && hasPhone && typeof onCall === 'function'));
+  const _onCallPress = _pstnOn ? onCall : (_chatyyCall ? () => onChatyyCall?.(check.resolvedEmail || email) : onCall);
   const inviteAccent = accent; // [2026-10-10 conv-polish] P&B: era verde, destoava das outras ações do cartão
   return (
     <View style={{ flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: dividerColor }}>
@@ -6015,11 +6030,12 @@ function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat
         style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 11, flexDirection: 'row', gap: 6 }}
         onPress={() => showMessage ? onStartChat(check.resolvedEmail) : onInvite()}
         activeOpacity={0.6}
-        disabled={check.loading}
+        disabled={check.loading || _busyMsg}
         accessibilityRole="button"
         accessibilityLabel={showMessage ? (t('chatConv.sendMessage') || 'Mensagem') : (t('chat.invite') || 'Convidar')}
+        accessibilityState={{ busy: check.loading || _busyMsg }}
       >
-        {check.loading ? (
+        {(check.loading || _busyMsg) ? (
           <ActivityIndicator size="small" color={accent} />
         ) : (
           <>
@@ -6038,11 +6054,11 @@ function ContactCardActions({ email, phone, t, accent, dividerColor, onStartChat
         onPress={onSave}
         activeOpacity={0.6}
         accessibilityRole="button"
-        accessibilityLabel={t('chatConv.addContact') || 'Adicionar contato'}
+        accessibilityLabel={_saved ? (t('shareContact.saved') || 'Salvo') : (t('chatConv.addContact') || 'Adicionar contato')}
       >
-        <IconPlus size={14} color={accent} />
+        {_saved ? <IconCheck size={14} color={accent} /> : <IconPlus size={14} color={accent} />}
         <Text style={{ fontSize: 13, fontWeight: '600', color: accent }}>
-          {t('chatConv.addContact') || 'Adicionar'}
+          {_saved ? (t('shareContact.saved') || 'Salvo') : (t('chatConv.addContact') || 'Adicionar')}
         </Text>
       </TouchableOpacity>
       {showCall ? (
@@ -33735,76 +33751,7 @@ function ChatConversationInnerBody() {
           // Own bubble on LIGHT theme is light lavender — a white accent on the
           // faint white-wash card vanished. Dark purple on light, white on dark.
           const accent = isOwn ? ownTextColor : otherInk;
-          const handleStartChat = () => {
-            if (ctEmail) {
-              try { router.push(`/chat-new?email=${encodeURIComponent(ctEmail)}`); } catch {}
-            } else if (ctPhone) {
-              try { router.push(`/chat-new?phone=${encodeURIComponent(ctPhone)}`); } catch {}
-            } else {
-              safeAlert(t('common.error') || 'Erro', t('chatConv.contactNoTarget') || 'Sem telefone ou email para iniciar conversa');
-            }
-          };
-          const handleSaveContact = async () => {
-            if (Platform.OS === 'web') {
-              // Web: download as vCard so user can import into address book
-              try {
-                const vcf = `BEGIN:VCARD\nVERSION:3.0\nFN:${ctName}\n${ctPhone ? `TEL:${ctPhone}\n` : ''}${ctEmail ? `EMAIL:${ctEmail}\n` : ''}END:VCARD`;
-                const blob = new Blob([vcf], { type: 'text/vcard' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url; a.download = `${ctName || 'contact'}.vcf`;
-                document.body.appendChild(a); a.click();
-                setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
-              } catch {}
-              return;
-            }
-            try {
-              const Contacts = require('expo-contacts');
-              // [2026-10-09 wa-real #8] "Adicionar contato" pelo FORMULÁRIO do
-              // sistema (CNContactViewController / ACTION_INSERT) com os dados
-              // preenchidos — o usuário revisa e salva, como no WhatsApp. iOS:
-              // o formulário não exige acesso à agenda. Android: o módulo exige
-              // READ_CONTACTS. Se o formulário não existir no binário ou falhar,
-              // cai no caminho antigo (addContactAsync direto).
-              const _formContact = {
-                [Contacts.Fields.FirstName]: ctName,
-                ...(ctPhone ? { [Contacts.Fields.PhoneNumbers]: [{ label: 'mobile', number: ctPhone }] } : {}),
-                ...(ctEmail ? { [Contacts.Fields.Emails]: [{ label: 'home', email: ctEmail }] } : {}),
-              };
-              if (typeof Contacts.presentFormAsync === 'function') {
-                let _formOk = false;
-                try {
-                  if (Platform.OS !== 'ios') {
-                    const perm = await Contacts.requestPermissionsAsync();
-                    if (perm?.status !== 'granted') {
-                      try { require('../services/deviceContactLookup').alertContactsDenied(t, perm); } catch { safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos.'); }
-                      return;
-                    }
-                  }
-                  await Contacts.presentFormAsync(null, _formContact, { isNew: true });
-                  _formOk = true;
-                } catch (formErr) {
-                  console.warn('presentFormAsync fallback:', formErr?.message || formErr);
-                }
-                if (_formOk) return;
-              }
-              const _permSave = await Contacts.requestPermissionsAsync();
-              if (_permSave?.status !== 'granted') {
-                try { require('../services/deviceContactLookup').alertContactsDenied(t, _permSave); } catch { safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.contactsPermission') || 'Permita acesso aos contatos.'); }
-                return;
-              }
-              const newContact = {
-                [Contacts.Fields.FirstName]: ctName,
-                ...(ctPhone ? { [Contacts.Fields.PhoneNumbers]: [{ label: 'mobile', number: ctPhone }] } : {}),
-                ...(ctEmail ? { [Contacts.Fields.Emails]: [{ label: 'home', email: ctEmail }] } : {}),
-              };
-              await Contacts.addContactAsync(newContact);
-              safeAlert(t('common.success') || 'Sucesso', t('chatConv.contactSaved') || 'Contato salvo');
-            } catch (e) {
-              console.warn('Save contact error:', e);
-              safeAlert(t('common.error') || 'Erro', t('chatConv.contactSaveError') || 'Não foi possível salvar o contato');
-            }
-          };
+          // [2026-10-21 contato-msg] ações (Mensagem/Adicionar/Ligar/Convidar) → contactShare (mesmas do cartão nativo).
           return (
             <View style={{ minWidth: 250, maxWidth: 300, borderRadius: 14, backgroundColor: cardBg, overflow: 'hidden', position: 'relative' }}>
               {/* Header: avatar + name + phone (with flag) + email — toque abre os detalhes [2026-10-17 share-contact] */}
@@ -33847,35 +33794,14 @@ function ChatConversationInnerBody() {
                 dividerColor={dividerColor}
                 hasPhone={!!ctPhone}
                 knownChatyy={!!(_csP.first && _csP.first.chatyy)}
-                onStartChat={(resolvedEmail) => {
-                  const targetEmail = resolvedEmail || ctEmail;
-                  if (targetEmail) {
-                    try { router.push(`/chat-new?email=${encodeURIComponent(targetEmail)}`); } catch {}
-                  } else if (ctPhone) {
-                    try { router.push(`/chat-new?phone=${encodeURIComponent(ctPhone)}`); } catch {}
-                  }
-                }}
-                onInvite={async () => {
-                  // Não tem Chatyy: oferece convite via SMS (se tem telefone) ou Share.
-                  const inviteMsg = `${ctName ? ctName + ', ' : ''}${t('chat.inviteShareMessage') || 'instala o Chatyy: https://chatyy.com.br'}`;
-                  if (ctPhone && Platform.OS !== 'web') {
-                    const cleanPhone = ctPhone.replace(/[^+\d]/g, '');
-                    const sep = Platform.OS === 'ios' ? '&' : '?';
-                    try { Linking.openURL(`sms:${cleanPhone}${sep}body=${encodeURIComponent(inviteMsg)}`); }
-                    catch { try { await Share.share({ message: inviteMsg, title: 'Chatyy' }); } catch {} }
-                  } else {
-                    try { await Share.share({ message: inviteMsg, title: 'Chatyy' }); }
-                    catch {
-                      if (Platform.OS === 'web') {
-                        try { await navigator.clipboard?.writeText?.(inviteMsg); safeAlert('', t('chat.inviteCopied') || 'Convite copiado'); }
-                        catch { safeAlert('Chatyy', inviteMsg); }
-                      }
-                    }
-                  }
-                }}
-                onSave={_csP.first && _csP.first.phones && _csP.first.phones.length > 1 ? (() => _csMod.saveToPhonebook(_csP.first, t)) : handleSaveContact}
-                onCall={() => { try { Linking.openURL(`tel:${ctPhone.replace(/[^+\d]/g, '')}`); } catch {} }}
-                onChatyyCall={(em) => { try { require('../services/chatyyOnlyCalls').startChatyyCall({ email: em, name: ctName, router }); } catch {} }}
+                contact={_csP.first || { name: ctName, email: ctEmail, phone: ctPhone, phones: ctPhone ? [ctPhone] : [] }}
+                // [2026-10-21 contato-msg] "Mensagem" abre DIRETO a conversa 1:1 (get-or-create; você = Mensagens Salvas);
+                // Adicionar = agenda (já salvo → "Salvo" abre o contato); Ligar = voz Chatyy c/ confirmação ou telefone do aparelho.
+                onStartChat={(resolvedEmail) => { _csMod.openChatWith(_csP.first || { name: ctName, email: ctEmail, phone: ctPhone }, router, resolvedEmail || '', { t, myEmail: user?.email }); }}
+                onInvite={() => { _csMod.inviteContact(_csP.first || { name: ctName, email: ctEmail, phone: ctPhone }, t); }}
+                onSave={() => { _csMod.addOrOpenContact(_csP.first || { name: ctName, email: ctEmail, phone: ctPhone, phones: ctPhone ? [ctPhone] : [] }, t); }}
+                onCall={() => { _csMod.callContact(_csP.first || { name: ctName, email: ctEmail, phone: ctPhone }, router, t, '', { myEmail: user?.email }); }}
+                onChatyyCall={(em) => { _csMod.callContact(_csP.first || { name: ctName, email: ctEmail, phone: ctPhone }, router, t, em, { myEmail: user?.email }); }}
               />
               {/* [WAVE 43D] Multi-select sticky — overlay intercepts the
                   Mensagem/Convidar/Salvar/Ligar action buttons when the row
