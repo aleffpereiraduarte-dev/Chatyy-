@@ -119,6 +119,7 @@ function describeMessage(m, t) {
   if (parsed && parsed.e2e) {
     let pk = null;
     try { pk = require('../services/e2eeV4').peekPlaintext(content); } catch {}
+    try { if (pk == null) { const _e5 = require('../services/e2ee/e2ee5').peek(content); if (_e5) pk = _e5.text; } } catch {} // [e2ee5] texto já decifrado neste aparelho
     return pk != null ? { text: pk, copyText: pk } : { Icon: IconLock, text: L('e2ee.listPreview', 'Mensagem criptografada') };
   }
   if (type === 'image') {

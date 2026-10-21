@@ -751,6 +751,8 @@ export function isSessionPending(cmi) { return !!cmi && _sessionPendingCmi.has(S
 
 export async function savePendingMessage(conversationId, message) {
   _warnDeprecatedPending();
+  // [e2ee5 WP-08c] conversa E2EE v5: pendente guarda só o envelope (texto puro nunca vai ao storage).
+  try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn() && message) message = _e5.outboxScrub({ ...message, conversation_id: message.conversation_id ?? conversationId }); } catch {}
   try { if (message && message.client_message_id) { _sessionPendingCmi.add(String(message.client_message_id)); if (_sessionPendingCmi.size > 500) _sessionPendingCmi.delete(_sessionPendingCmi.values().next().value); } } catch {}
   if (isNative && isDbReady()) {
     try { await dbSavePending({ ...message, conversation_id: conversationId }); return; } catch {}

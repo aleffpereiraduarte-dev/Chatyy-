@@ -108,6 +108,17 @@ export function configureNativeOutbox(force = false) {
 
 function _isE2E(p) {
   try { if (globalThis.__chatyy_envelope_mode === true) return true; } catch {}
+  // [e2ee5 WP-08c] E2EE v5 decide pelo e2ee_mode da CONVERSA (não por flag no payload): envelope
+  // pronto (o JS cifrou) entra na fila nativa só com binário que trata E2EE (WP-08a/08b:
+  // e2eeNativeVersion ≥ 1 → WS só com cap e2ee5_ns, recusas §5.4). Texto puro de conversa E2EE nunca.
+  try {
+    const e5 = require('./e2ee/e2ee5');
+    if (p && e5.isOn() && (e5.isConvE2eeSync(p.conversation_id) || e5.isEnvelope(p.content))) {
+      if (!e5.isEnvelope(p.content)) return true;
+      const m = _resolve();
+      return !(m && typeof m.e2eeNativeVersion === 'function' && Number(m.e2eeNativeVersion()) >= 1);
+    }
+  } catch {}
   return !!(p && (p._e2e || p._e2eWanted || p.e2e || p.envelopes));
 }
 

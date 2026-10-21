@@ -407,6 +407,9 @@ export async function enqueue(payload, opts = null) {
   // the CDN (mediaSendQueue owns it), 'msg' (default) for everything else.
   const lane = (opts && opts.lane === 'upload') ? 'upload' : 'msg';
   if (!payload || !payload.client_message_id || !payload.conversation_id) return null;
+  // [e2ee5 WP-08c] Conversa E2EE v5: a linha guarda SÓ o envelope (ou nada até a cifra terminar;
+  // `_e2eWanted` sem `_e2e` → o worker marca "não enviada", nunca reenvia texto puro).
+  try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn()) payload = _e5.outboxScrub(payload); } catch {}
   // [2026-10-15 ordem-rico] Ver _enqueuing acima: síncrono, antes do 1º await.
   const _trackConv = (initialState === 'queued' && lane === 'msg') ? Number(payload.conversation_id) : 0;
   if (_trackConv) _enqueuing.set(_trackConv, (_enqueuing.get(_trackConv) || 0) + 1);
@@ -847,8 +850,10 @@ export async function updatePayload(cmi, patch) {
     if (!row) return false;
     let p = {};
     try { p = JSON.parse(row.payload) || {}; } catch {}
+    let next = { ...p, ...patch };
+    try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn()) next = _e5.outboxScrub(next); } catch {} // [e2ee5 WP-08c] sem display_content em claro
     await db.runAsync('UPDATE outbox SET payload = ?, updated_at = ? WHERE client_message_id = ?',
-      JSON.stringify({ ...p, ...patch }), Date.now(), String(cmi));
+      JSON.stringify(next), Date.now(), String(cmi));
     return true;
   } catch { return false; }
 }

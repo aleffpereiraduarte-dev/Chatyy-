@@ -12374,6 +12374,7 @@ function ChatConversationInnerBody() {
     const c = { ...m };
     // [2026-10-09 e2ee v4] cache nativo guarda o envelope, não o texto.
     if (typeof c._e2eRaw === 'string' && c._e2eRaw.startsWith('{"e2e":4')) c.content = c._e2eRaw;
+    else if (typeof c._e2eRaw === 'string' && c._e2eRaw.startsWith('{"e2e":') && c._e2eRaw.charCodeAt(7) >= 53) c.content = c._e2eRaw; // [e2ee5] v5+: cache guarda o envelope
     delete c._e2eRaw;
     delete c._pending;
     delete c._failed;
@@ -12677,6 +12678,8 @@ function ChatConversationInnerBody() {
           // decrypt it as soon as the secret key finishes loading.
           if ((j.e2e === 1 || j.e2e === 2 || j.e2e === 3) && j.envelopes) return { ...msg, content: '...', _e2e: true, _e2eRaw: trimmed };
           if (j.e2e === 4 && j.c) return { ...msg, content: '...', _e2e: true, _e2eRaw: trimmed };
+          // [e2ee5] v5 (e N>5): texto do cache local já decifrado ou placeholder — nunca o JSON cru.
+          if (typeof j.e2e === 'number' && j.e2e >= 5) { try { return require('../services/e2ee/e2ee5').applyToRow(msg, trimmed, msg.conversation_id, null) || msg; } catch { return { ...msg, content: '...', _e2e: true, _e2eRaw: trimmed }; } }
         } catch {}
         return msg;
       });
@@ -15636,6 +15639,20 @@ function ChatConversationInnerBody() {
 
     const initE2EE = async () => {
       try {
+        // [e2ee5] E2EE v5 (flag __chatyy_e2ee5): conversa e2ee_mode=1 → cifra pelo núcleo chatyy-crypto.
+        // Reaproveita os trilhos do v4 (e2eKeys.v4 = sem citação/prévia em claro); v5 = este caminho.
+        try {
+          const _e5 = require('../services/e2ee/e2ee5');
+          if (_e5.isOn()) {
+            const _s5 = await _e5.prepareConversation(conversationId);
+            if (!isFresh()) return;
+            if (_s5 && _s5.mode === 1) {
+              e2eV4Ref.current = { ..._s5, v5: true, enabled: true, allowed: true, supported: true };
+              setE2eEnabled(true); setE2eKeys({ v4: true, v5: true }); setE2eBundles(null);
+              return;
+            }
+          }
+        } catch {}
         // [2026-10-09 e2ee v4] Flag de SERVIDOR (só contas liberadas). Se a
         // conversa está cifrada em v4, liga o modo e NÃO toca o legado.
         try {
@@ -15708,6 +15725,50 @@ function ChatConversationInnerBody() {
     const timer = setTimeout(initE2EE, 500);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [conversationId, currentEmail, members.length]);
+
+  // [e2ee5] Estado da conversa ao vivo (WS conv_e2ee / recusas) + texto decifrado chegando
+  // (evento LOCAL e2ee5_plain: núcleo JS ou ingestão nativa) + edições t:edit (edit_of).
+  useEffect(() => {
+    let _e5 = null;
+    try { _e5 = require('../services/e2ee/e2ee5'); } catch {}
+    if (!_e5 || !_e5.isOn() || !conversationId) return undefined;
+    const offConv = _e5.watchConversation(conversationId, (st) => {
+      if (!mountedRef.current || !st) return;
+      if (st.mode === 1) {
+        e2eV4Ref.current = { ...st, v5: true, enabled: true, allowed: true, supported: true };
+        setE2eEnabled(true); setE2eKeys({ v4: true, v5: true }); setE2eBundles(null);
+      } else if (e2eV4Ref.current?.v5) {
+        e2eV4Ref.current = null; setE2eEnabled(false); setE2eKeys(null);
+      }
+    });
+    let offPlain = null;
+    try {
+      const mailWs = require('../services/websocket').default;
+      offPlain = mailWs.on('e2ee5_plain', (d) => {
+        if (!mountedRef.current || !d || String(d.conversation_id) !== String(conversationId)) return;
+        setMessages(prev => {
+          let touched = false;
+          const next = prev.map(m => {
+            if (!_e5.rowNeedsRefresh(m, d.key) && !(d.id != null && m && String(m.id) === String(d.id) && typeof m._e2eRaw === 'string')) return m;
+            const r = _e5.applyToRow(m, m._e2eRaw, conversationId, t);
+            if (!r || (r.content === m.content && r._e5State === m._e5State && r._e5EditOf === m._e5EditOf)) return m;
+            touched = true;
+            return r;
+          });
+          return touched ? _e5.foldEdits(next) : prev;
+        });
+      });
+    } catch {}
+    return () => { try { offConv(); } catch {} try { offPlain && offPlain(); } catch {} };
+  }, [conversationId]);
+  // [e2ee5] linhas t:edit que chegaram já decifradas (cache) → aplica no alvo e some da lista.
+  useEffect(() => {
+    if (!e2eKeys?.v5) return;
+    try {
+      const _e5 = require('../services/e2ee/e2ee5');
+      if (messages.some(m => m && m._e5EditOf)) setMessages(prev => _e5.foldEdits(prev));
+    } catch {}
+  }, [e2eKeys, messages]);
 
   // R2-backed redownload listener — when a bubble (or the fullscreen
   // viewer) successfully refetches a previously-evicted asset, swap the
@@ -15801,6 +15862,15 @@ function ChatConversationInnerBody() {
     try {
       // [2026-10-09 e2ee v4] Conta liberada pela flag → liga/desliga o v4.
       const _v4st = e2eV4Ref.current;
+      // [e2ee5] v5: rebaixar (set:0 + confirmação, grava e2ee_off visível) — ligar é automático (§8.3).
+      if (_v4st?.v5) {
+        const _okOff = await confirm({ title: t('e2ee.title'), message: t('e2ee.confirmDisable'), confirmText: t('e2ee.turnOff'), cancelText: t('common.cancel') }).catch(() => false);
+        if (!_okOff) return;
+        const r5 = await require('../services/e2ee/e2ee5').setConversationMode(conversationId, 0);
+        if (r5.ok) { e2eV4Ref.current = null; setE2eEnabled(false); setE2eKeys(null); }
+        else safeAlert(t('common.error'), t('chatConv.e2eDisableFailed'));
+        return;
+      }
       if (_v4st?.allowed) {
         const _v4 = require('../services/e2eeV4');
         const _tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
@@ -16056,6 +16126,12 @@ function ChatConversationInnerBody() {
       }
       if (!raw) return msg;
 
+      // [e2ee5] Envelope v5 (Megolm, núcleo chatyy-crypto) e N>5: cache local / placeholder;
+      // decifra em 2º plano e o evento local e2ee5_plain repinta (efeito [e2ee5] abaixo).
+      if (raw.startsWith('{"e2e":') && raw.charCodeAt(7) >= 53) {
+        try { const _r5 = require('../services/e2ee/e2ee5').applyToRow(msg, raw, msg.conversation_id || conversationId, t); if (_r5) return _r5; } catch {}
+        return { ...msg, content: '...', _e2e: true, _e2eRaw: raw };
+      }
       // [2026-10-09 e2ee v4] Envelope vodozemac/Olm: decifra no aparelho;
       // texto fica em cache local cifrado (recarregar não pede de novo).
       if (raw.startsWith('{"e2e":4')) {
@@ -16344,6 +16420,13 @@ function ChatConversationInnerBody() {
         // aqui → decifra (ou usa o texto já em cache local) também.
         if (jsonData.e2e === 4 && jsonData.c) {
           return decryptMessages([{ ...msg, _e2eRaw: contentTrimmed }])[0];
+        }
+        if (typeof jsonData.e2e === 'number' && jsonData.e2e >= 5) { // [e2ee5]
+          return decryptMessages([{ ...msg, _e2eRaw: contentTrimmed }])[0];
+        }
+        // [e2ee5] mensagem de sistema {"sys":"e2ee_on"|"e2ee_off"} → divisor (nunca o JSON cru)
+        if (t === 'system' && typeof jsonData.sys === 'string' && jsonData.sys.indexOf('e2ee_') === 0) {
+          return { ...msg, _e2eSys: jsonData.sys };
         }
         if ((jsonData.e2e === 1 || jsonData.e2e === 2 || jsonData.e2e === 3) && jsonData.envelopes) {
           return { ...msg, content: '...', _e2e: true, _e2eRaw: contentTrimmed };
@@ -18786,9 +18869,13 @@ function ChatConversationInnerBody() {
           // Relay-delivered ids can arrive as strings while local rows hold
           // numbers — a strict === match made the edit invisible until refetch.
           if (String(row.id) === String(m.id)) {
-            return { ...row, content: m.content, edited_at: m.edited_at || new Date().toISOString(), edited: true };
+            const _ed = { ...row, content: m.content, edited_at: m.edited_at || new Date().toISOString(), edited: true };
+            // [e2ee5] edição compat (chat_edit com envelope): decifra localmente, nunca mostra o JSON.
+            if (typeof m.content === 'string' && m.content.startsWith('{"e2e":')) return decryptMessages([{ ..._ed, _e2eRaw: m.content }])[0];
+            return _ed;
           }
           if (row.reply_to && Number(row.reply_to.id) === Number(m.id)) {
+            if (typeof m.content === 'string' && m.content.startsWith('{"e2e":')) return row; // [e2ee5] citação cifrada fica como está
             return { ...row, reply_to: { ...row.reply_to, content: String(m.content || '').slice(0, 200) } };
           }
           return row;
@@ -20970,7 +21057,8 @@ function ChatConversationInnerBody() {
         let editContent = text;
         if (e2eEnabled && e2eKeys?.v4) {
           // [2026-10-09 e2ee v4] Edição também vai cifrada; falhou → não edita.
-          try { editContent = await require('../services/e2eeV4').encryptText(conversationId, e2eV4Ref.current?.peer, text); }
+          // [e2ee5] v5: edição = linha nova t:edit com edit_of (api.chatEdit manda pelo chat_send).
+          try { editContent = e2eKeys?.v5 ? await require('../services/e2ee/e2ee5').sealEdit(conversationId, editingMsg.id, text) : await require('../services/e2eeV4').encryptText(conversationId, e2eV4Ref.current?.peer, text); }
           catch {
             setSending(false);
             sendingRef.current = false;
@@ -21363,7 +21451,10 @@ function ChatConversationInnerBody() {
       if (e2eKeys.v4) {
         // [2026-10-09 e2ee v4] vodozemac/Olm por aparelho. Falhou → NÃO envia.
         try {
-          encrypted = await require('../services/e2eeV4').encryptText(conversationId, e2eV4Ref.current?.peer, text);
+          // [e2ee5] v5: payload v1 (cmid = client_message_id, citação cifrada) pelo núcleo chatyy-crypto.
+          encrypted = e2eKeys.v5
+            ? await require('../services/e2ee/e2ee5').sealText(conversationId, text, { cmid: msgId, reply: replyId ? { ...(replyTo || {}), id: replyId } : null })
+            : await require('../services/e2eeV4').encryptText(conversationId, e2eV4Ref.current?.peer, text);
         } catch (e) { _v4Err = e?.code || 'encrypt_failed'; encrypted = null; }
       } else if (usableV3) {
         try { encrypted = await e2eService.createEnvelopeV3(text, currentEmail, e2eBundles, myDeviceIdRef.current); }
@@ -21523,7 +21614,7 @@ function ChatConversationInnerBody() {
         client_message_id: msgId,
         sender_email: currentEmail,
         sender_name: user?.name || currentEmail,
-        content: text,
+        content: e2eKeys?.v5 ? contentToSend : text, // [e2ee5] a lista lê o texto do cache local (prévia)
         type: optimisticMsg?.type || 'text',
         created_at: optimisticMsg?.created_at || new Date().toISOString(),
         _local: true,
@@ -21726,6 +21817,7 @@ function ChatConversationInnerBody() {
         if (e2eEnabled) {
           serverMsg.content = text; // We already know the plaintext
           serverMsg._e2e = true;
+          if (e2eKeys?.v5 && typeof contentToSend === 'string') serverMsg._e2eRaw = contentToSend; // [e2ee5] caches guardam o envelope
         }
         // [#1182 bubble-flip] Preserve _client_id so msgKeyExtractor returns
         // a stable FlatList key across the optimistic→server swap. Without
@@ -26204,6 +26296,28 @@ function ChatConversationInnerBody() {
     // merge do servidor parte dele — antes partia só da memória e descartava
     // o FTS local (histórico em disco sumia ao chegar a resposta do servidor).
     let mergedSoFar = localResults;
+    // [e2ee5] conversa E2EE: o servidor não indexa → busca no texto decifrado guardado NESTE aparelho.
+    if (e2eKeys?.v5) {
+      try {
+        const _r5 = await require('../services/e2ee/e2ee5').searchLocal(conversationId, q, 100);
+        if (!isFreshSearch()) return;
+        if (_r5.length) {
+          const _seen5 = new Set(mergedSoFar.map(m => String(m.id)));
+          const _m5 = [...mergedSoFar];
+          for (const row of _r5) {
+            if (_seen5.has(String(row.id))) continue;
+            if (filters.senderEmail && (row.sender_email || '').toLowerCase() !== String(filters.senderEmail).toLowerCase()) continue;
+            if (filters.type && filters.type !== 'text' && filters.type !== 'link') continue;
+            if (filters.type === 'link' && !isLinkMsg(row)) continue;
+            _m5.push(row); _seen5.add(String(row.id));
+          }
+          _m5.sort((a, b) => (new Date(b.created_at).getTime()) - (new Date(a.created_at).getTime()));
+          mergedSoFar = _m5;
+          setSearchResults(_m5);
+          if (!localResults.length && _m5.length) safeScrollToMsg(_m5[0]);
+        }
+      } catch {}
+    }
 
     // Local SQLite FTS5 — covers messages that aren't in the in-memory
     // window (older history cached on disk). Returns in <50ms vs ~300ms
@@ -31715,6 +31829,11 @@ function ChatConversationInnerBody() {
       // Check if it's a call message (JSON with call_type)
       // [2026-10-06 thread-tech] memo + no throw for plain-text system rows
       const callData = _memoJSONSafe(msg.content);
+      // [e2ee5] {"sys":"e2ee_on"|"e2ee_off"} → divisor do WP-15 (ou pílula de texto) — nunca o JSON cru.
+      if (msg._e2eSys || (callData && typeof callData.sys === 'string' && callData.sys.indexOf('e2ee_') === 0)) {
+        const { E2ee5SystemRow } = require('../services/e2ee/e2ee5Ui');
+        return <E2ee5SystemRow content={msg.content} senderName={msg.sender_name || (msg.sender_email || '').split('@')[0]} />;
+      }
       if (callData?.call_type) {
         const isCaller = callData.caller_email === currentEmail;
         const isVideo = callData.call_type === 'video';
@@ -35462,6 +35581,11 @@ function ChatConversationInnerBody() {
                 </View>
               )}
               {!autoHideOriginal && (() => {
+                // [e2ee5] v5 não exibível (aguardando / não deu / atualize): estado do WP-15, sem JSON.
+                if (msg._e5State && msg._e5State !== 'decrypting') {
+                  const { E2ee5MessageBody } = require('../services/e2ee/e2ee5Ui');
+                  return <E2ee5MessageBody state={msg._e5State} color={isOwn ? ownMetaColor : otherMetaColor} />;
+                }
                 // [2026-10-11 emoji-sweep] '🔒…' é a SENTINELA de E2E pendente
                 // (cache/merge dependem do prefixo) — nunca pintar o emoji:
                 // cadeado SVG + texto traduzido.

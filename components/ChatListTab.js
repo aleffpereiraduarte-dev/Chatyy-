@@ -1377,7 +1377,13 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
         const isCall = lastMsg.type === 'call_card' || parsed.call_id || parsed.call_type !== undefined || parsed.caller_email;
         // [2026-10-09 e2ee v4] Envelope cifrado: texto já decifrado neste
         // aparelho (cache local) ou rótulo neutro — nunca o JSON cru.
-        if (parsed && parsed.e2e) {
+        // [e2ee5] v5 (N≥5): texto decifrado do cache local ou "Mensagem" genérica (decifra em 2º
+        // plano; o evento e2ee5_plain repinta a linha). Sistema {"sys":"e2ee_*"} → texto do divisor.
+        let _p5 = null;
+        try { if ((parsed && typeof parsed.e2e === 'number' && parsed.e2e >= 5) || (parsed && typeof parsed.sys === 'string' && parsed.sys.indexOf('e2ee_') === 0)) _p5 = require('../services/e2ee/e2ee5').previewText(lastMsg, t); } catch {}
+        if (_p5 != null) {
+          content = _p5;
+        } else if (parsed && parsed.e2e) {
           let _pk = null;
           try { _pk = require('../services/e2eeV4').peekPlaintext(content); } catch {}
           const _lbl = t('e2ee.listPreview');
@@ -2412,6 +2418,7 @@ const ConversationRow = React.memo(function ConversationRow({
   // above won't catch it. Without these the preview text would stay stale
   // until a brand-new message arrived.
   if ((prevConv.last_message?.content || '') !== (nextConv.last_message?.content || '')) return false;
+  if ((prevConv.last_message?._e5v || 0) !== (nextConv.last_message?._e5v || 0)) return false; // [e2ee5] texto decifrado chegou
   if ((prevConv.last_message?.deleted_at || '') !== (nextConv.last_message?.deleted_at || '')) return false;
   // Re-render when delivery/read state of the last outbound message changes
   // so ✓ → ✓✓ → ✓✓ roxo animates in without waiting for a new message.
@@ -4618,6 +4625,18 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
   // Row tap (anywhere else) still opens the conversation.
   const [avatarLightbox, setAvatarLightbox] = useState(null); // { name, email }
   const [conversations, setConversations] = useState(() => _initialConvs.filter(c => !c.archived));
+  // [e2ee5] decifra em 2º plano a última mensagem das conversas E2EE v5 (prévia da lista JS e da
+  // nativa); ao terminar o evento e2ee5_plain repinta. Flag __chatyy_e2ee5 desligada = no-op.
+  useEffect(() => {
+    try {
+      const _e5 = require('../services/e2ee/e2ee5');
+      if (!_e5.isOn()) return;
+      for (const c of (conversations || [])) {
+        const lm = c && c.last_message;
+        if (lm && typeof lm === 'object' && _e5.isEnvelope(lm.content) && !_e5.peek(lm.content) && !_e5.peekFailure(lm.content)) _e5.decryptRow(lm, c.id).catch(() => {});
+      }
+    } catch {}
+  }, [conversations]);
   const [archivedConversations, setArchivedConversations] = useState(() => {
     if (!_initialConvs.length) return [];
     const arch = []; for (const c of _initialConvs) if (c.archived) arch.push(c);
@@ -6788,6 +6807,19 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // chat_message; the existing isSelf guard inside onIncomingForList keeps
       // unread at 0 and skips the receive sound.
       unsubs.push(mailWs.on('chat_local_outbound', onIncomingForList));
+      // [e2ee5] texto decifrado chegou (núcleo JS / ingestão nativa): repinta a prévia da linha.
+      unsubs.push(mailWs.on('e2ee5_plain', (d) => {
+        if (!d || d.conversation_id == null) return;
+        setConversations(prev => {
+          let hit = false;
+          const next = prev.map(c => {
+            if (!c || String(c.id) !== String(d.conversation_id) || !c.last_message || typeof c.last_message !== 'object') return c;
+            hit = true;
+            return { ...c, last_message: { ...c.last_message, _e5v: Date.now() } };
+          });
+          return hit ? next : prev;
+        });
+      }));
 
       // [2026-10-18 relogio-lista] ACK do envio → a prévia sai do relógio (ou vai
       // p/ "não enviada") no MESMO momento que a bolha. Fontes: 'chat_local_ack'

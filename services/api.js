@@ -5947,6 +5947,10 @@ function _rememberNativeSent(id) {
     }
   } catch {}
 }
+// [e2ee5 WP-08c] o hub aceita envelope no chat_send WS (cap e2ee5_ns, §5.3)?
+function _e5WsOk() {
+  try { const ws = require('./websocket').default; return !!(ws && Array.isArray(ws.serverCaps) && ws.serverCaps.includes('e2ee5_ns')); } catch { return false; }
+}
 async function _tryNativeWsSend(payload) {
   const cmi = payload.client_message_id;
   if (!cmi) return null;
@@ -5957,7 +5961,7 @@ async function _tryNativeWsSend(payload) {
     msg_type: 'text',
     content: payload.content,
   };
-  for (const k of ['reply_to_id', 'reply_quote_text', 'mentions', 'effect', 'silent', 'sealed']) {
+  for (const k of ['reply_to_id', 'reply_quote_text', 'mentions', 'effect', 'silent', 'sealed', 'has_link', 'mention_all', 'edit_of']) { // [e2ee5] + metadados em claro §2.5
     if (payload[k] != null && payload[k] !== '') frame[k] = payload[k];
   }
   // [2026-10-15 fase 4] FILA DE ENVIO NATIVA: grava no SQLite nativo ANTES de
@@ -5995,12 +5999,13 @@ async function _tryNativeWsSend(payload) {
   if (!ws) return null;
   return await new Promise((resolve) => {
     let done = false;
-    let offAck = null; let offFb = null; let timer = null;
+    let offAck = null; let offFb = null; let offErr = null; let timer = null;
     const finish = (v) => {
       if (done) return;
       done = true;
       try { offAck?.(); } catch {}
       try { offFb?.(); } catch {}
+      try { offErr?.(); } catch {}
       if (timer) clearTimeout(timer);
       resolve(v);
     };
@@ -6015,6 +6020,11 @@ async function _tryNativeWsSend(payload) {
     offFb = ws.on('chat_send_fallback', (m) => {
       if (!m || m.client_message_id !== cmi) return;
       finish(null);
+    });
+    // [e2ee5 WP-08c] §5.4: recusa definitiva no WS — NÃO reenviar o mesmo conteúdo por HTTP.
+    offErr = ws.on('chat_send_error', (m) => {
+      if (!m || m.client_message_id !== cmi) return;
+      finish({ success: false, code: m.code || 'chat_send_error', error: m.code || 'chat_send_error', message: m.code || 'chat_send_error', data: { code: m.code || '' }, __httpStatus: Number(m.http) || 409, _native_outbox: true, _e2ee5_refused: true });
     });
     timer = setTimeout(() => finish(null), _nativeSendAckTimeout());
     try {
@@ -6101,6 +6111,19 @@ async function _chatSendInner(conversationId, content, type = 'text', replyToId 
   // await it right before finalize so the temp row provably exists when we
   // swap temp→server id.
   // [#1188 fix 2026-05-19] Pass senderEmail so SQLite row has correct owner.
+  // [e2ee5 WP-08c] Conversa E2EE v5 (e2ee_mode=1): cifra ANTES de qualquer transporte — SQLite local,
+  // fila web, hub (native_send), Rust, HTTP e fila nativa só veem o envelope. Recusa = nada sai.
+  // Flag __chatyy_e2ee5 desligada → _e5 = null (caminho de hoje, byte a byte).
+  let _e5 = null;
+  try {
+    const _e5m = require('./e2ee/e2ee5');
+    if (_e5m.isOn()) _e5 = await _e5m.sealForSend(conversationId, content, type, fileUrl, stableCMI, { reply: replyToId ? { id: replyToId, quoteText: opts?.replyQuoteText } : null, fwd: opts?.fwd, editOf: opts?.editOf });
+  } catch { _e5 = null; }
+  if (_e5 && _e5.refuse) {
+    return { success: false, code: _e5.refuse.code, error: _e5.refuse.code, message: _e5.refuse.message, data: { code: _e5.refuse.code }, _e2ee5_refused: true };
+  }
+  if (_e5 && typeof _e5.content === 'string') content = _e5.content;
+  const _e5Env = !!(_e5 && !_e5.downgraded);
   const _localWritePromise = _localOptimisticSend({
     tempId: localTempId,
     conversationId,
@@ -6170,6 +6193,12 @@ async function _chatSendInner(conversationId, content, type = 'text', replyToId 
   // [2026-10-10 regional-accept] Re-tentativa de mensagem que o edge aceitou e
   // o US rejeitou (evento chat_send_rejected): pede o caminho direto ao US —
   // senão o edge repete a rejeição guardada no spool. Corpo (não header: CORS).
+  // [e2ee5 WP-08c] só metadados em claro do contrato §2.5 (has_link, mention_all, edit_of); nada de
+  // citação/prévia/referência em claro (o servidor também descarta).
+  if (_e5Env) {
+    Object.assign(payload, _e5.extra || {});
+    delete payload.reply_quote_text; delete payload.reply_ext_conv_id; delete payload.reply_ext_msg_id; delete payload.no_preview; delete payload.meta;
+  }
   try { if (require('./regionalAccept').shouldBypassRegional(stableCMI)) payload.regional_off = 1; } catch {}
   // [2026-10-12 send-reliability-web] Per-conversation FIFO on WEB. Native has
   // it in sendWorker (isConversationBusy → messageOutbox.release); web had
@@ -6220,7 +6249,7 @@ async function _chatSendInner(conversationId, content, type = 'text', replyToId 
   // Users can still opt out via setEnvelopeMode(false), which persists a
   // '0' marker and downgrades subsequent sends to the plaintext branch.
   let result = null;
-  const envelopeMode = (typeof globalThis !== 'undefined') && globalThis.__chatyy_envelope_mode === true;
+  const envelopeMode = !_e5Env && (typeof globalThis !== 'undefined') && globalThis.__chatyy_envelope_mode === true; // [e2ee5] v5 nunca no modo envelope legado
   if (envelopeMode) {
     try {
       // Lazy import — avoid loading nacl + envelope code in apps that have
@@ -6363,7 +6392,8 @@ async function _chatSendInner(conversationId, content, type = 'text', replyToId 
       // [2026-10-07 native-send] Texto puro → hub Go (ack no próprio socket).
       // Qualquer coisa fora disso (mídia, tópico, meta, sem conteúdo) segue
       // direto pro HTTP. null = hub sem a capability / fallback / timeout 4s.
-      if (type === 'text' && !fileUrl && !topicId && !opts?.meta && !opts?.replyExt
+      // [e2ee5 WP-08c] envelope pelo hub só com a cap e2ee5_ns (§5.3); senão HTTP (que impõe igual).
+      if (type === 'text' && !fileUrl && !topicId && !opts?.meta && !opts?.replyExt && (!_e5Env || _e5WsOk())
           && typeof content === 'string' && content.trim() !== '') {
         try {
           const nat = await _tryNativeWsSend(payload);
@@ -6379,7 +6409,7 @@ async function _chatSendInner(conversationId, content, type = 'text', replyToId 
         } catch {}
       }
       // [2026-10-16 w12e] silent → pula o Rust (não lê 'silent' → push sairia com som); hub Go e PHP honram.
-      if (!result && !topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed && !opts?.meta && !opts?.replyExt && !opts?.silent) {
+      if (!result && !_e5Env /* [e2ee5] Rust não impõe E2EE */ && !topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed && !opts?.meta && !opts?.replyExt && !opts?.silent) {
         const rust = await _rustChatPost('send', payload);
         if (rust?.success) { result = rust; }
       }
@@ -6395,6 +6425,8 @@ async function _chatSendInner(conversationId, content, type = 'text', replyToId 
     }
   }
   _webNoteSendOutcome(conversationId, stableCMI, result, opts);
+  // [e2ee5 WP-08c] ✓ do envio cifrado: id do servidor ↔ texto local; recusa por estado → re-busca o estado.
+  if (_e5) { try { require('./e2ee/e2ee5').afterSend(conversationId, content, result); } catch {} }
   // [2026-10-14 lista-eco-envio] O envio pelo hub (native_send, frame WS) e o Rust
   // não passam pelo apiCall → o chat_list do SWR (60 s) NÃO era invalidado. Ao voltar
   // p/ a lista, o refresh de foco recebia o snapshot de ANTES do envio (prévia do
@@ -6854,6 +6886,11 @@ async function _readLocalMessageSnapshot(messageId, conversationId) {
 }
 
 export async function chatEdit(messageId, content, conversationId = null) {
+  // [e2ee5 WP-08c] conversa E2EE v5: edição = linha NOVA cifrada (t:edit) com edit_of em claro (§2.4).
+  try {
+    const _e5m = require('./e2ee/e2ee5');
+    if (_e5m.isOn()) { const r5 = await _e5m.editViaSend(messageId, content, conversationId); if (r5) return r5; }
+  } catch {}
   // Stage 1: write the edit to local SQLite FIRST, then POST. The optimistic
   // row update is what the UI rebinds to on reload — server confirmation
   // arrives later via WS message_edited.
@@ -7496,6 +7533,14 @@ export async function chatGroupInviteJoin(token) {
 }
 
 export async function chatForward(messageId, targetConversationId, opts = null) {
+  // [e2ee5 WP-08c] origem cifrada ou destino E2EE: o CLIENTE recifra (o servidor não clona envelope).
+  try {
+    const _e5m = require('./e2ee/e2ee5');
+    if (_e5m.isOn()) {
+      const r5 = await _e5m.forwardClient(messageId, [targetConversationId], opts);
+      if (r5) { const x = (r5.data && r5.data.results && r5.data.results[0]) || {}; return { success: !!x.success, code: x.error, message: x.error || '', data: { id: x.message_id, conversation_id: targetConversationId } }; }
+    }
+  } catch {}
   const payload = { message_id: messageId, conversation_id: targetConversationId };
   // Hide origin: forwarded message appears as if the sender wrote it.
   // Telegram parity — "Forward without attribution" option.
@@ -7510,6 +7555,10 @@ export async function chatForward(messageId, targetConversationId, opts = null) 
 // message into N conversations. Backend reports per-target success/fail
 // so the UI can surface partial results without re-sending.
 export async function chatForwardMulti(messageId, targetConversationIds, opts = null) {
+  try { // [e2ee5 WP-08c] ver chatForward
+    const _e5m = require('./e2ee/e2ee5');
+    if (_e5m.isOn()) { const r5 = await _e5m.forwardClient(messageId, targetConversationIds, opts); if (r5) return r5; }
+  } catch {}
   const payload = {
     message_id: messageId,
     conversation_ids: Array.isArray(targetConversationIds) ? targetConversationIds : [],

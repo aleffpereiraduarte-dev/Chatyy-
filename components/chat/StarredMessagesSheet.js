@@ -165,6 +165,7 @@ export function describeStarred(m, S) {
   if (parsed && parsed.e2e) {
     let pk = null;
     try { pk = require('../../services/e2eeV4').peekPlaintext(content); } catch {}
+    try { if (pk == null) { const _e5 = require('../../services/e2ee/e2ee5').peek(content); if (_e5) pk = _e5.text; } } catch {} // [e2ee5] texto já decifrado neste aparelho
     return pk != null ? { kind: 'text', text: String(pk) } : { kind: 'row', Icon: IconLock, label: S.encrypted };
   }
   const viewOnce = !!(m.is_view_once || m.view_once || (parsed && parsed.view_once));

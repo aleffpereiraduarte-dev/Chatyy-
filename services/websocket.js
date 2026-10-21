@@ -609,6 +609,8 @@ class MailWebSocket {
       // Hub antigo ignora. Fio nativo reaproveita este frame nas reconexões
       // internas → _onAuthenticated reafirma o estado atual logo após o auth.
       ...(_presenceAppState() ? { app_state: _presenceAppState() } : {}),
+      // [e2ee5 WP-08c] §5.1: aparelho E2EE desta conexão (só com a flag + sessão aberta).
+      ...((() => { try { return require('./e2ee/e2ee5').wsAuthFields() || {}; } catch { return {}; } })()),
     };
   }
 
@@ -2457,6 +2459,8 @@ class MailWebSocket {
         // (ex.: 'native_send' = chat_send de texto direto no hub Go). Recalculado
         // a cada auth — hub antigo / conta fora do canário → [] → HTTP de sempre.
         this.serverCaps = Array.isArray(msg.caps) ? msg.caps.slice(0, 32) : [];
+        // [e2ee5 WP-08c] sessão do núcleo + sync a cada auth (flag desligada = no-op).
+        try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn()) _e5.onWsAuth(); } catch {}
         // [2026-10-06 rt-client] Hidrata o espelho de privacidade de typing da conta.
         try { this._hydrateTypingPrivacy(msg.email); } catch {}
         // Seed lastPongTime so the ping-timeout watchdog has a valid baseline.
@@ -3235,6 +3239,16 @@ class MailWebSocket {
             return Promise.resolve({ viaPhoenix: true, msg_id: message && message.id });
           }
         }
+      }
+    } catch {}
+    // [e2ee5 WP-08c] conversa E2EE v5: relay só com envelope, sem citação/prévia em claro
+    // (texto puro numa conversa cifrada não sai pelo relay).
+    try {
+      const _e5 = require('./e2ee/e2ee5');
+      if (_e5.isOn() || _e5.isEnvelope(message && message.content)) {
+        const _m5 = _e5.relayScrub(conversationId, message);
+        if (_m5 === null) return Promise.resolve({ failed: true, skipped: 'e2ee5' }); // sem ✓ antecipado
+        message = _m5;
       }
     } catch {}
     const msgId = this._genMsgId();
