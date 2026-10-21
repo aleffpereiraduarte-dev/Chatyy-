@@ -6369,6 +6369,7 @@ export default {
   'one.voiceAutoRead': 'Read responses',
   'one.speakStop': 'Stop reading',
   'one.voiceConversation': 'Voice conversation',
+  'one.interrupt': 'Interrupt and speak',
   'one.voiceSpeaking': 'Speaking...',
   'one.voiceTapStop': 'Tap to stop',
   'one.toolSearchingEmails': 'Searching emails...',
