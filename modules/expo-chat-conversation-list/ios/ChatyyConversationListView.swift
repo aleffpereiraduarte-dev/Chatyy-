@@ -251,7 +251,7 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
   }
 
   /// [lista-viva] Uma seção por papel: cabeçalho "FIXADAS" (1 item), cartão
-  /// das fixadas (raio 22, margem 0 12 10, respiro 4 em cima/embaixo) e o
+  /// das fixadas (raio 22, margem 0 12 10, respiro 2 em cima/embaixo) e o
   /// resto. Sem separadores.
   private func makeVivoLayout() -> UICollectionViewLayout {
     let layout = UICollectionViewCompositionalLayout(sectionProvider: { [weak self] idx, env in
@@ -271,7 +271,8 @@ public final class ChatyyConversationListView: ExpoView, UICollectionViewDelegat
       }
       let sec = NSCollectionLayoutSection.list(using: cfg, layoutEnvironment: env)
       if sid == ChatyyConversationListView.secPinned {
-        sec.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 12, bottom: 14, trailing: 12)
+        // [2026-10-21 ajustes 2] respiro interno do cartão 4 → 2 (em cima/embaixo).
+        sec.contentInsets = NSDirectionalEdgeInsets(top: 2, leading: 12, bottom: 12, trailing: 12)
         let deco = NSCollectionLayoutDecorationItem.background(elementKind: CLPinnedCardView.kind)
         deco.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 12, bottom: 10, trailing: 12)
         deco.zIndex = -1

@@ -1043,7 +1043,7 @@ const _ROW_IN_CARD = { paddingHorizontal: 10 };
 const _SECTION_VIVO = { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 6 };
 const _SECTION_TEXT_VIVO = { fontWeight: '700' };
 const _PIN_CARD = { marginHorizontal: 12, marginBottom: 10, borderRadius: 22 };
-const _PIN_CARD_CLIP = { borderRadius: 22, overflow: 'hidden', paddingVertical: 4 };
+const _PIN_CARD_CLIP = { borderRadius: 22, overflow: 'hidden', paddingVertical: 2 }; // [2026-10-21 ajustes 2] 4 → 2
 function _vivoCardShadow(isDark) { try { return require('../constants/theme').cardShadow(isDark); } catch { return null; } }
 function formatActivityStatus(isOnline, lastSeen, t) {
   if (isOnline) return { text: t?.('chat.online') || 'online', color: '#22c55e' };

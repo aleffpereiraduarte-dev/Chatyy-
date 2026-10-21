@@ -92,48 +92,57 @@ function _glyphW(str, fs) {
   }
   return w * fs;
 }
-function _ellipsize(str, maxW, fs) {
-  if (_glyphW(str, fs) <= maxW) return str;
-  const words = str.split(' ');
-  while (words.length > 1) {
-    words.pop();
-    const c = words.join(' ').replace(/[\s.,;:!?·-]+$/, '') + '…';
+// Corta na ÚLTIMA palavra inteira que cabe e põe "…" (nunca no meio da palavra).
+function _ellipsizeWords(words, maxW, fs) {
+  for (let n = words.length; n >= 1; n--) {
+    const c = words.slice(0, n).join(' ').replace(/[\s.,;:!?·-]+$/, '') + (n < words.length ? '…' : '');
     if (_glyphW(c, fs) <= maxW) return c;
   }
-  let c = words[0] || '';
-  while (c.length > 1 && _glyphW(c + '…', fs) > maxW) c = c.slice(0, -1);
-  return c + '…';
+  return null; // nem a 1ª palavra cabe
 }
+// Quebra em até 2 linhas com palavras inteiras, no tamanho fs. null = não cabe inteiro.
+function _fit2(words, maxW, fs) {
+  const str = words.join(' ');
+  if (_glyphW(str, fs) <= maxW) return str;
+  if (words.length < 2) return null;
+  let best = -1;
+  let bestD = Infinity;
+  for (let k = 1; k < words.length; k++) {
+    const w1 = _glyphW(words.slice(0, k).join(' '), fs);
+    const w2 = _glyphW(words.slice(k).join(' '), fs);
+    if (w1 > maxW || w2 > maxW) continue;
+    // 2ª linha com 1 palavra só quando não há outro jeito
+    const lone = (words.length >= 3 && k === words.length - 1) ? maxW : 0;
+    const d = Math.abs(w1 - w2) + lone;
+    if (d < bestD) { bestD = d; best = k; }
+  }
+  if (best < 0) return null;
+  return words.slice(0, best).join(' ') + '\n' + words.slice(best).join(' ');
+}
+/**
+ * [2026-10-21 ajustes 2] Até 2 linhas, SEMPRE palavras inteiras: tenta no tamanho
+ * cheio e encolhe até 0,85 antes de cortar; se ainda não cabe, a 1ª linha enche
+ * (palavras inteiras, sem "…") e a 2ª termina na última palavra que cabe + "…".
+ * Retorna { text, fs }.
+ */
 export function balanceNote(text, maxW, fs = 11) {
   const str = String(text || '').replace(/\s+/g, ' ').trim();
-  if (!str || _glyphW(str, fs) <= maxW) return str;
+  if (!str) return { text: '', fs };
   const words = str.split(' ');
-  if (words.length < 2) return str; // palavra única longa: o Text quebra/encolhe
-  const total = _glyphW(str, fs);
-  let best = -1;
-  if (total <= maxW * 2 - fs * 0.6) {
-    // cabe em 2: corte que minimiza a diferença, 1ª linha cabendo
-    let bestD = Infinity;
-    for (let k = 1; k < words.length; k++) {
-      const w1 = _glyphW(words.slice(0, k).join(' '), fs);
-      const w2 = _glyphW(words.slice(k).join(' '), fs);
-      if (w1 > maxW || w2 > maxW) continue;
-      // 2ª linha com 1 palavra só quando não há outro jeito
-      const lone = (words.length >= 3 && k === words.length - 1) ? maxW : 0;
-      const d = Math.abs(w1 - w2) + lone;
-      if (d < bestD) { bestD = d; best = k; }
-    }
+  const sizes = [fs, fs * 0.95, fs * 0.9, fs * 0.85];
+  for (const f of sizes) {
+    const r = _fit2(words, maxW, f);
+    if (r != null) return { text: r, fs: f };
   }
-  if (best < 0) {
-    // não cabe: 1ª linha enche ao máximo, 2ª leva o resto com reticências
-    best = 1;
-    for (let k = 1; k < words.length; k++) {
-      if (_glyphW(words.slice(0, k).join(' '), fs) <= maxW) best = k; else break;
-    }
-  }
-  const l1 = words.slice(0, best).join(' ');
-  const l2 = _ellipsize(words.slice(best).join(' '), maxW, fs);
-  return l1 + '\n' + l2;
+  const f = fs * 0.85;
+  let k = 0;
+  while (k < words.length && _glyphW(words.slice(0, k + 1).join(' '), f) <= maxW) k++;
+  // 1ª palavra maior que a linha: vai inteira sozinha na 1ª (o Text encolhe)
+  if (k === 0) k = 1;
+  if (k >= words.length) return { text: str, fs: f };
+  const l2 = _ellipsizeWords(words.slice(k), maxW, f);
+  if (l2 == null) return { text: words.slice(0, k).join(' ').replace(/[\s.,;:!?·-]+$/, '') + '…', fs: f };
+  return { text: words.slice(0, k).join(' ') + '\n' + l2, fs: f };
 }
 
 function _haptic(kind = 'light') {
@@ -167,12 +176,13 @@ export const ThoughtBubble = memo(function ThoughtBubble({ text, isDark, full = 
     default: {},
   });
   const vivo = listVivoOn();
+  const _note = useMemo(() => (vivo ? balanceNote(text, VIVO_BUBBLE.w - 2 * VIVO_BUBBLE.padX, 11) : null), [vivo, text]);
   return (
     <Animated.View pointerEvents="none" style={{ alignItems: 'center', opacity: op, transform: [{ translateY: ty }] }}>
       <View style={[hs.bubble, full ? hs.bubbleFull : null, vivo && hs.bubbleVivo, { backgroundColor: bg, borderColor: edge }, shadow]}>
         {vivo ? (
-          <Text maxFontSizeMultiplier={1} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.85} ellipsizeMode="tail" style={[hs.bubbleText, hs.bubbleTextVivo, { color: ink }]}>
-            {balanceNote(text, VIVO_BUBBLE.w - 2 * VIVO_BUBBLE.padX, 11)}
+          <Text maxFontSizeMultiplier={1} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.9} ellipsizeMode="tail" style={[hs.bubbleText, hs.bubbleTextVivo, { color: ink, fontSize: _note.fs, lineHeight: Math.round(_note.fs * 1.23 * 2) / 2 }]}>
+            {_note.text}
           </Text>
         ) : (
           <Text maxFontSizeMultiplier={1.15} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={full ? 0.62 : 0.8} ellipsizeMode="tail" style={[hs.bubbleText, { color: ink }]}>

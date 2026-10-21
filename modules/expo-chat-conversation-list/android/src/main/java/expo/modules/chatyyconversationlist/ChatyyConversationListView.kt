@@ -1430,8 +1430,9 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
       outRect.left = side
       outRect.right = side
       // O rótulo "FIXADAS" + alfinete é do header JS (logo acima da 1ª linha).
-      if (id == pinFirstId) outRect.top = (4f * density).toInt()
-      if (id == pinLastId) outRect.bottom = (14f * density).toInt()
+      // [2026-10-21 ajustes 2] respiro interno do cartão 4 → 2 (em cima/embaixo).
+      if (id == pinFirstId) outRect.top = (2f * density).toInt()
+      if (id == pinLastId) outRect.bottom = (12f * density).toInt()
     }
 
     override fun onDraw(c: Canvas, parent: RecyclerView, state: RecyclerView.State) {
@@ -1452,7 +1453,7 @@ class ChatyyConversationListView(context: Context, appContext: AppContext) : Exp
         if (id == pinLastId) lastBottom = b
       }
       if (top.isNaN()) return
-      val pad = 4f * density
+      val pad = 2f * density
       val cardTop = if (!firstTop.isNaN()) firstTop - pad else top - 60f * density
       val cardBottom = if (!lastBottom.isNaN()) lastBottom + pad else bottom + 60f * density
       val side = 12f * density

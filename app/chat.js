@@ -1934,7 +1934,10 @@ function ChatHub() {
             {...listTabProps}
             largeTitle={LIST_LARGE_TITLE ? titles.chats : undefined}
             onLargeTitleCollapsedChange={LIST_LARGE_TITLE ? onChatTitleCollapseHome : undefined}
-            bottomInset={GLASS_TAB_BAR ? tabBarH : 0}
+            /* [2026-10-21 ajustes 2] barra translúcida por cima: a ÚLTIMA conversa precisa
+               rolar até ficar inteira acima dela → altura medida da barra (já inclui a safe
+               area; piso 49 + safe area antes da 1ª medida) + 8 de respiro. */
+            bottomInset={GLASS_TAB_BAR ? Math.max(tabBarH, 49 + (insets.bottom || 0)) + 8 : 0}
             topOverlayInset={homeOverlay ? homeHeaderH : 0}
             onNativeTopBar={LIST_LARGE_TITLE ? setHomeTopBar : undefined}
           /></ChatErrorBoundary>
