@@ -33,6 +33,7 @@ import {
   IconArchive, IconShield, IconAlertCircle, IconPhoneOff, IconSliders, IconMapPin, IconCloud, IconMail,
 } from '../../Icons';
 import NativeSwitch from '../../NativeSwitch';
+import E2eeBackupSection from '../../e2ee/BackupSection'; // [e2ee5 WP-14]
 import { useReducedMotion } from '../../reducedMotion';
 import { detailColor } from '../../../constants/theme';
 import * as proxyCfg from '../../../services/proxyConfig';
@@ -310,6 +311,9 @@ export default function PrivacyCategory() {
       <SettingsGroup header={tr('settings.rd2.chats', 'Conversas')} cardStyle={st.card22}>
         <SettingsSwitchRow icon={IconArchive} title={t('settings.privacyKeepArchived')} subtitle={t('settings.privacyKeepArchivedDesc')} value={privacy.keep_archived !== false} onValueChange={(v) => savePrivacy({ keep_archived: !!v })} />
       </SettingsGroup>
+
+      {/* [e2ee5 WP-14] Backup das conversas protegidas (some sem __chatyy_e2ee5 + e2ee5_backup) */}
+      <E2eeBackupSection cardStyle={st.card22} />
 
       {/* Mídia (EXIF, remetente selado, conversas na nuvem) */}
       <PrivacyExtrasGroup icons={EXTRA_ICONS} cardStyle={st.card22} cloudChats={privacy.cloud_chats_default} onCloudChatsChange={(v) => savePrivacy({ cloud_chats_default: !!v })} />

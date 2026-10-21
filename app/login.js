@@ -1397,10 +1397,27 @@ export default function LoginScreen() {
     }
   }, [t]);
 
+  // [e2ee5 WP-12] Web: QR do vínculo E2EE (celular emite o acesso deste navegador + chaves) no lugar
+  // do QR antigo, só com __chatyy_e2ee5 + __chatyy_e2ee5_link. Desligado = bloco antigo intacto.
+  const e2ee5LinkUi = (() => { try { return Platform.OS === 'web' && require('../services/e2ee/link').webLinkUiOn(); } catch { return false; } })();
+  const onE2ee5Linked = useCallback(async ({ bearer }) => {
+    setQrStatus('confirmed');
+    let r = null;
+    try { r = await loginWithToken(bearer, ''); } catch { r = null; }
+    if (!mountedRef.current) return;
+    if (r && r.success) {
+      setTimeout(() => { if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount(), r.data?.email || ''); }, 300);
+    } else {
+      setQrStatus('idle');
+      setError(t('uiG.login.qrFailed'));
+    }
+  }, [loginWithToken, maybePromptRestoreThenGo, t]);
+  // [e2ee5 WP-12] fim
+
   // Auto-generate QR when switching to QR mode (desktop) - only once
   const qrGeneratedRef = useRef(false);
   useEffect(() => {
-    if (loginMode === 'qr' && isDesktop && !qrGeneratedRef.current) {
+    if (loginMode === 'qr' && isDesktop && !qrGeneratedRef.current && !e2ee5LinkUi) { // [e2ee5] QR antigo só sem o vínculo E2EE
       qrGeneratedRef.current = true;
       generateQR();
     }
@@ -2873,7 +2890,10 @@ export default function LoginScreen() {
                   opacity: fadeAnim,
                   transform: [{ translateX: slideAnim }, { translateX: shakeAnim }],
                 }}>
-                  {loginMode === 'qr' && isDesktop ? (
+                  {loginMode === 'qr' && isDesktop && e2ee5LinkUi ? (
+                    // [e2ee5 WP-12] QR do vínculo E2EE (desenhado localmente; não leva bearer)
+                    (() => { const LinkWebPanel = require('../components/e2ee/LinkWebPanel').default; return <View style={s.qrPanel}><LinkWebPanel compact onLinked={onE2ee5Linked} /></View>; })()
+                  ) : loginMode === 'qr' && isDesktop ? (
                     (() => {
                       // Framed QR container — rounded card with a subtle border,
                       // generous inner padding, and four brand-purple corner

@@ -186,7 +186,10 @@ export function ensureSession() {
       // WhatsApp: os contatos veem "o código de segurança mudou"). Web = só pelo QR do celular
       // (F4); exceção D4/QA com flag explícita.
       const webOk = _g().__chatyy_e2ee5_web_bootstrap === true;
-      if (Platform.OS !== 'web' || webOk) {
+      // [e2ee5 WP-14] conta com backup no servidor: oferece restaurar (mesma identidade) antes de criar outra.
+      let _defer = false;
+      try { _defer = require('./backup').shouldDeferBootstrap(st); if (_defer) require('./backup').offerRestore(); } catch (_) { _defer = false; }
+      if ((Platform.OS !== 'web' || webOk) && !_defer) {
         try {
           await c.bootstrapIdentity();
           try { await c.sync(); } catch (_) {}
@@ -200,6 +203,7 @@ export function ensureSession() {
     _wireOnce();
     _wireNative();
     _armPeriodic();
+    try { require('./link').onSession(_sess); require('./backup').onSession(_sess); } catch (_) {} // [e2ee5 WP-12/WP-14]
     if (s1) _onSyncResult(s1);
     for (const cid of Array.from(_waiting.keys())) _retryWaiting(cid); // "aguardando" de antes da sessão
     _log('session', { uid: _sess.uid, dev: _sess.deviceId, signed: _sess.signed });
@@ -277,6 +281,7 @@ function _onSyncResult(r) {
   } catch (_) {}
   try {
     for (const ev of (Array.isArray(r.chatyyEvents) ? r.chatyyEvents : [])) {
+      if (ev && ev.eventType === 'chatyy.link.revoked') { try { require('./link').onChatyyEvent(ev); } catch (_) {} continue; } // [e2ee5 WP-12]
       if (!ev || (ev.eventType !== 'chatyy.decrypt_report' && ev.eventType !== 'chatyy.key_resend')) continue;
       let c = null;
       try { c = JSON.parse(ev.contentJson || '{}'); } catch (_) {}

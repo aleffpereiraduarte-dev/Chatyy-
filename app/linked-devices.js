@@ -26,6 +26,8 @@ import { loadDeviceRegistry, installAppStateHook } from '../services/deviceRegis
 import FadeSlideIn from '../components/FadeSlideIn';
 import UIRefreshControl from '../components/ui/RefreshControl';
 import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
+import * as e2eeLink from '../services/e2ee/link'; // [e2ee5 WP-12] vínculo E2EE pelo QR (inerte sem __chatyy_e2ee5)
+import LinkPhoneSheet from '../components/e2ee/LinkPhoneSheet';
 import { detailColor } from '../constants/theme';
 import { useGroupedColors, SettingsGroup, SettingsRow, SettingsIconTile, SettingsValueText, grafiteTileStyle } from '../components/settings/SettingsKit'; // [2026-10-10 settings-polish] [2026-10-17 settings-wa] listas agrupadas
 
@@ -106,6 +108,10 @@ export default function LinkedDevicesScreen() {
   const [scanOpen, setScanOpen] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
+  // [e2ee5 WP-12] QR do Chatyy Web com vínculo E2EE + aparelhos vinculados do servidor de chaves.
+  const [linkQr, setLinkQr] = useState(null);
+  const [e5, setE5] = useState({ ok: false, devices: [], isPrimary: false });
+  const [e5Revoking, setE5Revoking] = useState(null);
   const _useCamPerm = useCameraPermissions || (() => [null, () => {}]);
   const [permission, requestPermission] = _useCamPerm();
 
@@ -147,6 +153,13 @@ export default function LinkedDevicesScreen() {
 
   useEffect(() => { load(); }, [load]);
 
+  // [e2ee5 WP-12] aparelhos vinculados (E2EE). Falha/flag off = segue só com as sessões de hoje.
+  const loadE5 = useCallback(async () => {
+    if (!e2eeLink.isOn()) return;
+    try { const r = await e2eeLink.listLinked(); setE5(r && r.ok ? r : { ok: false, devices: [], isPrimary: false }); } catch {}
+  }, []);
+  useEffect(() => { loadE5(); }, [loadE5]);
+
   // Registro de chaves por aparelho (SQLite-first): aquece na montagem +
   // gancho AppState=active idempotente.
   useEffect(() => {
@@ -165,6 +178,15 @@ export default function LinkedDevicesScreen() {
   const handleScanned = ({ data }) => {
     if (scanned || scanBusy || typeof data !== 'string') return;
     const raw = data.trim();
+    // [e2ee5 WP-12] QR do Chatyy Web com vínculo E2EE (chatyy-link:1:…): confirmação + histórico no sheet.
+    if (e2eeLink.isLinkQr(raw)) {
+      if (!e2eeLink.phoneLinkOnSync()) return; // flag desligada: ignora como hoje
+      setScanned(true);
+      setScanOpen(false);
+      setTimeout(() => setLinkQr(raw), Platform.OS === 'ios' ? 500 : 150); // iOS: 1 Modal por vez
+      setTimeout(() => setScanned(false), 800);
+      return;
+    }
     const webM = raw.match(/^(?:chatyy:\/\/qr\/|https?:\/\/(?:www\.)?chatyy\.com\.br\/qr\/)([a-f0-9]{64})\b/i);
     const isCompanion = raw.startsWith('chatyy://companion');
     if (!webM && !isCompanion) return; // QR de contato etc.: ignora em silêncio
@@ -271,6 +293,11 @@ export default function LinkedDevicesScreen() {
         try {
           const r = await api.apiCall('revoke_all_sessions', {}, 'POST');
           if (r && r.success === false) throw new Error(r.message || r.error || '');
+          // [e2ee5 WP-12] e as chaves dos vinculados (rotaciona as sessões das conversas).
+          if (e5.ok && e5.isPrimary) {
+            for (const d of e5.devices.filter((x) => x.kind !== 'P')) { try { await e2eeLink.revokeLinked(d.deviceId); } catch {} }
+            loadE5();
+          }
           await load();
         } catch (e) { console.warn('[devices] revokeAll:', e); _revokeFailed(e); }
         setRevokingAll(false);
@@ -278,11 +305,73 @@ export default function LinkedDevicesScreen() {
     );
   };
 
+  // [e2ee5 WP-12] Desconectar um vinculado: o servidor corta o acesso na hora e este celular troca a
+  // chave de todas as conversas protegidas (o aparelho desconectado não lê as mensagens novas).
+  const revokeE5 = (d, name) => {
+    _confirm(
+      t('devices.disconnectTitle', { name, defaultValue: `Desconectar ${name}?` }),
+      t('e2ee5.devices.logout_body', 'Esse aparelho sai da sua conta na hora e deixa de receber as mensagens novas. Para usar de novo, conecte pelo QR.'),
+      t('devices.disconnect', 'Desconectar'),
+      async () => {
+        try {
+          const { confirmWithBiometric } = require('../services/biometricGate');
+          const ok = await confirmWithBiometric({ reason: t('devices.disconnect', 'Desconectar') });
+          if (!ok) return;
+        } catch {}
+        setE5Revoking(d.deviceId);
+        try {
+          await e2eeLink.revokeLinked(d.deviceId);
+          await loadE5();
+          load();
+        } catch (e) {
+          _revokeFailed(e && e.code === 'not_primary' ? new Error(t('e2ee5.link.err_not_primary', 'Só o celular principal da conta conecta outros aparelhos.')) : null);
+        }
+        setE5Revoking(null);
+      },
+    );
+  };
+  const e5Row = (d) => {
+    const name = d.label || (d.kind === 'T' ? t('e2ee5.devices.tablet', 'Tablet ou computador') : 'Chatyy Web');
+    const meta = [d.platform, t('e2ee5.devices.e2e', 'Criptografia de ponta a ponta')].filter(Boolean).join(' · ');
+    const seen = seenLabel(Math.floor((d.lastSeen || d.createdAt) / 1000), t);
+    const left = d.idleDaysLeft;
+    const busy = e5Revoking === d.deviceId;
+    return (
+      <Pressable
+        key={d.deviceId}
+        onPress={busy || !e5.isPrimary ? undefined : () => revokeE5(d, name)}
+        accessibilityRole="button"
+        accessibilityLabel={`${name}, ${meta}${seen ? ', ' + seen : ''}. ${t('devices.disconnect', 'Desconectar')}`}
+        style={({ pressed }) => [st.devRow, pressed && { backgroundColor: g.fill }]}
+        testID={`devices-e2ee-row-${d.deviceId}`}
+      >
+        <SettingsIconTile Icon={IconMonitor} size={40} />
+        <View style={st.devText}>
+          <Text style={[st.devName, { color: g.text }]} numberOfLines={1}>{name}</Text>
+          <Text style={[st.devMeta, { color: g.secondary }]} numberOfLines={1}>{meta}</Text>
+          {!!seen && <Text style={[st.devMeta, { color: g.secondary }]} numberOfLines={1}>{seen}</Text>}
+          {left != null && left <= 7 && (
+            <Text style={[st.devMeta, { color: g.secondary }]} numberOfLines={2}>
+              {left <= 0
+                ? t('e2ee5.devices.inactive_today', 'Sem uso há 30 dias: sai da conta hoje')
+                : t('e2ee5.devices.inactive_30d', { n: left, defaultValue: `Sai da conta em ${left} d se não for usado` })}
+            </Text>
+          )}
+        </View>
+        {busy
+          ? <ActivityIndicator color={g.secondary} size="small" />
+          : e5.isPrimary ? <SettingsValueText color={g.destructive}>{t('devices.disconnect', 'Desconectar')}</SettingsValueText> : null}
+      </Pressable>
+    );
+  };
+
   const [pulling, setPulling] = useState(false);
-  const onPull = () => { setPulling(true); Promise.resolve(load()).finally(() => setPulling(false)); };
+  const onPull = () => { setPulling(true); loadE5(); Promise.resolve(load()).finally(() => setPulling(false)); };
 
   const current = sessions.find((s) => s && s.is_current) || null;
-  const others = sessions.filter((s) => s && !s.is_current);
+  // [e2ee5 WP-12] o acesso de um aparelho vinculado por QR E2EE aparece UMA vez (no grupo abaixo).
+  const e5Linked = e5.ok ? e5.devices.filter((d) => d.kind !== 'P') : [];
+  const others = sessions.filter((s) => s && !s.is_current && !(e5.ok && /^qr-link:e2ee5-/.test(String(s.user_agent_raw || ''))));
   // Web (cookie, sem bearer) nunca vem como is_current → cartão local.
   const localCurrent = (() => {
     const v = _appVersion();
@@ -422,6 +511,17 @@ export default function LinkedDevicesScreen() {
             </View>
           </SettingsGroup>
 
+          {/* [e2ee5 WP-12] Aparelhos vinculados pelo QR com criptografia de ponta a ponta */}
+          {e5Linked.length > 0 && (
+            <SettingsGroup
+              header={t('e2ee5.devices.title', 'Aparelhos vinculados')}
+              footer={t('e2ee5.devices.footer', 'Um aparelho vinculado que fica 30 dias sem uso sai da sua conta sozinho. Ao desconectar, as conversas protegidas trocam de chave.')}
+              inset={70}
+            >
+              {e5Linked.map(e5Row)}
+            </SettingsGroup>
+          )}
+
           {/* Outros aparelhos */}
           {loading ? skeleton : (loadFailed && sessions.length === 0) ? (
             <View style={[st.stateCard, { backgroundColor: g.cardBg }, g.cardShadow]}>
@@ -433,7 +533,7 @@ export default function LinkedDevicesScreen() {
                 <Text style={[st.retryText, { color: g.text }]}>{t('common.tryAgain', 'Tentar de novo')}</Text>
               </Pressable>
             </View>
-          ) : others.length === 0 ? (
+          ) : others.length === 0 && e5Linked.length > 0 ? null : others.length === 0 ? (
             <View style={[st.stateCard, { backgroundColor: g.cardBg }, g.cardShadow]}>
               <SettingsIconTile Icon={IconShield} size={48} muted />
               <Text style={[st.stateTitle, { color: g.text }]}>{t('devices.noOthersTitle', 'Nenhum outro aparelho')}</Text>
@@ -476,6 +576,14 @@ export default function LinkedDevicesScreen() {
           </SettingsGroup>
         </FadeSlideIn>
       </ScrollView>
+
+      {/* [e2ee5 WP-12] confirmação + progresso do vínculo E2EE (abre depois que a câmera fecha) */}
+      <LinkPhoneSheet
+        visible={!!linkQr && !scanOpen}
+        qr={linkQr}
+        onClose={() => { setLinkQr(null); loadE5(); load(); }}
+        onDone={() => { loadE5(); }}
+      />
 
       {/* Câmera do "Conectar um aparelho" (rota em cartão → Modal único, nunca sobre outro). */}
       <Modal visible={scanOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setScanOpen(false)}>
