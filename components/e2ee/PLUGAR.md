@@ -40,3 +40,6 @@ deploy web.
 - Página "Criptografia" nas configurações e `/var/www/mail/p/criptografia.html` (próxima entrega do WP-15).
 - Revisão visual em iOS/Android/web, claro e escuro (precisa da flag ligada num build de QA).
 - pt-PT (cai no pt-BR).
+
+## Decisão do founder (21/10): canais
+Nos canais NÃO mostrar selo "não criptografado" no cabeçalho. Só uma linha discreta no fim do feed ("Canais são públicos. Saiba mais", 11,5 pt, cor secundária) e uma linha na info do canal. Pílula "Não criptografado" fica só nos cartões de jogo/Assistir junto e no Kids.
