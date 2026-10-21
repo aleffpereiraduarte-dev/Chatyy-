@@ -44,12 +44,12 @@ export default function TwoFactorSetup({ visible, onClose }) {
     setError('');
     try {
       const r = await api.apiCall('totp_setup', {}, 'POST');
-      if (r.success && r.data) {
+      if (r?.success && r.data) {
         setSecret(r.data.secret);
         setUri(r.data.uri);
         setStep(2);
       } else {
-        setError(r.message || t('twoFactor.setupError'));
+        setError(r?.message || t('twoFactor.setupError'));
       }
     } catch {
       setError(t('common.networkError'));
@@ -67,11 +67,11 @@ export default function TwoFactorSetup({ visible, onClose }) {
     setError('');
     try {
       const r = await api.apiCall('totp_verify', { code }, 'POST');
-      if (r.success && r.data) {
+      if (r?.success && r.data) {
         setBackupCodes(r.data.backup_codes || []);
         setStep(3);
       } else {
-        setError(r.message || t('twoFactor.invalidCode'));
+        setError(r?.message || t('twoFactor.invalidCode'));
       }
     } catch {
       setError(t('common.networkError'));
@@ -99,11 +99,11 @@ export default function TwoFactorSetup({ visible, onClose }) {
     setError('');
     try {
       const r = await api.apiCall('totp_disable', { password }, 'POST');
-      if (r.success) {
+      if (r?.success) {
         setSuccess(t('twoFactor.disabledSuccess'));
         setTimeout(() => handleClose(), 1500);
       } else {
-        setError(r.message || t('twoFactor.disableError'));
+        setError(r?.message || t('twoFactor.disableError'));
       }
     } catch {
       setError(t('common.networkError'));

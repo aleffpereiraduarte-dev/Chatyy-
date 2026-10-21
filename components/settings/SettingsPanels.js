@@ -143,7 +143,7 @@ export function PushMasterSwitchRow() {
     const on = !!v;
     setEnabled(on);
     // Per-account only (no external reader of the global key).
-    await writeAcctFlag('push_enabled', on ? 'true' : 'false', { mirrorGlobal: false });
+    try { await writeAcctFlag('push_enabled', on ? 'true' : 'false', { mirrorGlobal: false }); } catch {}
     try {
       const push = await import('../../services/pushNotifications');
       push.setPushMasterEnabled?.(on);

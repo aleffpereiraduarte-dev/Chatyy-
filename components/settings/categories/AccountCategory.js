@@ -327,7 +327,7 @@ function DangerZone() {
                     else Alert.alert(t('settings.accountDeleted'), t('settings.accountDeletedMessage'));
                     logout();
                   } else {
-                    setError(r.message || t('settings.deleteAccountError'));
+                    setError(r?.message || t('settings.deleteAccountError'));
                   }
                 } catch {
                   setError(t('common.networkError'));

@@ -32,13 +32,13 @@ export default function NotificationsCategory() {
               subtitle={perm === 'denied' ? t('settings.notifsBlockedDesc') : t('settings.notifsAlertDesc')}
               value={perm === 'granted' ? t('settings.notifsActive') : undefined}
               chevron={false}
-              onPress={perm !== 'granted' && perm !== 'denied' ? async () => { setPerm(await Notification.requestPermission()); } : undefined}
+              onPress={perm !== 'granted' && perm !== 'denied' ? async () => { try { const p = await Notification.requestPermission(); setPerm(p || Notification.permission); } catch { try { setPerm(Notification.permission); } catch {} } } : undefined}
             />
           </SettingsGroup>
         </View>
       )}
       {Platform.OS !== 'web' && (
-        <SettingsGroup footer={t('notif.pushDesc')}>
+        <SettingsGroup>
           <PushMasterSwitchRow />
         </SettingsGroup>
       )}

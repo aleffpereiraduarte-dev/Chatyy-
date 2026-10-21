@@ -262,7 +262,7 @@ export default function BackupScreen() {
       const r = await api.historySnapshotSetSchedule(sched);
       if (r?.success !== false) setSnapshot(s => ({ ...s, schedule: sched }));
       else safeAlert(t('common.error') || 'Error', mapApiError(r, t, 'backup'));
-    } finally { setSnapshotBusy(false); }
+    } catch { safeAlert(t('common.error') || 'Erro', t('common.networkError')); } finally { setSnapshotBusy(false); }
   }, [t]);
 
   const handleSnapshotNow = useCallback(async () => {
@@ -282,7 +282,7 @@ export default function BackupScreen() {
       } else {
         safeAlert(t('common.error') || 'Error', mapApiError(r, t, 'backup'));
       }
-    } finally { setSnapshotBusy(false); }
+    } catch { safeAlert(t('common.error') || 'Erro', t('common.networkError')); } finally { setSnapshotBusy(false); }
   }, [t]);
 
   const handleSnapshotRestore = useCallback(() => {
@@ -302,7 +302,7 @@ export default function BackupScreen() {
               } else {
                 safeAlert(t('common.error') || 'Error', mapApiError(r, t, 'backup'));
               }
-            } finally { setSnapshotBusy(false); }
+            } catch { safeAlert(t('common.error') || 'Erro', t('common.networkError')); } finally { setSnapshotBusy(false); }
           },
         },
       ]
@@ -326,7 +326,7 @@ export default function BackupScreen() {
               } else {
                 safeAlert(t('common.error') || 'Error', mapApiError(r, t, 'backup'));
               }
-            } finally { setSnapshotBusy(false); }
+            } catch { safeAlert(t('common.error') || 'Erro', t('common.networkError')); } finally { setSnapshotBusy(false); }
           },
         },
       ]

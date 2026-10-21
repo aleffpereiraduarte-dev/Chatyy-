@@ -142,11 +142,13 @@ export default function NotificationPreferences() {
 
   // Optimistic single-field save. On failure roll back the UI to the
   // previous value so we never silently diverge from the server.
-  const savePref = useCallback(async (patch) => {
+  const savePref = useCallback(async (patch, prevOverride) => {
     // [2026-10-20 wa2] desfaz só as chaves deste patch (a cópia inteira apagava outras
     // mudanças feitas enquanto este salvamento estava em andamento).
+    // [2026-10-21] campos de texto (horário) já gravaram o digitado em prefs →
+    // o chamador passa o valor de antes (prevOverride) p/ o desfazer funcionar.
     const prevVals = {};
-    for (const k of Object.keys(patch || {})) prevVals[k] = prefs ? prefs[k] : undefined;
+    for (const k of Object.keys(patch || {})) prevVals[k] = (prevOverride && k in prevOverride) ? prevOverride[k] : (prefs ? prefs[k] : undefined);
     setPrefs(p => ({ ...p, ...patch }));
     // [2026-10-13 settings-instant] commit otimista: snapshot local + fila
     // offline (sem rede não desfaz — reenvia ao reconectar).
@@ -158,6 +160,8 @@ export default function NotificationPreferences() {
       Alert.alert(t('common.error'), t('notifPref.saveFailed'));
     }
   }, [prefs, t]);
+
+  const dndFocusRef = useRef({ dnd_start_time: '', dnd_end_time: '' });
 
   const addKeyword = useCallback(async () => {
     const kw = newKeyword.trim();
@@ -183,7 +187,7 @@ export default function NotificationPreferences() {
         Alert.alert(t('common.error'), r?.error || t('notifPref.addFailed'));
       }
     } catch (e) {
-      Alert.alert(t('common.error'), e?.message || t('notifPref.connFailed'));
+      Alert.alert(t('common.error'), t('notifPref.connFailed'));
     }
   }, [newKeyword, t]);
 
@@ -194,7 +198,7 @@ export default function NotificationPreferences() {
       if (r?.success === false) { Alert.alert(t('common.error'), t('notifPref.genericFail')); return; }
       setKeywords(prev => prev.filter(k => k.id !== id));
     } catch (e) {
-      Alert.alert(t('common.error'), e?.message || t('notifPref.connFailed'));
+      Alert.alert(t('common.error'), t('notifPref.connFailed'));
     }
   }, [t]);
 
@@ -225,7 +229,7 @@ export default function NotificationPreferences() {
         Alert.alert(t('common.error'), t('notifPref.genericFail'));
       }
     } catch (e) {
-      Alert.alert(t('common.error'), e?.message || t('notifPref.genericFail'));
+      Alert.alert(t('common.error'), t('notifPref.genericFail'));
     }
   }, [t]);
   const clearSnooze = useCallback(async () => {
@@ -336,13 +340,18 @@ export default function NotificationPreferences() {
                 <TextInput
                   value={prefs.dnd_start_time || ''}
                   onChangeText={(v) => setPrefs(p => ({ ...p, dnd_start_time: v }))}
+                  onFocus={() => { dndFocusRef.current.dnd_start_time = prefs.dnd_start_time || ''; }}
                   onBlur={() => {
+                    // [2026-10-21] só salva se mudou; inválido volta ao valor
+                    // anterior (antes sobrescrevia o salvo com '22:00').
+                    const before = dndFocusRef.current.dnd_start_time;
                     const v = (prefs.dnd_start_time || '').trim();
+                    if (v === before) return;
                     if (/^([01]\d|2[0-3]):([0-5]\d)$/.test(v)) {
-                      savePref({ dnd_start_time: v });
+                      savePref({ dnd_start_time: v }, { dnd_start_time: before });
                     } else {
-                      setPrefs(p => ({ ...p, dnd_start_time: '22:00' }));
-                      savePref({ dnd_start_time: '22:00' });
+                      setPrefs(p => ({ ...p, dnd_start_time: before || '22:00' }));
+                      if (!before) savePref({ dnd_start_time: '22:00' }, { dnd_start_time: before });
                     }
                   }}
                   placeholder="22:00"
@@ -362,13 +371,18 @@ export default function NotificationPreferences() {
                 <TextInput
                   value={prefs.dnd_end_time || ''}
                   onChangeText={(v) => setPrefs(p => ({ ...p, dnd_end_time: v }))}
+                  onFocus={() => { dndFocusRef.current.dnd_end_time = prefs.dnd_end_time || ''; }}
                   onBlur={() => {
+                    // [2026-10-21] só salva se mudou; inválido volta ao valor
+                    // anterior (antes sobrescrevia o salvo com '07:00').
+                    const before = dndFocusRef.current.dnd_end_time;
                     const v = (prefs.dnd_end_time || '').trim();
+                    if (v === before) return;
                     if (/^([01]\d|2[0-3]):([0-5]\d)$/.test(v)) {
-                      savePref({ dnd_end_time: v });
+                      savePref({ dnd_end_time: v }, { dnd_end_time: before });
                     } else {
-                      setPrefs(p => ({ ...p, dnd_end_time: '07:00' }));
-                      savePref({ dnd_end_time: '07:00' });
+                      setPrefs(p => ({ ...p, dnd_end_time: before || '07:00' }));
+                      if (!before) savePref({ dnd_end_time: '07:00' }, { dnd_end_time: before });
                     }
                   }}
                   placeholder="07:00"

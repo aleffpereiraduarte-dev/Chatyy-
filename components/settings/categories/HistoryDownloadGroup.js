@@ -98,10 +98,12 @@ export default memo(function HistoryDownloadGroup() {
       const { forceFullHistoryDownload } = require('../../../services/fullHistorySync');
       const email = api.getActiveAccountEmail?.() || '';
       await forceFullHistoryDownload(api.apiCall, email, { includeAllMedia: true });
-    } catch {}
+    } catch {
+      try { require('../../ui/Toast').showToast({ message: t('settings.storage.downloadFailed', 'Não foi possível baixar. Verifique a conexão e tente de novo.'), kind: 'error' }); } catch {}
+    }
     setBusyHistory(false);
     refreshStats();
-  }, [busyHistory, refreshStats]);
+  }, [busyHistory, refreshStats, t]);
 
   const onDownloadMissing = useCallback(async () => {
     if (busyMedia) return;
@@ -120,10 +122,12 @@ export default memo(function HistoryDownloadGroup() {
           if (aliveRef.current) setMediaProgress(p);
         },
       });
-    } catch {}
+    } catch {
+      try { require('../../ui/Toast').showToast({ message: t('settings.storage.downloadFailed', 'Não foi possível baixar. Verifique a conexão e tente de novo.'), kind: 'error' }); } catch {}
+    }
     setBusyMedia(false);
     refreshStats();
-  }, [busyMedia, refreshStats]);
+  }, [busyMedia, refreshStats, t]);
 
   if (Platform.OS === 'web') return null;
 

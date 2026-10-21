@@ -38,8 +38,10 @@ export default function PasskeysScreen() {
   const supported = PASSKEYS_ENABLED && isPasskeySupported();
 
   const reload = useCallback(async () => {
-    const list = await listPasskeys();
-    setItems(Array.isArray(list) ? list : []);
+    try {
+      const list = await listPasskeys();
+      setItems(Array.isArray(list) ? list : []);
+    } catch { setItems([]); }
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
@@ -63,6 +65,8 @@ export default function PasskeysScreen() {
       } else if (r.reason !== 'cancelled') {
         Alert.alert(t('settings.passkeys.title'), t('settings.passkeys.error'));
       }
+    } catch {
+      Alert.alert(t('settings.passkeys.title'), t('settings.passkeys.error'));
     } finally {
       setBusy(false);
     }

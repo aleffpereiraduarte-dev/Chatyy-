@@ -360,7 +360,10 @@ export default function ManageStorageScreen() {
     try {
       const r = await api.fileDelete(f.id);
       if (r?.success !== false) afterTrash([f.id]);
-    } catch {}
+      else if (alive.current) setNote(tt(t, 'manageStorage.trashPartial', 'Alguns itens não puderam ser movidos. Tente de novo.'));
+    } catch {
+      if (alive.current) setNote(tt(t, 'manageStorage.trashPartial', 'Alguns itens não puderam ser movidos. Tente de novo.'));
+    }
     if (alive.current) markBusy([f.id], false);
   };
 

@@ -126,7 +126,7 @@ export default function ListenCatalog() {
   const openGenre = async (k, label) => {
     setGenre({ k, label, items: null, next: null });
     const r = await fetchTab({ tab: 'musica', chip: k, country });
-    setGenre((g) => (g && g.k === k ? { ...g, items: (r && r.items) || [], next: r && r.next_cursor } : g));
+    setGenre((g) => (g && g.k === k ? { ...g, items: (r && r.items) || [], next: r && r.next_cursor, failed: !r || !!r.error } : g));
   };
   const moreGenre = async () => {
     if (!genre || !genre.next) return;
@@ -222,7 +222,9 @@ export default function ListenCatalog() {
             <IconX size={13} color={c.accentInk} />
           </Pressable>
         </View>
-        {!genre.items ? <ActivityIndicator style={{ marginTop: 30 }} color={c.muted} /> : genre.items.map(row)}
+        {!genre.items ? <ActivityIndicator style={{ marginTop: 30 }} color={c.muted} /> : genre.items.length ? genre.items.map(row) : (
+          <Text style={[st.empty, { color: c.muted }]}>{genre.failed ? WT.tr(t, 'watch.catalogError', 'Não deu para carregar. Tente de novo daqui a pouco.') : WT.tr(t, 'watch.nothingFound', 'Nada encontrado. Tente outra palavra.')}</Text>
+        )}
         {genre.next ? <Pressable onPress={moreGenre} style={[st.more, { borderColor: c.line }]}><Text style={{ color: c.text, fontWeight: '600' }}>{WT.tr(t, 'watch.loadMore', 'Carregar mais')}</Text></Pressable> : null}
       </View>
     );
@@ -241,6 +243,9 @@ export default function ListenCatalog() {
         {!jamOff ? shelf(WT.tr(t, 'listen.hot', 'Em alta'), 'Jamendo', hotOnly) : null}
         {!jamOff ? shelf(WT.tr(t, 'listen.lofi', 'Lo-fi para relaxar'), null, lofi) : null}
         {shelf(WT.tr(t, 'listen.classics', 'Clássicos'), WT.tr(t, 'watch.src.pd', 'Domínio público'), classicPd)}
+        {classic && classic.error && (jamOff || ((hot && hot.error) && (lofi && lofi.error))) ? (
+          <Text style={[st.empty, { color: c.muted }]}>{WT.tr(t, 'watch.catalogError', 'Não deu para carregar. Tente de novo daqui a pouco.')}</Text>
+        ) : null}
         {convItems.length ? (
           <View>
             <View style={st.shelfH}><Text style={[st.shelfT, { color: c.text }]}>{WT.tr(t, 'watch.tab.conv', 'Da conversa')}</Text><Text style={[st.shelfS, { color: c.muted }]}>{convItems.length}</Text></View>
@@ -271,7 +276,7 @@ export default function ListenCatalog() {
           <IconSearch size={18} color={c.muted} />
           <TextInput value={q} onChangeText={setQ} placeholder={WT.tr(t, 'listen.searchPh', 'Músicas, artistas, gêneros')} placeholderTextColor={c.muted}
             style={[st.srchIn, { color: c.text }]} returnKeyType="search" autoCorrect={false} />
-          {q ? <Pressable accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setQ('')} hitSlop={8}><IconX size={16} color={c.muted} /></Pressable> : null}
+          {q ? <Pressable accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => setQ('')}><IconX size={16} color={c.muted} /></Pressable> : null}
         </View>
       </View>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 100 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
@@ -296,7 +301,7 @@ const st = StyleSheet.create({
   r1: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 6 },
   ib: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   kicker: { fontSize: 13, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
-  h1: { fontSize: 30, fontWeight: '800', letterSpacing: -0.8, paddingHorizontal: 16, marginTop: 4 },
+  h1: { fontSize: 34, lineHeight: 40, fontWeight: '800', letterSpacing: -0.8, paddingHorizontal: 16, marginTop: 4 },
   srch: { marginHorizontal: 16, marginTop: 12, marginBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, paddingHorizontal: 10, height: 40 },
   srchIn: { flex: 1, fontSize: 16, paddingVertical: Platform.OS === 'android' ? 0 : 6 },
   genres: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingHorizontal: 16, paddingTop: 12 },

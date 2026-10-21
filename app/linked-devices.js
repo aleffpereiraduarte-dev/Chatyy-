@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { IconArrowLeft, IconShield, IconMonitor, IconSmartphone, IconCamera, IconUserPlus, IconX } from '../components/Icons';
+import { IconArrowLeft, IconShield, IconMonitor, IconSmartphone, IconCamera, IconUserPlus, IconX, IconRefresh } from '../components/Icons';
 import * as api from '../services/api';
 import * as settingsCache from '../services/settingsCache'; // [2026-10-13 settings-instant]
 import { loadDeviceRegistry, installAppStateHook } from '../services/deviceRegistry';
@@ -83,6 +83,8 @@ export default function LinkedDevicesScreen() {
   // (por conta) → abre na hora; spinner só na 1ª vez na vida.
   const [sessions, setSessions] = useState(() => { const c = settingsCache.peek('sessions'); return Array.isArray(c) ? c : []; });
   const [loading, setLoading] = useState(() => settingsCache.peek('sessions') == null);
+  // [2026-10-21] falha de rede sem cache ≠ "Apenas este dispositivo".
+  const [loadFailed, setLoadFailed] = useState(false);
   const [revoking, setRevoking] = useState(null);
   // Companion-mode scanner state. We use the same modal-camera shape that
   // profile-qr.js / chat-new.js do — lazy-loaded expo-camera, with a
@@ -95,6 +97,7 @@ export default function LinkedDevicesScreen() {
 
   const load = useCallback(async () => {
     if (settingsCache.peek('sessions') == null) setLoading(true);
+    let _ok = false;
     // sessions_list requires auth; on a cold mount the auth can lag a tick
     // behind the screen (QA robot flagged a transient 401 here). Preflight:
     // wait for auth to be READY before the FIRST request so it goes out authed.
@@ -118,6 +121,7 @@ export default function LinkedDevicesScreen() {
           const list = Array.isArray(r.data) ? r.data : (r.data.sessions || []);
           setSessions(list);
           try { settingsCache.put('sessions', list); } catch {}
+          _ok = true;
           break;
         }
         if (r && r.success === false && attempt < 2) {
@@ -130,6 +134,7 @@ export default function LinkedDevicesScreen() {
         console.warn('[devices] load:', e);
       }
     }
+    setLoadFailed(!_ok && settingsCache.peek('sessions') == null);
     setLoading(false);
   }, [user?.email]);
 
@@ -183,7 +188,13 @@ export default function LinkedDevicesScreen() {
         load();
       } catch (e) {
         const errTitle = t('common.error') || 'Erro';
-        const errBody = (e?.message) || 'failed';
+        // [2026-10-21] nunca mostrar código interno ('invalid token'/'approve_failed'/'offline').
+        const _m = String(e?.message || '');
+        const errBody = /invalid token/i.test(_m)
+          ? t('devices.scanInvalid', 'Este QR não é de vincular celular. Gere um novo no outro aparelho.')
+          : (!_m || /approve_failed|offline|network|fetch|timeout|^failed$/i.test(_m))
+            ? t('devices.scanFailed', 'Não foi possível vincular. Tente de novo.')
+            : _m;
         if (Platform.OS === 'web') {
           if (window?.alert) window.alert(`${errTitle}: ${errBody}`);
         } else {
@@ -371,6 +382,10 @@ export default function LinkedDevicesScreen() {
       {loading ? (
         <SettingsGroup header={t('profile.activeSessions') || 'Sessões ativas'}>
           <SettingsRow title=" " chevron={false} right={<ActivityIndicator size="small" color={g.secondary} />} />
+        </SettingsGroup>
+      ) : (loadFailed && sessions.length === 0) ? (
+        <SettingsGroup header={t('profile.activeSessions') || 'Sessões ativas'} footer={t('devices.loadFailed', 'Não foi possível carregar os aparelhos. Verifique a conexão.')}>
+          <SettingsRow icon={IconRefresh} title={t('common.tryAgain', 'Tentar de novo')} onPress={load} testID="devices-retry" />
         </SettingsGroup>
       ) : sessions.length === 0 ? (
         <View style={styles.emptyWrap}>

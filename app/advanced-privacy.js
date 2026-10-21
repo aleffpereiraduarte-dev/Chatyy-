@@ -70,10 +70,15 @@ export default function AdvancedPrivacyScreen() {
   }, []);
 
   async function saveProxy(patch) {
+    const before = proxy;
     const next = { ...proxy, ...patch };
     setProxy(next);
     try { settingsCache.patch('adv_privacy', (prev) => ({ ...(prev || {}), proxy: { ...next, password: '' } })); } catch {}
-    try { await proxyCfg.setProxyConfig(patch); } catch {}
+    try { await proxyCfg.setProxyConfig(patch); } catch {
+      setProxy(before);
+      try { settingsCache.patch('adv_privacy', (prev) => ({ ...(prev || {}), proxy: { ...before, password: '' } })); } catch {}
+      try { settingsCache.notifySaveFailed(t); } catch {}
+    }
   }
   // [2026-10-20 wa2] Host/porta/usuário/senha: aplicar o proxy a CADA tecla derrubava
   // a conexão no meio da digitação ("1", "12", "127."…). Agora espera 900 ms parado.
@@ -93,12 +98,16 @@ export default function AdvancedPrivacyScreen() {
   useEffect(() => () => {
     // sair da tela com digitação pendente: aplica já
     const st = _proxyTxtRef.current;
-    if (st.timer) { clearTimeout(st.timer); st.timer = null; try { proxyCfg.setProxyConfig(st.pending); } catch {} }
+    if (st.timer) { clearTimeout(st.timer); st.timer = null; try { proxyCfg.setProxyConfig(st.pending)?.catch?.(() => {}); } catch {} }
   }, []);
   async function saveScreenBlock(v) {
     setScreenBlock(v);
     try { settingsCache.patch('adv_privacy', (prev) => ({ ...(prev || {}), screenBlock: !!v })); } catch {}
-    try { await screenGate.setScreenCaptureBlocked(v); } catch {}
+    try { await screenGate.setScreenCaptureBlocked(v); } catch {
+      setScreenBlock(!v);
+      try { settingsCache.patch('adv_privacy', (prev) => ({ ...(prev || {}), screenBlock: !v })); } catch {}
+      try { settingsCache.notifySaveFailed(t); } catch {}
+    }
   }
   async function saveDiscoverable(v) {
     setDiscoverable(v);
@@ -106,9 +115,14 @@ export default function AdvancedPrivacyScreen() {
     try {
       const r = await api.chatDiscoverableSet(v);
       if (r && r.success === false) { setDiscoverable(!v); settingsCache.put('discoverable', !v); settingsCache.notifySaveFailed(t); }
-    } catch {}
+    } catch {
+      // [2026-10-21] sem rede: não fica mostrando um valor que não foi salvo.
+      setDiscoverable(!v); settingsCache.put('discoverable', !v);
+      try { settingsCache.notifySaveFailed(t); } catch {}
+    }
   }
 
+  // [2026-10-21 polish] switches nativos: se o módulo recusar, volta o switch.
   // [2026-10-08 settings-redesign2] Header nativo único + listas agrupadas
   // (SettingsKit). Mesmas APIs: proxyConfig / screenCaptureGate / vpnDetect /
   // chatDiscoverableSet. Aviso de VPN em preto&branco (era amarelo).

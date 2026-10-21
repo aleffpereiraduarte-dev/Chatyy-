@@ -76,12 +76,15 @@ export default function WatchCatalog() {
     const hit = _cache.get(key);
     const n = ++reqN.current;
     if (hit && Date.now() - hit.at < 10 * 60 * 1000) {
+      setLoading(false);
       setData((d) => (cursor && d ? { ...hit.data, items: [...d.items, ...hit.data.items] } : hit.data)); setMore(hit.data.next_cursor || null); return;
     }
     if (!cursor) setLoading(true);
     const r = await WT.catalog({ tab, chip: tab === 'conv' ? 'videos' : (chip === 'tudo' ? '' : chip), q: qDeb, cursor: cursor || '', conversation_id: tab === 'conv' ? cid : undefined, country });
     if (n !== reqN.current) return;
     setLoading(false);
+    // [2026-10-21] "carregar mais" que falha não apaga a lista já mostrada
+    if (cursor && (!r || r.error)) { flash(WT.tr(t, 'watch.catalogError', 'Não deu para carregar. Tente de novo daqui a pouco.')); return; }
     if (r && !r.error) _cache.set(key, { at: Date.now(), data: r });
     setData((d) => (cursor && d && r && !r.error ? { ...r, items: [...d.items, ...(r.items || [])] } : r));
     setMore((r && r.next_cursor) || null);
@@ -327,7 +330,7 @@ const st = StyleSheet.create({
   root: { flex: 1 },
   r1: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6 },
   ib: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  h1: { fontSize: 28, fontWeight: '800', letterSpacing: -0.6, paddingHorizontal: 16 },
+  h1: { fontSize: 34, lineHeight: 40, fontWeight: '800', letterSpacing: -0.8, paddingHorizontal: 16 },
   sub: { fontSize: 13, paddingHorizontal: 16, marginTop: 2 },
   srch: { marginHorizontal: 16, marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, paddingHorizontal: 10, height: 38 },
   srchIn: { flex: 1, fontSize: 15.5, paddingVertical: Platform.OS === 'android' ? 0 : 6 },

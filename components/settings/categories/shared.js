@@ -357,7 +357,7 @@ export function useSettingsBlob() {
     });
     readLocalKeys(['notif_prefs']).then((kv) => {
       try { if (kv.notif_prefs) hydrate(JSON.parse(kv.notif_prefs)); } catch {}
-    });
+    }).catch(() => {});
     settingsCache.revalidate('settings', { ttl: OPEN_TTL }).catch(() => {});
     return () => {
       u1(); u2();

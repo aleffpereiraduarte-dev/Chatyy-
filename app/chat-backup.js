@@ -67,6 +67,19 @@ async function _hasRememberedPass() {
  * Password is NEVER sent to Chatyy servers. The native module derives
  * the AES key via PBKDF2 (600k iters) on-device.
  */
+// [2026-10-21 polish-calls-settings] Erros dos serviços de backup vêm em inglês
+// técnico ("decryption failed — wrong passphrase…", "Drive upload failed (403)…").
+// Mostra um texto amigável traduzido; o detalhe vai só para o console.
+function backupErrText(t, e) {
+  const m = String((e && e.message) || e || '');
+  try { console.warn('[chat-backup]', m); } catch {}
+  if (/passphrase|decrypt|bad magic|auth tag|not JSON|missing manifest/i.test(m)) return t('backup.errWrongPassword', 'Senha incorreta ou backup corrompido.');
+  if (/cancel/i.test(m)) return t('backup.errCancelled', 'Operação cancelada.');
+  if (/network|offline|fetch|timeout|timed out|api error|\(5\d\d\)/i.test(m)) return t('common.networkError', 'Erro de rede. Verifique sua conexão.');
+  if (/iCloud/i.test(m)) return t('backup.errICloud', 'iCloud indisponível neste aparelho.');
+  return t('backup.errGeneric', 'Não foi possível concluir. Tente de novo.');
+}
+
 export default function ChatBackupScreen() {
   const { colors } = useTheme();
   const { t } = useLanguage();
@@ -177,9 +190,7 @@ export default function ChatBackupScreen() {
     } catch (e) {
       // Surface but don't roll back the toggle — user can retry.
       Alert.alert(
-        t('backup.autoFailedTitle') || 'Auto backup',
-        String(e?.message || e)
-      );
+        t('backup.autoFailedTitle') || 'Auto backup', backupErrText(t, e));
     }
   }, [autoSchedule, password, t]);
 
@@ -204,7 +215,7 @@ export default function ChatBackupScreen() {
       }
       await refreshList();
     } catch (e) {
-      Alert.alert(t('backup.failedTitle') || 'Backup failed', String(e?.message || e));
+      Alert.alert(t('backup.failedTitle') || 'Backup failed', backupErrText(t, e));
     } finally {
       setWorking(false);
       setBusyAction(null);
@@ -237,7 +248,7 @@ export default function ChatBackupScreen() {
                 (t('backup.restoredMsg') || 'Database restored with') + ` ${r?.messageCount || 0} messages.`
               );
             } catch (e) {
-              Alert.alert(t('backup.restoreFailed') || 'Restore failed', String(e?.message || e));
+              Alert.alert(t('backup.restoreFailed') || 'Restore failed', backupErrText(t, e));
             } finally {
               setWorking(false);
               setBusyAction(null);
@@ -267,7 +278,7 @@ export default function ChatBackupScreen() {
         (t('backup.cloud.icloudOkMsg') || 'Backup salvo em ') + `${r.filename}`
       );
     } catch (e) {
-      Alert.alert(t('backup.failedTitle') || 'Falha no backup', String(e?.message || e));
+      Alert.alert(t('backup.failedTitle') || 'Falha no backup', backupErrText(t, e));
     } finally {
       setWorking(false);
       setBusyAction(null);
@@ -305,7 +316,7 @@ export default function ChatBackupScreen() {
         (t('backup.cloud.driveOkMsg') || 'Backup salvo como ') + `${r.filename}`
       );
     } catch (e) {
-      Alert.alert(t('backup.failedTitle') || 'Falha no backup', String(e?.message || e));
+      Alert.alert(t('backup.failedTitle') || 'Falha no backup', backupErrText(t, e));
     } finally {
       setWorking(false);
       setBusyAction(null);
@@ -354,6 +365,10 @@ export default function ChatBackupScreen() {
             text: t('backup.restoreConfirmCta') || 'Restaurar',
             style: 'destructive',
             onPress: async () => {
+              // [2026-10-21] o finally externo já liberou o spinner quando o
+              // Alert abriu — trava de novo durante a restauração real.
+              setWorking(true);
+              setBusyAction('restore');
               try {
                 const r = await restoreBundle(bundle);
                 Alert.alert(
@@ -364,14 +379,17 @@ export default function ChatBackupScreen() {
                     .replace('{skip}', r.skipped)
                 );
               } catch (e) {
-                Alert.alert(t('backup.restoreFailed') || 'Falha ao restaurar', String(e?.message || e));
+                Alert.alert(t('backup.restoreFailed') || 'Falha ao restaurar', backupErrText(t, e));
+              } finally {
+                setWorking(false);
+                setBusyAction(null);
               }
             },
           },
         ]
       );
     } catch (e) {
-      Alert.alert(t('backup.restoreFailed') || 'Falha ao restaurar', String(e?.message || e));
+      Alert.alert(t('backup.restoreFailed') || 'Falha ao restaurar', backupErrText(t, e));
     } finally {
       setWorking(false);
       setBusyAction(null);
@@ -431,7 +449,7 @@ export default function ChatBackupScreen() {
         dialogTitle: t('backup.export.encrypted') || 'Baixar JSON criptografado',
       });
     } catch (e) {
-      Alert.alert(t('backup.failedTitle') || 'Falha no backup', String(e?.message || e));
+      Alert.alert(t('backup.failedTitle') || 'Falha no backup', backupErrText(t, e));
     } finally {
       setWorking(false);
       setBusyAction(null);
@@ -464,7 +482,7 @@ export default function ChatBackupScreen() {
                 dialogTitle: t('backup.export.unencrypted') || 'Exportar sem criptografia',
               });
             } catch (e) {
-              Alert.alert(t('backup.failedTitle') || 'Falha no backup', String(e?.message || e));
+              Alert.alert(t('backup.failedTitle') || 'Falha no backup', backupErrText(t, e));
             } finally {
               setWorking(false);
               setBusyAction(null);

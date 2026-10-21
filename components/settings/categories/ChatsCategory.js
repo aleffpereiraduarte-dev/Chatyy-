@@ -194,9 +194,16 @@ function MutedWordsGroup() {
     putList(list => list.filter(x => x !== word));
     try {
       const r = await api.feedMutedWordsRemove(word);
-      if (r?.success === false && Array.isArray(before)) settingsCache.put('muted_words', before);
-    } catch {}
-  }, []);
+      if (r?.success === false) {
+        if (Array.isArray(before)) settingsCache.put('muted_words', before);
+        try { settingsCache.notifySaveFailed(t); } catch {}
+      }
+    } catch {
+      // [2026-10-21] sem rede: volta a palavra e avisa (antes sumia sem ter removido).
+      if (Array.isArray(before)) settingsCache.put('muted_words', before);
+      try { settingsCache.notifySaveFailed(t); } catch {}
+    }
+  }, [t]);
 
   const disabled = loading || !input.trim();
 
