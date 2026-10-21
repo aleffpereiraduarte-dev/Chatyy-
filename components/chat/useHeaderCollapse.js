@@ -14,6 +14,9 @@ let RA = null;
 try { RA = require('react-native-reanimated'); } catch {}
 const _ok = !!(RA && RA.useSharedValue && RA.useAnimatedStyle && RA.withTiming && RA.interpolateColor && RA.default && RA.default.View);
 
+// Worklets não podem capturar o módulo inteiro (RA.*) → função solta.
+const _interpolateColor = _ok ? RA.interpolateColor : null;
+
 export function headerCollapseOn() {
   return _ok && globalThis.__chatyy_header_collapse !== false;
 }
@@ -71,7 +74,7 @@ function useHeaderCollapseImpl(topInset, bgColor) {
     const s = (HEADER_SHRINK / 2) * p.value;
     return {
       paddingTop: top + 6 - s, paddingBottom: 6 - s, minHeight: 56 - HEADER_SHRINK * p.value,
-      backgroundColor: RA.interpolateColor(p.value, [0, 1], [bg, bg0]),
+      backgroundColor: _interpolateColor(p.value, [0, 1], [bg, bg0]),
     };
   }, [top, bg, bg0]);
   const avatarStyle = RA.useAnimatedStyle(() => ({ transform: [{ scale: 1 - 0.21 * p.value }] }));

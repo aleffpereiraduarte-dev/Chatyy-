@@ -13,7 +13,7 @@
 //   - shouldConfirm() → true = volta e chama onDismissAttempt() (ex.: "Descartar?").
 // Android/web: sem efeito (o Android tem o voltar do sistema).
 // Kill: globalThis.__chatyy_modal_drag = false (a rota continua abrindo igual).
-import React, { useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { Keyboard, Platform, StyleSheet, useWindowDimensions } from 'react-native';
 
 let RA = null;
@@ -29,6 +29,9 @@ export function routeDragDismissOn() {
   return OK && globalThis.__chatyy_modal_drag !== false;
 }
 
+// Worklets não podem capturar o módulo inteiro (RA.*) → funções soltas.
+const _runOnJS = OK ? RA.runOnJS : null;
+
 const DIST = 96;
 const VEL = 900; // pt/s
 
@@ -36,7 +39,7 @@ function DragRoot({ children, onDismiss, shouldConfirm, onDismissAttempt, style,
   const { height: winH } = useWindowDimensions();
   const y = RA.useSharedValue(0);
   const z = RA.useSharedValue(Number(zone) || 0);
-  z.value = Number(zone) || 0;
+  useEffect(() => { z.value = Number(zone) || 0; }, [zone]); // eslint-disable-line react-hooks/exhaustive-deps
   const cb = useRef({});
   cb.current = { onDismiss, shouldConfirm, onDismissAttempt };
   const pan = useMemo(() => {
@@ -51,7 +54,7 @@ function DragRoot({ children, onDismiss, shouldConfirm, onDismissAttempt, style,
         if (dy > DIST || vy > VEL) attempt();
         return;
       }
-      y.value = RA.withTiming(winH + 40, { duration: 180 }, (fin) => { 'worklet'; if (fin) RA.runOnJS(close)(); });
+      y.value = RA.withTiming(winH + 40, { duration: 180 }, (fin) => { 'worklet'; if (fin) _runOnJS(close)(); });
     };
     return GH.Gesture.Pan()
       .activeOffsetY(10)
@@ -64,9 +67,9 @@ function DragRoot({ children, onDismiss, shouldConfirm, onDismissAttempt, style,
         const t0 = e.allTouches && e.allTouches[0];
         if (!t0 || t0.y > z.value) mgr.fail();
       })
-      .onStart(() => { 'worklet'; RA.runOnJS(kb)(); })
+      .onStart(() => { 'worklet'; _runOnJS(kb)(); })
       .onUpdate((e) => { 'worklet'; y.value = Math.max(0, e.translationY); })
-      .onEnd((e) => { 'worklet'; RA.runOnJS(release)(Math.max(0, e.translationY), e.velocityY); });
+      .onEnd((e) => { 'worklet'; _runOnJS(release)(Math.max(0, e.translationY), e.velocityY); });
   }, [winH]); // eslint-disable-line react-hooks/exhaustive-deps
   const st = RA.useAnimatedStyle(() => ({ transform: [{ translateY: y.value }] }));
   const AV = RA.default.View;
