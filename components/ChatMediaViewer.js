@@ -1147,6 +1147,23 @@ function _canPlayHlsNatively() {
   return _hlsNativeWeb;
 }
 
+// [2026-10-21 viewer-audit] Retomar de onde parou (Telegram/YouTube): vídeo
+// longo (> 30 s) fechado/trocado no meio volta na mesma posição ao reabrir
+// nesta sessão do app. Só memória (nada em disco; view-once nunca entra).
+const _VID_POS = new Map();
+function _vidPosSave(key, player) {
+  try {
+    if (!key || !player) return;
+    const dur = Number(player.duration) || 0;
+    const ct = Number(player.currentTime) || 0;
+    if (dur > 30 && ct > 3 && ct < dur - 3) {
+      _VID_POS.delete(key);
+      _VID_POS.set(key, ct);
+      if (_VID_POS.size > 60) _VID_POS.delete(_VID_POS.keys().next().value);
+    } else if (dur > 0) _VID_POS.delete(key);
+  } catch {}
+}
+
 function NativeVideoPlayer({ url, isActive = true, allowPip = true, noCache = false }) {
   // Prefer expo-video — has native AVPlayerViewController controls,
   // PiP, fullscreen, scrubbing, captions. Custom AVPlayerLayer view
@@ -1163,10 +1180,44 @@ function NativeVideoPlayer({ url, isActive = true, allowPip = true, noCache = fa
     const player = useVideoPlayer(noCache ? url : cachedVideoSource(url), (p) => {
       try { p.loop = false; p.muted = false; } catch {}
     });
+    const _posKey = noCache ? null : (typeof url === 'string' ? url.split('?')[0] : null);
+    const _pendingSeek = useRef(null);
+    const _applySeek = useCallback(() => {
+      const ps = _pendingSeek.current;
+      if (ps == null || !player) return;
+      try {
+        const dur = Number(player.duration) || 0;
+        if (dur > 0) { _pendingSeek.current = null; if (ps < dur - 1) player.currentTime = ps; }
+      } catch {}
+    }, [player]);
     useEffect(() => {
       if (!player) return;
-      try { if (isActive) player.play(); else player.pause(); } catch {}
-    }, [isActive, player]);
+      try {
+        if (isActive) {
+          const saved = _posKey ? _VID_POS.get(_posKey) : null;
+          if (saved != null && (Number(player.currentTime) || 0) < 1) { _pendingSeek.current = saved; _applySeek(); }
+          player.play();
+        } else {
+          _vidPosSave(_posKey, { currentTime: player.currentTime, duration: player.duration });
+          player.pause();
+        }
+      } catch {}
+    }, [isActive, player, _posKey, _applySeek]);
+    // Fechar o viewer desmonta o player (já liberado na limpeza do
+    // useVideoPlayer) → guarda a última posição vista pelo timeUpdate.
+    const _lastPos = useRef(null);
+    useEffect(() => {
+      if (!player || !_posKey || typeof player.addListener !== 'function') return undefined;
+      let sub = null;
+      try {
+        if (!(player.timeUpdateEventInterval > 0)) player.timeUpdateEventInterval = 1;
+        sub = player.addListener('timeUpdate', (ev) => {
+          const ct = Number(ev && ev.currentTime);
+          if (isFinite(ct)) _lastPos.current = { currentTime: ct, duration: Number(player.duration) || 0 };
+        });
+      } catch {}
+      return () => { try { sub?.remove?.(); } catch {} _vidPosSave(_posKey, _lastPos.current); };
+    }, [player, _posKey]);
     // [bia-voz 2026-10-18] entra no registry de mídia → ligação/modo voz da Bia
     // pausam este vídeo (inclusive em PiP), senão o áudio dele vira "fala" no mic.
     useEffect(() => {
@@ -1188,7 +1239,7 @@ function NativeVideoPlayer({ url, isActive = true, allowPip = true, noCache = fa
       try {
         sub = player.addListener('statusChange', (ev) => {
           const st = ev && ev.status;
-          if (st === 'readyToPlay') { _setVidOfflineErr(false); return; }
+          if (st === 'readyToPlay') { _setVidOfflineErr(false); _applySeek(); return; }
           if (st !== 'error') return;
           let online = true;
           try { const oc = require('../services/offlineCache'); if (typeof oc.isOnline === 'function') online = !!oc.isOnline(); } catch {}
@@ -1196,7 +1247,7 @@ function NativeVideoPlayer({ url, isActive = true, allowPip = true, noCache = fa
         });
       } catch {}
       return () => { try { sub?.remove?.(); } catch {} };
-    }, [player, url]);
+    }, [player, url, _applySeek]);
 
     // Wave 14 — pinch-to-scrub. Uses react-native-gesture-handler's
     // PinchGestureHandler so the gesture composes cleanly with the
@@ -2384,6 +2435,15 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         _nvCleanup();
         _setNvFailed(true);
       }
+    }).catch(() => {
+      // [2026-10-21 viewer-audit] NV.open rejeitou (VC ocupado/Activity morta):
+      // sem este catch a sessão ficava em -1 → _nvOn preso = tela do viewer
+      // vazia (sem pager JS) + rejeição não tratada. Cai no pager JS.
+      if (_nvSessionRef.current === -1) {
+        _nvSessionRef.current = 0;
+        _nvCleanup();
+        _setNvFailed(true);
+      }
     });
     return undefined;
   }, [visible, _nvOn]);
@@ -2778,13 +2838,15 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
     if (viewOnce) return false;
     const _dlUrl = (_ovr && _ovr.url) || url;
     const _dlActive = (_ovr && _ovr.active) || _active;
-    const _dlName = (_ovr && _ovr.fileName) || fileName;
+    const _dlName = (_ovr && _ovr.fileName) || _active?.fileName || fileName; // [2026-10-21] álbum: nome do item ATUAL (não o da foto tocada)
     let _dlOk = false;
     if (Platform.OS === 'web') {
       // Stream as blob to avoid opening media.chatyy in a new tab
       try {
         setSaving(true);
         const res = await fetch(_dlUrl, { credentials: 'include' });
+        // [2026-10-21 viewer-audit] 404/403 baixava a página de erro como "foto.jpg"
+        if (!res.ok) throw new Error('http_' + res.status);
         const blob = await res.blob();
         const blobUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -2796,9 +2858,15 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
-      } catch {
-        // Fallback (still in same tab)
-        window.location.href = _dlUrl;
+      } catch (e) {
+        // [2026-10-21 viewer-audit] antes: window.location.href = url → o SPA
+        // inteiro saía da conversa (e no 404 abria a página de erro). Agora:
+        // erro HTTP = aviso; falha de rede/CORS = nova aba.
+        if (/^http_/.test(String(e?.message || ''))) {
+          try { Alert.alert(t?.('mediaViewer.saveErrorTitle') || 'Erro ao salvar', t?.('drive.downloadFailed') || 'Não foi possível baixar o arquivo. Tente novamente.'); } catch {}
+        } else {
+          try { window.open(_dlUrl, '_blank', 'noopener'); } catch {}
+        }
       } finally {
         setSaving(false);
       }

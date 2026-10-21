@@ -3586,7 +3586,7 @@ function PhotosScreenInner() {
     const go = (fn) => () => { PC.afterSheet().then(fn); };
     PC.showActionMenu({
       options: [
-        { label: 'Enviar fotos e vídeos do aparelho', onPress: go(uploadFromDevice) },
+        { label: t('photos.uploadFromDeviceMenu', 'Enviar fotos e vídeos do aparelho'), onPress: go(uploadFromDevice) },
         { label: PC.pcT('newPost'), onPress: () => startNewPostFlow('library') },
         { label: (t('photos.createAlbum') !== 'photos.createAlbum' && t('photos.createAlbum')) || 'Criar álbum', onPress: go(() => setCreateAlbumVisible(true)) },
       ],

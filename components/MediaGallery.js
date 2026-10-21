@@ -417,6 +417,16 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   const useNativeGrid = (activeTab === 'media' || activeTab === 'image' || activeTab === 'video') && isNativeMediaGridAvailable();
   const [sel, setSel] = useState({ active: false, keys: [], count: 0 });
   const [selBusy, setSelBusy] = useState(false);
+  // [2026-10-21 viewer-audit] retorno do "Salvar" em lote (WhatsApp: "N salvos")
+  // — antes sucesso saía calado e falha/permissão negada mostrava só "Erro".
+  const [saveNote, setSaveNote] = useState(null);
+  const saveNoteTimer = useRef(null);
+  useEffect(() => () => { if (saveNoteTimer.current) clearTimeout(saveNoteTimer.current); }, []);
+  const flashSaveNote = useCallback((msg) => {
+    if (saveNoteTimer.current) clearTimeout(saveNoteTimer.current);
+    setSaveNote(msg);
+    saveNoteTimer.current = setTimeout(() => { saveNoteTimer.current = null; setSaveNote(null); }, 2200);
+  }, []);
   const nativeItems = useMemo(() => (useNativeGrid ? _nativeItems(items, activeTab) : []), [useNativeGrid, items, activeTab]);
   const itemsById = useMemo(() => {
     const m = new Map();
@@ -609,23 +619,43 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
     if (!list.length) return;
     setSelBusy(true);
     let ok = 0;
+    let denied = false;
     try {
       const ML = require('expo-media-library');
-      const perm = await ML.requestPermissionsAsync(false);
-      if (perm?.status === 'granted') {
+      // true = só gravar (iOS "Adicionar apenas"), igual ao visualizador
+      const perm = await ML.requestPermissionsAsync(true);
+      if (perm?.status === 'granted' || perm?.accessPrivileges === 'all' || perm?.accessPrivileges === 'limited') {
         const { ensureLocalFile } = require('../utils/mediaNativeActions');
         for (const it of list) {
           try {
+            // eslint-disable-next-line no-await-in-loop
             const f = await ensureLocalFile(resolveUrl(it.file_url), it.file_name || '');
+            // eslint-disable-next-line no-await-in-loop
             if (f) { await ML.saveToLibraryAsync(f); ok++; }
           } catch {}
         }
-      }
+      } else denied = true;
     } catch {}
     setSelBusy(false);
-    // (dentro de <Modal>: o ToastHost global fica atrás — Alert só na falha)
-    if (ok > 0) exitSelection();
-    else { try { Alert.alert(t?.('common.error') || 'Erro'); } catch {} }
+    // (dentro de <Modal>: o ToastHost global fica atrás → aviso próprio da folha)
+    if (denied) {
+      try {
+        Alert.alert(
+          _tl('common.permission', 'Permissão necessária'),
+          _tl('viewer.photosPermissionHint', 'Vá em Ajustes > Chatyy > Fotos e selecione "Todas as fotos".'),
+        );
+      } catch {}
+      return;
+    }
+    if (ok > 0) {
+      exitSelection();
+      try { require('../services/haptics').success?.(); } catch {}
+      flashSaveNote(ok === list.length
+        ? (ok === 1 ? _tl('gallery.savedOne', 'Salvo na galeria') : _tl('gallery.savedMany', '{n} itens salvos na galeria').replace('{n}', String(ok)))
+        : _tl('gallery.savedPartial', '{ok} de {n} salvos na galeria').replace('{ok}', String(ok)).replace('{n}', String(list.length)));
+    } else {
+      try { Alert.alert(_tl('mediaViewer.saveErrorTitle', 'Erro ao salvar'), _tl('drive.downloadFailed', 'Não foi possível baixar o arquivo. Tente novamente.')); } catch {}
+    }
   };
   const shareSelected = async () => {
     const list = selectedItems();
@@ -757,6 +787,13 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
             onOpenLink={openLinkItem} onJump={jumpFromLink} onPlayAudio={playAudioItem} />
         )}
       </View>
+      {saveNote ? (
+        <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 48, alignItems: 'center' }}>
+          <View accessibilityLiveRegion="polite" style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: 'rgba(20,20,22,0.92)' }}>
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>{saveNote}</Text>
+          </View>
+        </View>
+      ) : null}
       <ChatMediaViewer
         visible={!!viewerItem}
         fileUrl={viewerItem?.fileUrl}

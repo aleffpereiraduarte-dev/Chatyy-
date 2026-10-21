@@ -16,6 +16,10 @@ function loadExpoVideo() {
 // mount; expanded playback (with audio) lives in the full-screen media
 // viewer. Hooks are called here (never behind a conditional in the parent)
 // to stay Rules-of-Hooks safe.
+// [2026-10-21 viewer-audit] hooks fora de qualquer return antecipado: o
+// `if (!uri) return null` vinha ANTES do useVideoPlayer → uri null→valor
+// mudava a contagem de hooks (crash "Rendered more hooks") e o React
+// Compiler pulava o componente. Agora o player vive em <NotePlayer>.
 export default function VideoNotePlayer({ uri }) {
   const { t } = useLanguage();
   if (!uri) return null;
@@ -40,6 +44,10 @@ export default function VideoNotePlayer({ uri }) {
       if (local) resolvedUri = local;
     } catch {}
   }
+  return <NotePlayer mod={mod} uri={resolvedUri} />;
+}
+
+function NotePlayer({ mod, uri: resolvedUri }) {
   const { useVideoPlayer, VideoView } = mod;
   const player = useVideoPlayer(cachedVideoSource(resolvedUri), (p) => {
     // expo-video usa `muted`/`loop` como properties (não isMuted como em
