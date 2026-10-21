@@ -161,6 +161,29 @@ export function noteBacklog(conversationId) {
   if (conversationId != null && Number(conversationId)) _backlog.add(Number(conversationId));
 }
 /** Rebuild the backlog set from SQLite (worker calls this after each drain). */
+// [2026-10-21 troca-conta] DONO da linha. A tabela `outbox` é do aparelho (não
+// da conta) e a troca de conta não a apaga mais: uma mensagem pendente de A
+// NUNCA pode sair com o bearer de B. enqueue() carimba `_owner`; linha antiga
+// usa sender_email; sem nenhum dos dois = conta ativa (comportamento antigo).
+// Linha de outra conta fica parada (nunca descartada) e volta a sair quando a
+// conta dela estiver ativa de novo.
+function _activeOwner() {
+  try { return String(require('./api').getActiveAccountEmail?.() || '').trim().toLowerCase(); } catch { return ''; }
+}
+export function rowOwner(row) {
+  const p = row && (row.payload || (row.payload_raw ? (() => { try { return JSON.parse(row.payload_raw); } catch { return null; } })() : null));
+  return String((p && (p._owner || p.sender_email)) || '').trim().toLowerCase();
+}
+export function isForeignRow(row, active = _activeOwner()) {
+  const o = rowOwner(row);
+  return !!(o && active && o !== active);
+}
+function _mine(rows) {
+  const a = _activeOwner();
+  if (!a) return rows || [];
+  return (rows || []).filter((r) => !isForeignRow(r, a));
+}
+
 export async function refreshBacklog() {
   const db = await _db_or_null();
   if (!db) return;
@@ -168,9 +191,11 @@ export async function refreshBacklog() {
     // Rows the foreground currently owns ('sending' in this process) are not
     // a backlog — the foreground is already sending them in order.
     // [2026-10-07 send-media] upload-lane rows never block text (own lane).
-    const owned = await db.getAllAsync(`SELECT conversation_id AS c, client_message_id AS k, state FROM outbox WHERE state IN ('queued','sending') AND lane = 'msg'`);
+    const owned = await db.getAllAsync(`SELECT conversation_id AS c, client_message_id AS k, state, payload FROM outbox WHERE state IN ('queued','sending') AND lane = 'msg'`);
     const nonOwned = new Set();
+    const _a = _activeOwner();
     for (const r of owned || []) {
+      if (_a && isForeignRow({ payload_raw: r.payload }, _a)) continue; // [troca-conta] fila de outra conta
       const c = Number(r?.c);
       if (!c) continue;
       if (r.state === 'sending' && isOwnedSending(r.k)) continue;
@@ -410,6 +435,8 @@ export async function enqueue(payload, opts = null) {
   // [e2ee5 WP-08c] Conversa E2EE v5: a linha guarda SÓ o envelope (ou nada até a cifra terminar;
   // `_e2eWanted` sem `_e2e` → o worker marca "não enviada", nunca reenvia texto puro).
   try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn()) payload = _e5.outboxScrub(payload); } catch {}
+  // [2026-10-21 troca-conta] carimba a conta dona da linha (ver rowOwner)
+  try { if (payload && !payload._owner) { const _o = _activeOwner(); if (_o) payload = { ...payload, _owner: _o }; } } catch {}
   // [2026-10-15 ordem-rico] Ver _enqueuing acima: síncrono, antes do 1º await.
   const _trackConv = (initialState === 'queued' && lane === 'msg') ? Number(payload.conversation_id) : 0;
   if (_trackConv) _enqueuing.set(_trackConv, (_enqueuing.get(_trackConv) || 0) + 1);
@@ -534,27 +561,31 @@ export async function dequeueNext(conversationId = null) {
   const now = Date.now();
   try {
     let row;
+    // [2026-10-21 troca-conta] linhas de OUTRA conta não contam (nem como cabeça da fila).
     if (conversationId == null) {
-      row = await db.getFirstAsync(
+      const rs = await db.getAllAsync(
         `SELECT * FROM outbox
           WHERE state = 'queued' AND next_retry_at <= ? AND lane = 'msg'
           ORDER BY conversation_id ASC, seq ASC
-          LIMIT 1`,
+          LIMIT 200`,
         now
       );
+      row = _mine((rs || []).map((r) => ({ ...r, payload_raw: r.payload, payload: null })))[0] || null;
     } else {
       // [send-reliability] Head-of-line: only the LOWEST pending seq of the
       // conversation may go out. A higher seq that is already due must wait
       // while an older row is still in backoff or in flight.
-      row = await db.getFirstAsync(
+      const rs = await db.getAllAsync(
         `SELECT * FROM outbox
           WHERE conversation_id = ? AND state IN ('queued','sending') AND lane = 'msg'
           ORDER BY seq ASC
-          LIMIT 1`,
+          LIMIT 200`,
         Number(conversationId)
       );
+      row = _mine((rs || []).map((r) => ({ ...r, payload_raw: r.payload, payload: null })))[0] || null;
       if (row && (row.state !== 'queued' || (Number(row.next_retry_at) || 0) > now)) row = null;
     }
+    if (row) { row = { ...row, payload: row.payload_raw }; delete row.payload_raw; }
     if (!row) return null;
     return _hydrate(row);
   } catch (e) {
@@ -663,7 +694,7 @@ export async function listAccepted() {
   if (!db) return [];
   try {
     const rows = await db.getAllAsync(`SELECT * FROM outbox WHERE state = 'accepted' ORDER BY seq ASC LIMIT 200`);
-    return (rows || []).map(_hydrate);
+    return _mine((rows || []).map(_hydrate));
   } catch { return []; }
 }
 
@@ -888,9 +919,9 @@ export async function dequeueUploads(limit = 4) {
         WHERE lane = 'upload' AND state = 'queued' AND next_retry_at <= ?
         ORDER BY created_at ASC, seq ASC
         LIMIT ?`,
-      Date.now(), Math.max(1, limit | 0)
+      Date.now(), Math.max(1, limit | 0) + 50
     );
-    return (rows || []).map(_hydrate);
+    return _mine((rows || []).map(_hydrate)).slice(0, Math.max(1, limit | 0)); // [troca-conta]
   } catch { return []; }
 }
 
@@ -899,9 +930,15 @@ export async function nextUploadDueAt() {
   const db = await _db_or_null();
   if (!db) return null;
   try {
-    const row = await db.getFirstAsync(`SELECT MIN(next_retry_at) AS m FROM outbox WHERE lane = 'upload' AND state = 'queued'`);
-    const m = row ? (row.m ?? row['m']) : null;
-    return m == null ? null : Number(m);
+    // [2026-10-21 troca-conta] só linhas da conta ativa (a de outra conta, já
+    // vencida, faria o despertador girar sem nada para tirar da fila).
+    const rows = await db.getAllAsync(`SELECT next_retry_at, payload FROM outbox WHERE lane = 'upload' AND state = 'queued'`);
+    let m = null;
+    for (const r of _mine((rows || []).map((r) => ({ payload_raw: r.payload, next_retry_at: r.next_retry_at })))) {
+      const v = Number(r.next_retry_at) || 0;
+      if (m == null || v < m) m = v;
+    }
+    return m;
   } catch { return null; }
 }
 
@@ -973,17 +1010,23 @@ export async function nextDueAt() {
     // it anyway, and the head's own transition re-pokes the worker. Without
     // this a released (due-now) row behind a backing-off head spun the wake
     // timer every 250ms.
-    const row = await db.getFirstAsync(
-      `SELECT MIN(o.next_retry_at) AS m FROM outbox o
-        WHERE o.state = 'queued' AND o.lane = 'msg'
-          AND NOT EXISTS (SELECT 1 FROM outbox h
-                           WHERE h.conversation_id = o.conversation_id
-                             AND h.state IN ('queued','sending')
-                             AND h.lane = 'msg'
-                             AND h.seq < o.seq)`
+    // [2026-10-21 troca-conta] cabeça calculada só com as linhas da conta ativa.
+    const rows = await db.getAllAsync(
+      `SELECT conversation_id, seq, state, next_retry_at, payload FROM outbox
+        WHERE state IN ('queued','sending') AND lane = 'msg'
+        ORDER BY conversation_id ASC, seq ASC`
     );
-    const m = row ? (row.m ?? row['m']) : null;
-    return m == null ? null : Number(m);
+    const seen = new Set();
+    let m = null;
+    for (const r of _mine((rows || []).map((r) => ({ ...r, payload_raw: r.payload, payload: null })))) {
+      const c = String(r.conversation_id);
+      if (seen.has(c)) continue;
+      seen.add(c);
+      if (r.state !== 'queued') continue;
+      const v = Number(r.next_retry_at) || 0;
+      if (m == null || v < m) m = v;
+    }
+    return m;
   } catch { return null; }
 }
 
@@ -1114,7 +1157,9 @@ export async function getPending(conversationId = null, opts = null) {
             ORDER BY seq ASC`,
           Number(conversationId)
         );
-    return rows.map(_hydrate);
+    // [2026-10-21 troca-conta] só a conta ativa (worker, migração p/ fila nativa,
+    // UI, reconcile); opts.allAccounts = todas.
+    return (opts && opts.allAccounts) ? rows.map(_hydrate) : _mine(rows.map(_hydrate));
   } catch { return []; }
 }
 

@@ -599,6 +599,13 @@ async function _rescopeForAccountSwitch(prevEmail, nextEmail) {
   try { require('../services/mmkv').setString('omc_cache_owner', next.toLowerCase()); } catch {}
   // 5. cursor de resume do WS desta conta
   try { require('../services/websocket').default?.bindCursorAccount?.(next); } catch {}
+  // 6. fila de envio JS: linhas são por conta (messageOutbox._owner) → a conta
+  //    nova retoma as dela (as da anterior ficam paradas até ela voltar)
+  setTimeout(() => {
+    try { require('../services/messageOutbox').refreshBacklog?.(); } catch {}
+    try { require('../services/sendWorker').poke?.(); } catch {}
+    try { require('../services/mediaSendQueue').kick?.(); } catch {}
+  }, 1500);
   return true;
 }
 

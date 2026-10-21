@@ -283,6 +283,7 @@ function _nativeEligible(row) {
 }
 async function _handToNative(row) {
   const cmi = row.client_message_id;
+  try { if (require('./messageOutbox').isForeignRow?.(row)) return false; } catch {} // [troca-conta]
   if (_nativeHanded.has(cmi)) return true;
   const claimed = await markSending(cmi);
   if (!claimed) return false;
@@ -366,6 +367,9 @@ async function _drainAllConversations() {
 // Claim a row in-flight and process it. On completion, self-rearm the SAME
 // conversation so its remaining backlog drains without waiting on the timer.
 function _kickoff(row) {
+  // [2026-10-21 troca-conta] linha de OUTRA conta nunca sai com o bearer desta
+  // (fica na fila; sai quando a conta dela voltar a ficar ativa).
+  try { if (require('./messageOutbox').isForeignRow?.(row)) return; } catch {}
   _inflight.add(row.conversation_id);
   // Don't await — let each conversation drain in parallel. The per-conv
   // FIFO guarantee comes from the _inflight set + seq ordering.
