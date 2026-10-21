@@ -6436,7 +6436,7 @@ async function _chatSendInner(conversationId, content, type = 'text', replyToId 
   let _e5 = null;
   try {
     const _e5m = require('./e2ee/e2ee5');
-    if (_e5m.isOn()) _e5 = await _e5m.sealForSend(conversationId, content, type, fileUrl, stableCMI, { reply: replyToId ? { id: replyToId, quoteText: opts?.replyQuoteText } : null, fwd: opts?.fwd, editOf: opts?.editOf });
+    if (_e5m.isOn()) _e5 = await _e5m.sealForSend(conversationId, content, type, fileUrl, stableCMI, { reply: replyToId ? { id: replyToId, quoteText: opts?.replyQuoteText } : null, fwd: opts?.fwd, via: opts?.via, editOf: opts?.editOf }); // [e2ee5] via:'bia' (WP-17)
   } catch { _e5 = null; }
   if (_e5 && _e5.refuse) {
     return { success: false, code: _e5.refuse.code, error: _e5.refuse.code, message: _e5.refuse.message, data: { code: _e5.refuse.code }, _e2ee5_refused: true };

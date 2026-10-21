@@ -537,6 +537,7 @@ export async function sealText(convId, text, opts) {
   if (rep) payload.reply = { ...rep, sender_uid: rep.sender_uid || undefined };
   if (o.mentionAll) payload.mention_all = true;
   if (o.fwd) payload.fwd = { n: Math.max(1, Number(o.fwd) || 1) };
+  if (o.via === 'bia') payload.via = 'bia'; // [e2ee5 WP-08c→WP-17] resposta da Bia a pedido explícito (D2), cifrada p/ todos
   const t0 = Date.now();
   let r;
   try {
@@ -582,7 +583,7 @@ export async function sealForSend(convId, content, type, fileUrl, cmid, opts) {
     return { refuse: { code: 'e2ee5_unsupported_type', message: 'Este tipo de mensagem ainda não pode ser enviado numa conversa protegida.' } };
   }
   try {
-    const env = await sealText(k, content, { cmid, reply: opts && opts.reply, mentionAll: opts && opts.mentionAll, fwd: opts && opts.fwd, editOf: opts && opts.editOf, editOfCmid: opts && opts.editOfCmid });
+    const env = await sealText(k, content, { cmid, reply: opts && opts.reply, mentionAll: opts && opts.mentionAll, fwd: opts && opts.fwd, via: opts && opts.via, editOf: opts && opts.editOf, editOfCmid: opts && opts.editOfCmid });
     return { content: env, extra: _extraOf(sealMetaOf(env) || {}) };
   } catch (e) {
     return { refuse: { code: (e && e.code) || 'encrypt_failed', message: 'Não foi possível criptografar a mensagem. Nada foi enviado.' } };
@@ -1116,6 +1117,29 @@ const _fold = (v) => { try { return String(v || '').normalize('NFD').replace(/[�
  * Busca no texto decifrado guardado NESTE aparelho (o servidor não indexa conversa E2EE).
  * → linhas `{id, conversation_id, sender_email, content, type, created_at, client_message_id}` (mais nova primeiro).
  */
+/**
+ * [e2ee5 WP-08c→WP-17] TODAS as mensagens decifradas guardadas NESTE aparelho para a conversa (memória +
+ * cache local persistido), não só as da tela — exportação no aparelho. Nada vai ao servidor.
+ * → `[{id, cmid, conversation_id, sender_email, content, t, payload, created_at, edited}]` (mais antiga primeiro).
+ */
+export async function listLocal(convId) {
+  if (!isOn() || convId == null) return [];
+  const conv = String(convId);
+  const byId = new Map();
+  const add = (e) => {
+    if (!e || e.conv !== conv || e.t === 'edit') return;
+    const id = String(e.mid || e.cmid || '');
+    if (!id || byId.has(id)) return;
+    const ed = e.mid ? editOf(e.mid, e.sender) : null;
+    byId.set(id, { id: e.mid ? Number(e.mid) : id, cmid: e.cmid || null, conversation_id: Number(conv) || conv, sender_email: e.sender || '', content: ed ? ed.text : (e.text || ''), t: e.t || 'text', payload: e.payload || null, created_at: new Date(e.ts || 0).toISOString(), edited: !!ed });
+  };
+  const all = [..._plain.values()];
+  try { all.push(...(await _persistScan(conv))); } catch (_) {}
+  for (const e of all) _noteEdit(e);
+  for (const e of all) add(e);
+  return [...byId.values()].sort((a, b) => (Date.parse(a.created_at) || 0) - (Date.parse(b.created_at) || 0));
+}
+
 export async function searchLocal(convId, query, limit = 60) {
   if (!isOn() || convId == null) return [];
   const toks = _fold(query).split(/\s+/).filter(Boolean).slice(0, 8);
@@ -1207,6 +1231,6 @@ const e2ee5 = {
   wsAuthFields, convState, convModeSync, convStateSync, isConvE2eeSync, watchConversation, prepareConversation,
   setConversationMode, sealText, sealEdit, sealForSend, sealMetaOf, peek, peekByMid, peekFailure, noteServerId,
   decryptRow, applyToRow, foldEdits, rowNeedsRefresh, sysKind, sysText, previewText, searchLocal, forwardClient,
-  outboxScrub, relayScrub, afterSend, editViaSend, editOf, sessionSync, deviceIdSync, myUidSync, isReadySync,
+  outboxScrub, relayScrub, afterSend, editViaSend, editOf, listLocal, sessionSync, deviceIdSync, myUidSync, isReadySync,
 };
 export default e2ee5;
