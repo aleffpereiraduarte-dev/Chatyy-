@@ -54,6 +54,22 @@ public class ChatyyChatStoreModule: Module {
       return ChatyyStoreDB.shared.messagesJSONSync(account: account, conv: conv, beforeId: Int64(beforeId), limit: limit)
     }
 
+    // [e2ee5 WP-08a] payloads decifrados pelo nativo (tabela e2e_plain). 1 = e2ePlainSync.
+    Function("e2eeApiVersion") { () -> Int in
+      return 1
+    }
+
+    /// ids = JSON "[id,…]" ("[]" = as 200 mais novas) → JSON {"<id>": {state, payload?, reason?, trust?, cmid}}.
+    Function("e2ePlainSync") { (account: String, conv: String, idsJson: String) -> String in
+      var ids: [Int64] = []
+      if let d = idsJson.data(using: .utf8), let a = (try? JSONSerialization.jsonObject(with: d)) as? [Any] {
+        for x in a {
+          if let n = x as? NSNumber { ids.append(n.int64Value) } else if let s = x as? String, let v = Int64(s) { ids.append(v) }
+        }
+      }
+      return ChatyyStoreDB.shared.e2ePlainJSONSync(account: account, conv: conv, ids: ids)
+    }
+
     Function("threadNewestSync") { (account: String, conv: String) -> String in
       return ChatyyStoreDB.shared.newestSync(account: account, conv: conv)
     }

@@ -257,6 +257,8 @@ final class ChatTransport {
   // MARK: [fase 4] porta WS da fila nativa (chamado na fila q)
   func nativeSendReady(account: String) -> Bool { return session?.nativeSendReady(account) ?? false }
   func nativeSendRaw(account: String, text: String) -> Bool { return session?.sendNativeFrame(account, text) ?? false }
+  /// [e2ee5 WP-08a] hub aceita envelope no native_send (cap `e2ee5_ns`, CONTRATO §5.3).
+  func e2eeNsReady(account: String) -> Bool { return session?.e2eeNsReady(account) ?? false }
 
   private func onPath(_ path: NWPath) {
     if !pathInited {
@@ -724,6 +726,8 @@ final class TransportSession {
   // [2b/4] conta confirmada pelo auth_success + capability native_send do hub
   private var authedAccount: String?
   private var nativeSendCap = false
+  /// [e2ee5 WP-08a] cap `e2ee5_ns` do auth_success (envelope pelo WS).
+  private var e2eeNsCap = false
   private var ingestBuf: [String] = []
 
   func isAuthed() -> Bool { return !closed && phys == .authed && task != nil }
@@ -742,6 +746,8 @@ final class TransportSession {
     return a == account.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
   }
 
+  func e2eeNsReady(_ account: String) -> Bool { return e2eeNsCap && nativeSendReady(account) }
+
   func sendNativeFrame(_ account: String, _ text: String) -> Bool {
     if !nativeSendReady(account) { return false }
     rawSend(text)
@@ -752,8 +758,11 @@ final class TransportSession {
   /// e-mail + caps do auth_success sem parsear o `data` inteiro (pode ter centenas de KB).
   private func noteAuthIdentity(_ text: String) {
     nativeSendCap = false
+    e2eeNsCap = false
     if let ci = text.range(of: "\"caps\":["), let end = text.range(of: "]", range: ci.upperBound..<text.endIndex) {
-      nativeSendCap = text[ci.lowerBound..<end.lowerBound].contains("\"native_send\"")
+      let caps = text[ci.lowerBound..<end.lowerBound]
+      nativeSendCap = caps.contains("\"native_send\"")
+      e2eeNsCap = caps.contains("\"e2ee5_ns\"")
     }
     // e-mail de TOPO: chaves do Go em ordem alfabética → vem depois de "data";
     // o último "email" é o do topo. Sem ele, vale a conta que o JS informou.
@@ -775,6 +784,8 @@ final class TransportSession {
     guard let acct = authedAccount else { return }
     ChatyyStoreDB.shared.ingestFrames(account: acct, frames: list)
     owner.bump("ingestBatches"); owner.bump("ingestFrames", Int64(list.count))
+    // [e2ee5 WP-08a] envelopes → decifra em 2º plano → e2e_plain (flag desligada = nada)
+    ChatyyE2EEIngest.shared.process(account: acct, frames: list)
   }
 
   init(sid: String, cfg: TransportConfig, owner: ChatTransport) {
@@ -939,6 +950,10 @@ final class TransportSession {
          let data = text.data(using: .utf8),
          let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
         ChatOutbox.shared.onWsFrame(account: acct, obj: obj)
+      }
+      // [e2ee5 WP-08a] estado E2EE da conversa mudou (§5.2) → cache nativo (só metadado)
+      if text.utf8.count < 4096 && text.contains("\"conv_e2ee\""), let acct = authedAccount {
+        ChatyyE2EEIngest.shared.noteConvE2EE(account: acct, text: text)
       }
       // [2b] mensagens/recibos → store nativo (o JS continua recebendo igual)
       if cfg.storeIngest && authedAccount != nil && ChatyyStoreIngest.wants(text) { ingestBuf.append(text) }

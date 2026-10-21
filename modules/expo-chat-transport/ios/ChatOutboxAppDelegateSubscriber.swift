@@ -16,6 +16,8 @@ public class ChatOutboxAppDelegateSubscriber: ExpoAppDelegateSubscriber {
   ) -> Bool {
     ChatOutboxBackground.registerOnce()
     ChatOutbox.shared.start()
+    // [e2ee5 WP-08a] resposta pela notificação / Siri em conversa E2EE (app morto incluso)
+    ChatyyE2EEBridge.install()
     // [2026-10-18 native-share] jobs da ShareExtension que ficaram órfãos
     ChatyyShareOutbox.shared.drainSoon("launch", delay: 6)
     return true

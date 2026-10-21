@@ -249,6 +249,9 @@ public enum ChatyyStoreIngest {
   /// Por que NÃO montar no nativo ("" = pode). Conservador.
   static func textReason(_ p: TextProfile, _ m: [String: Any]) -> String {
     if !p.ok { return "profile" }
+    // [e2ee5 WP-08a] envelope {"e2e":…}: o RowBuilder nativo NUNCA mostra o JSON cru
+    // (a foto fica "desatualizada" e o JS repinta com o texto decifrado).
+    if str(m["content"]).hasPrefix("{\"e2e\"") { return "e2e" }
     if p.group { return "group" }
     var type = str(m["type"]); if type.isEmpty { type = "text" }
     if type != "text" { return "type" }

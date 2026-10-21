@@ -239,6 +239,37 @@ final class ChatyyShareItem {
   var isMedia: Bool { return kind == .image || kind == .video || kind == .file }
 }
 
+// MARK: - [e2ee5 WP-08a 2026-10-21] conversas E2EE (sem núcleo na extensão)
+
+/// e2ee_mode por conversa: o snapshot do JS (e2ee_mode / e2ee / is_e2ee) OU o mapa do App Group
+/// que o app grava (ChatyyE2EEConvModes no expo-chat-transport: chatyy.e2ee5.convmode.u.<uid>).
+enum ChatyyShareE2EE {
+  static func modes(account: String, ud: UserDefaults) -> [String: Any] {
+    var vs = [account]
+    if account.hasSuffix("@chatyy.com.br") { vs.append(String(account.dropLast(14)) + "@onemundo.com.br") }
+    if account.hasSuffix("@onemundo.com.br") { vs.append(String(account.dropLast(16)) + "@chatyy.com.br") }
+    var out: [String: Any] = [:]
+    for v in vs {
+      guard let u = ud.string(forKey: "chatyy.e2ee5.uid.a." + v), !u.isEmpty,
+            let m = ud.dictionary(forKey: "chatyy.e2ee5.convmode.u." + u) else { continue }
+      for (k, x) in m { out[k] = x }
+    }
+    return out
+  }
+
+  static func truthy(_ v: Any?) -> Bool {
+    if let b = v as? Bool { return b }
+    if let n = v as? NSNumber { return n.intValue != 0 }
+    if let s = v as? String { return s == "1" || s == "true" }
+    return false
+  }
+
+  static func isProtected(_ row: [String: Any], id: String, modes: [String: Any]) -> Bool {
+    if truthy(row["e2ee_mode"]) || truthy(row["e2ee"]) || truthy(row["is_e2ee"]) { return true }
+    return (modes[id] as? NSNumber)?.intValue == 1
+  }
+}
+
 // MARK: - Portão: nativo ou fallback
 
 enum ChatyyShareGate {
@@ -278,15 +309,21 @@ enum ChatyyShareGate {
       return nil
     }
     var convs: [ChatyyShareConversation] = []
+    let e2eeModes = ChatyyShareE2EE.modes(account: account, ud: ud)
+    var e2eeSkipped = 0
     for r in rows {
       let id = str(r["id"])
       let title = str(r["title"])
       if id.isEmpty || title.isEmpty { continue }
+      // [e2ee5 WP-08a] conversa E2EE: a extensão não tem o núcleo → não envia daqui (nunca
+      // texto/mídia em claro); fica no app ("Mais opções no Chatyy" / fluxo antigo).
+      if ChatyyShareE2EE.isProtected(r, id: id, modes: e2eeModes) { e2eeSkipped += 1; continue }
       let email = str(r["email"]).lowercased()
       let key = (title + " " + email).folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
       convs.append(ChatyyShareConversation(id: id, title: title, isGroup: (r["is_group"] as? Bool) ?? false,
                                            email: email, avatarFile: str(r["avatar"]), searchKey: key))
     }
+    if e2eeSkipped > 0 { ChatyyShareDiag.log("info", "gate: \(e2eeSkipped) conversa(s) E2EE fora da lista nativa") }
     if convs.isEmpty {
       ChatyyShareDiag.log("info", "gate: snapshot vazio → app")
       return nil

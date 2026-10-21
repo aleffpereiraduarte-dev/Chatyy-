@@ -164,12 +164,70 @@ enum ChatyyIntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
     case notSignedIn
     case emptyMessage
     case sendFailed
+    case protectedOpenApp
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .notSignedIn: return "Open Chatyy and sign in first."
         case .emptyMessage: return "The message is empty."
         case .sendFailed: return "Could not send the message. Try again in Chatyy."
+        case .protectedOpenApp: return "This chat is end-to-end encrypted. Open Chatyy to send."
+        }
+    }
+}
+
+// [e2ee5 WP-08a 2026-10-21] Conversa E2EE (e2ee_mode=1, mapa do App Group gravado pelo app):
+// o texto NUNCA vai em claro. Vai pela ponte NotificationCenter do expo-chat-transport
+// (ChatyyE2EENative.swift cifra com o núcleo e envia pela fila nativa). Ninguém aceitou
+// (binário sem o núcleo / flag e2ee5_native desligada) → erro "abra o Chatyy".
+enum ChatyyIntentE2EE {
+    static func uidForAccount() -> String? {
+        guard let ud = UserDefaults(suiteName: chatyyAppGroup) else { return nil }
+        let a = (ud.string(forKey: "chatyy.auth_email") ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        var vs: [String] = []
+        if !a.isEmpty {
+            vs.append(a)
+            if a.hasSuffix("@chatyy.com.br") { vs.append(String(a.dropLast(14)) + "@onemundo.com.br") }
+            if a.hasSuffix("@onemundo.com.br") { vs.append(String(a.dropLast(16)) + "@chatyy.com.br") }
+        }
+        for v in vs { if let u = ud.string(forKey: "chatyy.e2ee5.uid.a." + v), !u.isEmpty { return u } }
+        let last = ud.string(forKey: "chatyy.e2ee5.lastUid") ?? ""
+        return last.isEmpty ? nil : last
+    }
+
+    static func isProtected(conversationId: String) -> Bool {
+        guard let ud = UserDefaults(suiteName: chatyyAppGroup), let u = uidForAccount(),
+              let m = ud.dictionary(forKey: "chatyy.e2ee5.convmode.u." + u) else { return false }
+        return (m[conversationId] as? NSNumber)?.intValue == 1
+    }
+
+    /// true = enviado cifrado. false = ninguém aceitou / falhou / passou do prazo.
+    static func send(conversationId: String, text: String, token: String) async -> Bool {
+        let cmid = "siri-" + UUID().uuidString.lowercased()
+        let account = UserDefaults(suiteName: chatyyAppGroup)?.string(forKey: "chatyy.auth_email") ?? ""
+        return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            let lock = NSLock()
+            var resumed = false
+            var obs: NSObjectProtocol?
+            func finish(_ ok: Bool) {
+                lock.lock()
+                if resumed { lock.unlock(); return }
+                resumed = true
+                lock.unlock()
+                if let o = obs { NotificationCenter.default.removeObserver(o) }
+                cont.resume(returning: ok)
+            }
+            obs = NotificationCenter.default.addObserver(forName: Notification.Name("ChatyyE2EENativeSendResult"), object: nil, queue: nil) { n in
+                guard (n.userInfo?["cmid"] as? String) == cmid else { return }
+                finish((n.userInfo?["state"] as? String) == "sent")
+            }
+            let box = NSMutableDictionary()
+            NotificationCenter.default.post(name: Notification.Name("ChatyyE2EENativeSendText"), object: nil, userInfo: [
+                "box": box, "account": account, "conv": conversationId, "text": text, "cmid": cmid,
+                "bearer": token, "base": ChatyyIntentStore.baseUrl(),
+            ])
+            if (box["accepted"] as? Bool) != true { finish(false); return }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 20) { finish(false) }
         }
     }
 }
@@ -289,6 +347,13 @@ struct ChatyySendMessageIntent: AppIntent {
         if text.isEmpty { throw ChatyyIntentError.emptyMessage }
         let token = ChatyyIntentStore.authToken()
         if token.isEmpty { throw ChatyyIntentError.notSignedIn }
+        if ChatyyIntentE2EE.isProtected(conversationId: contact.id) {
+            // [e2ee5 WP-08a] conversa cifrada: só pelo núcleo; senão o usuário abre o app
+            if await ChatyyIntentE2EE.send(conversationId: contact.id, text: text, token: token) {
+                return .result(dialog: IntentDialog("Sent to \\(contact.name)"))
+            }
+            throw ChatyyIntentError.protectedOpenApp
+        }
         try await ChatyyIntentAPI.sendText(conversationId: contact.id, text: text, token: token)
         return .result(dialog: IntentDialog("Sent to \\(contact.name)"))
     }
@@ -532,6 +597,7 @@ const PHRASES = {
 const STRINGS = {
   'Open Chatyy and sign in first.': { 'pt-BR': 'Abra o Chatyy e entre na sua conta primeiro.', 'pt-PT': 'Abra o Chatyy e inicie sessão primeiro.', es: 'Abre Chatyy e inicia sesión primero.' },
   'The message is empty.': { 'pt-BR': 'A mensagem está vazia.', 'pt-PT': 'A mensagem está vazia.', es: 'El mensaje está vacío.' },
+  'This chat is end-to-end encrypted. Open Chatyy to send.': { 'pt-BR': 'Esta conversa tem criptografia de ponta a ponta. Abra o Chatyy para enviar.', 'pt-PT': 'Esta conversa tem encriptação ponto a ponto. Abra o Chatyy para enviar.', es: 'Este chat tiene cifrado de extremo a extremo. Abre Chatyy para enviar.' },
   'Could not send the message. Try again in Chatyy.': { 'pt-BR': 'Não foi possível enviar a mensagem. Tente de novo no Chatyy.', 'pt-PT': 'Não foi possível enviar a mensagem. Tente novamente no Chatyy.', es: 'No se pudo enviar el mensaje. Inténtalo de nuevo en Chatyy.' },
   'Chatyy contact': { 'pt-BR': 'Contato do Chatyy', 'pt-PT': 'Contacto do Chatyy', es: 'Contacto de Chatyy' },
   'Send Chatyy message': { 'pt-BR': 'Enviar mensagem no Chatyy', 'pt-PT': 'Enviar mensagem no Chatyy', es: 'Enviar mensaje en Chatyy' },

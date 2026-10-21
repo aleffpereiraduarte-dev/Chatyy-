@@ -8,7 +8,7 @@ public class ChatyyTransportModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyTransport")
 
-    Events("onTransportFrames", "onTransportState", "onOutboxState")
+    Events("onTransportFrames", "onTransportState", "onOutboxState", "onE2EEPlain")
 
     OnCreate {
       ChatTransport.shared.emitter = { [weak self] name, body in
@@ -20,6 +20,7 @@ public class ChatyyTransportModule: Module {
         self?.sendEvent("onOutboxState", body)
       }
       ChatOutbox.shared.start()
+      ChatyyE2EEBridge.install() // [e2ee5 WP-08a] envio cifrado da notificação/Siri
     }
 
     OnDestroy {
@@ -37,10 +38,26 @@ public class ChatyyTransportModule: Module {
     }
 
     /// item = JSON {cmi, conv, kind:'text'|'media', body:{…chat_send}, frame?, file?, up?} → "new" | estado | ""
-    AsyncFunction("outboxSubmit") { (account: String, itemJson: String) -> String in
+    /// [e2ee5 WP-08a] conversa E2EE (flag e2ee5_native): cifra antes de gravar; "" = não entrou.
+    AsyncFunction("outboxSubmit") { (account: String, itemJson: String, promise: Promise) in
       guard let d = itemJson.data(using: .utf8),
-            let item = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return "" }
-      return ChatOutbox.shared.submit(account: account, item: item)
+            let item = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { promise.resolve(""); return }
+      ChatOutbox.shared.submitAsync(account: account, item: item) { st in promise.resolve(st) }
+    }
+
+    // ─── [e2ee5 WP-08a] E2EE nativo (sem conteúdo nas respostas) ────────────
+    /// 0 = binário sem o núcleo; 1 = fila cifra / ingest decifra / ponte notificação+Siri.
+    Function("e2eeNativeVersion") { () -> Int in
+      return ChatyyE2EEGate.coreLinked ? 1 : 0
+    }
+
+    /// O JS soube do e2ee_mode (conv_e2ee/conversation_state): aquece o cache nativo.
+    Function("e2eeNoteConv") { (account: String, conv: String, mode: Int) in
+      if let u = ChatyyE2EEConvModes.uid(account: account) { ChatyyE2EEConvCache.shared.noteMode(uid: u, conv: conv, mode: mode) }
+    }
+
+    Function("e2eeStats") { () -> [String: Any] in
+      return ChatyyE2EEIngest.shared.snapshot()
     }
 
     AsyncFunction("outboxList") { (account: String) -> String in

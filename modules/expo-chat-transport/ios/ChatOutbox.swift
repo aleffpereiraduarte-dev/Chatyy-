@@ -69,6 +69,10 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
   private var bgSession: URLSession?
   private var bgEventsDone: (() -> Void)?
   private var started = false
+  /// [e2ee5 WP-08a] cmi → quem espera o estado final (ponte notificação/Siri). Só na fila q.
+  private var finalWaiters: [String: [(String, String) -> Void]] = [:]
+  /// [e2ee5 WP-08a] linhas sendo recifradas (texto puro numa conversa que virou E2EE). Só na fila q.
+  private var reencrypting = Set<String>()
 
   private lazy var http: URLSession = {
     let c = URLSessionConfiguration.default
@@ -154,9 +158,60 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
   }
 
   /// Enfileira (idempotente por cmi). Grava no SQLite ANTES de voltar. "new" | estado | "".
+  /// [e2ee5 WP-08a] Conversa E2EE (flag e2ee5_native + e2ee_mode=1): cifra ANTES de gravar —
+  /// a tabela `outbox` e o HTTP/WS só veem o envelope. "" = não entrou (o JS segue o caminho dele).
   func submit(account: String, item: [String: Any]) -> String {
     let a = Self.norm(account)
     if a.isEmpty { return "" }
+    var it = item
+    if ChatyyE2EEOutbox.mayNeedWork(account: a, item: item) {
+      switch ChatyyE2EEOutbox.prepareBlocking(account: a, item: item, timeout: 8) {
+      case .pass: break
+      case .replace(let x): it = x
+      case .reject(let why): q.async { [self] in bump("e2eeRejected"); bump("e2eeRejected_" + why) }; return ""
+      }
+    }
+    return submitPrepared(a, it)
+  }
+
+  /// [e2ee5 WP-08a] Versão sem bloquear (outboxSubmit do JS, ponte): `done` com o estado do
+  /// submit; `onFinal` (opcional) com "sent"/"failed" + erro quando a linha termina.
+  func submitAsync(account: String, item: [String: Any], onFinal: ((String, String) -> Void)? = nil, done: @escaping (String) -> Void) {
+    let a = Self.norm(account)
+    if a.isEmpty { done(""); return }
+    let finish = { [self] (it: [String: Any]?) in
+      guard let it = it else { done(""); return }
+      if let cb = onFinal {
+        let cmi = ChatyyOutboxUtil.str(it["cmi"])
+        q.async { [self] in finalWaiters[cmi, default: []].append(cb) }
+      }
+      let st = submitPrepared(a, it)
+      if st.isEmpty || st == "sent" || st == "failed", let cb = onFinal {
+        let cmi = ChatyyOutboxUtil.str(it["cmi"])
+        q.async { [self] in
+          finalWaiters.removeValue(forKey: cmi)
+          if !st.isEmpty { cb(st, st == "failed" ? "already_failed" : "") }
+        }
+      }
+      done(st)
+    }
+    if !ChatyyE2EEOutbox.mayNeedWork(account: a, item: item) { finish(item); return }
+    #if CHATYY_CRYPTO_CORE
+    Task.detached { [self] in
+      switch await ChatyyE2EEOutbox.prepare(account: a, item: item) {
+      case .pass: finish(item)
+      case .replace(let x): finish(x)
+      case .reject(let why):
+        q.async { [self] in bump("e2eeRejected"); bump("e2eeRejected_" + why) }
+        finish(nil)
+      }
+    }
+    #else
+    finish(item)
+    #endif
+  }
+
+  private func submitPrepared(_ a: String, _ item: [String: Any]) -> String {
     let st = store.outboxPut(account: a, item: item)
     q.async { [self] in
       accounts.insert(a)
@@ -235,6 +290,10 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
     if type == "chat_send_ack", let row = obj["message"] as? [String: Any], ChatyyOutboxUtil.i64(row["id"]) > 0 {
       bump("wsAcks")
       done(at, row, via: "ws")
+    } else if type == "chat_send_error" {
+      // [e2ee5 WP-08a] §5.4: recusa definitiva para AQUELE conteúdo — não reenvia por HTTP.
+      bump("wsSendErrors")
+      e2eeRefused(at, ChatyyOutboxUtil.str(obj["code"]))
     } else {
       bump("wsFallbacks")
       httpSend(at)
@@ -364,6 +423,13 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
             nextWake = min(nextWake, t + 200)
           }
         case "queued":
+          // [e2ee5 WP-08a] texto puro numa conversa que agora sabemos ser E2EE → recifra antes
+          if ChatyyE2EEOutbox.needsReencrypt(account: a, row: it) {
+            blocked.insert(conv)
+            if due > t { nextWake = min(nextWake, due) }
+            else if inflight[cmi] == nil && uploads[cmi] == nil && online() { e2eeReencrypt(a, it) }
+            continue
+          }
           if ChatyyOutboxUtil.str(it["kind"]) == "media" && !hasFileUrl(it) {
             // bytes ainda não estão no CDN → sobe em paralelo (não segura a conversa)
             store.outboxPatch(account: a, cmi: cmi, patch: ["state": "uploading", "next_at": 0])
@@ -422,7 +488,9 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
     emit(["account": a, "cmi": cmi, "conv": conv, "state": "sending", "tries": ChatyyOutboxUtil.i64(it["tries"])])
     bump("attempts")
     let frame = ChatyyOutboxUtil.str(it["frame"])
-    if !frame.isEmpty && frame != "null" && ChatTransport.shared.nativeSendReady(account: a) && ChatTransport.shared.nativeSendRaw(account: a, text: frame) {
+    // [e2ee5 WP-08a] envelope pelo WS só se o hub declarou `e2ee5_ns` (§5.3); senão HTTP.
+    let wsEnvelopeOk = !ChatyyE2EEMsg.looksEncrypted(ChatyyE2EEOutbox.content(it)) || ChatTransport.shared.e2eeNsReady(account: a)
+    if wsEnvelopeOk && !frame.isEmpty && frame != "null" && ChatTransport.shared.nativeSendReady(account: a) && ChatTransport.shared.nativeSendRaw(account: a, text: frame) {
       bump("wsSends")
       let w = DispatchWorkItem { [weak self] in
         guard let self = self, self.inflight[cmi] === at, at.phase == "ws" else { return }
@@ -473,6 +541,8 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
     if (200...299).contains(code), ok, let row = data, ChatyyOutboxUtil.i64(row["id"]) > 0 { done(at, row, via: "http"); return }
     var msg = ChatyyOutboxUtil.str(j?["message"]); if msg.isEmpty { msg = ChatyyOutboxUtil.str(j?["error"]) }
     let msgShort = String(msg.prefix(120))
+    let e5 = ChatyyOutboxUtil.str(data?["code"])
+    if (400...499).contains(code) && e5.hasPrefix("e2ee5_") { e2eeRefused(at, e5); return } // [e2ee5 WP-08a]
     if code == 401 {
       authWaitUntil[at.account] = now() + 10000
       transient(at, "http_401", offline: false, auth: true)
@@ -496,6 +566,13 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
     inflight.removeValue(forKey: at.cmi)
     at.timer?.cancel()
     store.outboxSent(account: at.account, cmi: at.cmi, conv: at.conv, server: server)
+    // [e2ee5 WP-08a] a própria mensagem cifrada: o payload que acabamos de cifrar vira o texto local
+    if let pl = ChatyyE2EEOutbox.takePlain(at.cmi), ChatyyOutboxUtil.i64(server["id"]) > 0 {
+      store.e2ePut(account: at.account, rows: [["conv": pl.conv, "id": NSNumber(value: ChatyyOutboxUtil.i64(server["id"])), "cmid": at.cmi,
+                                                "state": "ok", "payload": pl.payload, "trust": "self"]])
+      bump("e2eeSent")
+    }
+    fireFinal(at.cmi, "sent", "")
     bump("sent")
     emit(["account": at.account, "cmi": at.cmi, "conv": at.conv, "state": "sent", "via": via, "server": ChatyyOutboxUtil.jsonString(server) ?? "{}"])
     pumpNow()
@@ -503,6 +580,8 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
 
   private func hard(_ at: Attempt, _ err: String) {
     inflight.removeValue(forKey: at.cmi)
+    ChatyyE2EEOutbox.dropPlain(at.cmi)
+    fireFinal(at.cmi, "failed", err)
     store.outboxPatch(account: at.account, cmi: at.cmi, patch: ["state": "failed", "err": err])
     store.outboxFailedMark(account: at.account, cmi: at.cmi, conv: at.conv)
     bump("hardFails")
@@ -528,6 +607,85 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
     pumpNow()
   }
 
+  // MARK: - [e2ee5 WP-08a] E2EE na fila nativa (só na fila q)
+
+  private func fireFinal(_ cmi: String, _ state: String, _ err: String) {
+    guard let cbs = finalWaiters.removeValue(forKey: cmi) else { return }
+    for cb in cbs { cb(state, err) }
+  }
+
+  /// Recusa E2EE do servidor/hub (§5.4 / §8.4).
+  private func e2eeRefused(_ at: Attempt, _ code: String) {
+    let row = findItem(at.account, at.cmi)
+    let plainText = row.map { !ChatyyE2EEMsg.looksEncrypted(ChatyyE2EEOutbox.content($0)) } ?? false
+    let uid = ChatyyE2EEConvModes.uid(account: at.account)
+    switch code {
+    case "e2ee5_plaintext_refused":
+      if let u = uid { ChatyyE2EEConvCache.shared.noteMode(uid: u, conv: at.conv, mode: 1) }
+      if plainText && ChatyyE2EEGate.uid(account: at.account) != nil {
+        // conversa virou E2EE depois do submit → volta à fila; o pump recifra antes de mandar
+        inflight.removeValue(forKey: at.cmi)
+        at.timer?.cancel(); at.timer = nil
+        store.outboxPatch(account: at.account, cmi: at.cmi, patch: ["state": "queued", "next_at": 0, "err": code])
+        bump("e2eeRequeued")
+        emit(["account": at.account, "cmi": at.cmi, "conv": at.conv, "state": "queued", "err": code, "retryInMs": 0])
+        pumpNow()
+        return
+      }
+      e2eeScrub(at.account, at.cmi, row)
+      hard(at, code)
+    case "e2ee5_not_e2ee":
+      // envelope numa conversa normal (rebaixada): o envelope não volta a ser texto → o JS reenvia
+      if let u = uid { ChatyyE2EEConvCache.shared.noteMode(uid: u, conv: at.conv, mode: 0) }
+      hard(at, code)
+    default:
+      if plainText { e2eeScrub(at.account, at.cmi, row) }
+      hard(at, code.isEmpty ? "e2ee5_refused" : code)
+    }
+  }
+
+  /// Linha que falhou numa conversa E2EE não guarda o texto puro no disco (o JS tem a bolha).
+  private func e2eeScrub(_ a: String, _ cmi: String, _ row: [String: Any]?) {
+    guard let r = row else { return }
+    var b = ChatyyOutboxUtil.obj(r["body"])
+    if b["content"] == nil { return }
+    b["content"] = ""
+    b.removeValue(forKey: "reply_quote_text")
+    store.outboxPatch(account: a, cmi: cmi, patch: ["body": ChatyyOutboxUtil.jsonString(b) ?? "{}", "frame": NSNull()])
+    bump("e2eeScrubbed")
+  }
+
+  /// Texto puro na fila de uma conversa que agora é E2EE → cifra e troca body/frame.
+  private func e2eeReencrypt(_ a: String, _ it: [String: Any]) {
+    let cmi = ChatyyOutboxUtil.str(it["cmi"]), conv = ChatyyOutboxUtil.str(it["conv"])
+    if reencrypting.contains(cmi) { return }
+    reencrypting.insert(cmi)
+    bump("e2eeReencrypt")
+    #if CHATYY_CRYPTO_CORE
+    Task.detached { [self] in
+      let r = await ChatyyE2EEOutbox.reencrypt(account: a, row: it)
+      q.async { [self] in
+        reencrypting.remove(cmi)
+        switch r {
+        case .ok(var patch):
+          patch["state"] = "queued"; patch["next_at"] = 0; patch["err"] = NSNull()
+          store.outboxPatch(account: a, cmi: cmi, patch: patch)
+          pumpNow()
+        case .retry(let why):
+          store.outboxPatch(account: a, cmi: cmi, patch: ["next_at": now() + 15000, "err": "e2ee5_wait: " + why])
+          armWake(now() + 15000)
+        case .fail(let why):
+          let at = Attempt(a, cmi, conv, "e2ee"); inflight[cmi] = at
+          e2eeScrub(a, cmi, it)
+          hard(at, "e2ee5_needs_app: " + why)
+        }
+      }
+    }
+    #else
+    reencrypting.remove(cmi)
+    #endif
+  }
+
   // MARK: - mídia: upload único (Rust /api/rust/upload) em SEGUNDO PLANO, depois chat_send
 
   private lazy var bodiesDir: URL = {
@@ -547,6 +705,12 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
 
   private func startUpload(_ a: String, _ it: [String: Any]) {
     let cmi = ChatyyOutboxUtil.str(it["cmi"]), conv = ChatyyOutboxUtil.str(it["conv"])
+    // [e2ee5 WP-08a] mídia em claro NUNCA sobe para conversa E2EE (mídia cifrada = F3/WP-11)
+    if let u = ChatyyE2EEGate.uid(account: a), ChatyyE2EEConvCache.shared.knownMode(uid: u, conv: conv) == 1 {
+      let at = Attempt(a, cmi, conv, "upload"); inflight[cmi] = at
+      e2eeScrub(a, cmi, it)
+      hard(at, "e2ee5_media_needs_app"); return
+    }
     let up = ChatyyOutboxUtil.obj(it["up"])
     var path = ChatyyOutboxUtil.str(it["file"])
     if path.hasPrefix("file://") { path = URL(string: path)?.path ?? String(path.dropFirst(7)) }

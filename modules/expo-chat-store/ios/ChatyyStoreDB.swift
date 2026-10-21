@@ -24,7 +24,8 @@ import CryptoKit
 // (DESIGN §4) no MESMO arquivo, com migração por user_version.
 public final class ChatyyStoreDB {
   public static let shared = ChatyyStoreDB()
-  public static let schemaVersion: Int32 = 3
+  /// 4 = [e2ee5 WP-08a] tabela e2e_plain (payload decifrado no aparelho, por mensagem).
+  public static let schemaVersion: Int32 = 4
   /// Teto de conversas com foto por conta (as menos recentes saem).
   static let maxThreads = 400
 
@@ -198,7 +199,18 @@ public final class ChatyyStoreDB {
         next_at INTEGER NOT NULL DEFAULT 0, err TEXT, server TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_outbox_conv ON outbox(conv, seq);
       """
-    let ddl = "BEGIN;" + (v < 1 ? v1 : "") + v2 + v3 + "PRAGMA user_version = \(Self.schemaVersion);COMMIT;"
+    // [e2ee5 WP-08a 2026-10-21] Conversa E2EE: `messages.raw` guarda SÓ o envelope do servidor;
+    // o payload decifrado (CONTRATO §2.3) fica aqui, por mensagem. state: ok | wait (UTD
+    // retentável) | fail (UTD definitivo). Mesmo arquivo do store (proteção
+    // CompleteUntilFirstUserAuthentication, fora do backup); some no logout com o arquivo.
+    let v4 = """
+      CREATE TABLE IF NOT EXISTS e2e_plain (conv TEXT NOT NULL, id INTEGER NOT NULL, cmid TEXT, state TEXT NOT NULL,
+        payload TEXT, reason TEXT, session TEXT, sender_device TEXT, trust TEXT, tries INTEGER NOT NULL DEFAULT 0,
+        reported INTEGER NOT NULL DEFAULT 0, first_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        PRIMARY KEY (conv, id)) WITHOUT ROWID;
+      CREATE INDEX IF NOT EXISTS idx_e2e_plain_state ON e2e_plain(conv, state);
+      """
+    let ddl = "BEGIN;" + (v < 1 ? v1 : "") + v2 + v3 + v4 + "PRAGMA user_version = \(Self.schemaVersion);COMMIT;"
     if exec(db, ddl) != SQLITE_OK { _ = exec(db, "ROLLBACK;"); return false }
     return true
   }
@@ -236,7 +248,8 @@ public final class ChatyyStoreDB {
       var pairs: [(String, String)] = []
       pairs.reserveCapacity(rows.count)
       let keySet = Set(keys)
-      for d in rows {
+      for d0 in rows {
+        let d = Self.e2eSanitize(d0) // [e2ee5 WP-08a] nunca grava envelope cru como texto
         guard let k = d["k"] as? String, keySet.contains(k), JSONSerialization.isValidJSONObject(d),
               let data = try? JSONSerialization.data(withJSONObject: d),
               let s = String(data: data, encoding: .utf8) else { continue }
@@ -571,7 +584,8 @@ public final class ChatyyStoreDB {
     for x in (b["conv_deletes"] as? [Any]) ?? [] {
       let id = Self.str(x); if id.isEmpty { continue }
       for sql in ["DELETE FROM conversations WHERE id = ?;", "DELETE FROM messages WHERE conv = ?;", "DELETE FROM receipts WHERE conv = ?;",
-                  "DELETE FROM reactions WHERE conv = ?;", "DELETE FROM thread_rows WHERE conv = ?;", "DELETE FROM thread_snap WHERE conv = ?;"] {
+                  "DELETE FROM reactions WHERE conv = ?;", "DELETE FROM thread_rows WHERE conv = ?;", "DELETE FROM thread_snap WHERE conv = ?;",
+                  "DELETE FROM e2e_plain WHERE conv = ?;"] {
         run(db, sql, [id])
       }
       touched.insert(id)
@@ -582,6 +596,8 @@ public final class ChatyyStoreDB {
       run(db, "INSERT OR REPLACE INTO messages (conv, id, ckey, client_id, sender, type, created_at, edited_at, deleted, reply_to, raw) VALUES (?,?,?,?,?,?,?,?,?,?,?);",
           [conv, id, Self.str(m["ckey"]), Self.str(m["client_id"]), Self.str(m["sender"]).lowercased(), Self.str(m["type"]),
            Self.i64(m["created_at"]), Self.i64(m["edited_at"]), Self.i64(m["deleted"]), Self.i64(m["reply_to"]), m["raw"] as? String])
+      // [e2ee5 WP-08a] apagada para todos → o texto decifrado sai junto
+      if Self.i64(m["deleted"]) != 0 { run(db, "DELETE FROM e2e_plain WHERE conv = ? AND id = ?;", [conv, id]) }
       touched.insert(conv); nMsg += 1
     }
     for d in (b["msg_deletes"] as? [[String: Any]]) ?? [] {
@@ -589,6 +605,7 @@ public final class ChatyyStoreDB {
       run(db, "DELETE FROM messages WHERE conv = ? AND id = ?;", [conv, id])
       run(db, "DELETE FROM receipts WHERE conv = ? AND msg_id = ?;", [conv, id])
       run(db, "DELETE FROM reactions WHERE conv = ? AND msg_id = ?;", [conv, id])
+      run(db, "DELETE FROM e2e_plain WHERE conv = ? AND id = ?;", [conv, id])
       touched.insert(conv)
     }
     for r in (b["receipts"] as? [[String: Any]]) ?? [] {
@@ -628,6 +645,7 @@ public final class ChatyyStoreDB {
     // poda: só as N mensagens mais novas por conversa tocada
     for conv in touched {
       run(db, "DELETE FROM messages WHERE conv = ? AND id < COALESCE((SELECT id FROM messages WHERE conv = ? ORDER BY id DESC LIMIT 1 OFFSET \(Self.maxMessagesPerConv - 1)), 0);", [conv, conv])
+      run(db, "DELETE FROM e2e_plain WHERE conv = ? AND id < COALESCE((SELECT id FROM messages WHERE conv = ? ORDER BY id DESC LIMIT 1 OFFSET \(Self.maxMessagesPerConv - 1)), 0);", [conv, conv])
     }
     rc = exec(db, "COMMIT;")
     if rc != SQLITE_OK {
@@ -806,7 +824,8 @@ public final class ChatyyStoreDB {
       guard let db = open(account) else { return }
       var pairs: [(String, String)] = []
       let idSet = Set(ids)
-      for d in rows {
+      for d0 in rows {
+        let d = Self.e2eSanitize(d0) // [e2ee5 WP-08a] prévia genérica no lugar de envelope cru
         let id = Self.str(d["id"]); if id.isEmpty || !idSet.contains(id) { continue }
         if let s = Self.jsonString(d) { pairs.append((id, s)) }
       }
@@ -1185,6 +1204,141 @@ public final class ChatyyStoreDB {
     q.sync { [self] in
       guard let db = open(account) else { return }
       if applyThreadOps(db, conv, "", [["op": "fail", "k": "c:" + cmi]]) { dropCached(account, conv); notify(account, [conv]) }
+    }
+  }
+
+  // MARK: [e2ee5 WP-08a 2026-10-21] payload decifrado no aparelho (tabela e2e_plain)
+  // Quem decifra é o transporte (ChatyyE2EENative.swift, núcleo chatyy-crypto). Aqui só a
+  // persistência + leitura para o JS/listas. NUNCA logar payload (CONTRATO §0.4).
+
+  /// Rótulo no lugar de um envelope cru que chegou a uma linha de lista (o JS ainda não
+  /// decifrou): "Aguardando esta mensagem…" (e2ee5.msg.waiting), no idioma do app.
+  static func e2eWaitingLabel() -> String {
+    let a = (UserDefaults(suiteName: "group.com.onemundo.mail")?.string(forKey: "chatyy_app_lang") ?? "").lowercased()
+    let l = a.isEmpty ? (Locale.preferredLanguages.first ?? "pt").lowercased() : a
+    if l.hasPrefix("en") { return "Waiting for this message…" }
+    if l.hasPrefix("es") { return "Esperando este mensaje…" }
+    return "Aguardando esta mensagem…"
+  }
+
+  /// Linha (como o JS mandou) sem nenhum texto `{"e2e"…}`: qualquer string que comece com o
+  /// envelope (texto, a11y, citação…) vira o rótulo genérico. Até 3 níveis de aninhamento.
+  public static func e2eSanitize(_ d: [String: Any]) -> [String: Any] {
+    return (e2eSanitizeValue(d, 0) as? [String: Any]) ?? d
+  }
+
+  private static func e2eSanitizeValue(_ v: Any, _ depth: Int) -> Any? {
+    if let s = v as? String { return s.hasPrefix("{\"e2e\"") ? e2eWaitingLabel() : nil }
+    if depth >= 4 { return nil }
+    if let dd = v as? [String: Any] {
+      var o = dd; var ch = false
+      for (k, x) in dd { if let nx = e2eSanitizeValue(x, depth + 1) { o[k] = nx; ch = true } }
+      return ch ? o : nil
+    }
+    if let a = v as? [Any] {
+      var o = a; var ch = false
+      for (i, x) in a.enumerated() { if let nx = e2eSanitizeValue(x, depth + 1) { o[i] = nx; ch = true } }
+      return ch ? o : nil
+    }
+    return nil
+  }
+
+  /// Grava resultados de decifragem. rows: {conv, id, cmid?, state: ok|wait|fail, payload? (só ok),
+  /// reason?, session?, sender_device?, trust?, reported?}. `ok` nunca volta para wait/fail.
+  /// Assíncrono (fila do store); notifica os observadores das conversas tocadas.
+  public func e2ePut(account: String, rows: [[String: Any]], done: (() -> Void)? = nil) {
+    if account.isEmpty || rows.isEmpty { done?(); return }
+    q.async { [self] in
+      defer { done?() }
+      guard let db = open(account) else { return }
+      if exec(db, "BEGIN IMMEDIATE;") != SQLITE_OK { return }
+      var touched = Set<String>()
+      let now = nowMs()
+      for r in rows {
+        let conv = Self.str(r["conv"]); let id = Self.i64(r["id"])
+        let state = Self.str(r["state"])
+        if conv.isEmpty || id <= 0 || !["ok", "wait", "fail"].contains(state) { continue }
+        let cmid = Self.str(r["cmid"])
+        run(db, "INSERT OR IGNORE INTO e2e_plain (conv, id, cmid, state, tries, reported, first_at, updated_at) VALUES (?,?,?,?,0,0,?,?);",
+            [conv, id, cmid, state, now, now])
+        if state == "ok" {
+          guard let payload = r["payload"] as? String, !payload.isEmpty else { continue }
+          run(db, "UPDATE e2e_plain SET state = 'ok', cmid = COALESCE(NULLIF(?, ''), cmid), payload = ?, reason = NULL, session = ?, sender_device = ?, trust = ?, updated_at = ? WHERE conv = ? AND id = ?;",
+              [cmid, payload, Self.str(r["session"]), Self.str(r["sender_device"]), Self.str(r["trust"]), now, conv, id])
+        } else {
+          run(db, "UPDATE e2e_plain SET state = ?, reason = ?, session = COALESCE(NULLIF(?, ''), session), tries = tries + 1, reported = MAX(reported, ?), updated_at = ? WHERE conv = ? AND id = ? AND state <> 'ok';",
+              [state, Self.str(r["reason"]), Self.str(r["session"]), Self.i64(r["reported"]), now, conv, id])
+        }
+        touched.insert(conv)
+      }
+      if exec(db, "COMMIT;") != SQLITE_OK { _ = exec(db, "ROLLBACK;"); return }
+      for c in touched { dropCached(account, c) }
+      notify(account, touched)
+    }
+  }
+
+  /// Payloads decifrados de uma conversa: JSON {"<id>": {"state","payload"?,"reason"?,"trust"?,"cmid"}}.
+  /// `ids` vazio = as 200 mais novas. Síncrono (PK).
+  public func e2ePlainJSONSync(account: String, conv: String, ids: [Int64]) -> String {
+    if account.isEmpty || conv.isEmpty { return "{}" }
+    return q.sync { [self] in
+      guard let db = open(account) else { return "{}" }
+      var out: [String: Any] = [:]
+      var st: OpaquePointer?
+      let list = ids.filter { $0 > 0 }.prefix(500)
+      let sql = list.isEmpty
+        ? "SELECT id, state, payload, reason, trust, cmid FROM e2e_plain WHERE conv = ? ORDER BY id DESC LIMIT 200;"
+        : "SELECT id, state, payload, reason, trust, cmid FROM e2e_plain WHERE conv = ? AND id IN (\(list.map { String($0) }.joined(separator: ",")));"
+      if sqlite3_prepare_v2(db, sql, -1, &st, nil) == SQLITE_OK {
+        bind(st, 1, conv)
+        while sqlite3_step(st) == SQLITE_ROW {
+          var o: [String: Any] = ["state": colText(st, 1), "cmid": colText(st, 5)]
+          let p = colText(st, 2); if !p.isEmpty { o["payload"] = p }
+          let r = colText(st, 3); if !r.isEmpty { o["reason"] = r }
+          let t = colText(st, 4); if !t.isEmpty { o["trust"] = t }
+          out[String(sqlite3_column_int64(st, 0))] = o
+        }
+      }
+      sqlite3_finalize(st)
+      return Self.jsonString(out) ?? "{}"
+    }
+  }
+
+  /// Mensagens com UTD retentável de uma conversa (para tentar de novo quando chega chave):
+  /// [{id, cmid, raw, tries, first_at, reported, session}]. Síncrono.
+  public func e2eWaiting(account: String, conv: String, limit: Int = 50) -> [[String: Any]] {
+    if account.isEmpty || conv.isEmpty { return [] }
+    return q.sync { [self] in
+      guard let db = open(account) else { return [] }
+      var out: [[String: Any]] = []
+      var st: OpaquePointer?
+      let sql = "SELECT p.id, p.cmid, m.raw, p.tries, p.first_at, p.reported, p.session FROM e2e_plain p JOIN messages m ON m.conv = p.conv AND m.id = p.id WHERE p.conv = ? AND p.state = 'wait' ORDER BY p.id DESC LIMIT ?;"
+      if sqlite3_prepare_v2(db, sql, -1, &st, nil) == SQLITE_OK {
+        bind(st, 1, conv); sqlite3_bind_int64(st, 2, Int64(max(1, limit)))
+        while sqlite3_step(st) == SQLITE_ROW {
+          out.append(["id": NSNumber(value: sqlite3_column_int64(st, 0)), "cmid": colText(st, 1), "raw": colText(st, 2),
+                      "tries": NSNumber(value: sqlite3_column_int64(st, 3)), "first_at": NSNumber(value: sqlite3_column_int64(st, 4)),
+                      "reported": NSNumber(value: sqlite3_column_int64(st, 5)), "session": colText(st, 6)])
+        }
+      }
+      sqlite3_finalize(st)
+      return out
+    }
+  }
+
+  /// Já existe resultado para (conv, id)? "" = não. Síncrono.
+  public func e2eStateSync(account: String, conv: String, id: Int64) -> String {
+    if account.isEmpty || conv.isEmpty || id <= 0 { return "" }
+    return q.sync { [self] in
+      guard let db = open(account) else { return "" }
+      var st: OpaquePointer?
+      var s = ""
+      if sqlite3_prepare_v2(db, "SELECT state FROM e2e_plain WHERE conv = ? AND id = ?;", -1, &st, nil) == SQLITE_OK {
+        bind(st, 1, conv); sqlite3_bind_int64(st, 2, id)
+        if sqlite3_step(st) == SQLITE_ROW { s = colText(st, 0) }
+      }
+      sqlite3_finalize(st)
+      return s
     }
   }
 

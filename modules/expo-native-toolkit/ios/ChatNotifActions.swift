@@ -115,6 +115,65 @@ enum ChatNotifAuthStore {
   }
 }
 
+// MARK: ─── [e2ee5 WP-08a 2026-10-21] resposta em conversa E2EE ──────────────
+//
+// Conversa com e2ee_mode=1 (push com e2e="5"/e2e_conv, ou o mapa de modos do App Group
+// gravado pelo app): o texto NUNCA vai em claro. A resposta é entregue ao expo-chat-transport
+// pela ponte NotificationCenter "ChatyyE2EENativeSendText" (ChatyyE2EENative.swift: cifra
+// com o núcleo e envia pela fila nativa). Sem quem aceite (binário sem o núcleo, flag
+// e2ee5_native desligada, outra conta) → "Não enviada. Toque para abrir" (abre o app).
+enum ChatNotifE2EE {
+  static let appGroup = "group.com.onemundo.mail"
+  static let sendName = Notification.Name("ChatyyE2EENativeSendText")
+  static let resultName = Notification.Name("ChatyyE2EENativeSendResult")
+
+  static func isProtected(_ p: [String: Any], recipient: String?, conv: String) -> Bool {
+    if let e = ChatNotifActionHandler.str(p, "e2e"), e != "0" { return true }
+    for k in ["e2e_conv", "e2e_c", "e2e_fetch", "e2e_sid"] where ChatNotifActionHandler.str(p, k) != nil { return true }
+    guard let ud = UserDefaults(suiteName: appGroup) else { return false }
+    var uids: [String] = []
+    let r = (recipient ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if !r.isEmpty {
+      var vs = [r]
+      if r.hasSuffix("@chatyy.com.br") { vs.append(String(r.dropLast(14)) + "@onemundo.com.br") }
+      if r.hasSuffix("@onemundo.com.br") { vs.append(String(r.dropLast(16)) + "@chatyy.com.br") }
+      for v in vs { if let u = ud.string(forKey: "chatyy.e2ee5.uid.a." + v), !u.isEmpty { uids.append(u) } }
+    } else if let u = ud.string(forKey: "chatyy.e2ee5.lastUid"), !u.isEmpty {
+      uids.append(u)
+    }
+    for u in uids {
+      if let m = ud.dictionary(forKey: "chatyy.e2ee5.convmode.u." + u), (m[conv] as? NSNumber)?.intValue == 1 { return true }
+    }
+    return false
+  }
+
+  /// true = enviado cifrado; false = ninguém aceitou ou falhou (o chamador avisa "toque para abrir").
+  static func send(account: String, conv: String, text: String, replyTo: Int64, bearer: String, base: String) -> Bool {
+    let cmid = "notif-" + UUID().uuidString.lowercased()
+    let box = NSMutableDictionary()
+    let res = NSMutableDictionary()
+    let sem = DispatchSemaphore(value: 0)
+    let obs = NotificationCenter.default.addObserver(forName: resultName, object: nil, queue: nil) { n in
+      guard (n.userInfo?["cmid"] as? String) == cmid else { return }
+      res["state"] = n.userInfo?["state"] as? String ?? ""
+      sem.signal()
+    }
+    defer { NotificationCenter.default.removeObserver(obs) }
+    var info: [String: Any] = ["box": box, "account": account, "conv": conv, "text": text, "cmid": cmid,
+                               "bearer": bearer, "base": base]
+    if replyTo > 0 { info["reply_to_id"] = String(replyTo) }
+    NotificationCenter.default.post(name: sendName, object: nil, userInfo: info)
+    guard (box["accepted"] as? Bool) == true else {
+      NSLog("[ChatNotifActions] e2ee reply: sem envio nativo cifrado → abrir o app")
+      return false
+    }
+    _ = sem.wait(timeout: .now() + 25)
+    let st = res["state"] as? String ?? ""
+    NSLog("[ChatNotifActions] e2ee reply → \(st.isEmpty ? "timeout" : st)")
+    return st == "sent"
+  }
+}
+
 final class ChatNotifActionHandler: NotificationDelegate {
   static let shared = ChatNotifActionHandler()
   static let appGroupId = "group.com.onemundo.mail"
@@ -163,8 +222,10 @@ final class ChatNotifActionHandler: NotificationDelegate {
     markHandled(requestId)
 
     let lang = (Self.str(p, "lang") ?? "pt").lowercased()
-    let lastMid = Int64(Self.str(p, "message_id") ?? "") ?? 0
+    let lastMid = Int64(Self.str(p, "message_id") ?? Self.str(p, "e2e_mid") ?? "") ?? 0
     let base = ChatNotifAuthStore.apiBase()
+    // [e2ee5 WP-08a] conversa E2EE: resposta só cifrada (ou "toque para abrir")
+    let e2ee = isReply && ChatNotifE2EE.isProtected(p, recipient: Self.str(p, "recipient_email"), conv: conv)
 
     let app = UIApplication.shared
     var bgId: UIBackgroundTaskIdentifier = .invalid
@@ -191,6 +252,20 @@ final class ChatNotifActionHandler: NotificationDelegate {
           if r.ok || (400..<500).contains(r.code) { break }
         }
         finish()
+        return
+      }
+      if isReply && e2ee {
+        let grp = (Self.str(p, "is_group") ?? "").lowercased()
+        let replyTo: Int64 = (grp == "1" || grp == "true") ? lastMid : 0
+        let account = ChatNotifAuthStore.normEmail(Self.str(p, "recipient_email"))
+        if ChatNotifE2EE.send(account: account, conv: conv, text: text, replyTo: replyTo, bearer: bearer, base: base) {
+          _ = Self.post(base: base, bearer: bearer, action: "chat_mark_read", body: [
+            "conversation_id": conv, "message_id": lastMid,
+          ])
+          Self.removeDelivered(conv: conv, then: finish)
+        } else {
+          Self.postSendFailed(conv: conv, lang: lang, original: response.notification.request.content, then: finish)
+        }
         return
       }
       if isReply {
