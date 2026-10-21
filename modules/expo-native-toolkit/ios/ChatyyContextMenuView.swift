@@ -14,6 +14,12 @@
 //   menuEnabled: liga/desliga a interação (ex.: modo seleção).
 //   previewCornerRadius: raio do recorte do preview (default 12).
 // Eventos: onMenuAction({ id }), onMenuWillShow(), onPreviewTap().
+//
+// [2026-10-21 menu-ancorado] primaryAction=true → modo BOTÃO (pull-down do
+// WhatsApp/Ajustes): um UIButton transparente cobre a view e mostra o MESMO
+// UIMenu ao TOCAR (showsMenuAsPrimaryAction), ancorado no próprio botão. Usar
+// SEM filhos RN (overlay absoluto por cima do ícone JS). buttonLabel = rótulo
+// de acessibilidade. JS detecta a prop "primaryAction" (components/AnchoredMenu).
 import ExpoModulesCore
 import UIKit
 
@@ -45,6 +51,12 @@ public class ChatyyContextMenuViewModule: Module {
       Prop("previewCornerRadius") { (view: ChatyyContextMenuView, value: Double?) in
         view.previewCornerRadius = CGFloat(value ?? 12)
       }
+      Prop("primaryAction") { (view: ChatyyContextMenuView, value: Bool?) in
+        view.setPrimaryAction(value ?? false)
+      }
+      Prop("buttonLabel") { (view: ChatyyContextMenuView, value: String?) in
+        view.buttonLabel = value ?? ""
+      }
     }
   }
 }
@@ -54,10 +66,20 @@ public final class ChatyyContextMenuView: ExpoView, UIContextMenuInteractionDele
   let onMenuWillShow = EventDispatcher()
   let onPreviewTap = EventDispatcher()
 
-  var actions: [ChatyyMenuActionRecord] = []
-  var menuTitle: String = ""
+  var actions: [ChatyyMenuActionRecord] = [] {
+    didSet { refreshButtonMenu() }
+  }
+  var menuTitle: String = "" {
+    didSet { refreshButtonMenu() }
+  }
   var previewCornerRadius: CGFloat = 12
+  var buttonLabel: String = "" {
+    didSet { menuButton?.accessibilityLabel = buttonLabel.isEmpty ? nil : buttonLabel }
+  }
   private var menuInteraction: UIContextMenuInteraction?
+  private var menuButton: UIButton?
+  private var primaryAction = false
+  private var interactionWanted = true
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -66,18 +88,59 @@ public final class ChatyyContextMenuView: ExpoView, UIContextMenuInteractionDele
   }
 
   private func attachInteraction() {
-    guard menuInteraction == nil else { return }
+    guard menuInteraction == nil, !primaryAction else { return }
     let interaction = UIContextMenuInteraction(delegate: self)
     addInteraction(interaction)
     menuInteraction = interaction
   }
 
   func setMenuEnabled(_ enabled: Bool) {
+    interactionWanted = enabled
+    menuButton?.isEnabled = enabled
     if enabled {
       attachInteraction()
     } else if let interaction = menuInteraction {
       removeInteraction(interaction)
       menuInteraction = nil
+    }
+  }
+
+  func setPrimaryAction(_ on: Bool) {
+    if on == primaryAction { return }
+    primaryAction = on
+    if on {
+      if let interaction = menuInteraction {
+        removeInteraction(interaction)
+        menuInteraction = nil
+      }
+      let b = UIButton(type: .custom)
+      b.backgroundColor = .clear
+      b.showsMenuAsPrimaryAction = true
+      b.isEnabled = interactionWanted
+      b.accessibilityLabel = buttonLabel.isEmpty ? nil : buttonLabel
+      b.addAction(UIAction { [weak self] _ in self?.onMenuWillShow([:]) }, for: .menuActionTriggered)
+      b.frame = bounds
+      b.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+      addSubview(b)
+      menuButton = b
+      refreshButtonMenu()
+    } else {
+      menuButton?.removeFromSuperview()
+      menuButton = nil
+      if interactionWanted { attachInteraction() }
+    }
+  }
+
+  private func refreshButtonMenu() {
+    guard let b = menuButton else { return }
+    b.menu = actions.isEmpty ? nil : buildMenu()
+  }
+
+  public override func layoutSubviews() {
+    super.layoutSubviews()
+    if let b = menuButton {
+      b.frame = bounds
+      bringSubviewToFront(b)
     }
   }
 

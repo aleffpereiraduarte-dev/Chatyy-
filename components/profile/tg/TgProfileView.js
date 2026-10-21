@@ -34,6 +34,7 @@ import { usePendingProfilePosts, mergePendingPosts, openPendingPostMenu } from '
 import ProfilePostProgress from '../../ProfilePostProgress';
 import * as muralNav from '../../../services/muralNav';
 import { getDefaultAudience, loadDefaultAudience, setDefaultAudience, subscribeDefaultAudience } from '../../../services/muralPrefs';
+import { useAnchoredMenu, AnchoredMenuButton, AnchoredMenuHost, sfSymbolFor } from '../../AnchoredMenu'; // [2026-10-21 menu-ancorado]
 
 export function isTgProfileEnabled() {
   try { if (globalThis.__chatyy_profile_tg === false) return false; } catch {}
@@ -706,6 +707,13 @@ export default function TgProfileView(props) {
   );
 
   const moreMenu = Array.isArray(contact.moreMenu) ? contact.moreMenu.filter(Boolean).slice(0, 3) : [];
+  // [2026-10-21 menu-ancorado] "..." = menu ancorado no botão (UIMenu nativo no
+  // binário novo; popover JS por OTA) em vez do alerta central de botões cinza.
+  const anchoredMenu = useAnchoredMenu();
+  const moreActions = moreMenu.map((r) => ({
+    id: String(r.id || r.title), title: r.title, destructive: !!r.dest, onPress: r.onPress,
+    systemImage: sfSymbolFor(r.icon), renderIcon: r.icon ? (sz, c) => <TgIcon name={r.icon} size={sz} color={c} /> : null,
+  }));
 
   let CommentsHost = null; // folha de comentários sobe nesta tela (components/mural)
   try { CommentsHost = require('../../mural/CommentsSheet').MuralCommentsHost || null; } catch { CommentsHost = null; }
@@ -718,7 +726,7 @@ export default function TgProfileView(props) {
   if (!isSelf && noteSheet && note && note.text) { try { CNoteSheet = require('../../chatlist/ContactNoteSheet').default; } catch { CNoteSheet = null; } }
 
   return (
-    <View style={[s.fill, { backgroundColor: th.bg }]}>
+    <View ref={anchoredMenu.rootRef} collapsable={false} style={[s.fill, { backgroundColor: th.bg }]}>
       <View style={{ paddingTop: topInset, backgroundColor: th.bg, zIndex: 5 }}>
         <View style={s.bar}>
           <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: barOp, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: th.line, backgroundColor: th.bg }]} />
@@ -734,9 +742,15 @@ export default function TgProfileView(props) {
               <Text style={[s.pillTxt, { color: th.text }]}>{tr('edit')}</Text>
             </Pressable>
           ) : moreMenu.length ? (
-            <Pressable onPress={() => _menu({ options: moreMenu.map((r) => ({ label: r.title, destructive: !!r.dest, onPress: r.onPress })), cancelLabel: tr('cancel') })} hitSlop={6} style={s.ib} accessibilityRole="button" accessibilityLabel={tr('more')}>
+            <AnchoredMenuButton
+              menu={anchoredMenu}
+              actions={moreActions}
+              label={tr('more')}
+              style={s.ib}
+              onFallback={() => _menu({ options: moreMenu.map((r) => ({ label: r.title, destructive: !!r.dest, onPress: r.onPress })), cancelLabel: tr('cancel') })}
+            >
               <TgIcon name="more" size={24} color={th.text} />
-            </Pressable>
+            </AnchoredMenuButton>
           ) : <View style={s.ib} />}
         </View>
       </View>
@@ -789,6 +803,7 @@ export default function TgProfileView(props) {
           router={router}
         />
       ) : null}
+      {moreActions.length ? <AnchoredMenuHost menu={anchoredMenu} isDark={!!th.isDark} /> : null}
     </View>
   );
 }

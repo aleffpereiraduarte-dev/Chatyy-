@@ -314,6 +314,7 @@ const MessageScreenEffectMemo = React.memo(MessageScreenEffect);
 import MessageBubbleEffect from '../components/MessageBubbleEffect';
 import MediaGallery from '../components/MediaGallery';
 import TgContactInfo from '../components/profile/TgContactInfo'; // [mural 2026-10-20]
+import StarredMessagesSheet, { starredSheetDetents } from '../components/chat/StarredMessagesSheet'; // [2026-10-21 favoritas-folha]
 import JumpToDateSheet from '../components/chat/JumpToDateSheet'; // [busca-conversa 2026-10-16]
 import ExportConversationModal from '../components/ExportConversationModal';
 import FormatToolbar from '../components/FormatToolbar';
@@ -27869,6 +27870,28 @@ function ChatConversationInnerBody() {
     }
   };
 
+  // [2026-10-21 favoritas-folha] desfavoritar/desfazer a partir da folha de favoritas.
+  const handleStarredSheetUnstar = (item) => {
+    const id = item && item.id;
+    if (id == null) return;
+    setStarredMessages(prev => prev.filter(m => String(m.id) !== String(id)));
+    setMessages(prev => _mapKeep(prev, m => String(m.id) === String(id) ? { ...m, starred: false } : m));
+    Promise.resolve(api.chatStarMessage(Number(id), false)).then((r) => {
+      if (r && r.success === false) throw new Error('unstar');
+    }).catch(() => {
+      setStarredMessages(prev => (prev.some(m => String(m.id) === String(id)) ? prev : [item, ...prev]));
+      setMessages(prev => _mapKeep(prev, m => String(m.id) === String(id) ? { ...m, starred: true } : m));
+    });
+  };
+  const handleStarredSheetRestar = (item) => {
+    const id = item && item.id;
+    if (id == null) return;
+    setStarredMessages(prev => (prev.some(m => String(m.id) === String(id)) ? prev
+      : [...prev, item].sort((a, b) => String(b.starred_at || b.created_at || '').localeCompare(String(a.starred_at || a.created_at || '')))));
+    setMessages(prev => _mapKeep(prev, m => String(m.id) === String(id) ? { ...m, starred: true } : m));
+    Promise.resolve(api.chatStarMessage(Number(id), true)).catch(() => {});
+  };
+
   const handleStarMessage = async (msg) => {
     setSelectedMsg(null);
     // Guard against optimistic / not-yet-acked messages. Sending bubbles carry
@@ -45857,69 +45880,59 @@ function ChatConversationInnerBody() {
       ) : null}
 
       {/* Starred Messages Modal */}
-      {(() => { // [2026-10-09 native-sheets] iOS/Android: sheet do sistema [0.6, 1]; web: Modal original
-        const _stBody = (<>
-          <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
-            <Text style={[styles.forwardTitle, { color: colors.text }]}>{t('chat.starredMessages')}</Text>
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.close', 'Fechar')} onPress={() => setShowStarredModal(false)}><IconX size={22} color={colors.text} /></TouchableOpacity>
-          </View>
-          {starredLoading && starredMessages.length === 0 ? (
-            <View style={{ flex: 1 }} />
-          ) : starredMessages.length === 0 ? (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: Spacing.lg }}>
-              <IconStar size={48} color={colors.textTertiary} />
-              <Text style={{ color: colors.textSecondary, fontSize: 15, marginTop: Spacing.md, textAlign: 'center' }}>{t('chat.noStarred')}</Text>
-            </View>
-          ) : (
-            <FlatList
-              data={starredMessages}
-              keyExtractor={item => String(item.id)}
-              contentContainerStyle={{ padding: Spacing.sm }}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={{ flexDirection: 'row', alignItems: 'center', padding: Spacing.sm, backgroundColor: colors.surface, borderRadius: BorderRadius.md, marginBottom: Spacing.xs }}
-                  onPress={() => {
-                    setShowStarredModal(false);
-                    if (String(item.conversation_id) === String(conversationId)) {
-                      // Same chat — jump + flash highlight via safeScrollToMsg
-                      // (load-around if the star is older than the loaded window).
-                      safeScrollToMsg({ id: item.id });
-                    } else if (item.conversation_id != null) {
-                      // [WA-parity 2026-06-29] Star from ANOTHER chat — open that
-                      // chat and land on the message (was a dead no-op before).
-                      require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: {
-                        id: String(item.conversation_id),
-                        type: item.conversation_type || undefined,
-                        scrollToMessageId: String(item.id),
-                        highlightMessageId: String(item.id),
-                      }});
-                    }
-                  }}
-                >
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
-                      <IconStarFilled size={12} color="#f59e0b" style={{ marginRight: 4 }} />
-                      <Text style={{ fontSize: 12, fontWeight: '600', color: colors.primary }} numberOfLines={1}>{item.sender_name || item.sender_email?.split('@')[0]}</Text>
-                      {item.conversation_name ? <Text style={{ fontSize: 11, color: colors.textTertiary, marginLeft: 4 }} numberOfLines={1}>{item.conversation_name}</Text> : null}
-                    </View>
-                    <Text style={{ fontSize: 13, color: colors.text }} numberOfLines={2}>{item.type === 'text' ? item.content : `[${item.type}] ${item.file_name || item.content || ''}`}</Text>
-                    <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>{formatTime(item.created_at)}</Text>
-                  </View>
-                </TouchableOpacity>
-              )}
-            />
-          )}
-        </>);
+      {(() => { // [2026-10-09 native-sheets] iOS/Android: sheet do sistema; web: Modal original
+        // [2026-10-21 favoritas-folha] corpo novo (components/chat/StarredMessagesSheet):
+        // avatar + nome de exibição, data relativa, prévia real (miniatura, duração,
+        // arquivo, figurinha…), desfavoritar c/ Desfazer; detent médio proporcional.
+        const _stClose = () => setShowStarredModal(false);
+        // Altura inicial ∝ conteúdo (só vale na apresentação): maior entre a última
+        // lista carregada e as ★ já visíveis nas mensagens carregadas.
+        const _starredDetents = showStarredModal
+          ? starredSheetDetents(Math.max(starredMessages.length, (messages || []).reduce((n, m) => n + (m && m.starred ? 1 : 0), 0)), Dimensions.get('window').height)
+          : [0.5, 1];
+        const _stBody = (
+          <StarredMessagesSheet
+            items={starredMessages}
+            loading={starredLoading}
+            localMessages={messages}
+            currentEmail={currentEmail}
+            isGroup={conversationType === 'group' || conversationType === 'channel'}
+            peerName={conversationName || ''}
+            peerEmail={conversationType === 'direct' ? (getContactPeerEmail() || params.email || '') : ''}
+            members={members}
+            bottomInset={Platform.OS === 'ios' ? 0 : insets.bottom}
+            onClose={_stClose}
+            onUnstar={handleStarredSheetUnstar}
+            onRestar={handleStarredSheetRestar}
+            onOpen={(item) => {
+              setShowStarredModal(false);
+              if (item.conversation_id == null || String(item.conversation_id) === String(conversationId)) {
+                // Same chat — jump + flash highlight via safeScrollToMsg
+                // (load-around if the star is older than the loaded window).
+                safeScrollToMsg({ id: item.id });
+              } else {
+                // [WA-parity 2026-06-29] Star from ANOTHER chat — open that
+                // chat and land on the message (was a dead no-op before).
+                require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: {
+                  id: String(item.conversation_id),
+                  type: item.conversation_type || undefined,
+                  scrollToMessageId: String(item.id),
+                  highlightMessageId: String(item.id),
+                }});
+              }
+            }}
+          />
+        );
         if (USE_NATIVE_SHEETS) {
           return (
-            <NativeSheet visible={!!showStarredModal} onClose={() => setShowStarredModal(false)} detents={[0.6, 1]} backgroundColor={colors.background}>
-              <View style={{ flex: 1, backgroundColor: colors.background, paddingBottom: Platform.OS === 'ios' ? 0 : insets.bottom }}>{_stBody}</View>
+            <NativeSheet visible={!!showStarredModal} onClose={_stClose} detents={_starredDetents} backgroundColor={_grafite(isDark).bg}>
+              <View style={{ flex: 1 }}>{_stBody}</View>
             </NativeSheet>
           );
         }
         return (
-      <LazyMount when={showStarredModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={() => setShowStarredModal(false)}>
-        <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
+      <LazyMount when={showStarredModal}>{(_lmV) => (<Modal visible={_lmV} transparent animationType="slide" onRequestClose={_stClose}>
+        <View style={[styles.forwardModal, { backgroundColor: _grafite(isDark).bg }]}>
           {_stBody}
         </View>
       </Modal>)}</LazyMount>
