@@ -85,19 +85,47 @@ class ChatActionReceiver : BroadcastReceiver() {
                 val cmid = "notif-" + UUID.randomUUID().toString()
                 runAsync {
                     var ok = false
-                    for (attempt in 0 until 2) {
+                    // [e2ee5 WP-08b] conversa E2EE: a resposta sai CIFRADA pelo núcleo nativo (sem JS);
+                    // não deu para cifrar → "abra o app para responder" (nunca texto puro). Gate
+                    // desligado / conversa normal = exatamente o envio de hoje.
+                    val groupReply = meta?.optBoolean("group", false) == true
+                    val replyMid = lastMid.toLongOrNull() ?: 0L
+                    val base = ChatNotifStore.apiBase(context)
+                    var seal = CallkitE2ee.sealText(context, recipient, bearer, base, convId, cmid, text,
+                        if (groupReply) replyMid else 0L)
+                    var e2eeBlocked = seal is CallkitE2ee.Seal.Fail
+                    var attempt = 0
+                    while (!e2eeBlocked && attempt < 2) {
+                        attempt++
                         // [reply-v2] em GRUPO a resposta pela notificação cita a última
                         // mensagem notificada (WhatsApp/Telegram); em privado não.
                         val body = HashMap<String, Any>()
                         body["conversation_id"] = convId
                         body["type"] = "text"
-                        body["content"] = text
+                        val env = seal as? CallkitE2ee.Seal.Env
+                        body["content"] = env?.envelope ?: text
+                        if (env != null) body["has_link"] = env.hasLink
                         body["client_message_id"] = cmid
-                        val replyMid = lastMid.toLongOrNull() ?: 0L
-                        if (meta?.optBoolean("group", false) == true && replyMid > 0L) body["reply_to_id"] = replyMid
+                        if (groupReply && replyMid > 0L) body["reply_to_id"] = replyMid
                         val r = apiPost(context, bearer, "chat_send", body)
                         if (r.ok) { ok = true; break }
+                        if (r.e2ee.startsWith("e2ee5_")) {
+                            CallkitE2ee.refused(recipient, convId, r.e2ee)
+                            // a conversa virou E2EE (estado velho): recifra 1× com o estado fresco
+                            if (r.e2ee == "e2ee5_plaintext_refused" && seal is CallkitE2ee.Seal.Plain) {
+                                seal = CallkitE2ee.sealText(context, recipient, bearer, base, convId, cmid, text,
+                                    if (groupReply) replyMid else 0L, fresh = true)
+                                if (seal is CallkitE2ee.Seal.Env) { attempt = 0; continue }
+                            }
+                            e2eeBlocked = true
+                            break
+                        }
                         if (r.code in 400..499) break // auth/validation — retry won't help
+                    }
+                    if (e2eeBlocked && !ok) {
+                        ChatMessagingStyleHandler.render(context, convId, alert = false,
+                            subText = ChatMessagingStyleHandler.openAppToReplyLabel(lang))
+                        return@runAsync
                     }
                     if (ok) {
                         // Replying = you read the chat (WhatsApp).
@@ -212,7 +240,8 @@ class ChatActionReceiver : BroadcastReceiver() {
 
     // ---- backend POST -------------------------------------------------------
 
-    private data class ApiResult(val ok: Boolean, val code: Int)
+    /** `e2ee` = `data.code` quando começa com "e2ee5_" (recusa E2EE do servidor), senão "". */
+    private data class ApiResult(val ok: Boolean, val code: Int, val e2ee: String = "")
 
     private fun apiPost(ctx: Context, bearer: String, action: String, params: Map<String, Any>): ApiResult {
         var conn: HttpURLConnection? = null
@@ -241,7 +270,7 @@ class ChatActionReceiver : BroadcastReceiver() {
             // action was not routed — treat as failure.
             val ok = code in 200..299 && try { JSONObject(resp).optBoolean("success", false) } catch (_: Throwable) { false }
             Log.d(TAG, "POST $action → HTTP $code ok=$ok")
-            ApiResult(ok, code)
+            ApiResult(ok, code, if (ok) "" else CallkitE2ee.errorCode(resp).takeIf { it.startsWith("e2ee5_") }.orEmpty())
         } catch (t: Throwable) {
             Log.w(TAG, "POST $action failed: ${t.message}")
             ApiResult(false, -1)

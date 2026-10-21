@@ -76,6 +76,8 @@ class ChatyyStoreDB private constructor(ctx: Context) {
   class Snapshot(val keys: List<String>, val rows: List<Map<String, Any?>>, val newest: String, val readMs: Double)
 
   private val dir = File(ctx.noBackupFilesDir, "chatyy-store")
+  // [e2ee5 WP-08b] contexto do app p/ a ponte E2EE (decifrar o que o transporte gravou)
+  private val appCtx: Context = ctx
   private val ex = Executors.newSingleThreadExecutor { r -> Thread(r, "chatyy-store").apply { priority = Thread.NORM_PRIORITY } }
   private val main = Handler(Looper.getMainLooper())
   private val dbs = HashMap<String, SQLiteDatabase>()
@@ -105,7 +107,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
       try {
         val db = SQLiteDatabase.openDatabase(f.path, null, SQLiteDatabase.CREATE_IF_NECESSARY or SQLiteDatabase.OPEN_READWRITE)
         try { db.enableWriteAheadLogging() } catch (_: Throwable) {}
-        if (migrate(db)) { dbs[h] = db; return db }
+        if (migrate(db)) { ensureE2e(db); dbs[h] = db; return db }
         try { db.close() } catch (_: Throwable) {}
       } catch (_: Throwable) {}
       if (attempt == 0) removeFiles(f)
@@ -177,7 +179,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
       for (d in rows) {
         val k = d["k"] as? String ?: continue
         if (k !in keySet) continue
-        val s = try { JSONObject(d).toString() } catch (_: Throwable) { null } ?: continue
+        val s = try { e2eSanitizeRow(JSONObject(d), E2eeNative.labelWaiting()).toString() } catch (_: Throwable) { null } ?: continue
         pairs.add(Pair(k, s))
       }
       val have = HashSet<String>(pairs.size).also { s -> pairs.forEach { s.add(it.first) } }
@@ -248,7 +250,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
             db.rawQuery("SELECT k, row FROM thread_rows WHERE conv = ?", arrayOf(conv)).use { c ->
               while (c.moveToNext()) {
                 val k = c.getString(0) ?: continue
-                try { map[k] = toMap(JSONObject(c.getString(1) ?: "{}")) } catch (_: Throwable) {}
+                try { map[k] = toMap(e2eFillRow(db, conv, JSONObject(c.getString(1) ?: "{}"))) } catch (_: Throwable) {}
               }
             }
             val ks = ArrayList<String>(ka.length())
@@ -363,7 +365,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
     db.rawQuery("SELECT k, row FROM thread_rows WHERE conv = ?", arrayOf(conv)).use { c ->
       while (c.moveToNext()) {
         val k = c.getString(0) ?: continue
-        try { map[k] = toMap(JSONObject(c.getString(1) ?: "{}")) } catch (_: Throwable) {}
+        try { map[k] = toMap(e2eFillRow(db, conv, JSONObject(c.getString(1) ?: "{}"))) } catch (_: Throwable) {}
       }
     }
     return map
@@ -441,7 +443,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
       b.optJSONArray("conv_deletes")?.let { a ->
         for (i in 0 until a.length()) {
           val id = jStr(a.opt(i)); if (id.isEmpty()) continue
-          for (t in arrayOf("conversations WHERE id", "messages WHERE conv", "receipts WHERE conv", "reactions WHERE conv", "thread_rows WHERE conv", "thread_snap WHERE conv")) {
+          for (t in arrayOf("conversations WHERE id", "messages WHERE conv", "receipts WHERE conv", "reactions WHERE conv", "thread_rows WHERE conv", "thread_snap WHERE conv", "e2e_plain WHERE conv" /* [e2ee5 WP-08b] */)) {
             db.execSQL("DELETE FROM $t = ?", arrayOf<Any?>(id))
           }
           touched.add(id)
@@ -457,6 +459,8 @@ class ChatyyStoreDB private constructor(ctx: Context) {
             arrayOf<Any?>(conv, id, jStr(m.opt("ckey")), jStr(m.opt("client_id")), jStr(m.opt("sender")).lowercase(), jStr(m.opt("type")),
               jLong(m.opt("created_at")), jLong(m.opt("edited_at")), jLong(m.opt("deleted")), jLong(m.opt("reply_to")), optStr(m, "raw"))
           )
+          // [e2ee5 WP-08b] apagada (p/ todos): o texto decifrado some junto
+          if (jLong(m.opt("deleted")) != 0L) db.execSQL("DELETE FROM e2e_plain WHERE conv = ? AND id = ?", arrayOf<Any?>(conv, id))
           touched.add(conv); nMsg++
         }
       }
@@ -465,6 +469,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
           val d = a.optJSONObject(i) ?: continue
           val conv = jStr(d.opt("conv")); val id = jLong(d.opt("id")); if (conv.isEmpty()) continue
           db.execSQL("DELETE FROM messages WHERE conv = ? AND id = ?", arrayOf<Any?>(conv, id))
+          db.execSQL("DELETE FROM e2e_plain WHERE conv = ? AND id = ?", arrayOf<Any?>(conv, id)) // [e2ee5 WP-08b]
           db.execSQL("DELETE FROM receipts WHERE conv = ? AND msg_id = ?", arrayOf<Any?>(conv, id))
           db.execSQL("DELETE FROM reactions WHERE conv = ? AND msg_id = ?", arrayOf<Any?>(conv, id))
           touched.add(conv)
@@ -527,6 +532,11 @@ class ChatyyStoreDB private constructor(ctx: Context) {
       for (conv in touched) {
         db.execSQL(
           "DELETE FROM messages WHERE conv = ? AND id < COALESCE((SELECT id FROM messages WHERE conv = ? ORDER BY id DESC LIMIT 1 OFFSET ${MAX_MESSAGES_PER_CONV - 1}), 0)",
+          arrayOf<Any?>(conv, conv)
+        )
+        // [e2ee5 WP-08b] texto decifrado só da janela guardada (mesmo teto das mensagens)
+        db.execSQL(
+          "DELETE FROM e2e_plain WHERE conv = ? AND id < COALESCE((SELECT id FROM e2e_plain WHERE conv = ? ORDER BY id DESC LIMIT 1 OFFSET ${MAX_MESSAGES_PER_CONV - 1}), 0)",
           arrayOf<Any?>(conv, conv)
         )
       }
@@ -702,7 +712,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
     ex.execute {
       val out = try {
         val b = StoreIngest.translate(normAccount(account), frames)
-        if (b == null) mapOf<String, Any>("ok" to 1, "messages" to 0) else applyBatchObj(account, b)
+        if (b == null) mapOf<String, Any>("ok" to 1, "messages" to 0) else applyBatchObj(account, b).also { e2eIngest(account, b) }
       } catch (_: SQLiteDatabaseCorruptException) { drop(account); mapOf<String, Any>("ok" to 0, "why" to "corrupt") }
       catch (t: Throwable) { mapOf<String, Any>("ok" to 0, "why" to (t.message ?: "err")) }
       try { done?.invoke(out) } catch (_: Throwable) {}
@@ -894,7 +904,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
       val it = patch.keys()
       while (it.hasNext()) {
         val k = it.next()
-        if (k !in arrayOf("state", "tries", "next_at", "err", "server", "body", "file", "up")) continue
+        if (k !in arrayOf("state", "tries", "next_at", "err", "server", "body", "file", "up", "frame" /* [e2ee5 WP-08b] recifrado */)) continue
         sets.add("$k = ?")
         args.add(if (patch.isNull(k)) null else when (k) { "tries", "next_at" -> jLong(patch.opt(k)); else -> patch.opt(k).toString() })
       }
@@ -939,6 +949,12 @@ class ChatyyStoreDB private constructor(ctx: Context) {
         db.setTransactionSuccessful()
       } finally { db.endTransaction() }
       notifyConvs(account, setOf(conv))
+      // [e2ee5 WP-08b] enviada cifrada: o próprio aparelho decifra o envelope (sessão de saída) → e2e_plain
+      if (isEnv(server.optString("content")) && jLong(server.opt("id")) > 0) {
+        val row = try { JSONObject(server.toString()) } catch (_: Throwable) { server }
+        if (row.optString("sender_email").isEmpty()) row.put("sender_email", account)
+        E2eeNative.ingestAsync(appCtx, account, listOf(Pair(conv, row)))
+      }
       Unit
     }
   }
@@ -981,7 +997,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
         val pairs = ArrayList<Pair<String, String>>()
         for (d in rows) {
           val id = jStr(d["id"]); if (id.isEmpty() || id !in idSet) continue
-          val s = try { JSONObject(d).toString() } catch (_: Throwable) { null } ?: continue
+          val s = try { e2eSanitizeRow(JSONObject(d), E2eeNative.labelNewMessage()).toString() } catch (_: Throwable) { null } ?: continue
           pairs.add(Pair(id, s))
         }
         val have = pairs.map { it.first }.toHashSet()
@@ -1021,7 +1037,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
           if (srev != null && srev == rev) {
             val map = HashMap<String, Map<String, Any?>>()
             db.rawQuery("SELECT id, row FROM home_rows WHERE scope = ?", arrayOf(scope)).use { c ->
-              while (c.moveToNext()) { val id = c.getString(0) ?: continue; try { map[id] = toMap(JSONObject(c.getString(1) ?: "{}")) } catch (_: Throwable) {} }
+              while (c.moveToNext()) { val id = c.getString(0) ?: continue; try { map[id] = toMap(e2eSanitizeRow(JSONObject(c.getString(1) ?: "{}"), E2eeNative.labelNewMessage())) } catch (_: Throwable) {} }
             }
             val ia = try { JSONArray(sids) } catch (_: Throwable) { JSONArray() }
             val ids = ArrayList<String>(); val rows = ArrayList<Map<String, Any?>>()
@@ -1043,6 +1059,153 @@ class ChatyyStoreDB private constructor(ctx: Context) {
       db.rawQuery("SELECT rev, top FROM home_snap WHERE scope = ? AND n > 0", arrayOf(scope)).use { c ->
         if (c.moveToFirst()) (c.getString(0) ?: "") + "\n" + (c.getString(1) ?: "") else ""
       }
+    }
+  }
+
+  // ═══ [e2ee5 WP-08b] texto decifrado (conversas E2EE) — SÓ neste arquivo protegido ═══
+  // noBackupFilesDir (fora do Auto Backup/D2D), armazenamento credential-encrypted do FBE.
+  // `messages.raw` continua com o ENVELOPE; o payload decifrado mora em `e2e_plain`.
+  // Nunca vai para AsyncStorage/JS cache/journal. Apagar a mensagem/conversa apaga daqui.
+
+  private fun ensureE2e(db: SQLiteDatabase) {
+    try {
+      db.execSQL("CREATE TABLE IF NOT EXISTS e2e_plain (conv TEXT NOT NULL, id INTEGER NOT NULL, cmid TEXT, payload TEXT NOT NULL, trust TEXT, at INTEGER, PRIMARY KEY (conv, id)) WITHOUT ROWID")
+      db.execSQL("CREATE TABLE IF NOT EXISTS e2e_uid (email TEXT PRIMARY KEY, uid TEXT NOT NULL, at INTEGER)")
+      db.execSQL("CREATE TABLE IF NOT EXISTS e2e_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, ev TEXT NOT NULL)")
+    } catch (_: Throwable) {}
+  }
+
+  private fun isEnv(v: Any?): Boolean = v is String && v.startsWith("{\"e2e\":")
+
+  /**
+   * Linha montada (foto da conversa / home) com envelope cru num campo de texto → rótulo + marca
+   * `e5:1` (na leitura, troca pelo texto decifrado se houver). Nunca grava/mostra o JSON cru.
+   */
+  private fun e2eSanitizeRow(o: JSONObject, label: String): JSONObject {
+    var hit = false
+    val it = o.keys()
+    val ks = ArrayList<String>(); while (it.hasNext()) ks.add(it.next())
+    for (k in ks) {
+      val v = o.opt(k)
+      if (isEnv(v)) { o.put(k, label); hit = true }
+      else if (v is JSONObject) { val inner = e2eSanitizeRow(v, label); if (inner.optInt("e5", 0) == 1) { inner.remove("e5"); hit = true } }
+    }
+    if (hit) o.put("e5", 1)
+    return o
+  }
+
+  /** Leitura da foto: linha marcada `e5` (ou com envelope legado) → texto decifrado de `e2e_plain`. */
+  private fun e2eFillRow(db: SQLiteDatabase, conv: String, o: JSONObject): JSONObject {
+    val legacy = isEnv(o.opt("text"))
+    if (o.optInt("e5", 0) != 1 && !legacy) return o
+    val id = jLong(o.opt("id"))
+    val p = if (id > 0) try {
+      db.rawQuery("SELECT payload FROM e2e_plain WHERE conv = ? AND id = ?", arrayOf(conv, id.toString())).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    } catch (_: Throwable) { null } else null
+    val pj = p?.let { try { JSONObject(it) } catch (_: Throwable) { null } }
+    if (pj != null) o.put("text", E2eeNative.previewOf(pj))
+    else if (legacy) e2eSanitizeRow(o, E2eeNative.labelWaiting())
+    return o
+  }
+
+  /** Envelopes recém-ingeridos (frames do hub) → decifra em 2º plano (gate dentro da ponte). */
+  private fun e2eIngest(account: String, b: JSONObject) {
+    val a = b.optJSONArray("messages") ?: return
+    var rows: ArrayList<Pair<String, JSONObject>>? = null
+    for (i in 0 until a.length()) {
+      val m = a.optJSONObject(i) ?: continue
+      val raw = m.optString("raw")
+      if (!raw.contains("\"content\":\"{\\\"e2e\\\":")) continue // barato: só linhas com envelope
+      val o = try { JSONObject(raw) } catch (_: Throwable) { continue }
+      if (!isEnv(o.optString("content"))) continue
+      if (rows == null) rows = ArrayList()
+      rows.add(Pair(jStr(m.opt("conv")), o))
+    }
+    rows?.let { E2eeNative.ingestAsync(appCtx, account, it) }
+  }
+
+  fun e2ePlainGet(account: String, conv: String, id: Long): String? {
+    if (account.isEmpty() || conv.isEmpty() || id <= 0) return null
+    return onEx(1500L, null as String?) {
+      val db = open(account) ?: return@onEx null
+      db.rawQuery("SELECT payload FROM e2e_plain WHERE conv = ? AND id = ?", arrayOf(conv, id.toString())).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    }
+  }
+
+  /** {id: payloadJson} das mensagens pedidas (JS / WP-08c lê o decifrado daqui). */
+  fun e2ePlainMany(account: String, conv: String, ids: List<Long>): String {
+    if (account.isEmpty() || conv.isEmpty() || ids.isEmpty()) return "{}"
+    return onEx(2000L, "{}") {
+      val db = open(account) ?: return@onEx "{}"
+      val out = JSONObject()
+      for (chunk in ids.filter { it > 0 }.distinct().take(500).chunked(100)) {
+        val qs = chunk.joinToString(",") { "?" }
+        val args = arrayOf(conv) + chunk.map { it.toString() }
+        db.rawQuery("SELECT id, payload FROM e2e_plain WHERE conv = ? AND id IN ($qs)", args).use { c ->
+          while (c.moveToNext()) out.put(c.getLong(0).toString(), c.getString(1) ?: continue)
+        }
+      }
+      out.toString()
+    }
+  }
+
+  fun e2ePlainPut(account: String, conv: String, id: Long, cmid: String, payload: String, trust: String) {
+    if (account.isEmpty() || conv.isEmpty() || id <= 0) return
+    onEx(2000L, Unit) {
+      val db = open(account) ?: return@onEx Unit
+      db.execSQL("INSERT OR REPLACE INTO e2e_plain (conv, id, cmid, payload, trust, at) VALUES (?,?,?,?,?,?)",
+        arrayOf<Any?>(conv, id, cmid, payload, trust, System.currentTimeMillis()))
+      dropCached(account, conv)
+      Unit
+    }
+  }
+
+  fun e2eNotify(account: String, convs: Set<String>) {
+    for (c in convs) dropCached(account, c)
+    notifyConvs(account, convs)
+  }
+
+  fun e2eUidGet(account: String, email: String): String? {
+    if (account.isEmpty() || email.isEmpty()) return null
+    return onEx(1500L, null as String?) {
+      val db = open(account) ?: return@onEx null
+      db.rawQuery("SELECT uid FROM e2e_uid WHERE email = ?", arrayOf(email)).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    }
+  }
+
+  fun e2eUidSet(account: String, email: String, uid: String) {
+    if (account.isEmpty() || email.isEmpty() || uid.isEmpty()) return
+    ex.execute {
+      try { open(account)?.execSQL("INSERT OR REPLACE INTO e2e_uid (email, uid, at) VALUES (?,?,?)", arrayOf<Any?>(email, uid, System.currentTimeMillis())) } catch (_: Throwable) {}
+    }
+  }
+
+  /** Eventos `chatyy.*` de um sync NATIVO (JS morto) → fila p/ o JS drenar (máx. 200, 2 dias). */
+  fun e2eEventsPut(account: String, events: JSONArray) {
+    if (account.isEmpty() || events.length() == 0) return
+    onEx(2000L, Unit) {
+      val db = open(account) ?: return@onEx Unit
+      val now = System.currentTimeMillis()
+      for (i in 0 until events.length()) {
+        val e = events.optJSONObject(i) ?: continue
+        db.execSQL("INSERT INTO e2e_events (at, ev) VALUES (?, ?)", arrayOf<Any?>(now, e.toString()))
+      }
+      db.execSQL("DELETE FROM e2e_events WHERE at < ? OR seq <= (SELECT seq FROM e2e_events ORDER BY seq DESC LIMIT 1 OFFSET 200)", arrayOf<Any?>(now - 2L * 86400_000L))
+      Unit
+    }
+  }
+
+  /** Entrega e apaga a fila de eventos `chatyy.*` ("[ev,…]"). */
+  fun e2eEventsDrain(account: String): String {
+    if (account.isEmpty()) return "[]"
+    return onEx(2000L, "[]") {
+      val db = open(account) ?: return@onEx "[]"
+      val a = JSONArray(); var mx = 0L
+      db.rawQuery("SELECT seq, ev FROM e2e_events ORDER BY seq ASC LIMIT 200", null).use { c ->
+        while (c.moveToNext()) { mx = c.getLong(0); try { a.put(JSONObject(c.getString(1) ?: "{}")) } catch (_: Throwable) {} }
+      }
+      if (mx > 0) db.execSQL("DELETE FROM e2e_events WHERE seq <= ?", arrayOf<Any?>(mx))
+      a.toString()
     }
   }
 

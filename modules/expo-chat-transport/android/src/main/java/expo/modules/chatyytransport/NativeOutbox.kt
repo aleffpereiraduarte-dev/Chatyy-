@@ -40,6 +40,8 @@ internal object NativeOutbox {
       val store = ChatyyStoreDB.get(app)
       val c = OutboxCore(StoreAdapter(store), NetAdapter, ChatTransport.executor())
       c.credsLoader = { a -> Creds.load(app, a) }
+      // [e2ee5 WP-08b] conversa E2EE: cifra antes de gravar (gate dentro; desligado = hoje)
+      c.sealer = E2eeOutboxSealer(app) { a -> Creds.load(app, a) }
       c.accountsLoader = { Creds.accounts(app) }
       core = c
       return c
@@ -90,6 +92,7 @@ internal object NativeOutbox {
     override fun online(): Boolean = ChatTransport.netUp
     override fun wsReady(account: String): Boolean = ChatTransport.nativeSendReady(account)
     override fun wsSend(account: String, text: String): Boolean = ChatTransport.nativeSendRaw(account, text)
+    override fun wsE2ee(account: String): Boolean = ChatTransport.nativeSendE2ee(account)
   }
 
   /**

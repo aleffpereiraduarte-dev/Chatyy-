@@ -153,7 +153,10 @@ object ChatBgJournal {
             o.put("cid", cid)
             o.put("mid", mid)
             val locked = d["locked"] == "1"
-            val full = d["bg_full"] == "1" && !locked
+            // [e2ee5 WP-08b] push E2EE (§7): sem texto em claro; o decifrado (WP-10/pushPreview) fica no store nativo
+            val e2e = d["e2e"] == "5"
+            if (e2e) o.put("e2e", "1")
+            val full = d["bg_full"] == "1" && !locked && !e2e
             o.put("full", if (full) "1" else "0")
             o.put("locked", if (locked) "1" else "0")
             o.put("sender", d["sender_email"] ?: "")
@@ -208,6 +211,9 @@ object ChatBgJournal {
             val full = !(sealed || viewOnce || e2e)
             val o = JSONObject()
             o.put("v", 1); o.put("src", "bg"); o.put("acct", acct)
+            // [e2ee5 WP-08b] mensagem cifrada: nunca texto/legenda/arquivo aqui (o journal vai p/ o
+            // chatyy.db do JS, que entra no backup). O decifrado mora no store nativo (e2ePlainSync).
+            if (e2e) o.put("e2e", "1")
             o.put("at", System.currentTimeMillis())
             o.put("cid", convId); o.put("mid", mid)
             o.put("full", if (full) "1" else "0"); o.put("locked", "0")

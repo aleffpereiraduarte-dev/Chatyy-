@@ -293,6 +293,8 @@ internal object ChatTransport {
   // ─── [fase 4] porta WS da fila nativa (chamado no MESMO executor) ────────
   internal fun nativeSendReady(account: String): Boolean = session?.nativeSendReady(account) ?: false
   internal fun nativeSendRaw(account: String, text: String): Boolean = session?.sendNativeFrame(account, text) ?: false
+  /** [e2ee5 WP-08b] hub aceita envelope pelo WS (cap `e2ee5_ns`, §5.3). */
+  internal fun nativeSendE2ee(account: String): Boolean = session?.nativeSendE2ee(account) ?: false
 
   // ─── API (chamada pela thread JS → posta na thread do transporte) ───────
 
@@ -587,6 +589,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   // [2b/4] conta confirmada pelo auth_success + capability native_send do hub
   private var authedAccount: String? = null
   private var nativeSendCap = false
+  private var e2eeNsCap = false // [e2ee5 WP-08b]
   private val ingestBuf = ArrayList<String>()
 
   /** [v6] hosts p/ pré-resolver (regional + US). */
@@ -601,6 +604,8 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
 
   fun nativeSendReady(account: String): Boolean =
     !closed && phys == Phys.AUTHED && ws != null && nativeSendCap && authedAccount != null && authedAccount == account.trim().lowercase()
+
+  fun nativeSendE2ee(account: String): Boolean = e2eeNsCap && nativeSendReady(account)
 
   fun sendNativeFrame(account: String, text: String): Boolean {
     if (!nativeSendReady(account)) return false
@@ -753,6 +758,11 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
           val acct = authedAccount
           if (o != null && acct != null) NativeOutbox.peek()?.onWsFrame(acct, o)
         }
+        // [e2ee5 WP-08b] avisos E2EE (conv_e2ee / e2ee5_td / e2ee5_devices) → ponte nativa (sem conteúdo)
+        if (text.length < 4096 && text.contains("e2ee") && (text.contains("\"conv_e2ee\"") || text.contains("\"e2ee5_td\"") || text.contains("\"e2ee5_devices\""))) {
+          val acct = authedAccount; val c = ChatTransport.appCtx
+          if (acct != null && c != null) try { E2eeWsHints.onFrame(c, acct, text, ChatTransport.foreground) } catch (_: Throwable) {}
+        }
         // [2b] mensagens/recibos → store nativo (o JS continua recebendo igual)
         if (cfg.storeIngest && authedAccount != null && StoreIngest.wants(text)) ingestBuf.add(text)
         enqueueFrame(text)
@@ -763,10 +773,14 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   /** e-mail + caps do auth_success sem parsear o `data` inteiro (pode ter centenas de KB). */
   private fun noteAuthIdentity(text: String) {
     nativeSendCap = false
+    e2eeNsCap = false
     val ci = text.indexOf("\"caps\":[")
     if (ci >= 0) {
       val end = text.indexOf(']', ci)
-      if (end > ci) nativeSendCap = text.substring(ci, end).contains("\"native_send\"")
+      if (end > ci) {
+        nativeSendCap = text.substring(ci, end).contains("\"native_send\"")
+        e2eeNsCap = text.substring(ci, end).contains("\"e2ee5_ns\"")
+      }
     }
     // e-mail de TOPO: chaves do Go em ordem alfabética → vem depois de "data";
     // o último "email" é o do topo. Sem ele, vale a conta que o JS informou.

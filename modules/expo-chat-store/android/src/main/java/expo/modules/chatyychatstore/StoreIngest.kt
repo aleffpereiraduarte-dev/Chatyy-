@@ -252,6 +252,8 @@ object StoreIngest {
     if (truthy(m.opt("edited"))) return "edited"
     val rx = m.optJSONArray("reactions"); if (rx != null && rx.length() > 0) return "reactions"
     val c = str(m.opt("content")).trimEnd()
+    // [e2ee5 WP-08b] envelope E2EE: a linha nativa mostraria o JSON cru → deixa p/ o JS (foto "desatualizada")
+    if (c.startsWith("{\"e2e\"")) return "e2e"
     if (c.isEmpty() || c.length > 500) return "len"
     if (p.allow?.matches(c) != true) return "allow"
     if (p.deny?.containsMatchIn(c) == true) return "deny"

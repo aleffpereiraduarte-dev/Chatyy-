@@ -140,6 +140,8 @@ class ChatBgSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, par
 
             val lines = ArrayList<String>()
             val newPts = HashMap<String, Long>()
+            // [e2ee5 WP-08b] linhas com envelope (conversa E2EE) → decifradas p/ o store protegido
+            val e2eRows = HashMap<String, JSONArray>()
             val acks = HashMap<String, MutableList<Long>>()
             for (i in 0 until outConvs.length()) {
                 val c = outConvs.optJSONObject(i) ?: continue
@@ -153,6 +155,7 @@ class ChatBgSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, par
                     if (mid <= 0) continue
                     hydrated.add(mid)
                     ChatBgJournal.lineFromSyncRow(acct, cid, m)?.let { lines.add(it) }
+                    if (CallkitE2ee.isEnvelope(if (m.isNull("content")) "" else m.optString("content", ""))) e2eRows.getOrPut(cid) { JSONArray() }.put(m)
                     val sender = ChatNotifStore.normEmail(m.optString("sender_email", ""))
                     if (sender.isNotEmpty() && sender != acct) acks.getOrPut(cid) { ArrayList() }.add(mid)
                 }
@@ -176,6 +179,16 @@ class ChatBgSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, par
                 }
             }
             if (lines.isNotEmpty()) ChatBgJournal.appendLines(ctx, lines)
+            // [e2ee5 WP-08b] o journal leva só o marcador e2e (o JS grava o journal no chatyy.db, que
+            // entra no backup); o texto decifrado fica SÓ no store nativo (noBackupFilesDir) → e2ePlainSync.
+            if (e2eRows.isNotEmpty() && CallkitE2ee.gateOn(ctx, acct)) {
+                val deadline = System.currentTimeMillis() + 25_000L
+                for ((cid, rows) in e2eRows) {
+                    val left = deadline - System.currentTimeMillis()
+                    if (left < 1500L) break
+                    CallkitE2ee.ingestRows(ctx, acct, cid, rows, bearer, base, left)
+                }
+            }
             if (newPts.isNotEmpty()) advance(ctx, acct, newPts)
             for ((cid, ids) in acks) {
                 val cidL = cid.toLongOrNull() ?: continue

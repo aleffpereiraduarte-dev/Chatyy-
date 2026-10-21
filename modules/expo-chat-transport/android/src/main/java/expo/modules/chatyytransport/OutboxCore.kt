@@ -65,6 +65,19 @@ class OutboxCore(
     /** Socket nativo autenticado nesta conta + hub com `native_send`. */
     fun wsReady(account: String): Boolean
     fun wsSend(account: String, text: String): Boolean
+    /** [e2ee5 WP-08b] hub com a cap `e2ee5_ns` (aceita envelope pelo WS, §5.3). Sem ela: HTTP. */
+    fun wsE2ee(account: String): Boolean = false
+  }
+
+  /**
+   * [e2ee5 WP-08b] Cifra itens de conversa E2EE ANTES de gravar (nunca texto puro no SQLite).
+   * Chamado FORA do executor (bloqueia: estado da conversa + núcleo). Sem sealer = hoje.
+   */
+  interface Sealer {
+    /** Item pronto p/ gravar (cifrado ou o mesmo); null = é E2EE e não deu → não grava ("" ao chamador). */
+    fun seal(account: String, item: JSONObject): JSONObject?
+    /** Recusa `e2ee5_*` do servidor/hub. Item re-selado (reenviar) ou null (falha definitiva). */
+    fun reseal(account: String, item: JSONObject, code: String): JSONObject?
   }
 
   class Creds(val account: String, val token: String, val base: String)
@@ -97,6 +110,8 @@ class OutboxCore(
   @Volatile var accountsLoader: (() -> List<String>)? = null
   /** Teste: base HTTP alternativa (proxy local). */
   @Volatile var baseOverride: String? = null
+  /** [e2ee5 WP-08b] cifra antes de persistir (null = comportamento de hoje). */
+  @Volatile var sealer: Sealer? = null
 
   private val http: OkHttpClient = httpClient ?: OkHttpClient.Builder()
     .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS)
@@ -146,7 +161,9 @@ class OutboxCore(
   fun submit(account: String, item: JSONObject): String {
     val a = norm(account)
     if (a.isEmpty()) return ""
-    val st = storage.put(a, item)
+    // [e2ee5 WP-08b] conversa E2EE: grava SÓ o envelope; não deu p/ cifrar → "" (o JS assume)
+    val toPut = sealer?.let { s -> try { s.seal(a, item) } catch (_: Throwable) { null } ?: run { bump("e2eeSealFail"); return "" } } ?: item
+    val st = storage.put(a, toPut)
     post {
       accounts.add(a)
       if (st == "new") { bump("submitted"); emit(mapOf("account" to a, "cmi" to item.optString("cmi"), "conv" to item.optString("conv"), "state" to "queued", "tries" to 0)) }
@@ -210,6 +227,12 @@ class OutboxCore(
       if (at.phase != "ws" || at.account != norm(account)) return@post
       at.timer?.cancel(false)
       val row = obj.optJSONObject("message")
+      // [e2ee5 WP-08b] §5.4: recusa definitiva no WS — NÃO reenviar por HTTP o mesmo conteúdo
+      if (type == "chat_send_error") {
+        bump("wsSendErrors")
+        e2eeRefused(at, obj.optString("code").ifEmpty { "chat_send_error" }, obj.optInt("http", 409))
+        return@post
+      }
       if (type == "chat_send_ack" && row != null && idOf(row) > 0) {
         bump("wsAcks")
         done(at, row, "ws")
@@ -412,7 +435,9 @@ class OutboxCore(
     emit(mapOf("account" to a, "cmi" to cmi, "conv" to conv, "state" to "sending", "tries" to it.optLong("tries")))
     bump("attempts")
     val frame = it.optString("frame")
-    if (frame.isNotEmpty() && frame != "null" && net.wsReady(a) && net.wsSend(a, frame)) {
+    // [e2ee5 WP-08b] envelope pelo WS só se o hub tem `e2ee5_ns` (§5.3); senão HTTP (que impõe igual)
+    val wsOk = !frame.contains("{\\\"e2e\\\":") || net.wsE2ee(a)
+    if (frame.isNotEmpty() && frame != "null" && wsOk && net.wsReady(a) && net.wsSend(a, frame)) {
       bump("wsSends")
       at.timer = exec.schedule({ if (inflight[cmi] === at && at.phase == "ws") { bump("wsTimeouts"); httpSend(at) } }, WS_ACK_MS, TimeUnit.MILLISECONDS)
       return
@@ -454,6 +479,9 @@ class OutboxCore(
     val data = j?.optJSONObject("data")
     if (code in 200..299 && ok && data != null && idOf(data) > 0) { done(at, data, "http"); return }
     val msg = j?.optString("message")?.ifEmpty { j.optString("error") } ?: ""
+    // [e2ee5 WP-08b] recusa por E2EE (§8.4): estado da conversa mudou → recifra 1× ou falha (nunca texto puro)
+    val e5 = data?.optString("code").orEmpty()
+    if (e5.startsWith("e2ee5_") && code in 400..499) { e2eeRefused(at, e5, code); return }
     when {
       code == 401 -> { authWaitUntil[at.account] = now() + 10000; transient(at, "http_401", offline = false, auth = true) }
       code == 429 -> {
@@ -466,6 +494,44 @@ class OutboxCore(
       code in 200..299 && j != null && HARD_RE.containsMatchIn(msg) -> hard(at, msg.take(120))
       else -> transient(at, "http_$code " + msg.take(80), offline = false)
     }
+  }
+
+  /**
+   * [e2ee5 WP-08b] Servidor/hub recusou por E2EE. `e2ee5_plaintext_refused` com o item ainda em
+   * claro (estado velho da conversa) → o sealer recifra fora do executor e o item volta à fila;
+   * 2ª recusa, `e2ee5_not_e2ee`, `e2ee5_bad_request` etc. → falha definitiva ("!", reenviável).
+   */
+  private fun e2eeRefused(at: Attempt, code: String, http: Int) {
+    inflight.remove(at.cmi)
+    val s = sealer
+    val row = findItem(at.account, at.cmi)
+    val again = row?.optString("err").orEmpty().startsWith("e2ee5_resealed")
+    if (s == null || row == null || again || code != "e2ee5_plaintext_refused") {
+      inflight[at.cmi] = at
+      try { s?.reseal(at.account, JSONObject().put("conv", at.conv).put("cmi", at.cmi).put("probe", true), code) } catch (_: Throwable) {}
+      hard(at, "$code http_$http")
+      return
+    }
+    // segura o item (não sai de novo em claro) enquanto recifra
+    storage.patch(at.account, at.cmi, JSONObject().put("state", "queued").put("next_at", now() + 120_000L).put("err", "e2ee5_resealing"))
+    bump("e2eeReseal")
+    val acct = at.account
+    Thread({
+      val n = try { s.reseal(acct, row, code) } catch (_: Throwable) { null }
+      post {
+        if (n != null) {
+          val p = JSONObject().put("state", "queued").put("next_at", 0).put("err", "e2ee5_resealed")
+          n.opt("body")?.let { b -> p.put("body", b.toString()) }
+          // frame cifrado (ou vazio → só HTTP): o texto puro não sai de novo
+          p.put("frame", n.optString("frame").ifEmpty { "" })
+          storage.patch(acct, at.cmi, p)
+          pumpNow()
+        } else {
+          inflight[at.cmi] = at
+          hard(at, "$code reseal_failed")
+        }
+      }
+    }, "chatyy-outbox-e2ee").start()
   }
 
   private fun findItem(a: String, cmi: String): JSONObject? {

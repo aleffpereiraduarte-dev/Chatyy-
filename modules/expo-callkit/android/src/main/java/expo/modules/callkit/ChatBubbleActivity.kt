@@ -255,7 +255,7 @@ class ChatBubbleActivity : Activity() {
             val url = base + "/api/email.php?action=chat_messages&limit=30&conversation_id=" +
                 URLEncoder.encode(convId, "UTF-8")
             val body = http("GET", url, token, null) ?: return@task
-            val parsed = parseMessages(body) ?: return@task
+            val parsed = parseMessages(body, token, base) ?: return@task
             main.post {
                 if (isFinishing || isDestroyed) return@post
                 msgs.clear()
@@ -272,7 +272,11 @@ class ChatBubbleActivity : Activity() {
         }, "chatyy-bubble-fetch").start()
     }
 
-    private fun parseMessages(raw: String): List<Msg>? {
+    // [e2ee5 WP-08b] 1ª busca pode ir à rede p/ chave/remetente; o poll de 5 s só lê o cache
+    // decifrado (a chave que chegar depois é aplicada pela ponte e entra no próximo poll).
+    @Volatile private var e2eNetDone = false
+
+    private fun parseMessages(raw: String, token: String, base: String): List<Msg>? {
         return try {
             val j = JSONObject(raw)
             if (!j.optBoolean("success", false)) return null
@@ -284,12 +288,19 @@ class ChatBubbleActivity : Activity() {
             } ?: return null
             val mine = me()
             val out = ArrayList<Msg>()
+            val net = !e2eNetDone
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
                 val sender = ChatNotifStore.normEmail(o.optString("sender_email", ""))
                 val name = o.optString("sender_name", "").ifEmpty { sender.substringBefore('@') }
-                out.add(Msg(o.optLong("id", 0L), mine.isNotEmpty() && sender == mine, name, describe(o)))
+                // [e2ee5 WP-08b] envelope → texto decifrado pelo núcleo nativo (ou "Aguardando…"); nunca o JSON cru
+                val text = if (CallkitE2ee.isEnvelope(o.optString("content", "")) &&
+                    (o.isNull("deleted_at") || o.optString("deleted_at", "").isEmpty())) {
+                    CallkitE2ee.displayText(this, me(), convId, o, token, base, net) ?: label("message")
+                } else describe(o)
+                out.add(Msg(o.optLong("id", 0L), mine.isNotEmpty() && sender == mine, name, text))
             }
+            e2eNetDone = true
             out.sortBy { it.id }
             out
         } catch (t: Throwable) {
@@ -327,20 +338,44 @@ class ChatBubbleActivity : Activity() {
         val cmid = "bubble-" + UUID.randomUUID().toString()
         Thread({
             var ok = false
-            for (attempt in 0 until 2) {
+            // [e2ee5 WP-08b] conversa E2EE: envia o envelope cifrado no nativo; não deu → abre o app
+            // (nunca texto puro). Gate desligado / conversa normal = como antes.
+            var seal = CallkitE2ee.sealText(this, me(), token, base, convId, cmid, text)
+            var e2eeBlocked = seal is CallkitE2ee.Seal.Fail
+            var attempt = 0
+            while (!e2eeBlocked && attempt < 2) {
+                attempt++
+                val env = seal as? CallkitE2ee.Seal.Env
                 val body = JSONObject().apply {
                     put("action", "chat_send")
                     put("conversation_id", convId)
                     put("type", "text")
-                    put("content", text)
+                    put("content", env?.envelope ?: text)
+                    if (env != null) put("has_link", env.hasLink)
                     put("client_message_id", cmid)
                 }.toString()
+                lastErrBody = null
                 val r = http("POST", "$base/api/email.php?action=chat_send", token, body)
                 ok = r != null && try { JSONObject(r).optBoolean("success", false) } catch (_: Throwable) { false }
                 if (ok) break
+                val e5 = CallkitE2ee.errorCode(lastErrBody ?: r)
+                if (e5.startsWith("e2ee5_")) {
+                    CallkitE2ee.refused(me(), convId, e5)
+                    if (e5 == "e2ee5_plaintext_refused" && seal is CallkitE2ee.Seal.Plain) {
+                        seal = CallkitE2ee.sealText(this, me(), token, base, convId, cmid, text, fresh = true)
+                        if (seal is CallkitE2ee.Seal.Env) { attempt = 0; continue }
+                    }
+                    e2eeBlocked = true
+                }
             }
             main.post {
                 if (isFinishing || isDestroyed) return@post
+                if (!ok && e2eeBlocked) {
+                    pendingMine.remove(optimistic)
+                    renderList()
+                    openInApp()
+                    return@post
+                }
                 if (ok) fetch() else {
                     pendingMine.remove(optimistic)
                     pendingMine.add(Msg(-1L, true, "", text + "  · " + label("failed")))
@@ -363,6 +398,8 @@ class ChatBubbleActivity : Activity() {
         }, "chatyy-bubble-read").start()
     }
 
+    @Volatile private var lastErrBody: String? = null
+
     /** Returns the body on HTTP 2xx, null otherwise. */
     private fun http(method: String, url: String, token: String, body: String?): String? {
         var conn: HttpURLConnection? = null
@@ -380,7 +417,11 @@ class ChatBubbleActivity : Activity() {
             }
             if (body != null) conn.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
             val code = conn.responseCode
-            if (code !in 200..299) return null
+            if (code !in 200..299) {
+                // [e2ee5 WP-08b] corpo do erro (só p/ ler data.code — nunca logado)
+                lastErrBody = try { conn.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Throwable) { null }
+                return null
+            }
             conn.inputStream.bufferedReader().use { it.readText() }
         } catch (t: Throwable) {
             Log.w(TAG, "$method failed: ${t.message}")

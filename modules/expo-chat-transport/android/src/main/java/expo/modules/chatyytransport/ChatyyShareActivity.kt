@@ -945,6 +945,14 @@ class ChatyyShareActivity : Activity() {
     val app = applicationContext
     exec.execute {
       var ok = 0
+      // [e2ee5 WP-08b] conversa E2EE: mídia cifrada é F3 (WP-11) → abre o app (nunca sobe em claro);
+      // texto é cifrado pela fila nativa (E2eeOutboxSealer). Gate desligado = como antes.
+      if (media.isNotEmpty() && expo.modules.chatyychatstore.E2eeNative.gateOn(app, account)) {
+        val e2ee = try {
+          recips.any { r -> expo.modules.chatyychatstore.E2eeNative.convState(app, account, r.id, c.token, c.base)?.mode == 1 }
+        } catch (_: Throwable) { false }
+        if (e2ee) { main.post { forwardToApp("e2ee_media") }; return@execute }
+      }
       try {
         ChatTransport.init(app)
         val core = NativeOutbox.get(app)
@@ -967,7 +975,12 @@ class ChatyyShareActivity : Activity() {
           return@post
         }
         finishedFlow = true
-        Toast.makeText(app, t("Enviando…", "Sending…", "Enviando…"), Toast.LENGTH_SHORT).show()
+        if (done < jobs.size) {
+          // [e2ee5 WP-08b] alguma conversa protegida não aceitou (não deu p/ cifrar agora)
+          Toast.makeText(app, t("Algumas mensagens não foram enviadas. Abra o Chatyy para tentar de novo.", "Some messages weren't sent. Open Chatyy to try again.", "Algunos mensajes no se enviaron. Abre Chatyy para intentarlo de nuevo."), Toast.LENGTH_LONG).show()
+        } else {
+          Toast.makeText(app, t("Enviando…", "Sending…", "Enviando…"), Toast.LENGTH_SHORT).show()
+        }
         finish()
       }
     }

@@ -11,6 +11,8 @@ android {
   defaultConfig {
     minSdkVersion safeExtGet("minSdkVersion", 24)
     targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    // [e2ee5 WP-08b] E2eeNative é chamado por reflexão pelo expo-callkit (R8 do release).
+    consumerProguardFiles 'consumer-rules.pro'
   }
 
   compileOptions {

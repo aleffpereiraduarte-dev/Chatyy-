@@ -74,6 +74,25 @@ class ChatyyChatStoreModule : Module() {
       store()?.statsSync(account) ?: mapOf<String, Any>("threads" to 0, "rows" to 0, "bytes" to 0)
     }
 
+    // ─── [e2ee5 WP-08b] E2EE nativo (sem mudar apiVersion: o JS detecta pela função) ───
+    /** {id: payloadJson} decifrados pelo nativo (transporte/push/2º plano). ids = "[1,2,…]". */
+    Function("e2ePlainSync") { account: String, conv: String, idsJson: String ->
+      val ids = try { org.json.JSONArray(idsJson).let { a -> (0 until a.length()).map { a.optLong(it) } } } catch (_: Throwable) { emptyList() }
+      store()?.e2ePlainMany(account, conv, ids) ?: "{}"
+    }
+
+    /** Eventos `chatyy.*` recebidos num sync NATIVO (JS parado) — entrega e apaga. */
+    Function("e2eEventsDrain") { account: String -> store()?.e2eEventsDrain(account) ?: "[]" }
+
+    /** Diagnóstico (sem segredos): núcleo linkado, gate da conta, pendentes. */
+    Function("e2eInfo") { account: String ->
+      val ctx = appContext.reactContext ?: return@Function mapOf<String, Any?>("coreLinked" to false)
+      E2eeNative.info(ctx, account)
+    }
+
+    /** Flag/conta mudou (status()/logout): esquece os caches de gate e de estado de conversa. */
+    Function("e2eInvalidate") { E2eeNative.invalidateAll(); Unit }
+
     AsyncFunction("wipeAccount") { account: String ->
       store()?.wipeAccount(account)
       Unit
