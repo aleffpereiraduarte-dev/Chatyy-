@@ -15335,4 +15335,6 @@ export default {
   "photos.bk.viewBackup": "Ver backup",
   "photos.bk.retry": "Tentar de novo",
   "photos.bk.pause": "Pausar envio",
+  "call.cameraPermTitle": "Permitir câmera",
+  "call.cameraPermMsg": "O Chatyy precisa da câmera para você aparecer na chamada.",
 };

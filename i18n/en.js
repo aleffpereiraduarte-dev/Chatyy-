@@ -15257,4 +15257,6 @@ export default {
   "photos.bk.viewBackup": "View backup",
   "photos.bk.retry": "Try again",
   "photos.bk.pause": "Pause upload",
+  "call.cameraPermTitle": "Allow camera",
+  "call.cameraPermMsg": "Chatyy needs the camera so you can appear on the call.",
 };

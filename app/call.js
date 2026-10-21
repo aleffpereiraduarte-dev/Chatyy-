@@ -46,13 +46,15 @@ async function requestAndroidCameraPermission() {
   try {
     const status = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA);
     if (status) return true;
+    // [2026-10-21] textos no idioma do app (eram fixos em pt).
+    const _L = (k, fb) => { try { const v = require('../i18n').lookupKey(globalThis.__chatyyLang || 'pt-BR', k); return typeof v === 'string' ? v : fb; } catch { return fb; } };
     const result = await PermissionsAndroid.request(
       PermissionsAndroid.PERMISSIONS.CAMERA,
       {
-        title: 'Permitir câmera',
-        message: 'O Chatyy precisa da câmera para você aparecer na chamada.',
-        buttonPositive: 'Permitir',
-        buttonNegative: 'Cancelar',
+        title: _L('call.cameraPermTitle', 'Permitir câmera'),
+        message: _L('call.cameraPermMsg', 'O Chatyy precisa da câmera para você aparecer na chamada.'),
+        buttonPositive: _L('common.allow', 'Permitir'),
+        buttonNegative: _L('common.cancel', 'Cancelar'),
       }
     );
     return result === PermissionsAndroid.RESULTS.GRANTED;
