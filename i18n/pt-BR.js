@@ -3988,6 +3988,7 @@ export default {
   'chat.disappearingActive': 'Mensagens temporárias ativadas',
   'chat.disappearingChange': 'Alterar',
   'chat.setNote': 'Definir nota',
+  'chat.yourNote': 'Sua nota',
   'chat.noteHint': 'Compartilhe o que esta pensando...',
   'chat.notePlaceholder': 'Sua nota (max 60 caracteres)',
   'chat.noteSet': 'Nota definida',

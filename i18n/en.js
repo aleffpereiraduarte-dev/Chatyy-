@@ -3994,6 +3994,7 @@ export default {
   'chat.disappearingActive': 'Disappearing messages on',
   'chat.disappearingChange': 'Change',
   'chat.setNote': 'Set note',
+  'chat.yourNote': 'Your note',
   'chat.noteHint': 'Share what you are thinking...',
   'chat.notePlaceholder': 'Your note (max 60 chars)',
   'chat.noteSet': 'Note set',

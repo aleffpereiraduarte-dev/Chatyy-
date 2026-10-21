@@ -353,8 +353,8 @@ function BrandTitle({ colors, size = 22, light }) {
             <Path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
           </Svg>
           <Text style={[styles.brandTitle, { color: colors.text, fontSize: size }]}>Chatyy</Text>
-          <View style={{ backgroundColor: '#111111', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 }}>
-            <Text style={{ color: '#fff', fontSize: size - 6, fontWeight: '800' }}>{t('kids.brandBadge') || 'Kids'}</Text>
+          <View style={{ backgroundColor: colors.text || '#111111', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 }}>
+            <Text style={{ color: colors.background || '#fff', fontSize: size - 6, fontWeight: '800' }}>{t('kids.brandBadge') || 'Kids'}</Text>
           </View>
         </View>
       ) : (

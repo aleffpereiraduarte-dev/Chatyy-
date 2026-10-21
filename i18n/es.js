@@ -3995,6 +3995,7 @@ export default {
   'chat.disappearingActive': 'Mensajes temporales activados',
   'chat.disappearingChange': 'Cambiar',
   'chat.setNote': 'Definir nota',
+  'chat.yourNote': 'Tu nota',
   'chat.noteHint': 'Comparte lo que estas pensando...',
   'chat.notePlaceholder': 'Tu nota (max 60 caracteres)',
   'chat.noteSet': 'Nota definida',

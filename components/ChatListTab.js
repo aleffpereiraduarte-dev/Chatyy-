@@ -2551,6 +2551,13 @@ const _saveNativeConversations = (convs) => {
 };
 
 // ── Status Stories Row (Instagram-style, unified with Notes) ──
+// Vídeo do editor de status (expo-video). Fora do render do StatusStoriesRow — ver [2026-10-21 fix].
+function StatusEditorVideo({ uri }) {
+  const { VideoView, useVideoPlayer } = require('expo-video');
+  const player = useVideoPlayer(uri, (p) => { try { p.loop = true; p.muted = true; p.play(); } catch {} });
+  return <VideoView player={player} style={{ width:'100%', height:'100%' }} contentFit="contain" nativeControls={false} />;
+}
+
 function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, requestOpenStatus, requestNewStatus,
   // [2026-10-19 home-carousel] modo carrossel único (Eu · Bia · status · fixadas)
   carousel = false, pinnedItems = null, carouselActionsRef = null, selectedIds = null }) {
@@ -3811,8 +3818,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               {t('status.createStatus') || 'Criar status'}
             </Text>
             {[
-              { key:'text',   Icon: IconType,   color:'#111111', label: t('status.typeText')  || 'Texto' },
-              { key:'camera', Icon: IconCamera, color:'#111111', label: t('status.typeCamera') || 'Câmera' },
+              { key:'text',   Icon: IconType,   color: isDark ? '#F2F2EF' : '#111111', label: t('status.typeText')  || 'Texto' }, // [2026-10-21] #111 sumia no escuro
+              { key:'camera', Icon: IconCamera, color: isDark ? '#F2F2EF' : '#111111', label: t('status.typeCamera') || 'Câmera' },
             ].map(opt => (
               <TouchableOpacity
                 key={opt.key}
@@ -4044,6 +4051,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   } else {
                     safeAlert(t('common.error') || 'Erro', t('status.publishFailed') || 'Não foi possível publicar o status.');
                   }
+                } catch (e) { // [2026-10-21 fix] erro de rede virava rejeição solta, sem aviso
+                  safeAlert(t('common.error') || 'Erro', t('status.publishFailed') || 'Não foi possível publicar o status.');
                 } finally { setStatusPublishing(false); }
                 return;
               }
@@ -4110,15 +4119,9 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                     // legacy and was returning null on first render here, leaving
                     // the editor blank. Both APIs have a different shape so we
                     // try the new one first and fall back to expo-av.
-                    try {
-                      const { VideoView, useVideoPlayer } = require('expo-video');
-                      // useVideoPlayer is a hook so we wrap in an inline component
-                      const StatusEditorVideo = ({ uri }) => {
-                        const player = useVideoPlayer(uri, (p) => { try { p.loop = true; p.muted = true; p.play(); } catch {} });
-                        return <VideoView player={player} style={{ width:'100%', height:'100%' }} contentFit="contain" nativeControls={false} />;
-                      };
-                      return <StatusEditorVideo uri={statusEditor.uri} />;
-                    } catch {}
+                    // [2026-10-21 fix] componente no escopo do módulo: definido aqui dentro era um TIPO novo a
+                    // cada render → o vídeo desmontava e voltava ao início a cada letra da legenda.
+                    try { return <StatusEditorVideo uri={statusEditor.uri} />; } catch {}
                     // [2026-10-07 android-native] expo-av fallback removed
                     // (package gone; stubbed Video was undefined → crash).
                     return null;
@@ -4272,9 +4275,9 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   safeAlert(t('common.error') || 'Erro', t('status.publishFailed') || 'Não foi possível publicar o status.');
                 } finally { setStatusPublishing(false); setStatusUploadPct(0); }
               }}
-              style={{ width:54, height:54, borderRadius:27, backgroundColor:'#111111', alignItems:'center', justifyContent:'center', opacity: statusPublishing ? 0.6 : 1 }}
+              style={{ width:54, height:54, borderRadius:27, backgroundColor:'#F2F2EF', alignItems:'center', justifyContent:'center', opacity: statusPublishing ? 0.6 : 1 }} // [2026-10-21] claro sobre o editor preto (#111 não aparecia)
             >
-              {statusPublishing ? <ActivityIndicator color="#fff" /> : <IconArrowRight size={24} color="#fff" />}
+              {statusPublishing ? <ActivityIndicator color="#111" /> : <IconArrowRight size={24} color="#111" />}
             </TouchableOpacity>
           </View>
           </KeyboardAvoidingView>
@@ -7256,7 +7259,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         sm.clearConversation?.(conv.id);
       } catch {}
       try { require('../services/chatPersistence').purgeConversationLocal?.(conv.id); } catch {} // [delconv 2026-10-21]
-      await api.chatDeleteConversation(conv.id);
+      const _dr = await api.chatDeleteConversation(conv.id);
+      if (_dr && _dr.success === false && !_dr.queued && !_dr._deferred) { // [2026-10-21 fix] recusou → avisa e a lista volta do servidor
+        try { require('./ui/Toast').showToast({ message: t('common.errorGeneric') || 'Não rolou. Tente de novo.', kind: 'error' }); } catch {}
+        try { loadConvRef.current?.(false); } catch {}
+      }
     } catch {}
   }, [t]);
 
@@ -7268,11 +7275,11 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     const move = (toArchive) => {
       _jsListLA(LayoutAnimation.Presets.easeInEaseOut); // [2026-10-20 tg-list-anim]
       if (toArchive) {
-        setConversations(prev => prev.filter(c => c.id !== conv.id));
-        setArchivedConversations(prev => [...prev.filter(c => c.id !== conv.id), { ...conv, archived: 1 }]);
+        setConversations(prev => prev.filter(c => String(c.id) !== String(conv.id))); // [2026-10-21] id texto x número (WS) duplicava a linha
+        setArchivedConversations(prev => [...prev.filter(c => String(c.id) !== String(conv.id)), { ...conv, archived: 1 }]);
       } else {
-        setArchivedConversations(prev => prev.filter(c => c.id !== conv.id));
-        setConversations(prev => [{ ...conv, archived: 0 }, ...prev.filter(c => c.id !== conv.id)]);
+        setArchivedConversations(prev => prev.filter(c => String(c.id) !== String(conv.id)));
+        setConversations(prev => [{ ...conv, archived: 0 }, ...prev.filter(c => String(c.id) !== String(conv.id))]);
       }
     };
     // [2026-10-19 core-chat] WhatsApp: arquivar uma conversa fixada a desafixa —
@@ -7298,7 +7305,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // [2026-10-11 qa-sweep2] The long-press sheet now asks for a duration
       // (8 h / 1 semana / sempre, like WhatsApp); swipe keeps the 8 h default.
       const _until = (typeof untilEpoch === 'number' && untilEpoch > 0) ? untilEpoch : (Math.floor(Date.now()/1000) + 8*3600);
-      await api.chatMute(conv.id, wasMuted ? 0 : _until);
+      const _mr = await api.chatMute(conv.id, wasMuted ? 0 : _until);
+      if (_mr && _mr.success === false && !_mr.queued && !_mr._deferred) throw new Error(_mr.message || 'mute_failed'); // [2026-10-21 fix] recusou → desfaz
       loadConversations(false);
     } catch {
       setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, muted: wasMuted } : c));
@@ -7348,7 +7356,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         try { await api.apiCall('chat_pin_conversation', { conversation_id: displaceId, pinned: false }, 'POST'); } catch {}
       }
       // Explicit intent (willPin) — idempotente, não vira fixa→desfixa num re-disparo.
-      await api.apiCall('chat_pin_conversation', { conversation_id: conv.id, pinned: willPin }, 'POST');
+      const _pr = await api.apiCall('chat_pin_conversation', { conversation_id: conv.id, pinned: willPin }, 'POST');
+      if (_pr && _pr.success === false && !_pr.queued && !_pr._deferred) throw new Error(_pr.message || 'pin_failed'); // [2026-10-21 fix] recusou → desfaz
       loadConversations(false);
     } catch {
       // Revert optimistic toggles on error.
@@ -7554,7 +7563,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             onPress: async () => {
               try {
                 const nextIds = [...(Array.isArray(f.conversation_ids) ? f.conversation_ids : []), Number(conv.id)];
-                await api.chatFoldersUpdate(f.id, { conversation_ids: nextIds });
+                const _fr = await api.chatFoldersUpdate(f.id, { conversation_ids: nextIds });
+                if (_fr && _fr.success === false) { safeAlert(t('common.error') || 'Erro', t('common.errorGeneric') || 'Não rolou. Tente de novo.'); return; } // [2026-10-21 fix]
                 setChatFolders(prev => prev.map(x => x.id === f.id ? { ...x, conversation_ids: nextIds } : x));
               } catch {}
             },
@@ -7714,7 +7724,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       };
       const handleLockToggle = async () => {
         try {
-          await api.chatLock(conv.id, !isLocked);
+          const _lr = await api.chatLock(conv.id, !isLocked);
+          if (_lr && _lr.success === false) { safeAlert(t('common.error') || 'Erro', t('common.errorGeneric') || 'Não rolou. Tente de novo.'); return; } // [2026-10-21 fix]
           setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, locked: !isLocked ? 1 : 0 } : c));
         } catch {}
       };
@@ -9862,7 +9873,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           const peerEmail = hit.peer_email || hit.other_email || hit.contact_email || hit.sender_email || '';
           return (
             <TouchableOpacity
-              key={`hit-${hit.id}`}
+              key={`hit-${hit.conversation_id}:${hit.id ?? hit.client_message_id ?? hit.created_at}`}
               onPress={() => require('../services/openConversation').openConversation({
                 pathname: '/chat-conversation',
                 params: {
@@ -9981,7 +9992,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
               )}
             </View>
             <Text maxFontSizeMultiplier={1.2} style={{ fontSize: 11, color: P.sub, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
-              {myNote ? (t('chat.setNote') || 'Set note') : (t('chat.setNote') || 'Set note')}
+              {myNote ? t('chat.yourNote', 'Sua nota') : t('chat.setNote', 'Criar nota')}
             </Text>
           </TouchableOpacity>
           {/* Other users' notes */}
@@ -11153,10 +11164,12 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
 // Tapping the card navigates into the full conversation. Falls back to
 // a single bubble built from `last_message` if nothing is cached yet.
 function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isDark, t, onOpen, loading, typingUsers, presencesRef }) {
-  const cardBg = isDark ? '#000000' : '#efeae2';
+  // [2026-10-21] Grafite: papel de parede/bolhas do tema (a bolha própria #111 sumia no fundo preto)
+  const _pg = _V2 ? (isDark ? _GF.dark : _GF.light) : null;
+  const cardBg = _pg ? _pg.wall : (isDark ? '#000000' : '#efeae2');
   const headerBg = isDark ? '#1c1c1e' : '#111111';
-  const ownBubble = '#111111';
-  const peerBubble = isDark ? '#1c1c1e' : '#ffffff';
+  const ownBubble = _pg ? _pg.ownMid : (isDark ? '#2c2c2e' : '#111111');
+  const peerBubble = _pg ? _pg.recv : (isDark ? '#1c1c1e' : '#ffffff');
   const ownText = '#ffffff';
   const peerText = isDark ? '#F5F5F7' : '#0f172a';
   const meta = isDark ? 'rgba(255,255,255,0.55)' : '#6b7280';
