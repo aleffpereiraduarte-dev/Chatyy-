@@ -17,7 +17,8 @@ function _host(u) { try { return ((u.match(/^https?:\/\/([^/]+)/i) || [])[1] || 
  * props: store (composerStore {get,subscribe}), colors, isDark, enabled (bool),
  *        skip(url) → true p/ domínios próprios, cacheGet/cacheSet (cache de prévias da conversa)
  */
-export default function ComposerLinkPreviewStrip({ store, colors, isDark, enabled = true, skip, cacheGet, cacheSet }) {
+export default function ComposerLinkPreviewStrip({ store, colors, isDark, enabled = true, skip, cacheGet, cacheSet, t }) {
+  const _l = (k, fb) => { try { const v = t ? t(k) : ''; return v && v !== k ? v : fb; } catch { return fb; } }; // [2026-10-21 polish-conv] a11y via i18n
   const [st, setSt] = useState(composerLinkPreview.get());
   const timerRef = useRef(null);
   const seqRef = useRef(0);
@@ -74,7 +75,7 @@ export default function ComposerLinkPreviewStrip({ store, colors, isDark, enable
   const thumbBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)';
 
   return (
-    <View style={[s.wrap, { backgroundColor: bg, borderTopColor: line }]} accessibilityLabel={d.title ? `Prévia do link: ${d.title}` : 'Prévia do link'}>
+    <View style={[s.wrap, { backgroundColor: bg, borderTopColor: line }]} accessibilityLabel={d.title ? `${_l('chatConv.linkPreviewA11y', 'Prévia do link')}: ${d.title}` : _l('chatConv.linkPreviewA11y', 'Prévia do link')}>
       <View style={[s.bar, { backgroundColor: ink }]} />
       <View style={[s.thumb, { backgroundColor: thumbBg }]}>
         {d.image ? (
@@ -100,7 +101,7 @@ export default function ComposerLinkPreviewStrip({ store, colors, isDark, enable
         onPress={() => composerLinkPreview.set({ dismissedUrl: st.url })}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         accessibilityRole="button"
-        accessibilityLabel="Remover prévia do link"
+        accessibilityLabel={_l('chatConv.removeLinkPreview', 'Remover prévia do link')}
         style={s.close}
       >
         <IconX size={16} color={sub} />

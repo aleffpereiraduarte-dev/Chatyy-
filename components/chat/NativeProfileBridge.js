@@ -51,9 +51,10 @@ export function profileColor(c) {
 export function profileTheme(isDark, colors = {}) {
   return {
     dark: !!isDark,
-    background: _pc(isDark ? (colors.background || '#000000') : '#f0f2f5'),
+    // [2026-10-21 polish-conv] Grafite: fundo/cartão do tema (era #f0f2f5 azulado do WA no claro).
+    background: _pc(isDark ? (colors.background || '#000000') : (colors.themeV2 ? (colors.background || '#f0f2f5') : '#f0f2f5')),
     surface: _pc(colors.surface || (isDark ? '#111111' : '#ffffff')),
-    card: _pc(isDark ? '#1c1c1e' : '#f4f4f5'),
+    card: _pc(colors.themeV2 ? (colors.surface2 || (isDark ? '#1c1c1e' : '#f4f4f5')) : (isDark ? '#1c1c1e' : '#f4f4f5')),
     cardBorder: _pc(isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'),
     text: _pc(colors.text || (isDark ? '#ffffff' : '#111111')),
     secondaryText: _pc(colors.textSecondary || (isDark ? '#a1a1a6' : '#6e6e73')),

@@ -126,7 +126,7 @@ export default function AdvancedPrivacySheet({
 
 const s = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' },
-  panel: { borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 18, paddingTop: 16 },
+  panel: { borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 18, paddingTop: 16 },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
   title: { flex: 1, fontSize: 17, fontWeight: '600' },
   intro: { fontSize: 14, lineHeight: 19, marginBottom: 10 },

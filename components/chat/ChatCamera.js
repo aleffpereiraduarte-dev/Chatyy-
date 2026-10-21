@@ -588,7 +588,7 @@ function CameraScreen({ VC, micOk, insets, onClose, onCapture, onOpenGallery, t 
         ) : null}
         <TouchableOpacity style={[st.topBtn, flashDisabled && { opacity: 0.35 }]} onPress={cycleFlash} disabled={flashDisabled || recording}
           accessibilityRole="button"
-          accessibilityLabel={`Flash ${flash === 'off' ? tt(t, 'chatCamera.flashOff', 'desligado') : flash === 'on' ? tt(t, 'chatCamera.flashOn', 'ligado') : 'auto'}`}>
+          accessibilityLabel={tt(t, 'chatCamera.flashA11y', 'Flash: {state}').replace('{state}', flash === 'off' ? tt(t, 'chatCamera.flashOff', 'desligado') : flash === 'on' ? tt(t, 'chatCamera.flashOn', 'ligado') : tt(t, 'chatCamera.flashAuto', 'automático'))}>
           <View>
             <IconZap size={24} color={flash === 'off' ? '#fff' : '#facc15'} />
             {flash === 'off' ? <View style={st.flashSlash} /> : null}

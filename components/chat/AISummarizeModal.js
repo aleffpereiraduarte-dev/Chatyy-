@@ -184,7 +184,7 @@ const s = StyleSheet.create({
   card: {
     width: '100%',
     maxWidth: 460,
-    borderRadius: 18,
+    borderRadius: 22,
     overflow: 'hidden',
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 22, shadowOffset: { width: 0, height: 12 } },

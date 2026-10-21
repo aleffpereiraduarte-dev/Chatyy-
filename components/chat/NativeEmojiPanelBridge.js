@@ -27,6 +27,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Platform, processColor, View } from 'react-native';
 import { useThreadKeyboardHeight, getThreadReanimated } from '../../utils/threadKeyboard';
+import { THEME_V2 as _THEME_V2, grafite as _grafite } from '../../constants/theme'; // [2026-10-21 polish-conv]
 
 let _failed = false;
 
@@ -565,6 +566,20 @@ function NativeEmojiPanelInner(props) {
     accent: _pc(isDark ? '#ffffff' : '#111111'),
     hairline: _pc(isDark ? '#262628' : 'rgba(0,0,0,0.10)'),
     selection: _pc(isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.07)'),
+    // [2026-10-21 polish-conv] Grafite: mesmo tom da barra do compositor (g.wall),
+    // sem emenda branca/preta pura entre a barra e o painel.
+    ...(_THEME_V2 ? (() => {
+      const g = _grafite(isDark);
+      return {
+        background: _pc(g.wall),
+        surface: _pc(g.surface),
+        text: _pc(g.text),
+        icon: _pc(isDark ? '#9A9AA0' : '#77777C'),
+        iconActive: _pc(g.text),
+        accent: _pc(g.ink),
+        hairline: _pc(g.line),
+      };
+    })() : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [themeKey]);
 
@@ -644,7 +659,7 @@ function NativeEmojiPanelInner(props) {
   const panelBottom = compact ? Math.max(0, composerPad) : Math.max(0, insetBottom);
 
   return (
-    <PanelShell visible={!!visible} fullHeight={fullHeight} compactHeight={compactHeight} composerPad={composerPad} background={isDark ? '#0b0b0b' : '#ffffff'}>
+    <PanelShell visible={!!visible} fullHeight={fullHeight} compactHeight={compactHeight} composerPad={composerPad} background={_THEME_V2 ? _grafite(isDark).wall : (isDark ? '#0b0b0b' : '#ffffff')}>
       <NativeView
         ref={nativeRef}
         style={{ height: compact ? compactHeight : fullHeight, width: '100%' }}

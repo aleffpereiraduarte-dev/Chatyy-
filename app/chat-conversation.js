@@ -716,6 +716,13 @@ function _setAppLocale(lang) { _appLocale = regionalLocale(lang) || undefined; }
 let _appT;
 function _setAppT(t) { _appT = t; }
 function _mt(key, fallback) { try { return (_appT && _appT(key)) || fallback; } catch (e) { return fallback; } }
+// [2026-10-21 polish-conv] Cromo da conversa (cabeçalho, barras fixas, compositor JS)
+// no Grafite: cinzas quentes em vez de branco/preto puros. O compositor NATIVO já usa
+// g.wall (NativeComposerBridge) → as barras de baixo casam com ele. Tema antigo = P&B.
+function _chromeTop(isDark) { return _THEME_V2 ? _grafite(isDark).bg : (isDark ? '#0b0b0b' : '#ffffff'); }
+function _chromeBottom(isDark) { return _THEME_V2 ? _grafite(isDark).wall : (isDark ? '#0b0b0b' : '#ffffff'); }
+function _chromeSheet(isDark) { return _THEME_V2 ? _grafite(isDark).sheet : (isDark ? '#0b0b0b' : '#ffffff'); }
+function _chromeLine(isDark) { return _THEME_V2 ? (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(24,24,27,0.08)') : (isDark ? '#262628' : 'rgba(0,0,0,0.10)'); }
 // [2026-10-12 srv-audit] Janela de "Apagar para todos" = 60 h (WhatsApp ~2 d 12 h;
 // servidor novo nega com code 'delete_window_expired' após 216000 s).
 const DELETE_FOR_ALL_WINDOW_MS = 216000 * 1000;
@@ -5194,7 +5201,10 @@ function _replyTargetOf(msg) {
 function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, playedByPeer, playedByMe, conversationId }) {
   const { t } = useLanguage();
   const isDarkMode = colors.background === '#0B141A' || colors.background === '#000' || colors.background === '#000000' || (colors.background && colors.background.startsWith('#0'));
-  const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
+  // [2026-10-21 polish-conv] tinta da bolha PRÓPRIA pela cor da bolha (Grafite claro =
+  // bolha grafite escura → duração/controles #111 sumiam). Tema antigo: igual a antes.
+  const ownDark = colors.chatBubbleOwn && /^#[0-9a-f]{6}$/i.test(colors.chatBubbleOwn) ? _isDarkHex(colors.chatBubbleOwn) : isDarkMode;
+  const ownMetaColor = ownDark ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
   const vs = VoiceNote.useVoiceBubbleState(messageId);
   const playing = vs.playing;
   const speed = vs.rate;
@@ -5483,14 +5493,14 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
 
   // On LIGHT theme the own bubble is light lavender, so white controls
   // vanish. Use dark controls for own on light theme; white on dark.
-  const ownCtrl = isDarkMode ? '#fff' : '#111111';
-  const ownCtrlSoft = isDarkMode ? 'rgba(255,255,255,0.85)' : 'rgba(17, 17, 17,0.85)';
+  const ownCtrl = ownDark ? '#fff' : '#111111';
+  const ownCtrlSoft = ownDark ? 'rgba(255,255,255,0.85)' : 'rgba(17, 17, 17,0.85)';
   // [2026-10-08 chat-beauty-bubbles] SÓ cores: controles do áudio RECEBIDO
   // seguem o tema (eram #111 fixo → invisíveis na bolha #1C1C1E do escuro).
   const inCtrl = isDarkMode ? '#F5F5F7' : '#111111';
   const playGlyph = (!isOwn && isDarkMode) ? '#111111' : '#fff';
   const tintColor = isOwn ? ownCtrl : inCtrl;
-  const tintDim = isOwn ? (isDarkMode ? 'rgba(255,255,255,0.35)' : 'rgba(17, 17, 17,0.30)') : (isDarkMode ? 'rgba(245,245,247,0.28)' : 'rgba(17, 17, 17,0.25)');
+  const tintDim = isOwn ? (ownDark ? 'rgba(255,255,255,0.35)' : 'rgba(17, 17, 17,0.30)') : (isDarkMode ? 'rgba(245,245,247,0.28)' : 'rgba(17, 17, 17,0.25)');
   // Idle → total length; active / scrubbed → current position (WhatsApp).
   const showCur = vs.active || curSec > 0;
   const displayTime = showCur ? curSec : (duration || 0);
@@ -5517,7 +5527,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
         </TouchableOpacity>
       )}
       <View style={{ position: 'relative' }}>
-        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.25)' : '#111111') : inCtrl }]} accessibilityLabel={busy ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
+        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? (ownDark ? 'rgba(255,255,255,0.25)' : '#111111') : inCtrl }]} accessibilityLabel={busy ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
           {busy ? (
             <ActivityIndicator size={18} color={playGlyph} />
           ) : playing ? (
@@ -5603,7 +5613,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
             onPress={cycleSpeed}
             accessibilityLabel={`${t ? (t('chatConv.playbackSpeed') || 'Playback speed') : 'Playback speed'} ${speed}x`}
             accessibilityRole="button"
-            style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.15)' : 'rgba(17, 17, 17,0.12)') : (isDarkMode ? 'rgba(245,245,247,0.14)' : 'rgba(17, 17, 17,0.15)') }}
+            style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: isOwn ? (ownDark ? 'rgba(255,255,255,0.15)' : 'rgba(17, 17, 17,0.12)') : (isDarkMode ? 'rgba(245,245,247,0.14)' : 'rgba(17, 17, 17,0.15)') }}
           >
             <Text style={{ fontSize: 10, fontWeight: '800', color: isOwn ? ownCtrlSoft : inCtrl }}>{speed}x</Text>
           </TouchableOpacity>
@@ -9670,10 +9680,13 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
   // (ondas, botões play/enviar) invisível no preto. Tinta = colors.text e os
   // botões redondos invertem no escuro (branco com ícone preto), igual ao
   // botão de mic do composer.
+  // [2026-10-21 polish-conv] Grafite escuro (surface #1A1A1D / fundo #0E0E10) não
+  // batia em nenhum valor → gravador com tinta #111 invisível no escuro. Agora
+  // também decide pela luminância do fundo.
   const isDarkBg = colors.surface === '#1e1e1e' || colors.surface === '#121212' || colors.surface === '#000'
-    || colors.surface === '#0b0b0b' || colors.background === '#000000';
-  const recBg = isDarkBg ? 'rgba(17, 17, 17,0.08)' : 'rgba(17, 17, 17,0.06)';
-  const previewBg = isDarkBg ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.08)';
+    || colors.surface === '#0b0b0b' || colors.background === '#000000' || _isDarkHex(colors.background);
+  const recBg = isDarkBg ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.06)';
+  const previewBg = isDarkBg ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.08)';
   const waveColor = isDarkBg ? (colors.text || '#F5F5F7') : '#111111';
   const recBtnBg = isDarkBg ? (colors.text || '#F5F5F7') : '#111111';
   const recBtnInk = isDarkBg ? '#000' : '#fff';
@@ -9802,12 +9815,12 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           onPress={() => setPreviewData(p => p ? { ...p, viewOnce: !p.viewOnce } : p)}
           style={[
             recStyles.voiceOnceBtn,
-            previewData.viewOnce ? recStyles.voiceOnceBtnActive : { borderColor: colors.border || 'rgba(17, 17, 17,0.35)' },
+            previewData.viewOnce ? [recStyles.voiceOnceBtnActive, { backgroundColor: recBtnBg, borderColor: recBtnBg }] : { borderColor: colors.border || 'rgba(17, 17, 17,0.35)' },
           ]}
           accessibilityRole="button"
           accessibilityLabel={previewData.viewOnce ? (t('chatConv.viewOnceVoiceLabel') || 'Áudio único') : _mt('chatConv.markViewOnce', 'Marcar como visualização única')}
         >
-          <Text style={[recStyles.voiceOnceBtnText, { color: previewData.viewOnce ? '#fff' : (colors.textTertiary || '#9ca3af') }]}>1</Text>
+          <Text style={[recStyles.voiceOnceBtnText, { color: previewData.viewOnce ? recBtnInk : (colors.textTertiary || '#9ca3af') }]}>1</Text>
         </TouchableOpacity>
 
         {/* Send */}
@@ -9971,12 +9984,12 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         onPress={() => setVoiceViewOnce(v => !v)}
         style={[
           recStyles.voiceOnceBtn,
-          voiceViewOnce ? recStyles.voiceOnceBtnActive : { borderColor: colors.border || 'rgba(17, 17, 17,0.35)' },
+          voiceViewOnce ? [recStyles.voiceOnceBtnActive, { backgroundColor: recBtnBg, borderColor: recBtnBg }] : { borderColor: colors.border || 'rgba(17, 17, 17,0.35)' },
         ]}
         accessibilityRole="button"
         accessibilityLabel={voiceViewOnce ? (t('chatConv.viewOnceVoiceLabel') || 'Áudio único') : _mt('chatConv.markViewOnce', 'Marcar como visualização única')}
       >
-        <Text style={[recStyles.voiceOnceBtnText, { color: voiceViewOnce ? '#fff' : (colors.textTertiary || '#9ca3af') }]}>1</Text>
+        <Text style={[recStyles.voiceOnceBtnText, { color: voiceViewOnce ? recBtnInk : (colors.textTertiary || '#9ca3af') }]}>1</Text>
       </TouchableOpacity>
       {/* Right controls — hands-free: an explicit Stop-to-preview button PLUS a
           primary purple Send button, with a "Toque para enviar" hint above.
@@ -30749,7 +30762,7 @@ function ChatConversationInnerBody() {
   }, [enrichedMessages, floorRev]);
 
   // [2026-10-20 tg-header] cabeçalho encolhe ao rolar (UI thread, sem re-render). Kill: __chatyy_header_collapse=false
-  const _hdrC = useHeaderCollapse(insets.top, isDark ? '#0b0b0b' : '#ffffff');
+  const _hdrC = useHeaderCollapse(insets.top, _chromeTop(isDark));
   const _hdrCDist = _hdrC.onDist;
   const _HdrBox = _hdrC.AnimatedView || View;
   // Optimized scroll handler - uses ref to avoid setState on every scroll event
@@ -37332,7 +37345,7 @@ function ChatConversationInnerBody() {
   if (chatLocked && !chatUnlocked) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <View style={[styles.header, { backgroundColor: isDark ? '#0b0b0b' : '#ffffff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)', paddingTop: insets.top + 6, position: 'absolute', top: 0, left: 0, right: 0 }]}>
+        <View style={[styles.header, { backgroundColor: _chromeTop(isDark), borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: _chromeLine(isDark), paddingTop: insets.top + 6, position: 'absolute', top: 0, left: 0, right: 0 }]}>
           <TouchableOpacity onPress={goBack} hitSlop={8} style={[styles.headerBtn, { width: 36 }, Platform.OS === 'ios' && { marginLeft: -4 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
             {/* [2026-10-13 conv-pb] mesma seta do cabeçalho principal (chevron iOS / seta 24) */}
             {Platform.OS === 'ios'
@@ -37434,9 +37447,9 @@ function ChatConversationInnerBody() {
       {/* Selection header (replaces main header when in multi-select mode) */}
       {selectionMode ? (
         <View style={[styles.header, {
-          backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+          backgroundColor: _chromeTop(isDark),
           borderBottomWidth: StyleSheet.hairlineWidth,
-          borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+          borderBottomColor: _chromeLine(isDark),
           paddingTop: insets.top + 6,
         }]}>
           <TouchableOpacity onPress={handleClearSelection} style={styles.headerBtn} accessibilityLabel={t('common.cancel') || 'Cancelar'} accessibilityRole="button">
@@ -37489,13 +37502,13 @@ function ChatConversationInnerBody() {
       /* Header with presence — gradient on web for premium feel */
       /* [2026-10-20 tg-header] Reanimated View: padding/fundo animam na UI thread ao rolar */
       <_HdrBox ref={_shellHdrRef} onLayout={_onShellHdrLayout} style={[styles.header, {
-        backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+        backgroundColor: _chromeTop(isDark),
         borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+        borderBottomColor: _chromeLine(isDark),
         paddingTop: insets.top + 6,
         ...(Platform.OS === 'web'
           ? {
-              background: isDark ? '#0b0b0b' : '#ffffff',
+              background: _chromeTop(isDark),
               boxShadow: 'none', // [2026-10-08 chat-beauty-chrome] só a hairline (era linha dupla)
             }
           : {}),
@@ -38193,8 +38206,8 @@ function ChatConversationInnerBody() {
       {activeTopic?.id && !showSearchBar ? (
         <View style={{
           flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 7, gap: 8,
-          backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
-          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+          backgroundColor: _chromeTop(isDark),
+          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: _chromeLine(isDark),
         }}>
           <TouchableOpacity
             style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}
@@ -38239,8 +38252,8 @@ function ChatConversationInnerBody() {
           // [2026-10-08 chat-beauty-chrome] barra fixada monocromática (era
           // âmbar): superfície do header + hairline, pin e barra lateral na cor
           // do texto, sem emoji no preview de mídia.
-          backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
-          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+          backgroundColor: _chromeTop(isDark),
+          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: _chromeLine(isDark),
           paddingVertical: 6,
         }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingBottom: 2 }}>
@@ -38306,8 +38319,8 @@ function ChatConversationInnerBody() {
         const _segOn = _pins.length <= 4 ? _pi : Math.min(3, Math.floor((_pi * 4) / _pins.length));
         return (
           <View style={{
-            backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
-            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+            backgroundColor: _chromeTop(isDark),
+            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: _chromeLine(isDark),
             flexDirection: 'row', alignItems: 'center', paddingLeft: 14, paddingRight: 6, minHeight: 48,
           }}>
             <TouchableOpacity
@@ -39055,7 +39068,7 @@ function ChatConversationInnerBody() {
 
       {/* Contact Picker (WhatsApp-style) */}
       {/* [2026-10-15 native-sheets-v2] Nativo: sheet grande do sistema (arrastar p/ fechar, fundo escala); web = Modal tela cheia de sempre. */}
-      <LazyMount when={showContactPicker}>{(_lmV) => (<NativeSheetModal visible={_lmV} animationType="slide" onRequestClose={() => setShowContactPicker(false)} detents={[1]} backgroundColor={isDark ? '#0b0b0b' : '#ffffff'}>
+      <LazyMount when={showContactPicker}>{(_lmV) => (<NativeSheetModal visible={_lmV} animationType="slide" onRequestClose={() => setShowContactPicker(false)} detents={[1]} backgroundColor={_chromeSheet(isDark)}>
         <NativeSheetKeyboardView enabled={USE_NATIVE_SHEETS} style={{ flex: 1, backgroundColor: colors.background, paddingTop: USE_NATIVE_SHEETS ? 12 : insets.top }}>
           {_shareContactV2() ? (
             <ShareContactPicker
@@ -39071,7 +39084,7 @@ function ChatConversationInnerBody() {
             flexDirection: 'row', alignItems: 'center', gap: 12,
             paddingHorizontal: 16, paddingVertical: 12,
             borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : '#eef0f1',
-            backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+            backgroundColor: _chromeSheet(isDark),
           }}>
             <TouchableOpacity accessibilityRole="button" accessibilityLabel={_axT('common.back', 'Voltar')} onPress={() => setShowContactPicker(false)} hitSlop={12}>
               <IconArrowLeft size={22} color={colors.text} />
@@ -39457,7 +39470,7 @@ function ChatConversationInnerBody() {
 
       <ThreadKeyboardBar>{/* [2026-10-19 kb-translate] sobe c/ o teclado por transform (iOS) */}
       {/* [linkpreview 2026-10-18] faixa de prévia do link digitado (JS, acima do compositor JS ou nativo) */}
-      <ComposerLinkPreviewStrip store={composerStore} colors={colors} isDark={isDark} enabled={!editingMsg && !composerBlocked && !(e2eEnabled && e2eKeys)} skip={_lpShouldSkip} cacheGet={_lpCacheGet} cacheSet={_lpCacheSet} />
+      <ComposerLinkPreviewStrip store={composerStore} colors={colors} isDark={isDark} enabled={!editingMsg && !composerBlocked && !(e2eEnabled && e2eKeys)} skip={_lpShouldSkip} cacheGet={_lpCacheGet} cacheSet={_lpCacheSet} t={t} />
       {/* Reply/Edit indicator — WhatsApp style with thick green left line.
           Animated entrance: slide up + fade in for the "I'm replying" cue. */}
       {(replyTo || editingMsg) && !(shouldUseNativeComposer() && _nativeReplyCardOn() && !isSavedMode && !composerBlocked && !isRecording) /* [2026-10-14 native-composer] barra nativa; [reply-card-fallback] iOS 692 = barra JS */ && (() => {
@@ -39842,7 +39855,7 @@ function ChatConversationInnerBody() {
             position: 'absolute', left: 0, right: 72, top: 0, bottom: 0, // [2026-10-08 chat-beauty-chrome] mic 58→44 (+room p/ o scale do hold)
             zIndex: 30, elevation: 10,
             justifyContent: 'flex-end',
-            backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+            backgroundColor: _chromeBottom(isDark),
             paddingBottom: composerBottomPad,
           } : { paddingBottom: composerBottomPad }}
         >
@@ -39872,7 +39885,7 @@ function ChatConversationInnerBody() {
       {/* [2026-10-17 busca-telegram] Busca aberta → o compositor dá lugar à barra de
           resultados (calendário · "3 de 12" · ↑↓), presa ao teclado como o compositor. */}
       {showSearchBar ? (
-        <View testID="chat-search-results-bar" style={{ flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 8, paddingTop: 4, paddingBottom: composerBottomPad, backgroundColor: isDark ? '#0b0b0b' : '#ffffff', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)' }}>
+        <View testID="chat-search-results-bar" style={{ flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 8, paddingTop: 4, paddingBottom: composerBottomPad, backgroundColor: _chromeBottom(isDark), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: _chromeLine(isDark) }}>
           <TouchableOpacity onPress={() => { try { searchInputRef.current?.blur?.(); } catch {} setShowJumpDate(true); }} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'chatConv.jumpToDate', 'Ir para data')} testID="chat-search-jump-date">
             <IconCalendar size={22} color={colors.text} />
           </TouchableOpacity>
@@ -40055,8 +40068,8 @@ function ChatConversationInnerBody() {
               // [2026-10-13 conv-pb] mesma superfície + hairline do compositor
               // (antes flutuava transparente sobre o papel de parede).
               flexDirection: 'row', alignItems: 'center', maxHeight: 44, paddingLeft: 6, paddingRight: 4,
-              backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
-              borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+              backgroundColor: _chromeBottom(isDark),
+              borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: _chromeLine(isDark),
               ...(Platform.OS === 'web' ? { maxWidth: 960, alignSelf: 'center', width: '100%' } : {}),
             }}>
               <ScrollView
@@ -40167,7 +40180,7 @@ function ChatConversationInnerBody() {
         )}
         {/* [2026-10-10 paste-image] "Colar foto" quando a área de transferência tem imagem */}
         {pasteChip && inputFocused && Platform.OS !== 'web' && (
-          <View style={{ flexDirection: 'row', paddingHorizontal: 12, paddingTop: 6, backgroundColor: isDark ? '#0b0b0b' : '#ffffff' }}>
+          <View style={{ flexDirection: 'row', paddingHorizontal: 12, paddingTop: 6, backgroundColor: _chromeBottom(isDark) }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', borderRadius: 18, borderWidth: 1, borderColor: isDark ? '#3a3a3c' : 'rgba(0,0,0,0.14)', backgroundColor: isDark ? '#1c1c1e' : '#f2f2f2' }}>
               <TouchableOpacity
                 onPress={onPasteChipPress}
@@ -40196,8 +40209,8 @@ function ChatConversationInnerBody() {
         {(() => { const _jsInputBar = () => (
         <View pointerEvents={(blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 'none' : 'auto'} style={[styles.inputBar, {
           // [2026-10-08 chat-beauty-chrome] same surface as the header + hairline
-          backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
-          borderTopColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+          backgroundColor: _chromeBottom(isDark),
+          borderTopColor: _chromeLine(isDark),
           opacity: (blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 0.4 : 1,
           // Bottom safe-area so the composer clears the system bar on BOTH
           // platforms: Android nav/gesture bar (insets.bottom ≈ 48px) and iOS
@@ -46779,9 +46792,9 @@ function ConvLightShell({ rec, params, acct, colors, isDark, t, insets, onBack }
         <View style={styles.wallpaper} pointerEvents="none"><WallpaperBackground value={I.wp} isDark={isDark} /></View>
       ) : null}
       <View style={[styles.header, {
-        backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+        backgroundColor: _chromeTop(isDark),
         borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+        borderBottomColor: _chromeLine(isDark),
         paddingTop: insets.top + 6,
       }]}>
         <TouchableOpacity onPress={onBack} hitSlop={8} style={[styles.headerBtn, { width: 36 }, Platform.OS === 'ios' && { marginLeft: -4 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">

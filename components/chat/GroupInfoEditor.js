@@ -41,10 +41,12 @@ export default function GroupInfoEditor({ visible, mode = 'description', initial
     if (ok) onClose?.();
   };
 
-  const bg = isDark ? (colors?.background || '#000000') : '#F3F3F6';
-  const card = isDark ? '#1C1C1E' : '#FFFFFF';
+  // [2026-10-21 polish-conv] Grafite: fundo/cartão/subtítulo do tema (eram cinzas iOS fixos).
+  const _v2 = !!colors?.themeV2;
+  const bg = _v2 ? colors.background : (isDark ? (colors?.background || '#000000') : '#F3F3F6');
+  const card = _v2 ? colors.surface : (isDark ? '#1C1C1E' : '#FFFFFF');
   const text = colors?.text || (isDark ? '#F5F5F7' : '#111111');
-  const sub = isDark ? '#8E8E93' : '#8A8A8E';
+  const sub = _v2 ? colors.textSecondary : (isDark ? '#8E8E93' : '#8A8A8E');
   const sep = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(60,60,67,0.16)';
 
   return (
@@ -98,7 +100,7 @@ const styles = StyleSheet.create({
   barBtn: { minWidth: 72, height: 44, justifyContent: 'center' },
   barTxt: { fontSize: 17 },
   title: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600' },
-  card: { marginHorizontal: 16, marginTop: 20, borderRadius: 14, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8 },
+  card: { marginHorizontal: 16, marginTop: 20, borderRadius: 20, paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8 },
   input: { fontSize: 17, paddingVertical: 6 },
   counter: { alignSelf: 'flex-end', fontSize: 12, marginTop: 4 },
   hint: { marginHorizontal: 32, marginTop: 8, fontSize: 13, lineHeight: 18 },
