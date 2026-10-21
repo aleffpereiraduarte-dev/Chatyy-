@@ -33,7 +33,8 @@ const ENTRIES = [
   ['account', 'settings.e2eBackup', 'Backup com criptografia', 'security', 'backup e2e chave key', 'native'],
   ['account', 'settings.backupKey.rotate', 'Redefinir senha do backup', 'security', 'backup', 'native'],
   ['account', 'settings.advancedKey', 'Chave avançada (BYOK)', 'security', 'byok', 'native'],
-  ['account', 'settings.advancedPrivacy', 'Privacidade avançada', 'security', 'proxy tor vpn captura screenshot', 'native'],
+  // [2026-10-21 privacidade-unica] Privacidade avançada = topo da página de Privacidade (proxy/Tor/descoberta/captura no app lá).
+  ['privacy', 'settings.advancedPrivacy', 'Privacidade avançada', 'adv_privacy_default', 'proxy tor vpn captura screenshot socks encontrar número discoverable'],
   ['account', 'settings.rd2.family', 'Família', 'security', 'family', 'native'],
   ['account', 'settings.rd2.parental', 'Controle parental', 'security', 'parental filhos kids', 'native'],
   ['account', 'settings.emptyTrash', 'Esvaziar lixeira', null, 'trash lixeira'],

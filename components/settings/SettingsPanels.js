@@ -80,7 +80,8 @@ function fmtBytes(b) {
 }
 
 // ─── Privacidade › Mídia e mensagens (EXIF, sealed sender, nuvem) ─────────
-export function PrivacyExtrasGroup({ cloudChats, onCloudChatsChange }) {
+// [2026-10-21 privacidade-unica] `icons` (opcional) = ladrilhos na página única de Privacidade.
+export function PrivacyExtrasGroup({ cloudChats, onCloudChatsChange, icons = null, cardStyle }) {
   const { t } = useLanguage();
   const [stripExif, setStripExif] = useState(() => peekAcctFlag('chatyy_strip_exif') !== 'false');
   const [sealed, setSealed] = useState(() => peekAcctFlag('chatyy_sealed_sender') === 'true');
@@ -102,20 +103,23 @@ export function PrivacyExtrasGroup({ cloudChats, onCloudChatsChange }) {
     return () => { alive = false; };
   }, []);
   return (
-    <SettingsGroup header={t('settings.rd2.mediaPrivacy')} footer={t('privacy.cloudChatsDesc')}>
+    <SettingsGroup header={t('settings.rd2.mediaPrivacy')} footer={t('privacy.cloudChatsDesc')} cardStyle={cardStyle}>
       <SettingsSwitchRow
+        icon={icons?.exif}
         title={t('privacy.stripExif')}
         subtitle={t('privacy.stripExifDesc')}
         value={stripExif}
         onValueChange={(v) => { setStripExif(!!v); writeAcctFlag('chatyy_strip_exif', v ? 'true' : 'false'); }}
       />
       <SettingsSwitchRow
+        icon={icons?.sealed}
         title={t('privacy.sealedSender')}
         subtitle={t('privacy.sealedSenderDesc')}
         value={sealed}
         onValueChange={(v) => { setSealed(!!v); writeAcctFlag('chatyy_sealed_sender', v ? 'true' : 'false'); }}
       />
       <SettingsSwitchRow
+        icon={icons?.cloud}
         title={t('privacy.cloudChats')}
         value={cloudChats !== false}
         onValueChange={(v) => onCloudChatsChange?.(!!v)}

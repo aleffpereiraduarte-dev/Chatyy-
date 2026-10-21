@@ -211,7 +211,10 @@ export async function pickAndAddProfilePhoto({ t, email = '', onBusy } = {}) {
  * DENTRO do compositor (antes abria aqui e o push do modal logo após o PHPicker
  * fechar era recusado pelo iOS → "não faz nada"). `from` = para onde voltar.
  */
-export async function startProfilePost(router, t, { from = '', pick = 'library' } = {}) {
+// [2026-10-21 publicar-sem-seletor] Founder: tocar em "Publicar no perfil" abria o seletor de
+// fotos do sistema na hora. Agora abre o COMPOSITOR (texto + Galeria/Câmera), como Instagram/
+// Facebook — pick vazio = sem seletor automático. Quem quiser o seletor direto passa pick.
+export async function startProfilePost(router, t, { from = '', pick = '' } = {}) {
   try {
     return require('./profilePostComposer').openPostComposer(router, { pick, from });
   } catch (e) {

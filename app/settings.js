@@ -5,8 +5,8 @@
 // components/settings/MeHeader (barra Buscar · QR · lápis, balão do recado
 // acima do avatar 120, nome + chevron de troca de conta, telefone • @usuário);
 // depois 3 cartões sem cabeçalho:
-//   1. Chatyy Plus · Perfil público · Listas · Mensagens de transmissão ·
-//      Mensagens favoritas · Aparelhos conectados
+//   1. Chatyy Plus · Perfil público · Publicar · Mensagens favoritas ·
+//      Aparelhos conectados · Privacidade avançada
 //   2. Conta · Privacidade · Conversas · Aparência · Notificações ·
 //      Armazenamento e dados · Idioma · Acessibilidade
 //   3. Carteira · Bia · E-mail · Ajuda · Convidar amigos
@@ -65,7 +65,7 @@ import { FontSize, Spacing, BorderRadius, LetterSpacing } from '../constants/the
 import {
   IconArrowLeft, IconSparkles, IconPlusCircle, IconMessageSquare, IconGlobe, IconBell, IconShield, IconUser,
   IconMail, IconDatabase, IconX, IconHelpCircle, IconSearch, IconUserPlus, IconType,
-  IconMonitor, IconStar, IconCreditCard, IconPalette, IconFolder, IconBroadcast, IconUsers, IconImage,
+  IconMonitor, IconStar, IconCreditCard, IconPalette, IconUsers, IconImage,
 } from '../components/Icons';
 import * as ProfilePhotos from '../services/profilePhotos'; // [perfil-fotos 2026-10-19]
 import * as settingsCache from '../services/settingsCache';
@@ -529,12 +529,12 @@ function SettingsScreenInner() {
       // [perfil-fotos 2026-10-19] publicar no perfil. [2026-10-21 foto-capa-studio] "Adicionar foto
       // de perfil" saiu (founder): trocar a foto = selo de câmera do avatar / Editar (ProfileMediaStudio).
       ProfilePhotos.isProfilePostsCiEnabled() ? { key: 'ppPublish', type: 'r', icon: 'image', Icon: IconImage, title: ProfilePhotos.ppT(t, 'publish'), sub: ProfilePhotos.ppT(t, 'publishHint'), go: () => { ProfilePhotos.startProfilePost(router, t); } } : null,
-      { key: 'lists', type: 'r', icon: 'archive', Icon: IconFolder, title: tr('me.lists', 'Listas'), route: '/chat-folders' },
-      { key: 'broadcast', type: 'r', icon: 'forward', Icon: IconBroadcast, title: tr('me.broadcast', 'Mensagens de transmissão'), route: '/chat-new' },
+      // [2026-10-21 me-enxuto] "Listas" e "Mensagens de transmissão" saíram daqui (founder):
+      // Listas = abas/pastas da lista de conversas (/chat-folders); transmissão = menu de nova conversa.
       { key: 'starred', type: 'r', icon: 'star', Icon: IconStar, title: t('chat.starredMessages') || 'Mensagens favoritas', route: '/starred-messages' },
       { key: 'devices', type: 'r', icon: 'device', Icon: IconMonitor, title: t('settings.linkedDevices') || 'Aparelhos conectados', route: '/linked-devices' },
       // [2026-10-19 capmember] atalho p/ "Privacidade avançada em todas as conversas" (topo de Privacidade).
-      { key: 'advPriv', type: 'r', icon: 'shield', Icon: IconShield, title: tr('me.advPrivacy', 'Privacidade avançada'), value: advPrivDefault ? tr('advPriv.on', 'Ativada') : tr('advPriv.off', 'Desativada'), go: () => { try { router.push('/advanced-privacy'); } catch { openCategory('privacy', 'adv_privacy_default'); } } },
+      { key: 'advPriv', type: 'r', icon: 'shield', Icon: IconShield, title: tr('me.advPrivacy', 'Privacidade avançada'), value: advPrivDefault ? tr('advPriv.on', 'Ativada') : tr('advPriv.off', 'Desativada'), go: () => { openCategory('privacy'); } }, // [2026-10-21 privacidade-unica] mesma página de Ajustes → Privacidade
     ].filter(Boolean),
     CATEGORY_GROUPS[0].map(catRow),
     [

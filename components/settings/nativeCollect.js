@@ -40,7 +40,9 @@ const SlotContext = createContext(null);
 
 // Categorias que são só linhas do kit (as demais têm cartões/campos próprios
 // e ficam na tela JS). Conferido à mão + checagem de altura em tempo real.
-const DEFAULT_NATIVE_CATS = ['privacy', 'notifications', 'accessibility', 'help', 'invite', 'bia', 'account', 'chats', 'email', 'language', 'storage'];
+// [2026-10-21 privacidade-unica] 'privacy' saiu: a página única tem o cartão hero da
+// Privacidade avançada (não é linha do kit) → tela JS.
+const DEFAULT_NATIVE_CATS = ['notifications', 'accessibility', 'help', 'invite', 'bia', 'account', 'chats', 'email', 'language', 'storage'];
 // apiVersion mínima da ChatyySettingsList por categoria (padrão 2). Conversas e
 // Armazenamento usam `vd` ("Remover"/"Limpar mídia" em vermelho) → api 4;
 // binário antigo segue na tela JS.

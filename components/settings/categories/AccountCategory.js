@@ -27,7 +27,7 @@ export default function AccountCategory() {
   const { t } = useLanguage();
   const router = useRouter();
   const safeNav = useSafeNav();
-  const { registerAnchor, openAccountSwitcher } = useSettingsHost();
+  const { registerAnchor, openAccountSwitcher, openCategory } = useSettingsHost();
   const { user, accounts } = useAuth();
   const { biometricEnabled, biometricAvailable, toggleBiometric, autoLockInterval, setAutoLockInterval } = useBiometric();
   // null | 'password' | '2fa' | 'e2e' | 'backupKey' | 'logins'
@@ -197,7 +197,7 @@ export default function AccountCategory() {
 
         {!isWeb && (
           <SettingsGroup footer={t('settings.advancedPrivacyDesc') || 'Proxy/Tor, bloqueio de captura de tela, descoberta por número, sugestão de VPN.'}>
-            <SettingsRow title={t('settings.advancedPrivacy') || 'Privacidade avançada'} onPress={() => safeNav('/advanced-privacy')} />
+            <SettingsRow title={t('settings.advancedPrivacy') || 'Privacidade avançada'} onPress={() => openCategory('privacy')} /* [2026-10-21 privacidade-unica] página única */ />
           </SettingsGroup>
         )}
 
