@@ -6468,7 +6468,7 @@ async function _chatSendInner(conversationId, content, type = 'text', replyToId 
     // would otherwise throw and kill the whole send.
     try { payload.mentions = JSON.stringify(mentions); } catch { /* skip */ }
   }
-  if (fileUrl) payload.file_url = fileUrl;
+  if (fileUrl && !_e5Env) payload.file_url = fileUrl; // [e2ee5 WP-09] conversa E2EE: nada de URL em claro (mídia/ref vão no payload cifrado)
   if (topicId) payload.topic_id = topicId;
   // iMessage-style effect ("slam", "loud", "balloons", etc.). Server
   // whitelists; client passes raw — invalid values are silently dropped.
@@ -6939,6 +6939,7 @@ export async function chatSearchAdvanced(opts = {}) {
 // then finalize on stop. By the time the user releases, most bytes are
 // already on disk.
 export async function chatVoiceSessionStart(conversationId) {
+  try { if (!require('./e2ee/e2ee5').allowsServerVoiceSession(conversationId)) return { success: false, message: 'e2ee5_no_voice_session' }; } catch {} // [e2ee5 WP-11] áudio sobe cifrado no fim, nunca em claro gravando
   return apiCall('chat_voice_session_start', { conversation_id: conversationId }, 'POST');
 }
 
@@ -7104,6 +7105,7 @@ export async function voicemailTranscribe(voicemailId) {
 }
 
 export async function chatUpdateLiveLocation(messageId, latitude, longitude, address, opts) {
+  try { const _r5 = await require('./e2ee/e2ee5').liveLocationUpdate(messageId, latitude, longitude, opts); if (_r5) return _r5; } catch {} // [e2ee5 WP-09] posição cifrada (estado do remetente)
   // opts.unlimited / opts.duration_seconds let the snap-map "sempre ativo"
   // share keep the right sentinel on every tick. Older callers (no opts)
   // still get the legacy 1h-default behavior on the backend.
@@ -7129,6 +7131,7 @@ export async function chatUpdateLiveLocation(messageId, latitude, longitude, add
 }
 
 export async function chatStopLiveLocation(messageId, opts) {
+  try { const _r5 = await require('./e2ee/e2ee5').liveLocationStop(messageId); if (_r5) return _r5; } catch {} // [e2ee5 WP-09]
   // [WAVE 49 2026-05-21] `force=true` opts in to the destructive backend
   // path (delete chat_live_locations row + global share + auto_chat grants).
   // Without it the backend soft-no-ops and the share continues until its
@@ -7322,6 +7325,7 @@ async function _rustChatPost(path, payload) {
 
 export async function chatReact(messageId, emoji, stickerUrl, clientActionId = null) {
   if (!messageId) return { success: false, message: 'invalid_message' };
+  try { const _r5 = await require('./e2ee/e2ee5').reactViaE2ee(messageId, emoji, stickerUrl, clientActionId); if (_r5) return _r5; } catch {} // [e2ee5 WP-09] emoji cifrado (§2.7)
   // [2026-10-13 P2-6] Id gerado pela tela e reutilizado no replay da fila →
   // o servidor reconhece a repetição e o toggle não se desfaz.
   const actionId = (typeof clientActionId === 'string' && clientActionId) ? clientActionId : _chatActionId();
@@ -9620,6 +9624,7 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
 }
 
 export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null, msgType = null, externalSignal = null, silent = false, clientMessageId = null, replyToId = null, durationSec = null, topicId = null) {
+  if (!silent) { try { const _r5 = await require('./e2ee/e2ee5Media').uploadViaChatUpload(conversationId, file, { content, viewOnce, onProgress, msgType, signal: externalSignal, clientMessageId, replyToId, durationSec, topicId }); if (_r5) return _r5; } catch {} } // [e2ee5 WP-11] conversa E2EE: cifra no aparelho + blob opaco
   const formData = new FormData();
   formData.append('action', 'chat_upload');
   formData.append('conversation_id', String(conversationId));
@@ -9806,6 +9811,7 @@ export async function chatUnreadCount(opts = null) {
 }
 
 export async function chatCreatePoll(conversationId, question, options, multipleChoice = false, quiz = null, replyToId = null) {
+  try { const _r5 = await require('./e2ee/e2ee5').createPoll(conversationId, question, options, multipleChoice, replyToId); if (_r5) return _r5; } catch {} // [e2ee5 WP-09] enquete cifrada
   const payload = { conversation_id: conversationId, question, options, multiple_choice: multipleChoice };
   if (replyToId) payload.reply_to_id = replyToId; // [2026-10-12 reply-media]
   // Quiz mode (Telegram parity): pass `quiz = { correctOption: N, explanation: '...' }`
@@ -9820,6 +9826,7 @@ export async function chatCreatePoll(conversationId, question, options, multiple
 }
 
 export async function chatVotePoll(pollId, optionIndex) {
+  try { const _r5 = await require('./e2ee/e2ee5').votePoll(pollId, optionIndex); if (_r5) return _r5; } catch {} // [e2ee5 WP-09] voto cifrado (apuração no cliente)
   return apiCall('chat_vote_poll', { poll_id: pollId, option_index: optionIndex }, 'POST');
 }
 
@@ -10241,15 +10248,18 @@ export async function drivePhotoSyncList(page = 1, limit = 50, month = null) {
 
 // Meetup / Hangout
 export async function chatCreateMeetup(conversationId, title, datetime, location = '', description = '', replyToId = null) {
+  try { const _r5 = await require('./e2ee/e2ee5').createMeetup(conversationId, title, datetime, location, description, replyToId); if (_r5) return _r5; } catch {} // [e2ee5 WP-09] encontro cifrado
   return apiCall('chat_create_meetup', { conversation_id: conversationId, title, datetime, location, description, ...(replyToId ? { reply_to_id: replyToId } : {}) }, 'POST'); // [2026-10-12 reply-media]
 }
 
 // [encontro2 2026-10-20] autor edita (title/datetime/location/description — só os que mudaram) ou cancela ({cancel:1}).
 export async function chatUpdateMeetup(messageId, fields = {}) {
+  try { if (require('./e2ee/e2ee5').isE2eeMessage(messageId)) return { success: false, code: 'e2ee5_unsupported_type', message: 'Editar o encontro ainda não está disponível em conversa protegida.' }; } catch {} // [e2ee5 WP-09]
   return apiCall('chat_meetup_update', { message_id: messageId, ...fields, client_action_id: _chatActionId() }, 'POST');
 }
 
 export async function chatMeetupRsvp(messageId, status) {
+  try { const _r5 = await require('./e2ee/e2ee5').meetupRsvp(messageId, status); if (_r5) return _r5; } catch {} // [e2ee5 WP-09] presença cifrada
   return apiCall('chat_meetup_rsvp', { message_id: messageId, status }, 'POST');
 }
 

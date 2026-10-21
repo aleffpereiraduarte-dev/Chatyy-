@@ -3917,6 +3917,8 @@ const linkPreviewStyles = StyleSheet.create({
 // [2026-10-18 wa-parity reactions] Lista completa de quem reagiu (WhatsApp): aba "Todas N" + uma
 // aba por emoji; cada linha mostra o emoji DAQUELA pessoa (antes o chip "+N" mostrava "+" em todas
 // as linhas); a minha linha = "Você · Toque para remover"; figurinha-reação vira imagem.
+// [e2ee5 WP-09] reações cifradas → emoji decifrado; votos/presença/posição não aparecem como reação
+function _e5Rx(m) { try { return require('../services/e2ee/e2ee5').reactionsView(m); } catch { return (m && m.reactions) || []; } }
 function _allReactorsOf(reactions) {
   const out = [];
   const seen = new Set();
@@ -4728,6 +4730,7 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     _albumItemsEqual &&
     a.effect === b.effect &&
     a.content === b.content &&
+    a._e5V === b._e5V && // [e2ee5 WP-09] mídia decifrada / votos / reações cifradas
     a.edited_at === b.edited_at &&
     a.deleted_at === b.deleted_at &&
     a.updated_at === b.updated_at &&
@@ -12371,6 +12374,7 @@ function ChatConversationInnerBody() {
   // and the next read/reload crashes the app. THIS IS LOAD-BEARING.
   const _sanitizeNativeMsg = (m) => {
     if (!m) return null;
+    try { m = require('../services/e2eeShape').toStoredShape(m); } catch {} // [e2ee5 WP-09] v5: tira campos decifrados antes do cache
     const c = { ...m };
     // [2026-10-09 e2ee v4] cache nativo guarda o envelope, não o texto.
     if (typeof c._e2eRaw === 'string' && c._e2eRaw.startsWith('{"e2e":4')) c.content = c._e2eRaw;
@@ -12638,6 +12642,7 @@ function ChatConversationInnerBody() {
             return { ...msg, content: '...', _e2e: true };
           }
         }
+        if (t !== 'text' && t !== 'system' && typeof msg.content === 'string' && msg.content.startsWith('{"e2e":5')) { try { return require('../services/e2ee/e2ee5').applyToRow(msg, msg.content, msg.conversation_id, null) || msg; } catch { return msg; } } // [e2ee5 WP-09]
         if (t !== 'text' && t !== 'system') return msg;
         if (!msg.content) return msg;
         const stripped = String(msg.content || '').trim();
@@ -15759,9 +15764,10 @@ function ChatConversationInnerBody() {
         setMessages(prev => {
           let touched = false;
           const next = prev.map(m => {
-            if (!_e5.rowNeedsRefresh(m, d.key) && !(d.id != null && m && String(m.id) === String(d.id) && typeof m._e2eRaw === 'string')) return m;
-            const r = _e5.applyToRow(m, m._e2eRaw, conversationId, t);
-            if (!r || (r.content === m.content && r._e5State === m._e5State && r._e5EditOf === m._e5EditOf)) return m;
+            const _rawC = m && typeof m.content === 'string' && m.content.startsWith('{"e2e":5'); // [e2ee5 WP-09] linha que entrou crua no estado
+            if (!_rawC && !_e5.rowNeedsRefresh(m, d.key) && !(d.id != null && m && String(m.id) === String(d.id) && typeof m._e2eRaw === 'string')) return m;
+            const r = _e5.applyToRow(m, _rawC ? m.content : m._e2eRaw, conversationId, t);
+            if (!r || (r.content === m.content && r._e5State === m._e5State && r._e5EditOf === m._e5EditOf && r._e5V === m._e5V)) return m; // [e2ee5 WP-09] _e5V
             touched = true;
             return r;
           });
@@ -16139,7 +16145,7 @@ function ChatConversationInnerBody() {
       // "undefined is not an object" inside an async WS callback → hard crash.
       // Repro: send offline → turn internet back on → drain+resync → crash.
       if (!msg) return msg;
-      if (msg.type !== 'text') return msg;
+      if (msg.type !== 'text' && !(typeof msg.content === 'string' && msg.content.startsWith('{"e2e":5')) && !(typeof msg._e2eRaw === 'string' && msg._e2eRaw.startsWith('{"e2e":5'))) return msg; // [e2ee5 WP-09] v5 de qualquer tipo
       // Find the raw envelope: prefer _e2eRaw (preserved by normalizer),
       // otherwise look at live content for {"e2e":1,...} pattern.
       let raw = msg._e2eRaw;
@@ -22159,6 +22165,7 @@ function ChatConversationInnerBody() {
   };
   const _sendRichViaOutbox = async ({ msgId, tempId, type, content, fileUrl = null, createdAt, replyToId = null }) => {
     if (!OUTBOX_V2_ONLY) return false;
+    try { const _s5 = await require('../services/e2ee/e2ee5').sealRichForOutbox(conversationId, type, content, fileUrl, msgId, replyToId); if (_s5 && _s5.refuse) return false; if (_s5) { content = _s5.content; type = _s5.type; fileUrl = null; } } catch {} // [e2ee5 WP-09]
     try {
       const r = await messageOutbox.enqueue({
         client_message_id: msgId,
@@ -30243,6 +30250,9 @@ function ChatConversationInnerBody() {
     // off vanishTickNow (30s ticker) so it repaints. Keep meta rows, system
     // messages, and optimistic rows without a parseable created_at.
     let base = selectionOverlayMessages;
+    // [e2ee5 WP-09] rede de segurança: linha v5 que chegou ao estado por um caminho sem a decifragem
+    // (merge do store, mídia) nunca é desenhada crua — mapeia aqui (cache local / placeholder).
+    try { if (base && base.some(m => m && typeof m.content === 'string' && m.content.startsWith('{"e2e":5'))) { const _e5 = require('../services/e2ee/e2ee5'); base = base.map(m => (m && typeof m.content === 'string' && m.content.startsWith('{"e2e":5') ? (_e5.applyToRow(m, m.content, m.conversation_id || conversationId, t) || m) : m)); } } catch {}
     // WhatsApp semantics: ONLY messages sent at/after disappearing was enabled
     // vanish. The prior history MUST stay visible. disappearingSetAt gates it —
     // without that gate this filter hid the ENTIRE conversation the moment you
@@ -32020,7 +32030,7 @@ function ChatConversationInnerBody() {
 
     const reactionGroups = {};
     if (msg.reactions && Array.isArray(msg.reactions)) {
-      msg.reactions.forEach(r => {
+      _e5Rx(msg).forEach(r => { // [e2ee5 WP-09]
         const emoji = r.emoji || r.reaction;
         if (!emoji) return;
         const users = typeof r.users === 'string' ? r.users.split(',') : (r.users || []);
@@ -36585,9 +36595,9 @@ function ChatConversationInnerBody() {
                   // you can see who reacted even on your own).
                   onPress={() => {
                     if (meReacted) handleReact(msg.id, emoji, String(emoji).startsWith('sticker:') ? String(emoji).slice(8) : undefined);
-                    else setReactionDetail({ emoji, msgId: msg.id, reactors: _allReactorsOf(msg.reactions) });
+                    else setReactionDetail({ emoji, msgId: msg.id, reactors: _allReactorsOf(_e5Rx(msg)) });
                   }}
-                  onLongPress={() => setReactionDetail({ emoji, msgId: msg.id, reactors: _allReactorsOf(msg.reactions) })}
+                  onLongPress={() => setReactionDetail({ emoji, msgId: msg.id, reactors: _allReactorsOf(_e5Rx(msg)) })}
                   delayLongPress={400}
                   // [2026-10-08 chat-beauty-bubbles] Chip sobreposto à borda da
                   // bolha com anel da cor do fundo (recorte limpo, sem sombra).
@@ -36635,7 +36645,7 @@ function ChatConversationInnerBody() {
                         // reactor across all overflow emojis. Re-uses the
                         // existing reactionDetail modal but seeds it with
                         // the merged set so the user sees everyone.
-                        setReactionDetail({ emoji: 'all', msgId: msg.id, reactors: _allReactorsOf(msg.reactions) });
+                        setReactionDetail({ emoji: 'all', msgId: msg.id, reactors: _allReactorsOf(_e5Rx(msg)) });
                       }}
                       style={[styles.reactionChip, { backgroundColor: isDark ? '#2C2C2E' : '#FFFFFF', borderColor: chatWallBg }]}
                       accessibilityLabel={_mt('chatConv.moreReactionsA11y', 'Ver mais {count} reações').replace('{count}', String(overflowCount))}
@@ -37262,7 +37272,7 @@ function ChatConversationInnerBody() {
           for (const u of us) if (u && !users.includes(u)) users.push(u);
         }
         if (users.some(u => String(u).toLowerCase() === meLc)) A.handleReact(target.id, emoji);
-        else setReactionDetail({ emoji, msgId: target.id, reactors: _allReactorsOf(target.reactions) });
+        else setReactionDetail({ emoji, msgId: target.id, reactors: _allReactorsOf(_e5Rx(target)) });
         return;
       }
       case 'link': {

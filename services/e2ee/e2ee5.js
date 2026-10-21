@@ -267,7 +267,7 @@ function _onSyncResult(r) {
     const convs = Array.isArray(r.convsWithNewKeys) ? r.convsWithNewKeys : [];
     for (const cid of convs) _retryWaiting(String(cid));
     // Sem saber a conversa (to-device com chave de sala nova), re-tenta tudo o que aguarda.
-    if ((r.toDeviceProcessed || 0) > 0 && !convs.length) for (const cid of Array.from(_waiting.keys())) _retryWaiting(cid);
+    if ((r.toDeviceProcessed || 0) > 0 && !convs.length) for (const cid of new Set([...Array.from(_waiting.keys()), ...Array.from(_rxWait.values()).map((w) => w.conv)])) _retryWaiting(cid); // [e2ee5 WP-09] + reações
   } catch (_) {}
   try {
     const uids = Array.isArray(r.identityChangedUids) ? r.identityChangedUids.map(String) : [];
@@ -361,6 +361,17 @@ function _wireOnce() {
     if (d.e2e_c && d.e2e_conv) {
       decryptRow({ id: d.e2e_mid, conversation_id: d.e2e_conv, client_message_id: d.e2e_cmid || '', content: d.e2e_c, _senderUid: d.e2e_sender_uid }, d.e2e_conv).catch(() => {});
     }
+  });
+  // [e2ee5 WP-09] reação/estado cifrado ao vivo: decifra e repinta a linha (votos, presença, posição)
+  ws.on('reaction', (raw) => {
+    if (!isOn()) return;
+    try {
+      const m = (raw && (raw.message || (raw.data && raw.data.message))) || (raw && raw.data) || raw;
+      if (!m || m.id == null || !Array.isArray(m.reactions) || m.conversation_id == null) return;
+      const prev = _lastRows.get(String(m.id));
+      if (prev) _lastRows.set(String(m.id), { ...prev, reactions: m.reactions });
+      _rxEntries({ reactions: m.reactions }, String(m.conversation_id), String(m.id));
+    } catch (_) {}
   });
   ws.on('chat_send_rejected', (raw) => { _onRejectedE5(dataOf(raw)); }); // [e2ee5 WP-06b] aceite regional recusou no dreno
   ws.on('chat_send_error', (raw) => {
@@ -514,7 +525,7 @@ function _replyField(reply) {
   if (pe && pe.cmid) out.cmid = pe.cmid;
   else if (reply.client_message_id) out.cmid = String(reply.client_message_id);
   const q = typeof reply.quoteText === 'string' && reply.quoteText ? reply.quoteText
-    : (pe && pe.text) || (typeof reply.content === 'string' && !isV5Family(reply.content) ? reply.content : '');
+    : (pe && (pe.text || (pe.payload && pe.payload.t && pe.payload.t !== 'text' ? _P5().quoteOf(pe.payload) : ''))) || (typeof reply.content === 'string' && !isV5Family(reply.content) && reply.content.charAt(0) !== '{' ? reply.content : ''); // [e2ee5 WP-09] pai rico: "Foto: …"/"Localização"; nunca JSON
   if (q) out.quote = String(q).slice(0, 300);
   out.qt = (pe && pe.t === 'edit') ? 'text' : (pe ? pe.t : (reply.type || 'text'));
   return out;
@@ -527,6 +538,17 @@ function _replyField(reply) {
  */
 export async function sealText(convId, text, opts) {
   const o = opts || {};
+  const body = String(text == null ? '' : text);
+  if (body.length * 3 > BODY_MAX && new TextEncoder().encode(body).length > BODY_MAX) throw _err('too_large');
+  const fields = { t: o.editOf ? 'edit' : 'text', body };
+  if (o.editOf) { fields.edit_of = String(o.editOf); fields.edit_of_cmid = String(o.editOfCmid || (_byMid.get(String(o.editOf)) || {}).cmid || ''); }
+  return sealPayload(convId, fields, o);
+}
+
+function _newCmid(p) { return (p || 'e5_') + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
+
+// [e2ee5 WP-09] sessão + estado + membros (comum a toda cifragem desta conversa)
+async function _sealCtx(convId) {
   if (!isOn()) throw _err('disabled');
   const s = await ensureSession();
   if (!s) throw _err('e2ee_unsupported');
@@ -535,13 +557,23 @@ export async function sealText(convId, text, opts) {
   let st = await convState(k);
   if (!st || st.mode !== 1) st = await convState(k, { force: true });
   if (!st || st.mode !== 1) throw _err('not_e2ee');
-  const body = String(text == null ? '' : text);
-  if (body.length * 3 > BODY_MAX && new TextEncoder().encode(body).length > BODY_MAX) throw _err('too_large');
-  const cmid = String(o.cmid || ('e5_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)));
   const members = st.members.includes(s.uid) ? st.members.slice() : st.members.concat([s.uid]);
-  const payload = { v: 1, t: o.editOf ? 'edit' : 'text', conv: k, cmid, ts: Date.now(), body };
-  if (o.editOf) { payload.edit_of = String(o.editOf); payload.edit_of_cmid = String(o.editOfCmid || (_byMid.get(String(o.editOf)) || {}).cmid || ''); }
-  const rep = !o.editOf ? _replyField(o.reply) : null;
+  return { s, k, members };
+}
+
+/**
+ * [e2ee5 WP-09] Cifra QUALQUER payload v1 (§2.3/§2.4). `fields` = {t, ...campos do tipo}; os comuns
+ * (v, conv, cmid, ts, reply, mention_all, fwd) vêm daqui. → envelope.
+ * opts: {cmid, reply:{id,…}, mentionAll, fwd, noPlain (reações/estados: não entram no cache de texto)}
+ */
+export async function sealPayload(convId, fields, opts) {
+  const o = opts || {};
+  const { s, k, members } = await _sealCtx(convId);
+  const cmid = String(o.cmid || _newCmid());
+  const payload = { ...(fields || {}), v: 1, conv: k, cmid, ts: Date.now() };
+  if (!payload.t) payload.t = 'text';
+  const isEdit = payload.t === 'edit';
+  const rep = !isEdit && !o.noPlain ? _replyField(o.reply) : null;
   if (rep) payload.reply = { ...rep, sender_uid: rep.sender_uid || undefined };
   if (o.mentionAll) payload.mention_all = true;
   if (o.fwd) payload.fwd = { n: Math.max(1, Number(o.fwd) || 1) };
@@ -551,15 +583,28 @@ export async function sealText(convId, text, opts) {
   try {
     r = await _C().encrypt(k, members, payload);
   } catch (e) {
-    _log('encrypt_fail', { conv: k, code: e && e.code });
+    _log('encrypt_fail', { conv: k, code: e && e.code, t: payload.t });
     throw e;
   }
   try { _health()?.recordEncrypt(Date.now() - t0, { claimed: (r && r.keyShareRequests) > 0 }); } catch (_) {}
   const env = r.envelopeJson;
-  _plainPut(env, { conv: k, mid: null, cmid, text: body, t: payload.t, payload, sender: s.email || _me(), ts: payload.ts });
-  _sealMetaPut(env, { has_link: _LINK_RE.test(body), mention_all: !!o.mentionAll, edit_of: o.editOf ? String(o.editOf) : null, cmid });
-  _log('sealed', { conv: k, len: env.length, ms: Date.now() - t0 });
+  const txt = _textOfPayload(payload);
+  if (!o.noPlain) {
+    _plainPut(env, { conv: k, mid: null, cmid, text: txt, t: payload.t, payload, sender: s.email || _me(), ts: payload.ts });
+    _sealMetaPut(env, { has_link: _LINK_RE.test(txt || ''), mention_all: !!o.mentionAll, edit_of: isEdit ? String(payload.edit_of) : null, cmid });
+  } else {
+    _rxPut(env, { payload, email: _canon(s.email || _me()), ts: payload.ts });
+  }
+  _log('sealed', { conv: k, len: env.length, ms: Date.now() - t0, t: payload.t });
   return env;
+}
+
+// Texto "pesquisável/citável" do payload (texto = corpo; mídia = legenda; o resto = vazio).
+function _textOfPayload(p) {
+  if (!p) return '';
+  if (p.t === 'text' || p.t === 'edit') return typeof p.body === 'string' ? p.body : '';
+  if (typeof p.caption === 'string') return p.caption;
+  return '';
 }
 
 /**
@@ -588,8 +633,19 @@ export async function sealForSend(convId, content, type, fileUrl, cmid, opts) {
     return { content, extra: _extraOf(m) };
   }
   if (fileUrl || (type && type !== 'text')) {
-    // F1 = texto. Mídia/local/contato/enquete cifrados entram na F2/F3 (WP-09/WP-11): nada vai em claro.
-    return { refuse: { code: 'e2ee5_unsupported_type', message: 'Este tipo de mensagem ainda não pode ser enviado numa conversa protegida.' } };
+    // [e2ee5 WP-09] local/contato/GIF/figurinha por referência/pedido de local → payload v1 do tipo.
+    // Mídia do aparelho NÃO chega aqui em claro: o upload cifrado (e2ee5Media) manda o envelope pronto.
+    const P = require('./payload');
+    const f = P.fieldsFromLegacy(type, content, fileUrl);
+    if (!f || f.t === 'text' && (fileUrl || type !== 'text')) {
+      return { refuse: { code: 'e2ee5_unsupported_type', message: 'Este tipo de mensagem ainda não pode ser enviado numa conversa protegida.' } };
+    }
+    try {
+      const env = await sealPayload(k, f, { cmid, reply: opts && opts.reply, mentionAll: opts && opts.mentionAll, fwd: opts && opts.fwd });
+      return { content: env, extra: _extraOf(sealMetaOf(env) || {}), dropFile: true, coarse: P.coarseOf(f.t) };
+    } catch (e) {
+      return { refuse: { code: (e && e.code) || 'encrypt_failed', message: 'Não foi possível criptografar a mensagem. Nada foi enviado.' } };
+    }
   }
   try {
     const env = await sealText(k, content, { cmid, reply: opts && opts.reply, mentionAll: opts && opts.mentionAll, fwd: opts && opts.fwd, via: opts && opts.via, editOf: opts && opts.editOf, editOfCmid: opts && opts.editOfCmid });
@@ -960,7 +1016,7 @@ export function decryptRow(row, convId) {
     if (np && np.state === 'ok' && np.payload) {
       let payload = {};
       try { payload = JSON.parse(np.payload) || {}; } catch (_) { payload = {}; }
-      const e = { conv, mid: String(row.id), cmid: String(payload.cmid || np.cmid || ''), text: typeof payload.body === 'string' ? payload.body : '', t: String(payload.t || 'text'), payload, sender: _norm(row.sender_email), ts: _rowTs(row), trust: np.trust };
+      const e = { conv, mid: String(row.id), cmid: String(payload.cmid || np.cmid || ''), text: _textOfPayload(payload), t: String(payload.t || 'text'), payload, sender: _norm(row.sender_email), ts: _rowTs(row), trust: np.trust };
       _plain.set(k, e); _byMid.set(e.mid, e); _fail.delete(k); _unwait(conv, k); _noteEdit(e);
       _emitLocal('e2ee5_plain', { conversation_id: conv, key: k, id: row.id });
       return e;
@@ -987,7 +1043,7 @@ export function decryptRow(row, convId) {
       const entry = {
         conv, mid: row.id != null && /^\d+$/.test(String(row.id)) ? String(row.id) : null,
         cmid: String(payload.cmid || row.client_message_id || ''),
-        text: typeof payload.body === 'string' ? payload.body : '',
+        text: _textOfPayload(payload),
         t: String(payload.t || 'text'), payload, sender: _norm(row.sender_email), ts: _rowTs(row), trust: d.trust,
       };
       const wasWaiting = _fail.has(k);
@@ -1031,6 +1087,8 @@ function _wait(conv, k, row) {
 }
 function _unwait(conv, k) { const m = _waiting.get(conv); if (m) { m.delete(k); if (!m.size) _waiting.delete(conv); } }
 function _retryWaiting(conv) {
+  // [e2ee5 WP-09] reações/estados que aguardavam a chave desta conversa
+  try { for (const [k, w] of Array.from(_rxWait)) if (w.conv === String(conv)) { _rxWait.delete(k); _rxDecrypt(w.conv, w.mid, w.env, w.email).catch(() => {}); } } catch (_) {}
   const m = _waiting.get(conv);
   if (!m) return;
   for (const [k, w] of Array.from(m)) {
@@ -1064,17 +1122,27 @@ export function applyToRow(msg, raw, convId, t) {
   if (v !== 5 || !isOn()) {
     return { ...msg, content: stateText(t, 'update_to_read'), _e2e: true, _e2eRaw: raw, _e5State: 'update_to_read' };
   }
+  if (msg.id != null && /^\d+$/.test(String(msg.id))) { _lastRows.set(String(msg.id), msg); if (_lastRows.size > 3000) _lastRows.delete(_lastRows.keys().next().value); } // [e2ee5 WP-09]
   const e = _plain.get(keyOf(raw));
   if (e) return _rowFromEntry(msg, raw, e);
   const f = _fail.get(keyOf(raw));
-  decryptRow({ ...msg, content: raw }, convId != null ? convId : msg.conversation_id).catch(() => {});
-  if (f) return { ...msg, content: stateText(t, f.state), _e2e: true, _e2eFailed: f.state !== 'waiting', _e2eRaw: raw, _e5State: f.state };
-  return { ...msg, content: '...', _e2e: true, _e2eRaw: raw, _e5State: 'decrypting' };
+  if (!f || f.state === 'waiting') decryptRow({ ...msg, content: raw }, convId != null ? convId : msg.conversation_id).catch(() => {}); // [e2ee5 WP-09] não repete o que não decifra
+  // [e2ee5 WP-09] linha de mídia ainda sem payload: balão de texto do estado (nunca "foto quebrada")
+  const _ty = msg.type && msg.type !== 'text' ? { type: 'text', _e5Ty: msg._e5Ty || msg.type } : null;
+  if (f) return { ...msg, ..._ty, content: stateText(t, f.state), _e2e: true, _e2eFailed: f.state !== 'waiting', _e2eRaw: raw, _e5State: f.state };
+  return { ...msg, ..._ty, content: '...', _e2e: true, _e2eRaw: raw, _e5State: 'decrypting' };
 }
 
 function _rowFromEntry(msg, raw, e) {
   const out = { ...msg, content: e.text, _e2e: true, _e2eRaw: raw };
   delete out._e5State; delete out._e2eFailed;
+  // [e2ee5 WP-09/WP-11] tipos ricos: payload decifrado → forma que os cartões de hoje desenham
+  const _pt = e.payload && e.payload.t;
+  if (_pt && _pt !== 'text' && _pt !== 'edit') {
+    try { Object.assign(out, _richFields(msg, e)); } catch (_) {}
+  }
+  const _ty0 = msg._e5Ty || msg.type;
+  if (out.type !== _ty0) out._e5Ty = _ty0; else delete out._e5Ty; // tipo grosso do servidor (o cache volta a ele)
   const ed = e.t !== 'edit' ? editOf(msg.id, e.sender || msg.sender_email) : null;
   if (ed) { out.content = ed.text; out.edited = true; out.edited_at = msg.edited_at || new Date(ed.ts).toISOString(); out.edited_count = Math.max(Number(msg.edited_count) || 0, ed.n); }
   const p = e.payload || {};
@@ -1084,9 +1152,296 @@ function _rowFromEntry(msg, raw, e) {
     const pe = p.reply.mid != null ? _byMid.get(String(p.reply.mid)) : null;
     out.reply_to = { ...rt, content: (pe && pe.text) || p.reply.quote || '', type: rt.type || p.reply.qt || 'text' };
   }
-  if (p.fwd && !msg.forwarded_from) out._e5Fwd = Number(p.fwd.n) || 1;
+  if (p.fwd && !msg.forwarded_from) { out._e5Fwd = Number(p.fwd.n) || 1; if (!(Number(msg.forward_count) > 0)) out.forward_count = out._e5Fwd; }
   if (p.mention_all) out._e5MentionAll = true;
+  // assinatura do que a decifragem pôs na linha (mídia pronta, votos, reações) → a tela repinta
+  out._e5V = _verOf(out);
   return out;
+}
+
+// ───────────────────────────────────────────────────────────── [e2ee5 WP-09/WP-11] tipos ricos
+
+function _M5() { return require('./e2ee5Media'); }
+function _P5() { return require('./payload'); }
+let _m5Wired = false;
+function _wireMedia() {
+  if (_m5Wired) return;
+  _m5Wired = true;
+  try {
+    _M5().subscribe((ev) => {
+      if (!ev || ev.conv == null) return;
+      _emitLocal('e2ee5_plain', { conversation_id: String(ev.conv), id: ev.mid, media: ev.state });
+    });
+  } catch (_) {}
+}
+
+function _midOf(msg, e) {
+  if (msg && msg.id != null && /^\d+$/.test(String(msg.id))) return String(msg.id);
+  return (e && e.mid) || '';
+}
+
+function _richFields(msg, e) {
+  _wireMedia();
+  const P = _P5();
+  const mid = _midOf(msg, e);
+  const conv = String(e.conv || msg.conversation_id || '');
+  const states = _statesOf(msg, conv, mid);
+  return P.toRowFields(e.payload, {
+    mid, myEmail: _canon(_me()), myEmailRaw: (_sess && _sess.email) || _me(), senderEmail: _canon(msg.sender_email), states,
+    media: (M) => {
+      let l = {};
+      try { l = _M5().localSync(M) || {}; if (!l.uri || l.state === 'idle') _M5().want(M, { conv, mid: mid || msg.id }); } catch (_) {}
+      return l;
+    },
+  });
+}
+
+function _verOf(o) {
+  const m = o._e5Media || {};
+  const pl = o.poll ? (o.poll.vote_counts || []).join(',') + '/' + (o.poll.my_votes || []).join(',') : '';
+  const mt = o.meetup && o.meetup.rsvp ? Object.keys(o.meetup.rsvp).map((k) => k + o.meetup.rsvp[k]).join(',') : '';
+  return [o.type || '', m.state || '', o._localUri ? String(o._localUri).length + String(o._localUri).slice(-12) : '', o._posterUri ? 'p' : '', pl, mt,
+    o.latitude != null ? String(o.latitude) + ',' + String(o.longitude) : '', o.live ? 'L' : '', _rxGen].join('|');
+}
+
+// ── reações e estados cifrados (§2.7; contrato 1.4: `emoji` = envelope; `v{…}` = estado por pessoa)
+const _rx = new Map();       // keyOf(env) → {payload, email, ts} | {bad:true}
+const _rxInflight = new Map();
+const _rxWait = new Map();   // keyOf(env) → {conv, mid, env, email}: chave ainda não chegou (re-tenta no sync)
+let _rxGen = 0;              // muda quando algo novo decifra (assinatura das linhas)
+function _rxPut(env, v) { _rx.set(keyOf(env), v); if (_rx.size > 5000) _rx.delete(_rx.keys().next().value); }
+const _isRxEnv = (s) => typeof s === 'string' && (s.startsWith('{"e2e":5') || s.startsWith('v{"e2e":5'));
+
+function _usersOf(r) { return typeof r.users === 'string' ? r.users.split(',') : (Array.isArray(r.users) ? r.users : (r.email ? [r.email] : (r.user_email ? [r.user_email] : []))); }
+
+/** Decifra (2º plano) a reação/estado `env` de `email` na mensagem `mid`. */
+function _rxDecrypt(conv, mid, env, email) {
+  const k = keyOf(env);
+  if (_rx.has(k)) return Promise.resolve(_rx.get(k));
+  if (_rxInflight.has(k)) return _rxInflight.get(k);
+  const p = (async () => {
+    const s = await ensureSession();
+    if (!s) return null;
+    const su = await _senderUid(conv, email, env, null);
+    if (!su) return null;
+    try {
+      const d = await _C().decrypt({ convId: String(conv), envelopeJson: env, senderUid: su, serverMid: '', cmid: '', tsMs: Date.now() });
+      let payload = {};
+      try { payload = JSON.parse(d.payloadJson || '{}') || {}; } catch (_) { payload = {}; }
+      // a reação é amarrada à MENSAGEM pelo conteúdo cifrado: o servidor não consegue movê-la de lugar
+      const target = String(payload.target_mid || payload.poll_mid || '');
+      const v = target && target === String(mid) ? { payload, email: _canon(email), ts: Number(payload.ts) || Date.now() } : { bad: true };
+      _rxPut(env, v);
+      _rxGen += 1;
+      _emitLocal('e2ee5_plain', { conversation_id: String(conv), id: mid, rx: true });
+      return v;
+    } catch (e) {
+      const reason = (e && (e.reason || e.code)) || 'internal';
+      if (!RETRYABLE.has(String(reason))) _rxPut(env, { bad: true });
+      else { _rxWait.set(k, { conv: String(conv), mid, env, email }); if (_rxWait.size > 2000) _rxWait.delete(_rxWait.keys().next().value); }
+      return null;
+    }
+  })().finally(() => { _rxInflight.delete(k); });
+  _rxInflight.set(k, p);
+  return p;
+}
+
+function _rxEntries(msg, conv, mid) {
+  const out = [];
+  const list = msg && Array.isArray(msg.reactions) ? msg.reactions : [];
+  for (const r of list) {
+    const em = r && (r.emoji || r.reaction);
+    if (!_isRxEnv(em)) continue;
+    const state = em.charCodeAt(0) === 118; // 'v'
+    const env = state ? em.slice(1) : em;
+    for (const u of _usersOf(r)) {
+      if (!u) continue;
+      const hit = _rx.get(keyOf(env));
+      if (hit) { if (!hit.bad) out.push({ state, email: _canon(u), payload: hit.payload, ts: hit.ts }); }
+      else if (isOn() && conv && mid) _rxDecrypt(conv, mid, env, u).catch(() => {});
+    }
+  }
+  return out;
+}
+
+/** Estados por pessoa (votos, presença, posição ao vivo) já decifrados desta mensagem. */
+function _statesOf(msg, conv, mid) {
+  return _rxEntries(msg, conv, mid).filter((x) => x.state).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+}
+
+const _rxView = new WeakMap();
+/**
+ * Gancho de EXIBIÇÃO das reações (bolha JS, lista nativa, folha de quem reagiu): troca envelopes
+ * pelos emojis decifrados e esconde os estados (voto/presença/posição). Sem envelope = o MESMO array.
+ */
+export function reactionsView(msg) {
+  const list = msg && Array.isArray(msg.reactions) ? msg.reactions : null;
+  if (!list || !list.length) return list || [];
+  let any = false;
+  for (const r of list) { const em = r && (r.emoji || r.reaction); if (_isRxEnv(em)) { any = true; break; } }
+  if (!any) return list;
+  const c = _rxView.get(list);
+  if (c && c.gen === _rxGen) return c.out;
+  const conv = String(msg.conversation_id || '');
+  const mid = msg.id != null && /^\d+$/.test(String(msg.id)) ? String(msg.id) : '';
+  const groups = new Map();
+  const add = (emoji, users) => {
+    let g = groups.get(emoji);
+    if (!g) { g = { emoji, count: 0, users: [] }; groups.set(emoji, g); }
+    for (const u of users) { if (u && !g.users.some((x) => String(x).toLowerCase() === String(u).toLowerCase())) g.users.push(u); }
+    g.count = g.users.length;
+  };
+  for (const r of list) {
+    const em = r && (r.emoji || r.reaction);
+    if (!em) continue;
+    if (!_isRxEnv(em)) { add(em, _usersOf(r)); continue; }
+    if (em.charCodeAt(0) === 118) continue; // estado: não é reação visível
+    const hit = _rx.get(keyOf(em));
+    if (hit && !hit.bad && hit.payload && hit.payload.t === 'reaction' && hit.payload.emoji) add(String(hit.payload.emoji), _usersOf(r));
+    else if (!hit && isOn() && conv && mid) for (const u of _usersOf(r)) _rxDecrypt(conv, mid, em, u).catch(() => {});
+  }
+  const out = Array.from(groups.values());
+  _rxView.set(list, { gen: _rxGen, out });
+  return out;
+}
+
+/** Minha reação atual (decifrada) nesta mensagem, ou null. */
+function _myReaction(msg) {
+  const me = _canon(_me());
+  for (const x of _rxEntries(msg, String((msg && msg.conversation_id) || ''), msg && msg.id != null ? String(msg.id) : '')) {
+    if (!x.state && x.email === me && x.payload && x.payload.t === 'reaction') return String(x.payload.emoji || '');
+  }
+  return null;
+}
+
+async function _rxSend(mid, fields, kind, opts) {
+  const pe = _byMid.get(String(mid));
+  const conv = pe ? pe.conv : (opts && opts.conv ? String(opts.conv) : '');
+  if (!conv) return { success: false, code: 'e2ee5_unknown_target', message: 'e2ee5_unknown_target' };
+  const body = { message_id: Number(mid) || mid, emoji: 'e2e', rx_kind: kind, client_action_id: (opts && opts.actionId) || _newCmid('rx_') };
+  if (opts && opts.remove) body.remove = 1;
+  else {
+    const f = { ...fields };
+    if (pe && pe.cmid) { if ('target_cmid' in f) f.target_cmid = pe.cmid; if ('poll_cmid' in f) f.poll_cmid = pe.cmid; }
+    try { body.enc = await sealPayload(conv, f, { noPlain: true, cmid: _newCmid('rx_') }); }
+    catch (e) { return { success: false, code: (e && e.code) || 'encrypt_failed', message: 'Não foi possível criptografar. Nada foi enviado.' }; }
+  }
+  const r = await _A().apiCall('chat_react', body, 'POST').catch(() => null);
+  if (r && r.success) _rxGen += 1;
+  return r || { success: false, message: 'network' };
+}
+
+/**
+ * Gancho do api.chatReact: mensagem cifrada → reação cifrada (troca/retira como o WhatsApp).
+ * null = não é E2EE (caminho de hoje). `msgRow` opcional (para saber a minha reação atual).
+ */
+export async function reactViaE2ee(messageId, emoji, stickerUrl, actionId) {
+  if (!isOn() || messageId == null) return null;
+  const pe = _byMid.get(String(messageId));
+  if (!pe) return null; // alvo não é mensagem cifrada que eu decifrei (texto de antes da ativação etc.)
+  if (stickerUrl) return { success: false, code: 'e2ee5_unsupported_type', message: 'Reação com figurinha ainda não está disponível em conversa protegida.' };
+  const em = String(emoji || '').slice(0, 16);
+  const mine = _myReactionByMid(String(messageId));
+  const remove = !em || (mine != null && mine === em);
+  return _rxSend(messageId, P5reaction(messageId, em), 'reaction', { remove, actionId });
+}
+function P5reaction(mid, em) { return _P5().reactionFields(mid, '', em); }
+const _lastRows = new Map(); // mid → última linha vista (reações cruas) — p/ saber a minha reação
+function _myReactionByMid(mid) { const row = _lastRows.get(mid); return row ? _myReaction(row) : null; }
+
+// ── enquete (§2.4 poll / poll_vote)
+export async function createPoll(conv, question, options, multi, replyToId) {
+  if (!isOn() || conv == null) return null;
+  { const _st = convModeSync(conv) === 1 ? { mode: 1 } : await convState(conv).catch(() => null); if (!_st || _st.mode !== 1) return null; }
+  const P = _P5();
+  const f = P.pollFields(question, options, multi);
+  if (f.options.length < 2) return { success: false, message: 'poll_options' };
+  try {
+    const env = await sealPayload(conv, f, { reply: replyToId ? { id: replyToId } : null });
+    return await _A().chatSend(conv, env, 'text', replyToId || null, null, null, null, sealMetaOf(env)?.cmid || null, null, { skipRust: true });
+  } catch (e) { return { success: false, code: (e && e.code) || 'encrypt_failed', message: 'Não foi possível criptografar a enquete. Nada foi enviado.' }; }
+}
+
+/** Gancho do api.chatVotePoll: `pollId` 'e5:<mid>' (enquete cifrada). null = enquete do servidor. */
+export async function votePoll(pollId, optionIndex) {
+  if (!isOn()) return null;
+  const m = /^e5:(\d+)$/.exec(String(pollId || ''));
+  const mid = m ? m[1] : (_byMid.get(String(pollId)) && _byMid.get(String(pollId)).t === 'poll' ? String(pollId) : null);
+  if (!mid) return null;
+  const pe = _byMid.get(mid);
+  if (!pe || !pe.payload || pe.payload.t !== 'poll') return { success: false, message: 'poll_unknown' };
+  const ids = (pe.payload.options || []).map((o, i) => String(o && o.id != null ? o.id : i));
+  const row = _lastRows.get(mid) || { id: mid, conversation_id: pe.conv, reactions: [] };
+  const me = _canon(_me());
+  let cur = [];
+  for (const s of _statesOf(row, pe.conv, mid)) if (s.email === me && s.payload.t === 'poll_vote') cur = (s.payload.option_ids || []).map(String);
+  const id = ids[Number(optionIndex)];
+  if (id == null) return { success: false, message: 'poll_option' };
+  let next;
+  if (pe.payload.multi) next = cur.includes(id) ? cur.filter((x) => x !== id) : cur.concat([id]);
+  else next = cur.includes(id) ? [] : [id];
+  const r = next.length ? await _rxSend(mid, _P5().voteFields(mid, '', next), 'state', {}) : await _rxSend(mid, null, 'state', { remove: true });
+  if (!(r && r.success)) return r;
+  // apuração local já com o meu voto novo (o servidor não sabe as opções)
+  const fake = { ...row, reactions: (r.data && Array.isArray(r.data.reactions)) ? r.data.reactions : row.reactions };
+  _lastRows.set(mid, fake);
+  const F = _P5().toRowFields(pe.payload, { mid, myEmail: me, states: _statesOf(fake, pe.conv, mid) });
+  const poll = F.poll || {};
+  return { success: true, data: { vote_counts: poll.vote_counts || [], votes: poll.vote_counts || [], my_votes: poll.my_votes || [], total_votes: poll.total_votes || 0 } };
+}
+
+// ── encontro (§2.4 meetup; presença = estado por pessoa)
+export async function createMeetup(conv, title, datetime, location, description, replyToId) {
+  if (!isOn() || conv == null) return null;
+  { const _st = convModeSync(conv) === 1 ? { mode: 1 } : await convState(conv).catch(() => null); if (!_st || _st.mode !== 1) return null; }
+  try {
+    const env = await sealPayload(conv, _P5().meetupFields(title, datetime, location, description), { reply: replyToId ? { id: replyToId } : null });
+    return await _A().chatSend(conv, env, 'text', replyToId || null, null, null, null, sealMetaOf(env)?.cmid || null, null, { skipRust: true });
+  } catch (e) { return { success: false, code: (e && e.code) || 'encrypt_failed', message: 'Não foi possível criptografar o encontro. Nada foi enviado.' }; }
+}
+export async function meetupRsvp(messageId, status) {
+  if (!isOn()) return null;
+  const pe = _byMid.get(String(messageId));
+  if (!pe || !pe.payload || pe.payload.t !== 'meetup') return null;
+  const r = status ? await _rxSend(messageId, _P5().rsvpFields(messageId, '', status), 'state', {}) : await _rxSend(messageId, null, 'state', { remove: true });
+  if (!(r && r.success)) return r;
+  const mid = String(messageId);
+  const row = { ...(_lastRows.get(mid) || { id: mid, conversation_id: pe.conv }), reactions: (r.data && r.data.reactions) || [] };
+  _lastRows.set(mid, row);
+  const F = _P5().toRowFields(pe.payload, { mid, myEmail: _canon(_me()), myEmailRaw: (_sess && _sess.email) || _me(), states: _statesOf(row, pe.conv, mid) });
+  return { success: true, data: { rsvp: (F.meetup && F.meetup.rsvp) || {} } };
+}
+export function isE2eeMessage(messageId) { const pe = messageId == null ? null : _byMid.get(String(messageId)); return !!pe; }
+
+// ── localização ao vivo: posição nova = estado cifrado do remetente na mensagem
+export async function liveLocationUpdate(messageId, lat, lng, opts) {
+  if (!isOn()) return null;
+  const pe = _byMid.get(String(messageId));
+  if (!pe || !pe.payload || pe.payload.t !== 'location') return null;
+  return _rxSend(messageId, _P5().liveLocFields(messageId, '', lat, lng, opts && opts.accuracy, false), 'state', {});
+}
+export async function liveLocationStop(messageId) {
+  if (!isOn()) return null;
+  const pe = _byMid.get(String(messageId));
+  if (!pe || !pe.payload || pe.payload.t !== 'location') return null;
+  const p = pe.payload;
+  return _rxSend(messageId, _P5().liveLocFields(messageId, '', p.lat, p.lng, null, true), 'state', {});
+}
+
+/** Sessão de voz que sobe o áudio EM CLARO enquanto grava: nunca em conversa E2EE. */
+export function allowsServerVoiceSession(conv) { return !(isOn() && conv != null && convModeSync(conv) === 1); }
+
+/**
+ * Fila durável (chat-conversation _sendRichViaOutbox): sela local/contato/GIF/figurinha ANTES de
+ * enfileirar (a linha do outbox só guarda o envelope). → {content, type, fileUrl:null} | null | {refuse}
+ */
+export async function sealRichForOutbox(conv, type, content, fileUrl, cmid, replyToId) {
+  if (!isOn() || conv == null) return null;
+  { const _st = convModeSync(conv) === 1 ? { mode: 1 } : await convState(conv).catch(() => null); if (!_st || _st.mode !== 1) return null; }
+  const r = await sealForSend(conv, content, type, fileUrl, cmid, { reply: replyToId ? { id: replyToId } : null });
+  if (!r) return null;
+  if (r.refuse) return r;
+  return { content: r.content, type: r.coarse || (type === 'text' ? 'text' : _P5().coarseOf(_P5().fineOfAppType(type))), fileUrl: null };
 }
 
 /**
@@ -1170,6 +1525,9 @@ export function previewText(lastMsg, t, convId) {
   if (!isV5Family(s)) return null;
   if (envVersion(s) !== 5 || !isOn()) return stateText(t, 'update_to_read');
   const e = _plain.get(keyOf(s));
+  if (e && e.payload && e.payload.t && e.payload.t !== 'text' && e.payload.t !== 'edit') { // [e2ee5 WP-09] "Foto: legenda", "Localização"…
+    try { return _P5().previewOf(e.payload, t) || _tx(t, 'e2ee5.msg.generic', 'Mensagem'); } catch (_) {}
+  }
   if (e) return e.text || _tx(t, 'e2ee5.msg.generic', 'Mensagem');
   const f = _fail.get(keyOf(s));
   const cid = convId != null ? convId : (lastMsg.conversation_id != null ? lastMsg.conversation_id : lastMsg.conv_id);
@@ -1246,7 +1604,10 @@ export async function forwardClient(messageId, targetIds, opts) {
   const anyE2ee = states.some((s) => s && s.mode === 1);
   if (!src && !anyE2ee) return null;
   let text = src ? src.text : (opts && typeof opts.sourceText === 'string' ? opts.sourceText : null);
-  if (src && src.t !== 'text' && src.t !== 'edit') text = null;
+  if (src && src.t !== 'text' && src.t !== 'edit') {
+    // [e2ee5 WP-09] tipos ricos: recifra o MESMO payload (mídia: mesma url+chave, sem reenviar bytes)
+    return _forwardRich(src, targets, states);
+  }
   if (text == null || text === '') {
     return { success: false, data: { results: targets.map((id) => ({ conversation_id: id, success: false, error: 'e2ee5_forward_unsupported' })) }, message: 'e2ee5_forward_unsupported' };
   }
@@ -1266,6 +1627,38 @@ export async function forwardClient(messageId, targetIds, opts) {
   return { success: okN > 0, data: { results, success: okN } };
 }
 
+async function _forwardRich(src, targets, states) {
+  const P = _P5();
+  const base = { ...(src.payload || {}) };
+  for (const k of ['v', 'conv', 'cmid', 'ts', 'reply', 'fwd', 'mention_all', 'mentions', 'batch', 'vo', 'ttl']) delete base[k];
+  const n = (src.payload && src.payload.fwd ? Number(src.payload.fwd.n) || 1 : 0) + 1;
+  const api = _A();
+  const results = [];
+  for (let i = 0; i < targets.length; i++) {
+    const id = targets[i];
+    const e2ee = states[i] && states[i].mode === 1;
+    try {
+      let r;
+      if (e2ee) {
+        const env = await sealPayload(id, base, { fwd: n });
+        r = await api.chatSend(id, env, P.coarseOf(base.t), null, null, null, null, sealMetaOf(env)?.cmid || null, null, { skipRust: true });
+      } else if (base.t === 'location' || base.t === 'contact') {
+        // destino sem E2EE: vai como hoje (o usuário escolheu mandar para uma conversa comum)
+        const F = P.toRowFields(base, {});
+        r = await api.chatSend(id, F.content, F.type, null, null, null, null, null, null, { skipRust: true });
+      } else {
+        results.push({ conversation_id: id, success: false, error: 'e2ee5_forward_unsupported' });
+        continue;
+      }
+      results.push({ conversation_id: id, success: !!(r && r.success), error: r && !r.success ? (r.code || r.message || 'failed') : undefined, message_id: r && r.data ? r.data.id : undefined });
+    } catch (e) {
+      results.push({ conversation_id: id, success: false, error: (e && e.code) || 'network' });
+    }
+  }
+  const okN = results.filter((x) => x.success).length;
+  return { success: okN > 0, data: { results, success: okN }, message: okN ? undefined : 'e2ee5_forward_unsupported' };
+}
+
 // ───────────────────────────────────────────────────────────── outbox / relay (sem texto puro)
 
 /** A linha do outbox desta conversa só pode guardar o envelope (ou nada) — §WP-08c. */
@@ -1273,7 +1666,12 @@ export function outboxScrub(payload) {
   if (!isOn() || !payload || payload.conversation_id == null) return payload;
   if (!isConvE2eeSync(payload.conversation_id)) return payload;
   const out = { ...payload };
-  if (!isEnvelope(out.content)) { out.content = ''; out._e2eWanted = true; out._e2e = false; }
+  // [e2ee5 WP-11] mídia da fila: a legenda/resposta viajam no rascunho até o upload cifrado selar;
+  // depois só o envelope (e2e_env) fica na linha.
+  const _media = !isEnvelope(out.content) && out.type && out.type !== 'text' && (out.local_uri || out.uri || out.src_durable || out.e2e_draft || out.e2e_env);
+  if (_media && !out.e2e_env && !out.e2e_draft) out.e2e_draft = { caption: String(out.caption || out.content || '').slice(0, 4096), reply_to_id: out.reply_to_id || null };
+  if (isEnvelope(out.e2e_env)) { out._e2e = true; out.content = ''; }
+  else if (!isEnvelope(out.content)) { out.content = ''; out._e2eWanted = true; out._e2e = false; }
   else out._e2e = true;
   out.display_content = '';
   if (out.caption) out.caption = '';
@@ -1301,5 +1699,7 @@ const e2ee5 = {
   setConversationMode, sealText, sealEdit, sealForSend, sealMetaOf, peek, peekByMid, peekFailure, noteServerId,
   decryptRow, applyToRow, foldEdits, rowNeedsRefresh, sysKind, sysText, previewText, searchLocal, forwardClient,
   outboxScrub, relayScrub, afterSend, editViaSend, editOf, listLocal, willRetryRejected, sessionSync, deviceIdSync, myUidSync, isReadySync,
+  sealPayload, reactionsView, reactViaE2ee, createPoll, votePoll, createMeetup, meetupRsvp, isE2eeMessage, // [e2ee5 WP-09/WP-11]
+  liveLocationUpdate, liveLocationStop, allowsServerVoiceSession, sealRichForOutbox,
 };
 export default e2ee5;

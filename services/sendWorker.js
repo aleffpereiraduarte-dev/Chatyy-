@@ -576,7 +576,11 @@ async function _uploadAndSendMedia(row) {
     }
 
     let r = null;
-    if (cdnUrl) {
+    if (p.e2e_env) {
+      // [e2ee5 WP-11] mídia cifrada no aparelho (url+chave dentro do envelope): só o envelope vai ao
+      // chat_send — sem file_url/nome/legenda/miniatura em claro.
+      r = await api.chatSend(p.conversation_id, p.e2e_env, msgType, p.reply_to_id || null, null, null, p.temp_id || null, cmi, p.topic_id || null, { skipRust: true });
+    } else if (cdnUrl) {
       // Rust uploaded — call chat_send with the cdn_url.
       r = await api.apiCall('chat_send', {
         conversation_id: p.conversation_id,

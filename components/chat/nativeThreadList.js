@@ -1310,7 +1310,9 @@ function _reacts(m, myEmail) {
   if (!Array.isArray(m.reactions) || !m.reactions.length) return undefined;
   const me = String(myEmail || '').toLowerCase();
   const groups = new Map();
-  for (const r of m.reactions) {
+  let _rl = m.reactions;
+  try { _rl = require('../../services/e2ee/e2ee5').reactionsView(m); } catch {} // [e2ee5 WP-09] emoji cifrado → decifrado; estados (voto/presença) fora
+  for (const r of _rl) {
     const e = r && (r.emoji || r.reaction);
     if (!e) continue;
     const users = typeof r.users === 'string' ? r.users.split(',') : (Array.isArray(r.users) ? r.users : []);

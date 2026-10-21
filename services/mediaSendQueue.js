@@ -512,6 +512,17 @@ async function _process(row) {
     }
     const file = { uri: localUri, name: p.file_name || 'file', type: p.mime_type || 'application/octet-stream', size };
 
+    // [e2ee5 WP-11] conversa E2EE: variantes no aparelho + cada arquivo cifrado + blob opaco; a linha
+    // fica pronta com o ENVELOPE (o sendWorker só faz o chat_send). Sessão de voz/fila nativa: nunca.
+    try {
+      const _m5 = require('./e2ee/e2ee5Media');
+      if (await _m5.queueStep(row, p, file, {
+        emit: (pct) => _emit(p, cmi, pct, 'upload'), signal: ctrl.signal,
+        updatePayload, markUploadReady, markFailed, promoteReady,
+        poke: () => { try { require('./sendWorker').poke?.(); } catch {} },
+      })) return;
+    } catch {}
+
     // 1b. Voice note pre-uploaded while recording → cheap finalize (server
     // already has the bytes). Any failure falls through to the full upload,
     // same cmi → the server dedups if the finalize actually landed.
@@ -761,6 +772,9 @@ export async function enqueueMedia(payload) {
       }
     }
   } catch { _srcCopy = null; }
+  // [e2ee5 WP-11] estado da conversa conhecido ANTES de gravar (a linha de conversa E2EE guarda a legenda
+  // só no rascunho cifrável e nunca vai à fila nativa/upload em claro).
+  try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn() && payload.conversation_id != null && _e5.convModeSync(payload.conversation_id) == null) await _e5.convState(payload.conversation_id); } catch {}
   const r = await enqueue(payload, { lane: 'upload' });
   if (!r && _srcCopy) { try { await _deleteDurable({ durable_name: _srcCopy }); } catch {} }
   if (r) {
