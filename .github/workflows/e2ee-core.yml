@@ -41,8 +41,9 @@ on:
       - '.github/workflows/e2ee-core.yml'
 
 concurrency:
+  # sem cancelar: vários pacotes dão push no núcleo; cada run termina (fica no máx. 1 na fila)
   group: e2ee-core-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -92,7 +93,9 @@ jobs:
           restore-keys: cc-android-${{ env.CHATYY_CRYPTO_CORE }}-${{ env.CHATYY_RUST_TOOLCHAIN }}-
       - name: .so (3 ABIs, 16 KB) + bindings Kotlin + AAR
         run: |
-          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          # NDK r27 fixo (= local e app); o "latest" do runner muda sozinho.
+          NDK27="$(ls -d "$ANDROID_HOME"/ndk/27.* 2>/dev/null | sort -V | tail -1)"
+          export ANDROID_NDK_HOME="${NDK27:-${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}}"
           echo "NDK: $ANDROID_NDK_HOME"
           bash native/chatyy-crypto/build-android.sh
       - name: Smoke Kotlin/JVM (bindings + JNA + coroutines)

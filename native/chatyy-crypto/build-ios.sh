@@ -62,7 +62,8 @@ DEV="$XCF/ios-arm64"
 W="$CARGO_TARGET_DIR/ios-size"; rm -rf "$W"; mkdir -p "$W"
 SMOKE_SWIFT="$CC_CI_DIR/smoke/$CHATYY_CRYPTO_CORE/main.swift"   # main.swift = código de topo
 printf 'print("vazio")\n' > "$W/base.swift"
-LINK=(xcrun swiftc -O -sdk "$SDK" -target "arm64-apple-ios$CC_IOS_MIN" -module-name LinkProbe)
+# -dead_strip = DEAD_CODE_STRIPPING=YES (padrão do Xcode em Release); sem ele conta código morto.
+LINK=(xcrun swiftc -O -sdk "$SDK" -target "arm64-apple-ios$CC_IOS_MIN" -module-name LinkProbe -Xlinker -dead_strip)
 "${LINK[@]}" "$W/base.swift" -o "$W/base"
 "${LINK[@]}" -I "$DEV/Headers" -Xcc -fmodule-map-file="$DEV/Headers/module.modulemap" \
   "$SOUT/ChatyyCryptoCore.swift" "$SMOKE_SWIFT" -L "$DEV" -l"$CC_LIB" -framework Security -o "$W/app"
