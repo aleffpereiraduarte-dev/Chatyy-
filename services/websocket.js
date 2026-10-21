@@ -284,7 +284,46 @@ let _lastRegionalWsUrl = null;
 // Kill-switch __chatyyRegionalWsOff → "us" também no nativo. Binário sem a
 // função → no-op.
 let _nativeWsRegionSent = null;
-function _syncNativeWsRegion(region) {
+// [2026-10-21 any-region] Binário com ChatyyChatCore.wsEndpointApi() >= 2 aceita
+// QUALQUER região válida (usw/sg/in/mia/mex/mad/scl…) via setWsEndpoint(region, url)
+// (o nativo valida host/caminho estritamente). Binário velho → setWsRegion como antes.
+// Kill: globalThis.__chatyy_native_ws_any_region = false → caminho antigo.
+const _NATIVE_WS_URL_RE = /^wss:\/\/(ws\.chatyy\.com\.br|api-[a-z][a-z0-9]{1,7}\.chatyy\.com\.br)\/ws$/;
+let _nativeWsAnySent = null;
+let _nativeWsApi = null; // null = ainda não consultado
+function _nativeWsAnyRegionOn(m) {
+  try {
+    const g = (typeof globalThis !== 'undefined') ? globalThis : {};
+    if (g.__chatyy_native_ws_any_region === false) return false;
+    if (_nativeWsApi === null) {
+      _nativeWsApi = (typeof m.wsEndpointApi === 'function' && typeof m.setWsEndpoint === 'function')
+        ? (Number(m.wsEndpointApi()) || 0) : 0;
+    }
+    return _nativeWsApi >= 2;
+  } catch { _nativeWsApi = 0; return false; }
+}
+function _syncNativeWsRegion(region, info) {
+  if (_nativeWsApi === 0 && region === _nativeWsRegionSent) return; // binário velho: igual a antes
+  try {
+    const { requireOptionalNativeModule } = require('expo');
+    const m = requireOptionalNativeModule('ChatyyChatCore');
+    if (m && info !== undefined && _nativeWsAnyRegionOn(m)) {
+      let r = 'us', url = US_WS_URL;
+      const reg = info && info.region;
+      if (reg && reg !== 'us') {
+        const u = REGIONAL_WS_URLS[reg] || _wsApi()?.getRegionWsUrl?.(reg);
+        if (u && u !== US_WS_URL && _NATIVE_WS_URL_RE.test(u)) { r = reg; url = u; }
+      }
+      const key = r + '|' + url;
+      if (key === _nativeWsAnySent) return;
+      if (m.setWsEndpoint(r, url) === true) {
+        _nativeWsAnySent = key;
+        _nativeWsRegionSent = null;
+        return;
+      }
+      // recusado pelo nativo → caminho antigo abaixo
+    }
+  } catch {}
   if (region === _nativeWsRegionSent) return;
   try {
     const { requireOptionalNativeModule } = require('expo');
@@ -292,6 +331,7 @@ function _syncNativeWsRegion(region) {
     if (m && typeof m.setWsRegion === 'function') {
       m.setWsRegion(region);
       _nativeWsRegionSent = region;
+      _nativeWsAnySent = null;
     }
   } catch {}
 }
@@ -300,7 +340,7 @@ function _pickWsUrl() {
     if (Platform.OS === 'web') return US_WS_URL;
     const g = (typeof globalThis !== 'undefined') ? globalThis : {};
     const info = require('./api').getEdgeInfo?.();
-    _syncNativeWsRegion((!g.__chatyyRegionalWsOff && info && REGIONAL_WS_URLS[info.region]) ? info.region : 'us');
+    _syncNativeWsRegion((!g.__chatyyRegionalWsOff && info && REGIONAL_WS_URLS[info.region]) ? info.region : 'us', g.__chatyyRegionalWsOff ? null : (info || null));
     if (g.__chatyyRegionalWsOff) return US_WS_URL;
     if (_regionalWsFailPending || (info && _regionalBlocked(info.region))) return US_WS_URL;
     // [client-lb 2026-10-21] regiões novas (mia/mex/mad/scl…) → WS da lista do servidor.

@@ -110,6 +110,17 @@ class ChatCoreModule : Module() {
       try { ChatyyWsEndpoint.setRegion(context, region) } catch (_: Throwable) {}
     }
 
+    // [2026-10-21 any-region] API 2: região/URL escolhida pelo JS (client-lb) p/
+    // QUALQUER região válida (usw/sg/in/mia/...). Validação estrita no nativo;
+    // inválido → false e nada muda. JS só chama se wsEndpointApi() >= 2.
+    Function("wsEndpointApi") {
+      ChatyyWsEndpoint.API_VERSION
+    }
+
+    Function("setWsEndpoint") { region: String, url: String ->
+      try { ChatyyWsEndpoint.setEndpoint(context, region, url) } catch (_: Throwable) { false }
+    }
+
     Function("getWsEndpoint") {
       try { ChatyyWsEndpoint.snapshot(context) } catch (_: Throwable) { mapOf<String, Any?>("url" to ChatyyWsEndpoint.US_URL) }
     }
