@@ -6511,6 +6511,11 @@ export async function chatSearchAdvanced(opts = {}) {
     const end = dayStart(opts.dateTo); end.setDate(end.getDate() + 1); // fim do dia local (exclusivo)
     body.date_to = end.toISOString();
   }
+  // [2026-10-21 tg4] busca DENTRO da conversa: instante exato (ISO) + "de quem"
+  if (opts.dateFromIso) body.date_from = String(opts.dateFromIso);
+  if (opts.dateToIso) body.date_to = String(opts.dateToIso);
+  if (opts.senderEmail) body.sender_email = String(opts.senderEmail).toLowerCase();
+  try { body.tz_offset_min = new Date().getTimezoneOffset(); } catch {} // servidor soma ao 00:00 UTC (UTC-3 → +180)
   if (opts.conversationId) body.conversation_id = opts.conversationId;
   if (opts.cursor) body.cursor = opts.cursor;
   return apiCall('chat_search_advanced', body, 'POST');
@@ -8360,8 +8365,22 @@ export async function chatCheckPin() {
 }
 
 // Scheduled messages
-export async function chatScheduleMessage(conversationId, content, scheduledAt) {
-  return apiCall('chat_schedule_message', { conversation_id: conversationId, content, scheduled_at: scheduledAt }, 'POST');
+export async function chatScheduleMessage(conversationId, content, scheduledAt, extra = null) {
+  // [2026-10-21 tg4] extra = mídia/resposta/tópico: { type, file_url, file_name, file_size, thumb_b64, duration, image_width, image_height, reply_to_id, topic_id }
+  return apiCall('chat_schedule_message', { ...(extra && typeof extra === 'object' ? extra : {}), conversation_id: conversationId, content, scheduled_at: scheduledAt }, 'POST');
+}
+
+// [2026-10-21 tg4] Editar agendada (texto e/ou horário). id "wo:N" = item "enviar quando online" (só texto).
+export async function chatScheduleEdit(id, { content, scheduledAt } = {}) {
+  const body = { id };
+  if (typeof content === 'string') body.content = content;
+  if (scheduledAt) body.scheduled_at = scheduledAt;
+  return apiCall('chat_schedule_edit', body, 'POST');
+}
+
+// [2026-10-21 tg4] "Enviar quando online" (1:1): sai quando o destinatário ficar online.
+export async function chatSendWhenOnline(conversationId, content, extra = null) {
+  return apiCall('chat_send_when_online', { ...(extra && typeof extra === 'object' ? extra : {}), conversation_id: conversationId, content }, 'POST');
 }
 
 export async function chatScheduledList() {
@@ -9153,7 +9172,7 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress, ext
   }
 }
 
-export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null, msgType = null, externalSignal = null, silent = false, clientMessageId = null, replyToId = null, durationSec = null) {
+export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null, msgType = null, externalSignal = null, silent = false, clientMessageId = null, replyToId = null, durationSec = null, topicId = null) {
   const formData = new FormData();
   formData.append('action', 'chat_upload');
   formData.append('conversation_id', String(conversationId));
@@ -9172,6 +9191,8 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
   if (msgType) formData.append('type', msgType);
   // [2026-10-12 reply-media] Foto/áudio/arquivo respondendo a uma mensagem.
   if (replyToId && !silent) formData.append('reply_to_id', String(replyToId));
+  // [2026-10-21 tg4] tópico do grupo (foto/vídeo/áudio/arquivo dentro do tópico selecionado)
+  if (topicId && !silent) formData.append('topic_id', String(topicId));
   // silent=1 uploads the file and returns only the URL, no chat message
   // is created and no broadcast/push is fired. Used for group avatar changes.
   if (silent) formData.append('silent', '1');

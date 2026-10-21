@@ -291,7 +291,120 @@ export function CustomScheduleModal({ visible, onClose, customDate, setCustomDat
 /**
  * Scheduled Messages List Modal - view/cancel pending scheduled messages
  */
-export function ScheduledMessagesModal({ visible, onClose, messages, onCancel, colors, t }) {
+// [2026-10-21 tg4] Item da lista: editar texto/horário (Telegram), mídia agendada e "quando online".
+function _schedKindLabel(sm, t) {
+  const tp = String(sm.type || 'text');
+  const tr = (k, fb) => { const v = t && t(k); return v && v !== k ? v : fb; };
+  if (tp === 'image' || tp === 'gif') return tr('chat.schedKindPhoto', 'Foto');
+  if (tp === 'video') return tr('chat.schedKindVideo', 'Vídeo');
+  if (tp === 'audio' || tp === 'voice') return tr('chat.schedKindAudio', 'Áudio');
+  if (tp === 'sticker') return tr('chat.schedKindSticker', 'Figurinha');
+  if (tp === 'location') return tr('chat.schedKindLocation', 'Localização');
+  if (tp === 'file') return sm.file_name || tr('chat.schedKindFile', 'Arquivo');
+  return '';
+}
+function _schedDate(v) {
+  if (!v) return null;
+  const d = new Date(/[zZ]$|[+-]\d\d:?\d\d$/.test(String(v)) ? v : v + 'Z');
+  return isNaN(d.getTime()) ? null : d;
+}
+function ScheduledItem({ sm, onCancel, onEdit, colors, t }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(String(sm.content || ''));
+  const [when, setWhen] = useState(() => _schedDate(sm.scheduled_at));
+  const [pickOpen, setPickOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const tr = (k, fb) => { const v = t && t(k); return v && v !== k ? v : fb; };
+  const kind = _schedKindLabel(sm, t);
+  const isWo = !!sm.when_online;
+  const at = _schedDate(sm.scheduled_at);
+  const save = async () => {
+    if (busy || typeof onEdit !== 'function') return;
+    const patch = {};
+    if (text.trim() !== String(sm.content || '').trim()) patch.content = text.trim();
+    if (!isWo && when && (!at || when.getTime() !== at.getTime())) patch.scheduledAt = when.toISOString();
+    if (patch.content === '' && !sm.file_url && sm.type !== 'location') return;
+    if (!('content' in patch) && !patch.scheduledAt) { setEditing(false); return; }
+    setBusy(true);
+    try { const ok = await onEdit(sm.id, patch); if (ok !== false) setEditing(false); } finally { setBusy(false); }
+  };
+  return (
+    <View style={{ backgroundColor: colors.background, borderRadius: 10, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: colors.border }}>
+      {!!kind && (
+        <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textSecondary, marginBottom: 4 }} numberOfLines={1}>{kind}</Text>
+      )}
+      {editing ? (
+        <TextInput
+          value={text}
+          onChangeText={setText}
+          multiline
+          autoFocus
+          placeholder={sm.file_url ? tr('chat.schedCaption', 'Legenda') : ''}
+          placeholderTextColor={colors.textTertiary}
+          style={{ fontSize: 14, color: colors.text, marginBottom: 8, minHeight: 40, maxHeight: 140, borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 8, textAlignVertical: 'top' }}
+        />
+      ) : (!!sm.content && (
+        <Text style={{ fontSize: 14, color: colors.text, marginBottom: 6 }} numberOfLines={3}>{sm.content}</Text>
+      ))}
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <TouchableOpacity
+          disabled={!editing || isWo}
+          onPress={() => setPickOpen(true)}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 1 }}
+          accessibilityRole={editing && !isWo ? 'button' : undefined}
+          accessibilityLabel={editing && !isWo ? tr('chat.schedChangeTime', 'Alterar horário') : undefined}
+        >
+          <IconClock size={12} color={colors.primary} />
+          <Text style={{ fontSize: 12, color: colors.primary, textDecorationLine: editing && !isWo ? 'underline' : 'none' }} numberOfLines={1}>
+            {isWo ? tr('chat.sendWhenOnlinePending', 'Quando ficar online')
+              : ((editing ? when : at) || new Date()).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          </Text>
+        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {editing ? (
+            <>
+              <TouchableOpacity onPress={() => { setEditing(false); setText(String(sm.content || '')); setWhen(at); }} style={{ paddingVertical: 4, paddingHorizontal: 8 }}>
+                <Text style={{ fontSize: 12, color: colors.textSecondary }}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={save} disabled={busy} style={{ paddingVertical: 4, paddingHorizontal: 10, borderRadius: 6, backgroundColor: colors.primary, opacity: busy ? 0.6 : 1 }}>
+                <Text style={{ fontSize: 12, color: colors.onPrimary || '#fff', fontWeight: '600' }}>{tr('common.save', 'Salvar')}</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              {typeof onEdit === 'function' && (
+                <TouchableOpacity onPress={() => setEditing(true)} style={{ paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, backgroundColor: colors.primary + '15' }} accessibilityRole="button">
+                  <Text style={{ fontSize: 12, color: colors.primary }}>{tr('chat.schedEdit', 'Editar')}</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                onPress={() => onCancel(sm.id)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, backgroundColor: colors.error + '15' }}
+              >
+                <IconTrash size={12} color={colors.error} />
+                <Text style={{ fontSize: 12, color: colors.error }}>{t('chat.scheduleCancel')}</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      </View>
+      {pickOpen && (
+        <DateTimePickerModal
+          visible={pickOpen}
+          onClose={() => setPickOpen(false)}
+          initial={when || new Date(Date.now() + 3600000)}
+          minDate={new Date(Date.now() + 60000)}
+          onConfirm={(d) => setWhen(d)}
+          colors={colors}
+          t={t}
+          title={tr('chat.schedChangeTime', 'Alterar horário')}
+        />
+      )}
+    </View>
+  );
+}
+
+export function ScheduledMessagesModal({ visible, onClose, messages, onCancel, onEdit, colors, t }) {
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
   const _drag367 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const insets = useSafeAreaInsets();
@@ -325,33 +438,7 @@ export function ScheduledMessagesModal({ visible, onClose, messages, onCancel, c
                 </Text>
               </View>
             ) : messages.map(sm => (
-              <View key={sm.id} style={{
-                backgroundColor: colors.background, borderRadius: 10, padding: 12, marginBottom: 10,
-                borderWidth: 1, borderColor: colors.border,
-              }}>
-                <Text style={{ fontSize: 14, color: colors.text, marginBottom: 6 }} numberOfLines={3}>
-                  {sm.content}
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <IconClock size={12} color={colors.primary} />
-                    <Text style={{ fontSize: 12, color: colors.primary }}>
-                      {new Date(/[zZ]$|[+-]\d\d:?\d\d$/.test(String(sm.scheduled_at)) ? sm.scheduled_at : sm.scheduled_at + 'Z').toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => onCancel(sm.id)}
-                    style={{
-                      flexDirection: 'row', alignItems: 'center', gap: 4,
-                      paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6,
-                      backgroundColor: colors.error + '15',
-                    }}
-                  >
-                    <IconTrash size={12} color={colors.error} />
-                    <Text style={{ fontSize: 12, color: colors.error }}>{t('chat.scheduleCancel')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
+              <ScheduledItem key={String(sm.id)} sm={sm} onCancel={onCancel} onEdit={onEdit} colors={colors} t={t} />
             ))}
           </ScrollView></DragScroll>
     </>

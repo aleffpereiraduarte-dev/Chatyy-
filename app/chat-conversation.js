@@ -153,6 +153,7 @@ import useVanishMode, { VanishSwipeArea, VanishThemeScope, IconVanish } from '..
 import { noteAdvancedPrivacy as _advPrivNote } from '../services/chatPrivacy';
 import ChatyySecureView from '../components/chat/ChatyySecureView'; // [2026-10-19 secure-view] print = "Captura de tela bloqueada"
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
+import ChatEmojiPicker from '../components/chat/ChatEmojiPicker'; // [2026-10-21 tg4]
 import LazyMount from '../components/chat/LazyMount';
 import MediaQualityPill from '../components/chat/MediaQualityPill';
 import {
@@ -212,6 +213,7 @@ import GamePlaySheetHost from '../components/games/GamePlaySheet'; // [jogos 202
 import GameDock from '../components/games/GameDock'; // [jogos 2026-10-20 dock] seletor + Damas/Cartas num painel acima do composer
 import { IconGamepad as _IconGamepad } from '../components/games/GameIcons';
 import MentionJumpFab from '../components/chat/MentionJumpFab'; // [2026-10-14 grupo-rajada]
+import UnreadJumpFab from '../components/chat/UnreadJumpFab'; // [2026-10-21 tg4] ir para a 1ª não lida
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
 
@@ -287,7 +289,7 @@ import ComposerLinkPreviewStrip from '../components/chat/ComposerLinkPreviewStri
 import { previewForMessage as _lpForMsg, isFreshMessage as _lpIsFresh, composerSendDecision as _lpSendDecision, setLocalPreviewForCmi as _lpSetLocal, parseLinkPreview as _lpParse, LP_SKELETON as _LP_SK } from '../components/chat/linkPreviewState'; // [linkpreview 2026-10-18]
 import CallLinkCard from '../components/chat/CallLinkCard'; // [call-link 2026-10-19]
 import { isCallLinkUrl as _isCallLinkUrl } from '../components/calls/callLinkUtil'; // [call-link 2026-10-19]
-import { ScheduleToast, CustomScheduleModal, ScheduledMessagesModal } from '../components/ScheduleModals';
+import { ScheduleToast, CustomScheduleModal, ScheduledMessagesModal, DateTimePickerModal as _SchedPickModal } from '../components/ScheduleModals'; // [2026-10-21 tg4] + agendar mídia
 import ReminderSheet from '../components/ReminderSheet';
 import { detectReminder as detectChatReminder, createReminder as createChatReminder, formatReminderWhen } from '../services/reminders';
 import GifPickerPanel from '../components/GifPicker';
@@ -7700,8 +7702,9 @@ function VideoPreviewNativeInner({ uri, trim, Video, useVideoPlayer }) {
 // [2026-10-19 media-quality] hdMode = level picked for THIS send ('standard'|
 // 'hd'|'full') or null (= qualityDefault, the saved per-network default);
 // onToggleHD(level) sets it. Applies to every item of the album.
-function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMode, onToggleHD, qualityDefault = 'standard' }) {
+function MediaPreview({ visible, onClose, onSend, onSchedule, files: filesProp, colors, hdMode, onToggleHD, qualityDefault = 'standard' }) {
   const { t } = useLanguage();
+  const [schedPickOpen, setSchedPickOpen] = useState(false); // [2026-10-21 tg4] segurar enviar = agendar mídia
   const _previewInsets = useSafeAreaInsets(); // [2026-10-07 native-ui-build] bottomBar = safe-area real
   const [caption, setCaption] = useState('');
   // [2026-10-11] Android: só desvia do teclado quando a legenda está focada
@@ -8022,7 +8025,8 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     if (!activeIsVideo && _proEditorOk) setProEditOpen(true);
   };
 
-  const handleSendPress = async () => {
+  const handleSendPress = async (scheduleAtIso) => {
+    const _schedAt = typeof scheduleAtIso === 'string' ? scheduleAtIso : null; // [2026-10-21 tg4] onPress passa o evento
     // Hand the whole (possibly-edited, possibly-pruned) batch to the parent
     // so it can fire one uploadAndSendFile per file with the shared batch id.
     // Web: kickoff() and every uploader prefer f._raw/f.blob over f.uri, so a
@@ -8074,6 +8078,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     // array aligned to `files` so each photo sends with its own legend.
     const finalCaps = { ...captions, [activeIdx]: caption };
     const capsArr = files.map((_, i) => finalCaps[i] || '');
+    if (_schedAt && typeof onSchedule === 'function') { onSchedule(caption, outFiles, capsArr, _schedAt); return; } // [2026-10-21 tg4]
     onSend(caption, viewOnce, outFiles, capsArr);
   };
 
@@ -8253,6 +8258,9 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
             <TouchableOpacity
               style={previewStyles.sendBtn}
               onPress={handleSendPress}
+              // [2026-10-21 tg4] segurar = agendar (Telegram); visualização única não agenda
+              onLongPress={typeof onSchedule === 'function' && !viewOnce ? () => { try { Keyboard.dismiss(); } catch {} setSchedPickOpen(true); } : undefined}
+              delayLongPress={400}
               disabled={preparingSend}
               accessibilityLabel={t('chatConv.send') || 'Enviar'}
               accessibilityRole="button"
@@ -8269,6 +8277,18 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
             <Text style={previewStyles.viewOnceHint}>
               {t('chatConv.viewOnceHint') || 'Foto/vídeo só pode ser visto uma vez'}
             </Text>
+          )}
+          {schedPickOpen && (
+            <_SchedPickModal
+              visible={schedPickOpen}
+              onClose={() => setSchedPickOpen(false)}
+              initial={new Date(Date.now() + 3600000)}
+              minDate={new Date(Date.now() + 60000)}
+              onConfirm={(d) => { if (d && d.getTime() > Date.now()) handleSendPress(d.toISOString()); }}
+              colors={colors}
+              t={t}
+              title={(() => { const v = t('w12e.scheduleMessage'); return v && v !== 'w12e.scheduleMessage' ? v : 'Agendar mensagem'; })()}
+            />
           )}
 
           {/* Thumbnail strip (WhatsApp-style). Only shown when batch > 1.
@@ -12922,6 +12942,8 @@ function ChatConversationInnerBody() {
             x: Math.max(8, rect.left + rect.width / 2 - 40),
             y: Math.max(40, rect.top - 38),
             text: txt.trim().slice(0, 240),
+            // [2026-10-21 tg4] texto inteiro do nó selecionado → acha a bolha de origem (reply_to_id)
+            ctx: String((anchor && anchor.textContent) || '').slice(0, 4000),
           });
         } catch { setQuotePill(null); }
       });
@@ -14569,6 +14591,12 @@ function ChatConversationInnerBody() {
   const [adminOnlyMessages, setAdminOnlyMessages] = _useStateT(false);
   const [showSlowModePicker, setShowSlowModePicker] = _useStateT(false);
   const [slowModeSeconds, setSlowModeSeconds] = _useStateT(0);
+  // [2026-10-21 tg4] Modo lento completo: instante (ms) em que posso enviar de novo + segundos
+  // restantes (contagem no campo). Criador do canal fica isento (servidor: chatSlowModeWait).
+  const [slowUntil, setSlowUntil] = _useStateT(0);
+  const [slowLeft, setSlowLeft] = _useStateT(0);
+  const slowUntilRef = useRef(0);
+  const slowCreatorRef = useRef('');
   // ─── Group admin quick-wins (5 surfaces) ───
   // pendingMembers: list of users awaiting admin approval to join the group.
   // We fetch the count when group info loads (admins only) and the full list
@@ -14676,6 +14704,7 @@ function ChatConversationInnerBody() {
   const [showTopicsModal, setShowTopicsModal] = _useStateT(false);
   const [topics, setTopics] = _useStateT([]);
   const [activeTopic, setActiveTopic] = _useStateT(null); // { id, name, icon } | null
+  const _topicSentCmisRef = useRef(new Set()); // [2026-10-21 tg4] cmis enviados dentro de um tópico
   const [newTopicName, setNewTopicName] = _useStateT('');
   const [newTopicIcon, setNewTopicIcon] = _useStateT(''); // [2026-10-12 srv-audit] '' = ícone padrão (SVG #)
   // Admin-only "create topic" sheet (separate from the read-only topic
@@ -20673,6 +20702,73 @@ function ChatConversationInnerBody() {
   // SEND TEXT MESSAGE
   // ============================================================
 
+  // [2026-10-21 tg4] Modo lento: quem está sujeito (grupo: não-admin; canal: quem não é o criador).
+  const _slowSubject = () => {
+    if (!(Number(slowModeSeconds || 0) > 0)) return false;
+    const _me = String(currentEmail || '').toLowerCase();
+    if (conversationType === 'group') {
+      return !(membersRef.current?.length ? membersRef.current : (members || [])).some(m => String(m?.email || '').toLowerCase() === _me && m?.role === 'admin');
+    }
+    if (conversationType === 'channel') return !!slowCreatorRef.current && slowCreatorRef.current !== _me;
+    return false;
+  };
+  const _slowArm = (untilMs) => {
+    const u = Number(untilMs) || 0;
+    if (u <= Date.now() || u <= slowUntilRef.current) return;
+    slowUntilRef.current = u;
+    setSlowUntil(u);
+  };
+  const _slowToast = (secs) => {
+    try {
+      const _tpl = t('chat.slowModeLeft');
+      const _m = (_tpl && _tpl !== 'chat.slowModeLeft' ? _tpl : 'Modo lento: {seconds} s').replace('{seconds}', String(Math.max(1, Math.ceil(secs))));
+      setScheduleToast(_m);
+      setTimeout(() => setScheduleToast(''), 2500);
+    } catch {}
+  };
+  // 429 slow_mode do servidor (retry_after) → arma a contagem e avisa.
+  const _slowFromResult = (res) => {
+    try {
+      if (!res || res.success) return;
+      const d = res.data || {};
+      const isSlow = d.slow_mode === true || /slow mode/i.test(String(res.message || res.error || ''));
+      if (!isSlow) return;
+      let ra = Number(d.retry_after) || 0;
+      if (!ra) { const mm = String(res.message || '').match(/(\d+)\s*s/); ra = mm ? Number(mm[1]) : 0; }
+      if (ra > 0) { _slowArm(Date.now() + ra * 1000); _slowToast(ra); }
+    } catch {}
+  };
+  // Último envio meu (mesmo apagado conta no servidor; aqui = melhor estimativa local).
+  useEffect(() => {
+    if (!_slowSubject()) { if (slowUntilRef.current) { slowUntilRef.current = 0; setSlowUntil(0); } return; }
+    const _me = String(currentEmail || '').toLowerCase();
+    const _arr = messagesRef?.current || messages || [];
+    for (let i = _arr.length - 1, n = 0; i >= 0 && n < 200; i--, n++) {
+      const m = _arr[i];
+      if (!m || m.type === 'system' || m._failed) continue;
+      if (String(m.sender_email || '').toLowerCase() !== _me) continue;
+      const ts = Date.parse(m.created_at || '');
+      if (Number.isFinite(ts)) _slowArm(ts + Number(slowModeSeconds) * 1000);
+      break;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slowModeSeconds, conversationType, messages?.length, members?.length]);
+  useEffect(() => {
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((slowUntilRef.current - Date.now()) / 1000));
+      setSlowLeft(left);
+      return left;
+    };
+    if (tick() <= 0) return undefined;
+    const iv = setInterval(() => { if (tick() <= 0) clearInterval(iv); }, 1000);
+    return () => clearInterval(iv);
+  }, [slowUntil]);
+  const _slowPlaceholder = (base) => {
+    if (!(slowLeft > 0)) return base;
+    const _tpl = t('chat.slowModeLeft');
+    return (_tpl && _tpl !== 'chat.slowModeLeft' ? _tpl : 'Modo lento: {seconds} s').replace('{seconds}', String(slowLeft));
+  };
+
   const handleSend = async () => {
     try {
       return await _handleSendInner();
@@ -20738,6 +20834,11 @@ function ChatConversationInnerBody() {
           return;
         }
       }
+    }
+    // [2026-10-21 tg4] Modo lento (grupo e canal): contando → não envia, texto fica no campo.
+    if (_slowSubject()) {
+      const _slw = Math.ceil((slowUntilRef.current - Date.now()) / 1000);
+      if (_slw > 0) { _slowToast(_slw); return; }
     }
     // Never flip sending→false here — that reopens a race window for
     // duplicate sends on rapid double-tap. Just ignore the second tap.
@@ -20960,6 +21061,8 @@ function ChatConversationInnerBody() {
     // can reject a late autosave broadcast that carries the same text.
     lastSentTextRef.current = text;
     lastSentAtRef.current = Date.now();
+    // [2026-10-21 tg4] enviou com modo lento → contagem começa e o aviso aparece
+    if (_slowSubject()) { _slowArm(Date.now() + Number(slowModeSeconds) * 1000); _slowToast(Number(slowModeSeconds)); }
     autocorrectSquashedRef.current = false;
     setInputText('');
     // Note: don't call inputRef.clear() here. Doing both setInputText('') AND
@@ -21485,6 +21588,7 @@ function ChatConversationInnerBody() {
           try { _ackT.s1 = sendSocketSnapshot(_ackNet()); } catch {}
           const _res = await api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId, activeTopic?.id, _sendOpts);
           _ackT.n1 = Date.now();
+          try { _slowFromResult(_res); } catch {} // [2026-10-21 tg4] 429 slow_mode → contagem
           if (OUTBOX_V2_ONLY) {
             const _k = messageOutbox.classifySendResult?.(_res);
             if (_k === 'transient' || _k === 'offline') messageOutbox.noteBacklog?.(conversationId);
@@ -21979,7 +22083,7 @@ function ChatConversationInnerBody() {
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail,
-      content: bodyContent, file_url: fileUrlArg, type: 'gif', reply_to_id: replyId, reply_to: replyObj, created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
+      content: bodyContent, file_url: fileUrlArg, type: 'gif', reply_to_id: replyId, reply_to: replyObj, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */, created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
 
@@ -22032,7 +22136,7 @@ function ChatConversationInnerBody() {
 
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await enqueueChatSend(() => api.chatSend(conversationId, bodyContent, 'gif', replyId, null, fileUrlArg, tempId, msgId));
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, bodyContent, 'gif', replyId, null, fileUrlArg, tempId, msgId, activeTopic?.id || null /* [2026-10-21 tg4] tópico */));
       if (r.success && r.data?.id) {
         // [#1188 fix] Preserve sender_email — envelope mode returns null and
         // would flip the bubble to incoming side.
@@ -22041,7 +22145,7 @@ function ChatConversationInnerBody() {
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
         if (_cap) {
           try {
-            const rc = await enqueueChatSend(() => api.chatSend(conversationId, _cap, 'text'));
+            const rc = await enqueueChatSend(() => api.chatSend(conversationId, _cap, 'text', null, null, null, null, null, activeTopic?.id || null /* [2026-10-21 tg4] */));
             if (rc?.success && rc.data?.id) {
               setMessages(prev => prev.some(m => m.id === rc.data.id) ? prev : [...prev, { ...rc.data, _pending: false, sender_email: rc.data.sender_email || currentEmail }]);
             }
@@ -22056,7 +22160,7 @@ function ChatConversationInnerBody() {
         // Mirror text-send fallback: queue for retry instead of dropping.
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
-          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId });
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */, mentions: null, temp_id: tempId, client_message_id: msgId });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
@@ -22070,7 +22174,7 @@ function ChatConversationInnerBody() {
       }
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
-        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId });
+        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */, mentions: null, temp_id: tempId, client_message_id: msgId });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
       } catch {
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
@@ -22107,6 +22211,7 @@ function ChatConversationInnerBody() {
     const optimisticMsg = {
       id: tempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail,
       content: sticker, type: stType,
+      topic_id: activeTopic?.id || null, // [2026-10-21 tg4]
       file_url: isImage ? sticker : null,
       reply_to_id: replyId,
       reply_to: (replyId && _rt) ? {
@@ -22157,7 +22262,7 @@ function ChatConversationInnerBody() {
 
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await enqueueChatSend(() => api.chatSend(conversationId, sticker, stType, replyId, null, isImage ? sticker : null, tempId, msgId));
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, sticker, stType, replyId, null, isImage ? sticker : null, tempId, msgId, activeTopic?.id || null /* [2026-10-21 tg4] */));
       if (r.success && r.data?.id) {
         // [#1188 fix] Preserve sender_email — envelope mode returns null.
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
@@ -22166,7 +22271,7 @@ function ChatConversationInnerBody() {
       } else {
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
-          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: stType, reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: stType, reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
@@ -22175,7 +22280,7 @@ function ChatConversationInnerBody() {
     } catch {
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
-        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: stType, reply_to_id: replyId, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
+        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sticker, msgType: stType, reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */, mentions: null, temp_id: tempId, client_message_id: msgId, file_url: isImage ? sticker : null });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
       } catch {
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m)); _listSendState(conversationId, tempId, 'failed'); // [2026-10-18 relogio-lista]
@@ -22257,6 +22362,103 @@ function ChatConversationInnerBody() {
         setScheduleToast(t('common.error') || 'Erro'); setTimeout(() => setScheduleToast(''), 3000); // [2026-10-20 tg1]
       }
     } catch { setScheduleToast(t('common.error') || 'Erro'); setTimeout(() => setScheduleToast(''), 3000); }
+  };
+
+  // [2026-10-21 tg4] Editar agendada (texto e/ou horário) — Telegram. Devolve false se falhou (folha segue editando).
+  const handleEditScheduled = async (id, patch) => {
+    try {
+      const r = await api.chatScheduleEdit(id, patch || {});
+      if (r && r.success) {
+        const d = r.data || {};
+        setScheduledMessages(prev => prev.map(m => String(m.id) === String(id)
+          ? { ...m, content: d.content != null ? d.content : m.content, scheduled_at: d.scheduled_at || m.scheduled_at } : m));
+        const _v = t('chat.scheduleEdited');
+        setScheduleToast(_v && _v !== 'chat.scheduleEdited' ? _v : 'Mensagem agendada alterada'); setTimeout(() => setScheduleToast(''), 2500);
+        return true;
+      }
+    } catch {}
+    setScheduleToast(t('common.error') || 'Erro'); setTimeout(() => setScheduleToast(''), 3000);
+    return false;
+  };
+
+  // [2026-10-21 tg4] Agendar com mídia: sobe cada arquivo sem criar mensagem (silent) e agenda
+  // um item por arquivo com a legenda dele. Visualização única não agenda (o servidor não guarda).
+  const handleScheduleMedia = async (caption, outFiles, captions, iso) => {
+    const batch = Array.isArray(outFiles) ? outFiles : [];
+    setMediaPreview({ visible: false, files: [] });
+    if (!batch.length || !iso) return;
+    const _tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+    try {
+      if (require('../services/e2eeV4').isConversationE2ee(conversationId)) {
+        safeAlert(t('common.error'), _tr('chat.scheduleE2eeBlocked', 'Agendar não está disponível em conversa criptografada.'));
+        return;
+      }
+    } catch {}
+    setScheduleToast(_tr('chat.scheduleUploading', 'Enviando mídia para agendar…'));
+    let ok = 0;
+    for (let i = 0; i < batch.length; i++) {
+      const f = batch[i] || {};
+      const mime = String(f.type || f.mimeType || '').toLowerCase();
+      const nm = String(f.name || f.fileName || '');
+      const isVid = mime.startsWith('video') || /\.(mp4|mov|m4v|webm|3gp)$/i.test(nm) || f.mediaType === 'video';
+      const isImg = !isVid && (mime.startsWith('image') || /\.(jpe?g|png|webp|heic|heif|gif)$/i.test(nm) || f.mediaType === 'photo');
+      const msgType = isVid ? 'video' : (isImg ? (/gif/.test(mime) ? 'gif' : 'image') : 'file');
+      try {
+        const up = await api.chatUploadFile(conversationId, f, '', false, null, msgType, null, true);
+        const url = up?.data?.file_url || up?.data?.url || up?.file_url || null;
+        if (!up?.success || !url) continue;
+        const cap = (Array.isArray(captions) && captions[i]) || (i === 0 ? (caption || '') : '');
+        const extra = {
+          type: msgType, file_url: url, file_name: nm || undefined,
+          file_size: Number(f.size || f.fileSize) || undefined,
+          image_width: Number(f.width) || undefined, image_height: Number(f.height) || undefined,
+        };
+        try { const _tp = activeTopic?.id; if (_tp) extra.topic_id = _tp; } catch {}
+        const r = await api.chatScheduleMessage(conversationId, String(cap || '').trim(), iso, extra);
+        if (r?.success) ok++;
+      } catch {}
+    }
+    if (ok > 0) {
+      const d = new Date(iso);
+      const timeStr = d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      setScheduleToast(t('chat.messageScheduled', { time: timeStr }));
+    } else {
+      setScheduleToast(_tr('chat.scheduleFailed', 'Não foi possível agendar'));
+    }
+    setTimeout(() => setScheduleToast(''), 3000);
+  };
+
+  // [2026-10-21 tg4] "Enviar quando online" (1:1, Telegram): o servidor guarda e entrega quando o contato ficar online.
+  const handleSendWhenOnline = async () => {
+    const text = composerStore.get().trim();
+    if (!text) return;
+    setShowScheduleMenu(false);
+    try {
+      if (require('../services/e2eeV4').isConversationE2ee(conversationId)) {
+        const _m = t('chat.scheduleE2eeBlocked');
+        safeAlert(t('common.error'), _m && _m !== 'chat.scheduleE2eeBlocked' ? _m : 'Agendar não está disponível em conversa criptografada.');
+        return;
+      }
+    } catch {}
+    if (editingMsg) return;
+    const _tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+    try {
+      const _rid = (() => { try { return _resolveReplyTargetId(replyTo) || null; } catch { return null; } })();
+      const _rp = _rid != null && !String(_rid).startsWith('temp') ? { reply_to_id: _rid } : null;
+      const r = await api.chatSendWhenOnline(conversationId, text, _rp);
+      if (r && r.success) {
+        setInputText('');
+        try { if (_rp) setReplyTo(null); } catch {}
+        setScheduleToast(_tr('chat.sendWhenOnlineQueued', 'Será enviada quando o contato ficar online'));
+        setTimeout(() => setScheduleToast(''), 3000);
+      } else {
+        const _code = r?.data?.code;
+        setScheduleToast(_code === 'presence_hidden' ? _tr('chat.sendWhenOnlineHidden', 'Este contato esconde quando está online') : _tr('chat.scheduleFailed', 'Não foi possível agendar'));
+        setTimeout(() => setScheduleToast(''), 3000);
+      }
+    } catch {
+      setScheduleToast(_tr('chat.scheduleFailed', 'Não foi possível agendar')); setTimeout(() => setScheduleToast(''), 3000);
+    }
   };
 
   // ============================================================
@@ -22987,7 +23189,7 @@ function ChatConversationInnerBody() {
       _uploading: true,
       _client_id: msgId,
       _batch_id: batchId || null,
-      reply_to_id: replyId,
+      reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
       reply_to: replyObj,
       is_view_once: forceViewOnce ? 1 : 0,
       // [2026-10-12 thread-overlap] Picker dims → the media box has its final
@@ -23087,7 +23289,7 @@ function ChatConversationInnerBody() {
           created_at: optimisticMsg.created_at,
           batch_id: batchId || null,
           duration: file.duration || null,
-          reply_to_id: replyId,
+          reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
         });
       } catch { _queued = null; }
       if (_queued) {
@@ -23115,7 +23317,7 @@ function ChatConversationInnerBody() {
         created_at: optimisticMsg.created_at,
         sender_email: user?.email,
         is_view_once: forceViewOnce ? 1 : 0,
-        reply_to_id: replyId,
+        reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
       };
       await savePendingMessage(conversationId, mediaPendingData);
     } catch {}
@@ -23156,7 +23358,7 @@ function ChatConversationInnerBody() {
           view_once: forceViewOnce ? 1 : 0,
           sender_email: user?.email,
           created_at: optimisticMsg.created_at,
-          reply_to_id: replyId,
+          reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
           _blob_lost: false,
         });
       } catch {}
@@ -23445,6 +23647,7 @@ function ChatConversationInnerBody() {
           client_message_id: msgId,
           temp_id: tempId,
           ...(replyId ? { reply_to_id: replyId } : {}),
+          ...(activeTopic?.id ? { topic_id: activeTopic.id } : {}), // [2026-10-21 tg4] tópico
         }, 'POST');
       }
 
@@ -23464,7 +23667,8 @@ function ChatConversationInnerBody() {
           }
         }, fileType, abortCtrl.signal, false, msgId, replyId,
           // [2026-10-20 media-wa] duração do vídeo também no caminho PHP (o selo "0:12" na bolha)
-          fileType === 'video' ? (Number(file?.duration) > 1000 ? Math.round(Number(file.duration) / 1000) : (Number(file?.duration) || null)) : null));
+          fileType === 'video' ? (Number(file?.duration) > 1000 ? Math.round(Number(file.duration) / 1000) : (Number(file?.duration) || null)) : null,
+          activeTopic?.id || null /* [2026-10-21 tg4] tópico */));
       }
 
       if (isAborted()) break;
@@ -23633,7 +23837,7 @@ function ChatConversationInnerBody() {
                 temp_id: tempId,
                 caption: caption || '',
                 view_once: forceViewOnce ? 1 : 0,
-                reply_to_id: replyId,
+                reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
               });
             } catch {}
             // Silent offline path — bubble keeps the WhatsApp ⏱ clock icon
@@ -23723,7 +23927,7 @@ function ChatConversationInnerBody() {
       // instantly; the server echo (ffmpeg *.peaks.json) replaces them.
       waveform: (Array.isArray(audioData.waveform) && audioData.waveform.length >= 8) ? audioData.waveform.slice(0, 64) : undefined,
       created_at: new Date().toISOString(),
-      reply_to_id: replyId,
+      reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
       reply_to: replyObj,
       _pending: true,
       _uploading: true,
@@ -23755,7 +23959,7 @@ function ChatConversationInnerBody() {
           waveform: Array.isArray(audioData.waveform) ? audioData.waveform.slice(0, 64) : null,
           sender_email: user?.email,
           created_at: optimisticMsg.created_at,
-          reply_to_id: replyId,
+          reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
         });
       } catch { _queued = null; }
       if (_queued) {
@@ -23779,7 +23983,7 @@ function ChatConversationInnerBody() {
         duration: audioData.duration,
         created_at: optimisticMsg.created_at,
         sender_email: user?.email,
-        reply_to_id: replyId,
+        reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
       };
       await savePendingMessage(conversationId, audioPendingData);
     } catch {}
@@ -23824,7 +24028,7 @@ function ChatConversationInnerBody() {
         // after a lost response dedups server-side instead of duplicating.
         r = await api.chatUploadFile(conversationId, filePayload, `Audio (${formatDuration(audioData.duration)})`, audioViewOnce, (progress) => {
           if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
-        }, 'audio', null, false, audioMsgId, replyId, audioData.duration); // [rec-audit P0-3] POST duration (s)
+        }, 'audio', null, false, audioMsgId, replyId, audioData.duration, activeTopic?.id || null /* [2026-10-21 tg4] */); // [rec-audit P0-3] POST duration (s)
       }
       // Null guard: if both the voice-session finalize and the fallback upload
       // returned undefined (e.g., a thrown error inside chatUploadFile that
@@ -23880,7 +24084,7 @@ function ChatConversationInnerBody() {
             // Same cmi as the live send (9th arg above) so a lost-response
             // retry dedups against the row the server may already have.
             client_message_id: audioMsgId,
-            reply_to_id: replyId,
+            reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
           });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
         } catch {
@@ -23910,7 +24114,7 @@ function ChatConversationInnerBody() {
           temp_id: tempId,
           view_once: audioViewOnce ? 1 : 0, // was silently dropped on this path
           client_message_id: audioMsgId,
-          reply_to_id: replyId,
+          reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
         });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
       } catch {
@@ -23956,7 +24160,7 @@ function ChatConversationInnerBody() {
       file_name: file.name,
       duration: file.duration || 0,
       created_at: new Date().toISOString(),
-      reply_to_id: replyId,
+      reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
       reply_to: replyObj,
       _pending: true,
       _uploading: true,
@@ -23978,7 +24182,7 @@ function ChatConversationInnerBody() {
         duration: file.duration || 0,
         created_at: optimisticMsg.created_at,
         sender_email: user?.email,
-        reply_to_id: replyId,
+        reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
       };
       await savePendingMessage(conversationId, vnotePendingData);
     } catch {}
@@ -24048,6 +24252,8 @@ function ChatConversationInnerBody() {
         false,
         clientId, // outbox cmi — replay after lost response dedups server-side
         replyId, // [2026-10-12 reply-media]
+        null,
+        activeTopic?.id || null, // [2026-10-21 tg4] tópico
       );
       if (r?.success && r.data) {
         const msg = r.data.message || r.data;
@@ -24075,7 +24281,7 @@ function ChatConversationInnerBody() {
           await queueOfflineAction({
             type: 'chat_file_upload', conversation_id: conversationId,
             uri: file.uri, name: file.name || '', file_type: file.type || 'video/mp4',
-            msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '', reply_to_id: replyId,
+            msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '', reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
           });
           setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
         } catch {
@@ -24089,7 +24295,7 @@ function ChatConversationInnerBody() {
         await queueOfflineAction({
           type: 'chat_file_upload', conversation_id: conversationId,
           uri: file.uri, name: file.name || '', file_type: file.type || 'video/mp4',
-          msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '', reply_to_id: replyId,
+          msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '', reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
         });
         setMessages(prev => _mapKeep(prev, m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
       } catch {
@@ -24228,7 +24434,7 @@ function ChatConversationInnerBody() {
         const _locCreated = new Date().toISOString();
         let _locOpt = null;
         try {
-          _locOpt = normalizeMessageTypes([{ id: locTempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail, content, type: 'location', reply_to_id: locReplyId, reply_to: locReplyObj, created_at: _locCreated, _pending: true, _client_id: locMsgId }])[0];
+          _locOpt = normalizeMessageTypes([{ id: locTempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail, content, type: 'location', reply_to_id: locReplyId, reply_to: locReplyObj, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */, created_at: _locCreated, _pending: true, _client_id: locMsgId }])[0];
         } catch {}
         if (_locOpt) setMessages(prev => [...prev, _locOpt]);
         if (await _sendRichViaOutbox({ msgId: locMsgId, tempId: locTempId, type: 'location', content, createdAt: _locCreated, replyToId: locReplyId })) {
@@ -24258,7 +24464,7 @@ function ChatConversationInnerBody() {
         await savePendingMessage(conversationId, locPendingData).catch(() => {});
 
         console.log('[loc] about to chatSend static', { lat: latitude, lng: longitude });
-        const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', locReplyId, null, null, locTempId, locMsgId));
+        const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', locReplyId, null, null, locTempId, locMsgId, activeTopic?.id || null /* [2026-10-21 tg4] */));
         console.log('[loc] chatSend result', { success: r?.success, hasId: !!r?.data?.id, msg: r?.message });
         if (r.success && r.data?.id) {
           inserted = normalizeMessageTypes([r.data])[0];
@@ -25795,8 +26001,72 @@ function ChatConversationInnerBody() {
   // 1. Local search first (instant) on loaded messages
   // 2. If query >= 3 chars and local results < 3, fall back to server-side FTS
   //    (covers older messages not in local cache)
+  // [2026-10-21 tg4] Busca no servidor com filtros SEM texto (foto/vídeo/link/doc/áudio, de quem,
+  // data) via chat_search_advanced, paginada (cursor). Resultado mais novo primeiro; "↑" (mais
+  // antigo) perto do fim busca a próxima página. Tocar/navegar pula p/ a msg (safeScrollToMsg →
+  // chat_load_around quando não está carregada).
+  const searchAdvRef = useRef({ seq: 0, cursor: null, more: false, loading: false, q: '', filters: null });
+  const [searchAdvMore, setSearchAdvMore] = _useStateT(false);
+  const _searchAdvType = (ty) => ({ image: 'photo', photo: 'photo', video: 'video', audio: 'audio', link: 'link', doc: 'doc' }[ty] || null);
+  const _searchAdvOn = (f) => !!(f && (_searchAdvType(f.type) || f.dateFrom || f.dateTo || f.senderEmail));
+  const _searchAdvRun = async (q, filters, append) => {
+    const st = searchAdvRef.current;
+    if (append && (!st.more || st.loading)) return;
+    const seq = append ? st.seq : ++st.seq;
+    if (!append) { st.cursor = null; st.more = false; st.q = q; st.filters = filters; }
+    st.loading = true;
+    try {
+      const _ty = _searchAdvType(filters?.type);
+      const r = await api.chatSearchAdvanced({
+        query: String(q || '').trim().length >= 2 ? String(q).trim() : '',
+        types: _ty ? [_ty] : undefined,
+        dateFromIso: filters?.dateFrom || null,
+        dateToIso: filters?.dateTo || null,
+        senderEmail: filters?.senderEmail || null,
+        conversationId,
+        cursor: append ? st.cursor : null,
+        limit: 40,
+      });
+      if (seq !== searchAdvRef.current.seq) return;
+      const d = r?.data || {};
+      const rows = (Array.isArray(d.messages) ? d.messages : [])
+        .filter(m => String(m.conversation_id) === String(conversationId))
+        .filter(m => !filters?.starredOnly || m.starred)
+        .map(m => ({
+          id: m.id, conversation_id: m.conversation_id, sender_email: m.sender_email, content: m.content,
+          type: m.type || 'text', created_at: m.created_at, sender_name: m.sender_name, file_name: m.file_name || null,
+          file_url: m.file_url || null, thumb_b64: m.thumb_b64 || null, starred: !!m.starred,
+        }));
+      st.cursor = d.next_cursor || null;
+      st.more = !!(d.has_more && d.next_cursor);
+      setSearchAdvMore(st.more);
+      if (append) {
+        setSearchResults(prev => {
+          const seen = new Set((prev || []).map(m => String(m.id)));
+          return [...(prev || []), ...rows.filter(m => !seen.has(String(m.id)))];
+        });
+      } else {
+        const _k = (m) => { const n = Number(m.id); return Number.isFinite(n) && n > 0 ? n : 0; };
+        let base = rows;
+        if (String(q || '').trim()) {
+          // com texto: junta com o que a busca local já achou (sem repetir)
+          const prevNow = searchResultsRef.current || [];
+          const seen = new Set(rows.map(m => String(m.id)));
+          base = [...rows, ...prevNow.filter(m => !seen.has(String(m.id)))].sort((a, b) => _k(b) - _k(a));
+        }
+        setSearchResults(base);
+        setSearchIdx(0);
+        if (base.length > 0) safeScrollToMsg(base[0]);
+      }
+    } catch {} finally { if (seq === searchAdvRef.current.seq) searchAdvRef.current.loading = false; }
+  };
+  const searchResultsRef = useRef([]);
+
   const handleSearchMessages = useCallback(async (q, filters = searchFilters) => {
     setSearchQuery(q);
+    // [2026-10-21 tg4] sem texto mas com filtro → só servidor (paginado)
+    if (!q.trim() && _searchAdvOn(filters)) { setSearchResults([]); setSearchIdx(0); await _searchAdvRun('', filters, false); return; }
+    searchAdvRef.current.seq++; searchAdvRef.current.more = false; setSearchAdvMore(false);
     if (!q.trim()) { setSearchResults([]); setSearchIdx(0); return; }
     // [2026-10-12 srv-audit] Sem acento/caixa: "acao" acha "ação" (NFD + tira
     // diacríticos dos dois lados), como o FTS do servidor.
@@ -25899,6 +26169,12 @@ function ChatConversationInnerBody() {
       } catch {}
     }
 
+    // [2026-10-21 tg4] texto + filtro de tipo/data/remetente → servidor com os filtros (paginado)
+    if (_searchAdvOn(filters) && q.trim().length >= 2) {
+      searchResultsRef.current = mergedSoFar;
+      await _searchAdvRun(q, filters, false);
+      return;
+    }
     // Server-side FTS for thorough search across all messages in this conversation
     if (q.trim().length >= 3) {
       try {
@@ -25947,6 +26223,10 @@ function ChatConversationInnerBody() {
   }, [messages, conversationId]);
 
   const handleSearchNav = useCallback((dir) => {
+    // [2026-10-21 tg4] perto do fim da página → carrega a próxima (mais antigas)
+    if (dir === 'up' && searchAdvRef.current.more && searchIdx >= searchResults.length - 3) {
+      try { _searchAdvRun(searchAdvRef.current.q, searchAdvRef.current.filters, true); } catch {}
+    }
     const next = dir === 'up' ? Math.min(searchIdx + 1, searchResults.length - 1) : Math.max(searchIdx - 1, 0);
     setSearchIdx(next);
     if (searchResults[next]) {
@@ -26047,6 +26327,7 @@ function ChatConversationInnerBody() {
   const applyGroupFlags = (conv) => {
     if (!conv || typeof conv !== 'object') return;
     if (typeof conv.slow_mode_seconds !== 'undefined') setSlowModeSeconds(Number(conv.slow_mode_seconds || 0));
+    if (conv.created_by) slowCreatorRef.current = String(conv.created_by).toLowerCase(); // [2026-10-21 tg4] canal: criador isento do modo lento
     if (typeof conv.admin_only_post !== 'undefined' || typeof conv.admin_only !== 'undefined') {
       setAdminOnlyMessages(!!(conv.admin_only_post ?? conv.admin_only));
     }
@@ -28571,6 +28852,13 @@ function ChatConversationInnerBody() {
   // and mark the (last - unread_count + 1)th incoming message as the first unread.
   const firstUnreadIdRef = useRef(null);
   const unreadSepCountRef = useRef(null); // [2026-10-14 grupo-rajada] { id, n } do divisor
+  // [2026-10-21 tg4] Botão "ir para a 1ª não lida" + cabeça das não lidas além da página.
+  // unreadJumpShow: divisor acima da tela (viewability). unreadJumpSeenRef: o usuário já
+  // passou pelo divisor → o botão não volta. Kill: global.__chatyy_unread_jump = false.
+  const [unreadJumpShow, setUnreadJumpShow] = _useStateT(false);
+  const unreadJumpShowRef = useRef(false);
+  const unreadJumpSeenRef = useRef(false);
+  const _unreadHeadFetchRef = useRef(false);
   const initialUnreadCountRef = useRef(parseInt(params.unread || '0', 10));
   // [2026-07-15] Read watermark for the "Não lidas" divider.
   //   lastReadWatermark: null  → conv meta not resolved yet
@@ -28708,6 +28996,84 @@ function ChatConversationInnerBody() {
     }
     setDividerRev(v => v + 1); // [2026-10-08 open-at-bottom]
   }, [messages, currentEmail, lastReadWatermark, convMetaResolved, openLoadDone]);
+
+  // [2026-10-21 tg4] Mais não lidas do que o carregado (contagem da lista > recebidas na
+  // página): o divisor ficava na 1ª recebida CARREGADA. Busca a cabeça no servidor
+  // (chat_load_around ancorado na mais antiga carregada, até 3 páginas de 100) e move o
+  // divisor p/ a N-ésima recebida do fim — o lugar certo. Kill: __chatyy_unread_head_fetch=false.
+  useEffect(() => {
+    if (!openLoadDone || _unreadHeadFetchRef.current || !conversationId) return;
+    if (global.__chatyy_unread_head_fetch === false || !hasMore) return;
+    if (unreadCapSrcRef.current !== 'list') return;
+    const cap = Number(unreadCapRef.current) || 0;
+    const fu = firstUnreadIdRef.current;
+    if (fu == null || cap <= 0) return;
+    try { if (_chatOrder().isTimeOrdered(conversationId)) return; } catch { return; }
+    const arr = messagesRef.current || [];
+    const idx = arr.findIndex(m => m && m.id === fu);
+    if (idx < 0) return;
+    const _inc = (m) => m && !m._type && m.type !== 'system' && m.sender_email !== currentEmail && !_chatOrder().isImportedMsg(m);
+    for (let j = 0; j < idx; j++) if (_inc(arr[j])) return; // há recebida mais antiga carregada → divisor já é real
+    let have = 0;
+    for (let j = idx; j < arr.length; j++) if (_inc(arr[j])) have++;
+    if (have >= cap) return;
+    _unreadHeadFetchRef.current = true;
+    (async () => {
+      let acc = arr.filter(m => m && !m._type && m.id != null && !String(m.id).startsWith('tmp_'));
+      let reachedStart = false;
+      for (let round = 0; round < 3; round++) {
+        const oldest = Number(acc[0] && acc[0].id);
+        if (!Number.isFinite(oldest) || oldest <= 0) break;
+        let cnt = 0;
+        for (let i = acc.length - 1; i >= 0; i--) if (_inc(acc[i])) cnt++;
+        if (cnt >= cap) break;
+        const need = Math.min(100, (cap - cnt) * 2 + 10);
+        let sl = null;
+        try { const r = await api.chatLoadAround?.(conversationId, oldest, need + 1, 0); sl = r && r.data && Array.isArray(r.data.messages) ? r.data.messages : null; } catch {}
+        if (!sl) return; // rede: deixa o divisor onde está (o botão leva até lá)
+        const fresh = sl.filter(m => m && m.id != null && Number(m.id) < oldest);
+        if (fresh.length < need) reachedStart = true;
+        if (!fresh.length) break;
+        acc = fresh.concat(acc);
+        setMessages(prev => {
+          const map = new Map();
+          for (const m of prev) if (m && m.id != null) map.set(String(m.id), m);
+          let added = 0;
+          for (const m of fresh) { const k = String(m.id); if (!map.has(k)) { map.set(k, m); added++; } }
+          if (!added) return prev;
+          return Array.from(map.values()).sort(_chatOrder().compareById);
+        });
+        if (reachedStart) break;
+      }
+      let cnt = 0; let nth = null; let oldestInc = null;
+      for (let i = acc.length - 1; i >= 0; i--) {
+        if (!_inc(acc[i])) continue;
+        cnt++; oldestInc = acc[i].id;
+        if (cnt === cap) { nth = acc[i].id; break; }
+      }
+      const target = nth != null ? nth : oldestInc;
+      if (target != null && target !== firstUnreadIdRef.current) {
+        firstUnreadIdRef.current = target;
+        unreadSepCountRef.current = null;
+        unreadJumpSeenRef.current = false;
+        setDividerRev(v => v + 1);
+      }
+    })();
+  }, [messages, openLoadDone, hasMore, conversationId, currentEmail]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // [2026-10-21 tg4] pula p/ o divisor (montado → salto direto; fora da janela → load-around)
+  const jumpToFirstUnread = () => {
+    const fu = firstUnreadIdRef.current;
+    unreadJumpSeenRef.current = true; unreadJumpShowRef.current = false; setUnreadJumpShow(false);
+    try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
+    if (fu == null) return;
+    try {
+      const d = threadDataRef.current || [];
+      const di = d.findIndex(m => m && m._type === 'unread_separator');
+      if (di >= 0 && THREAD_OLDEST_FIRST) { threadScroll.toIndex(di, { animated: false, viewPosition: 0.15 }); return; }
+    } catch {}
+    try { safeScrollToMsg({ id: fu }); } catch {}
+  };
 
   // [2026-10-14 grupo-rajada] Abertura: menções entre as não lidas (a partir do
   // divisor) entram na fila do botão "@". Decidido 1x, logo após o divisor.
@@ -29521,7 +29887,12 @@ function ChatConversationInnerBody() {
     // the topic's messages (+ meta rows and not-yet-acked optimistic sends).
     if (activeTopic?.id) {
       const _tid = Number(activeTopic.id);
-      base = base.filter(m => !m || m._type || m._pending || typeof m.id !== 'number' || Number(m.topic_id) === _tid);
+      // [2026-10-21 tg4] envio feito NESTE tópico cujo eco do servidor ainda veio sem topic_id
+      // (upload antigo / resposta parcial): continua no tópico pelo client_message_id.
+      const _ts = _topicSentCmisRef.current;
+      for (const m of base) { if (m && m._pending && Number(m.topic_id) === _tid && (m._client_id || m.client_message_id)) _ts.add(String(m._client_id || m.client_message_id)); }
+      base = base.filter(m => !m || m._type || m._pending || typeof m.id !== 'number' || Number(m.topic_id) === _tid
+        || (m.topic_id == null && m.client_message_id != null && _ts.has(String(m.client_message_id))));
     }
     if (!isSavedMode) return base;
     const q = String(savedSearch || '').trim().toLowerCase();
@@ -29548,6 +29919,54 @@ function ChatConversationInnerBody() {
       return true;
     });
   }, [selectionOverlayMessages, isSavedMode, savedSearch, savedFilter, disappearingTimer, disappearingSetAt, vanishTickNow, activeTopic]); // [2026-10-07 group-admin] +activeTopic
+
+  // [2026-10-21 tg4] Trocar de tópico recarrega do servidor (chat_messages com topic_id): antes o
+  // filtro só mostrava as do tópico que JÁ estavam carregadas (tópico antigo = tela vazia). Junta
+  // por id; linha já em memória ganha o topic_id do servidor (e o cache local é atualizado).
+  // Kill: global.__chatyy_topic_reload = false.
+  const _topicLoadSeqRef = useRef(0);
+  const [topicLoading, setTopicLoading] = _useStateT(false);
+  useEffect(() => {
+    const tid = activeTopic?.id;
+    if (!tid || !conversationId || global.__chatyy_topic_reload === false) { setTopicLoading(false); return; }
+    const seq = ++_topicLoadSeqRef.current;
+    setTopicLoading(true);
+    (async () => {
+      let r = null;
+      try { r = await api.chatMessages(conversationId, 100, null, 0, tid); } catch {}
+      if (seq !== _topicLoadSeqRef.current || !mountedRef.current) return;
+      setTopicLoading(false);
+      const rows0 = r && r.success ? (Array.isArray(r.data?.messages) ? r.data.messages : (Array.isArray(r.data) ? r.data : null)) : null;
+      if (!rows0) return;
+      let rows = rows0;
+      try { rows = processIncoming(rows0); } catch {}
+      const updated = [];
+      try {
+        const _byId = new Map();
+        for (const m of (messagesRef.current || [])) if (m && m.id != null) _byId.set(String(m.id), m);
+        for (const m of rows) { const cur = m && m.id != null ? _byId.get(String(m.id)) : null; if (cur && m.topic_id != null && Number(cur.topic_id) !== Number(m.topic_id)) updated.push({ ...cur, topic_id: m.topic_id }); }
+      } catch {}
+      setMessages(prev => {
+        const map = new Map();
+        for (const m of prev) if (m && m.id != null) map.set(String(m.id), m);
+        let changed = 0;
+        for (const m of rows) {
+          if (!m || m.id == null) continue;
+          const k = String(m.id);
+          const cur = map.get(k);
+          if (!cur) { map.set(k, m); changed++; }
+          else if (m.topic_id != null && Number(cur.topic_id) !== Number(m.topic_id)) { map.set(k, { ...cur, topic_id: m.topic_id }); changed++; }
+        }
+        if (!changed) return prev;
+        const vals = Array.from(map.values());
+        return _chatOrder().timeModeFor(conversationId, vals) ? vals.sort(_chatOrder().compareMsgs) : vals.sort(_chatOrder().compareById);
+      });
+      if (updated.length) {
+        try { cacheMessages(conversationId, updated).catch(() => {}); } catch {}
+        try { SmartCache.cacheMessages(conversationId, updated); } catch {}
+      }
+    })();
+  }, [activeTopic?.id, conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
   // [2026-10-20 tg1] Mensagens Salvas: etiquetas = #hashtags usadas nas mensagens
   // (mais usadas primeiro, até 12). Tocar filtra; escrever "#ideia" numa nota a etiqueta.
   const _savedTagChips = useMemo(() => {
@@ -30167,6 +30586,30 @@ function ChatConversationInnerBody() {
             below++;
           }
           if (below < newMsgCountRef.current) { newMsgCountRef.current = below; setNewMsgCount(below); }
+        }
+      }
+    } catch {}
+
+    // [2026-10-21 tg4] botão "1ª não lida": aparece com o divisor ACIMA da tela; some de vez
+    // quando o divisor (ou a 1ª não lida / algo mais antigo) fica visível.
+    try {
+      const fu = firstUnreadIdRef.current;
+      if (fu != null && !unreadJumpSeenRef.current && global.__chatyy_unread_jump !== false) {
+        const fuN = Number(fu);
+        let mnv = Infinity; let seen = false;
+        for (const v of viewableItems) {
+          const m = v?.item;
+          if (!m) continue;
+          if (m._type === 'unread_separator') { seen = true; break; }
+          const rows = m._type === 'album' && Array.isArray(m._items) ? m._items : (!m._type ? [m] : []);
+          for (const r of rows) { const n = Number(r && r.id); if (Number.isFinite(n) && n < mnv) mnv = n; }
+        }
+        if (!seen && Number.isFinite(fuN) && mnv !== Infinity && mnv <= fuN) seen = true;
+        if (seen) {
+          unreadJumpSeenRef.current = true;
+          if (unreadJumpShowRef.current) { unreadJumpShowRef.current = false; setUnreadJumpShow(false); }
+        } else if (mnv !== Infinity && !unreadJumpShowRef.current) {
+          unreadJumpShowRef.current = true; setUnreadJumpShow(true);
         }
       }
     } catch {}
@@ -35000,7 +35443,7 @@ function ChatConversationInnerBody() {
                   _waTextMetaKey = String(msg.id || msg.client_message_id || msg._clientId || _c.slice(0, 40)); // [2026-10-14 meta-inline]
                   const _ec = Number(msg.edited_count) || 0;
                   const _editedTxt = msg.edited_at
-                    ? (_ec > 1 ? `(${(t('chatConv.edited') || 'editada')} ${_ec}x)` : (t('chatConv.edited') || 'editado'))
+                    ? (_ec > 1 ? (() => { const _v = t('chatConv.editedTimes', { n: _ec }); return _v && _v !== 'chatConv.editedTimes' ? _v : `editada ${_ec} vezes`; })() : (t('chatConv.edited') || 'editado')) // [2026-10-21 tg4] "editada N vezes"
                     : '';
                   return (
                     // [2026-10-14 meta-inline] decisão inline/quebra por medida (WaMetaText).
@@ -35601,8 +36044,8 @@ function ChatConversationInnerBody() {
                 // the plain "editada" label otherwise. Tap opens the
                 // edit-history modal (existing helper).
                 const ec = Number(msg.edited_count) || 0;
-                const label = ec > 1
-                  ? `(${(t('chatConv.edited') || 'editada')} ${ec}x)`
+                const label = ec > 1 // [2026-10-21 tg4] "editada N vezes"
+                  ? (() => { const _v = t('chatConv.editedTimes', { n: ec }); return _v && _v !== 'chatConv.editedTimes' ? _v : `editada ${ec} vezes`; })()
                   : (t('chatConv.edited') || 'editado');
                 return (
                   <TouchableOpacity onPress={() => openEditHistory(msg.id)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} style={{ flexShrink: 1 }}>
@@ -36035,7 +36478,7 @@ function ChatConversationInnerBody() {
         ? (t('chatConv.unreadMessagesN', { n }) || `${n} mensagens não lidas`)
         : n === 1 ? tt('chatConv.unreadMessagesOne', '1 mensagem não lida') : tt('chatConv.unreadMessages', 'Mensagens não lidas')),
       deletedLabel: (own) => (own ? tt('chatConv.deletedMessageOwn', 'Você apagou esta mensagem') : tt('chatConv.deletedMessage', 'Esta mensagem foi apagada')),
-      editedLabel: (m) => { const ec = Number(m.edited_count) || 0; return ec > 1 ? `(${tt('chatConv.edited', 'editada')} ${ec}x)` : tt('chatConv.edited', 'editado'); },
+      editedLabel: (m) => { const ec = Number(m.edited_count) || 0; if (ec > 1) { const _v = t('chatConv.editedTimes', { n: ec }); return _v && _v !== 'chatConv.editedTimes' ? _v : `editada ${ec} vezes`; } return tt('chatConv.edited', 'editado'); }, // [2026-10-21 tg4]
       forwardedLabel: (m) => {
         const fc = Number(m.forward_count) || 0;
         const base = fc >= 5 ? tt('chatConv.forwardedManyTimes', 'Encaminhada com frequência') : tt('chatConv.forwarded', 'Encaminhada');
@@ -37399,7 +37842,7 @@ function ChatConversationInnerBody() {
                 // roda com debounce de 250ms pra não disparar a cada tecla.
                 setSearchQuery(q);
                 if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-                if (!q.trim()) { setSearchResults([]); setSearchIdx(0); return; }
+                if (!q.trim() && !_searchAdvOn(searchFilters)) { setSearchResults([]); setSearchIdx(0); return; } // [2026-10-21 tg4] filtro sem texto segue valendo
                 searchDebounceRef.current = setTimeout(() => handleSearchMessages(q, searchFilters), 250);
               }}
               placeholder={t('chatConv.searchPlaceholder') || 'Pesquisar mensagens...'}
@@ -37423,13 +37866,13 @@ function ChatConversationInnerBody() {
           {showSearchBar === 'filters' && (
             <View onLayout={(e) => { const h = Math.round(e?.nativeEvent?.layout?.height || 0); if (h !== searchFiltersH) setSearchFiltersH(h); }} style={{ backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, paddingHorizontal: 12, paddingVertical: 12, gap: 12 }}>
               <View>
-                <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>Type</Text>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>{_mt('chat.searchTypeTitle', 'Tipo') /* [2026-10-21 tg4] */}</Text>
                 <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
                   {[
-                    { id: 'text', label: 'text' },
-                    { id: 'image', label: 'image' },
-                    { id: 'video', label: 'video' },
-                    { id: 'audio', label: 'audio' },
+                    { id: 'text', label: _mt('chat.searchTypeText', 'Texto') },
+                    { id: 'image', label: _mt('chat.searchTypePhoto', 'Fotos') },
+                    { id: 'video', label: _mt('chat.searchTypeVideo', 'Vídeos') },
+                    { id: 'audio', label: _mt('chat.searchTypeAudio', 'Áudios') },
                     { id: 'link', label: t('search.filter.type.links') || 'Links' },
                     { id: 'doc', label: t('search.filter.type.docs') || 'Documentos' },
                   ].map(({ id: type, label }) => (
@@ -37709,6 +38152,42 @@ function ChatConversationInnerBody() {
           language={language}
           onBlock={() => handleBlockUser(params.email || '')}
         />
+      ) : null}
+      {/* [2026-10-21 tg4] Tópico atual no topo da conversa (Telegram): toque = escolher outro, X = todas */}
+      {activeTopic?.id && !showSearchBar ? (
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 7, gap: 8,
+          backgroundColor: isDark ? '#0b0b0b' : '#ffffff',
+          borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#262628' : 'rgba(0,0,0,0.10)',
+        }}>
+          <TouchableOpacity
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+            activeOpacity={0.6}
+            accessibilityRole="button"
+            accessibilityLabel={(() => { const _v = t('chatConv.topicCurrentA11y', { name: String(activeTopic.name || '') }); return _v && _v !== 'chatConv.topicCurrentA11y' ? _v : `Tópico: ${activeTopic.name || ''}. Toque para trocar`; })()}
+            onPress={async () => {
+              try { const r = await api.chatTopicList(conversationId); if (r?.success) setTopics(r.data?.topics || r.data?.items || []); } catch {}
+              setShowTopicsModal(true);
+            }}
+          >
+            {_isDefaultTopicIcon(activeTopic.icon)
+              ? <IconHash size={15} color={colors.text} />
+              : <Text style={{ fontSize: 15 }}>{activeTopic.icon}</Text>}
+            <Text numberOfLines={1} style={{ flex: 1, fontSize: 13.5, fontWeight: '600', color: colors.text }}>
+              {activeTopic.name || ''}
+            </Text>
+            {topicLoading ? <ActivityIndicator size="small" color={colors.textSecondary} /> : null}
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setActiveTopic(null)}
+            hitSlop={6}
+            style={{ width: 30, height: 30, alignItems: 'center', justifyContent: 'center', marginRight: -6 }}
+            accessibilityRole="button"
+            accessibilityLabel={(() => { const _v = t('chatConv.topicShowAll'); return _v && _v !== 'chatConv.topicShowAll' ? _v : 'Mostrar todas as mensagens'; })()}
+          >
+            <IconX size={15} color={colors.textSecondary} />
+          </TouchableOpacity>
+        </View>
       ) : null}
       {visiblePinnedMessages.length > 0 && showPinnedBanner && !showSearchBar && (() => {
         // [2026-10-17 conv-wa-polish] UMA linha (WhatsApp): barra segmentada
@@ -38683,10 +39162,32 @@ function ChatConversationInnerBody() {
           <TouchableOpacity
             onPress={() => {
               const snippet = quotePill.text;
+              const _qCtx = quotePill.ctx || '';
               setQuotePill(null);
+              // [2026-10-21 tg4] Acha a mensagem citada (as bolhas web não têm id no DOM): a que
+              // contém o trecho — e, havendo empate, a que contém o texto inteiro do nó selecionado
+              // (a mais recente vence). Com ela o envio leva reply_to_id + reply_quote_text.
+              let _qHit = null;
+              try {
+                const _nz = (s) => String(s || '').replace(/[*_~`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+                const _sn = _nz(snippet); const _cx = _nz(_qCtx);
+                const _arr = messagesRef.current || messages || [];
+                let _best = null, _bestTs = -1, _ctxHit = null, _ctxTs = -1;
+                for (let i = 0; i < _arr.length; i++) {
+                  const m = _arr[i];
+                  if (!m || m._type || m.type === 'system' || m.deleted_at || typeof m.content !== 'string' || m.id == null) continue;
+                  const c = _nz(m.content);
+                  if (!_sn || !c.includes(_sn)) continue;
+                  const ts = Date.parse(m.created_at || '') || 0;
+                  if (ts >= _bestTs) { _best = m; _bestTs = ts; }
+                  if (_cx && _cx.length >= _sn.length && c.includes(_cx) && ts >= _ctxTs) { _ctxHit = m; _ctxTs = ts; }
+                }
+                _qHit = _ctxHit || _best;
+              } catch {}
+              if (_qHit) setReplyTo({ ..._replyTargetOf(_qHit), quoteText: snippet });
               // Without a source-message reference we just stamp the text
               // into a minimal replyTo so the compose preview bar renders.
-              setReplyTo({ content: snippet, quoteText: snippet, type: 'text' });
+              else setReplyTo({ content: snippet, quoteText: snippet, type: 'text' });
               try { window.getSelection?.()?.removeAllRanges?.(); } catch {}
               inputRef.current?.focus();
             }}
@@ -39045,6 +39546,20 @@ function ChatConversationInnerBody() {
         </ThreadKeyboardFloat>
       )}
 
+      {/* [2026-10-21 tg4] ir para a 1ª não lida (acima do "@" e do ↓) */}
+      {unreadJumpShow && firstUnreadIdRef.current != null && global.__chatyy_unread_jump !== false && (
+        <ThreadKeyboardFloat>
+        <UnreadJumpFab
+          count={(unreadSepCountRef.current && unreadSepCountRef.current.n) || Number(unreadCapRef.current) || 0}
+          bottom={(_nlOverlayOn ? 150 : (showScrollDown ? 142 : 90)) + (unreadMentionIds.length > 0 ? 54 : 0)}
+          isDark={isDark}
+          colors={colors}
+          t={t}
+          onPress={jumpToFirstUnread}
+        />
+        </ThreadKeyboardFloat>
+      )}
+
       <ThreadKeyboardBar>{/* [2026-10-19 kb-translate] ↓ + compositor sobem c/ o teclado por transform (iOS) */}
       {/* Scroll to bottom FAB */}
       {/* [2026-10-14 motion] SpringPresence: entra E sai com mola (antes sumia seco) */}
@@ -39328,9 +39843,9 @@ function ChatConversationInnerBody() {
           <Text style={{ flex: 1, textAlign: 'center', fontSize: 15, fontWeight: '500', color: searchResults.length ? colors.text : colors.textSecondary }} numberOfLines={1}>
             {searchResults.length > 0
               ? _a11yT(t, 'chatConv.searchResultOf', '{current} de {total}', { current: searchIdx + 1, total: searchResults.length })
-              : (String(searchQuery || '').trim() ? (t('common.noResults') || 'Nenhum resultado encontrado') : '')}
+              : ((String(searchQuery || '').trim() || _searchAdvOn(searchFilters)) /* [2026-10-21 tg4] */ ? (t('common.noResults') || 'Nenhum resultado encontrado') : '')}
           </Text>
-          <TouchableOpacity disabled={searchResults.length < 2} onPress={() => handleSearchNav('up')} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', opacity: searchResults.length < 2 ? 0.35 : 1 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.prevResult', 'Resultado anterior')}>
+          <TouchableOpacity disabled={searchResults.length < 2 && !searchAdvMore /* [2026-10-21 tg4] */} onPress={() => handleSearchNav('up')} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', opacity: (searchResults.length < 2 && !searchAdvMore) ? 0.35 : 1 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.prevResult', 'Resultado anterior')}>
             <IconChevronDown size={22} color={colors.text} style={{ transform: [{ rotate: '180deg' }] }} />
           </TouchableOpacity>
           <TouchableOpacity disabled={searchResults.length < 2} onPress={() => handleSearchNav('down')} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', opacity: searchResults.length < 2 ? 0.35 : 1 }} accessibilityRole="button" accessibilityLabel={_a11yT(t, 'a11y.nextResult', 'Próximo resultado')}>
@@ -39776,7 +40291,7 @@ function ChatConversationInnerBody() {
                 // native paints caret separately, web doesn't.
                 ...(Platform.OS === 'web' ? { outlineStyle: 'none', caretColor: colors.primary || '#111111' } : {}),
               }}
-              placeholder={t('chatConv.messagePlaceholder') || 'Mensagem'}
+              placeholder={_slowPlaceholder(t('chatConv.messagePlaceholder') || 'Mensagem') /* [2026-10-21 tg4] */}
               placeholderTextColor={_chromeIcon}
               keyboardAppearance={isDark ? 'dark' : 'light'}
               selectionColor={colors.primary}
@@ -39981,6 +40496,18 @@ function ChatConversationInnerBody() {
                     <Svg width={16} height={16} viewBox="0 0 24 24"><Path d="M13.73 21a2 2 0 01-3.46 0M18.63 13A17.9 17.9 0 0118 8M6.26 6.26A5.86 5.86 0 006 8c0 7-3 9-3 9h14M18 8a6 6 0 00-9.33-5M2 2l20 20" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" /></Svg>
                     <Text style={{ fontSize: 14, color: colors.text, fontWeight: '600' }}>{t('w12e.sendSilent')}</Text>
                   </TouchableOpacity>
+                  {/* [2026-10-21 tg4] Enviar quando online (Telegram) — só 1:1 e se o contato não está online agora. */}
+                  {conversationType === 'direct' && !isSavedMode && (() => { try { return presenceStore?.get?.()?.status !== 'online'; } catch { return true; } })() && (
+                    <TouchableOpacity
+                      onPress={() => { if (!sending) handleSendWhenOnline(); }}
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
+                      accessibilityRole="button"
+                      accessibilityLabel={(() => { const v = t('chat.sendWhenOnline'); return v && v !== 'chat.sendWhenOnline' ? v : 'Enviar quando online'; })()}
+                    >
+                      <Svg width={16} height={16} viewBox="0 0 24 24"><Path d="M12 21a9 9 0 100-18 9 9 0 000 18z" stroke={colors.primary} strokeWidth={2} fill="none" /><Path d="M12 7v5l3 2" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" /><Path d="M19 4.5l1.5-1.5" stroke={colors.primary} strokeWidth={2} strokeLinecap="round" /></Svg>
+                      <Text style={{ fontSize: 14, color: colors.text, fontWeight: '600' }}>{(() => { const v = t('chat.sendWhenOnline'); return v && v !== 'chat.sendWhenOnline' ? v : 'Enviar quando online'; })()}</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
                     onPress={() => { setShowScheduleMenu(false); setShowEffectPicker(true); }}
                     style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 14, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
@@ -40181,7 +40708,7 @@ function ChatConversationInnerBody() {
             t={t}
             isDark={isDark}
             colors={colors}
-            placeholder={t('chatConv.messagePlaceholder') || 'Mensagem'}
+            placeholder={_slowPlaceholder(t('chatConv.messagePlaceholder') || 'Mensagem') /* [2026-10-21 tg4] */}
             replyPreview={_nativeReplyCardOn() ? _ncReply : null /* [reply-card-fallback] */}
             mentionCandidates={conversationType === 'group'
               ? (members || []).filter((m) => typeof m?.email === 'string' && m.email !== currentEmail).map((m) => ({ token: m.email.split('@')[0], email: m.email }))
@@ -40317,7 +40844,7 @@ function ChatConversationInnerBody() {
         }}
       />)}</LazyMount>
       <LazyMount when={showCustomSchedule}>{(_lmV) => (<CustomScheduleModal visible={_lmV} onClose={() => setShowCustomSchedule(false)} customDate={customScheduleDate} setCustomDate={setCustomScheduleDate} onSchedule={(iso) => { handleScheduleMessage(iso); setCustomScheduleDate(''); }} colors={colors} t={t} />)}</LazyMount>
-      <LazyMount when={showScheduledMessages}>{(_lmV) => (<ScheduledMessagesModal visible={_lmV} onClose={() => setShowScheduledMessages(false)} messages={scheduledMessages} onCancel={handleCancelScheduled} colors={colors} t={t} />)}</LazyMount>
+      <LazyMount when={showScheduledMessages}>{(_lmV) => (<ScheduledMessagesModal visible={_lmV} onClose={() => setShowScheduledMessages(false)} messages={scheduledMessages} onCancel={handleCancelScheduled} onEdit={handleEditScheduled} colors={colors} t={t} />)}</LazyMount>
 
       {/* Chat 2026 — Video Note recorder modal. Mounted at component root
           so it can render over the entire chat surface (not clipped by the
@@ -41947,40 +42474,12 @@ function ChatConversationInnerBody() {
                 ))
               )
             ) : (
-              <>
-              <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiSmileys') || 'Smileys'}</Text>
-              <View style={styles.emojiGrid}>
-                {'😀😃😄😁😅😂🤣😊😇🥰😍🤩😘😗😋😛😜🤪😝🤑🤗🤭🤫🤔🤐🤨😐😑😶😏😒🙄😬🤥😌😔😪🤤😴😷🤒🤕🤢🤮🤧🥵🥶🥴😵🤯🤠🥳🥸😎🤓🧐😕😟🙁☹️😮😯😲😳🥺😦😧😨😰😥😢😭😱😖😣😞😓😩😫🥱😤😡😠🤬'.match(/[^\uFE0F]\uFE0F?/gu).map(em => ( /* [2026-10-20 tg1] mantém o FE0F junto do emoji */
-                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
-                    <Text style={styles.emojiBtnText}>{em}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiGestures') || 'Gestures'}</Text>
-              <View style={styles.emojiGrid}>
-                {'👍👎👋🤚✋🖐️👌🤌🤏✌️🤞🤟🤘🤙👈👉👆👇☝️✊👊🤛🤜👏🙌👐🤲🤝🙏💪'.match(/[^\uFE0F]\uFE0F?/gu).map(em => ( /* [2026-10-20 tg1] mantém o FE0F junto do emoji */
-                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
-                    <Text style={styles.emojiBtnText}>{em}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiHearts') || 'Hearts'}</Text>
-              <View style={styles.emojiGrid}>
-                {'❤️🧡💛💚💙💜🖤🤍🤎💔❣️💕💞💓💗💖💝💘💟'.match(/[^\uFE0F]\uFE0F?/gu).map(em => ( /* [2026-10-20 tg1] mantém o FE0F junto do emoji */
-                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
-                    <Text style={styles.emojiBtnText}>{em}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              <Text style={[styles.emojiCategoryLabel, { color: colors.textSecondary }]}>{t('chatConv.emojiObjects') || 'Objects'}</Text>
-              <View style={styles.emojiGrid}>
-                {'🎉🎊🎈🎁🎂🍰🥂🍾🎶🎵🔥⭐💯✅❌⚡💡💤🎯🏆🥇🎖️🏅'.match(/[^\uFE0F]\uFE0F?/gu).map(em => ( /* [2026-10-20 tg1] mantém o FE0F junto do emoji */
-                  <TouchableOpacity key={em} style={styles.emojiBtn} onPress={() => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}>
-                    <Text style={styles.emojiBtnText}>{em}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-              </>
+              /* [2026-10-21 tg4] seletor completo (todas as categorias, busca pt/en, recentes, tom de pele) */
+              <ChatEmojiPicker
+                colors={colors}
+                t={t}
+                onPick={(em) => { handleReact((selectedMsg || _reactPickMsgRef.current)?.id, em); setShowFullEmojiPicker(false); setSelectedMsg(null); }}
+              />
             )}
         </>);
         if (_convSheetsOn()) {
@@ -41988,7 +42487,7 @@ function ChatConversationInnerBody() {
             <NativeSheet visible={!!_lmV} onClose={_fepClose} detents={[0.6, 1]} backgroundColor={colors.surface}>
               <View style={{ flex: 1, backgroundColor: colors.surface, paddingTop: 18, paddingHorizontal: 12 }}>
                 {_fepHead}
-                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: nativeSheetBottomPad(insets, 16) }} showsVerticalScrollIndicator={false}>
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: nativeSheetBottomPad(insets, 16) }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" /* [2026-10-21 tg4] busca de emoji */>
                   {_fepList}
                 </ScrollView>
               </View>
@@ -42007,7 +42506,7 @@ function ChatConversationInnerBody() {
           <DragBackdrop drag={_drag38258} color="rgba(0,0,0,0.5)" />
           <DragPanel drag={_drag38258} onStartShouldSetResponder={() => true} style={[styles.emojiPickerSheet, { backgroundColor: colors.surface }, Shadow.lg]} >
             {_fepHead}
-            <DragScroll drag={_drag38258}><ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
+            <DragScroll drag={_drag38258}><ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" /* [2026-10-21 tg4] */>
             {_fepList}
             </ScrollView></DragScroll>
           </DragPanel>
@@ -42514,6 +43013,7 @@ function ChatConversationInnerBody() {
         files={mediaPreview.files || []}
         colors={colors}
         onClose={() => setMediaPreview({ visible: false, files: [] })}
+        onSchedule={handleScheduleMedia /* [2026-10-21 tg4] agendar com mídia */}
         // [2026-10-15 native-attach] Mesmo envio reaproveitado pela folha nativa
         // (handleAttachSendDirect) via mediaPreviewSendRef.
         onSend={mediaPreviewSendRef.current = (caption, viewOnce, outFiles, captions) => {

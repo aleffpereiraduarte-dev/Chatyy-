@@ -429,6 +429,7 @@ async function _phpCombined(api, p, cmi, file, signal) {
     // [2026-10-12 rec-audit P0-3] duração (s) do áudio de voz no POST.
     (p.type === 'audio' || p.type === 'voice') ? (Number(p.duration) || null)
       : (p.type === 'video' ? (mediaDurationSec(p) || null) : null), // [2026-10-12 P2] vídeo também
+    p.topic_id || null, // [2026-10-21 tg4] tópico
   );
   return r;
 }

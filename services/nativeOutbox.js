@@ -181,6 +181,7 @@ function _mediaBody(p, metaFields) {
   };
   if (p.temp_id) b.temp_id = p.temp_id;
   if (p.reply_to_id) b.reply_to_id = p.reply_to_id;
+  if (p.topic_id) b.topic_id = p.topic_id; // [2026-10-21 tg4] tópico do grupo
   if ((p.opts && p.opts.sealed) || p.sealed) b.sealed = true;
   if (p.cdn_url) {
     b.file_url = p.cdn_url;

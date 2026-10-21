@@ -610,6 +610,7 @@ async function _uploadAndSendMedia(row) {
         cmi,
         p.reply_to_id || null, // [2026-10-12 reply-media]
         _mediaMetaFields(p, msgType).duration || null, // [2026-10-12 P2]
+        p.topic_id || null, // [2026-10-21 tg4] tópico
       );
     }
 

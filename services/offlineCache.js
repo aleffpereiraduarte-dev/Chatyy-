@@ -850,6 +850,8 @@ export async function replayOfflineQueue(api) {
               // lost-response retries landed the voice note twice.
               action.client_message_id || undefined,
               action.reply_to_id || null, // [2026-10-12 reply-media]
+              null,
+              action.topic_id || null, // [2026-10-21 tg4] tópico
             );
           } catch (uploadErr) {
             const m = String(uploadErr?.message || '');
@@ -929,6 +931,8 @@ export async function replayOfflineQueue(api) {
             false, // silent
             action.client_message_id || undefined, // dedup vs the live-send row
             action.reply_to_id || null, // [2026-10-12 reply-media]
+            null,
+            action.topic_id || null, // [2026-10-21 tg4] tópico
           );
           if (r?.success && r.data) {
             const serverMsg = r.data.message || r.data;
@@ -1006,6 +1010,8 @@ export async function replayOfflineQueue(api) {
               false, // silent
               action.client_message_id || undefined, // dedup vs the live-send row
               action.reply_to_id || null, // [2026-10-12 reply-media]
+              null,
+              action.topic_id || null, // [2026-10-21 tg4] tópico
             );
           } catch (uploadErr) {
             // 404/410 = arquivo sumiu do device (user limpou cache, ou web

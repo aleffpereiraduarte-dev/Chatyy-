@@ -164,9 +164,36 @@ export default function SearchScreen() {
     setLoading(true);
     try {
       if (activeTab === 'people') {
-        const r = await api.searchUsers(trimmed);
-        if (reqId !== reqIdRef.current) return;
-        const users = (r?.success && Array.isArray(r.data?.users)) ? r.data.users : [];
+        // [2026-10-21 tg4] mesmo people_search da "Nova conversa": nome, @usuário, e-mail e telefone
+        // em qualquer formato (+55, DDD, hífen Unicode, marcas invisíveis do WhatsApp/iOS).
+        // Ordem: acertos exatos (score ≥ 950) → seus contatos → no Chatyy. Falha → search_users antigo.
+        const clean = trimmed.replace(/[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g, '').trim();
+        let users = null;
+        try {
+          let homeDial = '';
+          try { homeDial = require('../services/contactSync').getHomeDialDigits() || ''; } catch {}
+          const r = await api.peopleSearch(clean, homeDial);
+          if (reqId !== reqIdRef.current) return;
+          if (r?.success) {
+            const d = r.data || {};
+            const all = [...(d.contacts || []), ...(d.global || []), ...(Array.isArray(d.users) ? d.users : [])];
+            const meL = String(me || '').toLowerCase();
+            const seen = new Set();
+            const exact = []; const rest = [];
+            for (const u of all) {
+              const k = String(u?.email || '').toLowerCase();
+              if (!k || seen.has(k) || k === meL) continue;
+              seen.add(k);
+              ((u.score || 0) >= 950 ? exact : rest).push(u);
+            }
+            users = [...exact, ...rest];
+          }
+        } catch {}
+        if (users === null) {
+          const r = await api.searchUsers(clean);
+          if (reqId !== reqIdRef.current) return;
+          users = (r?.success && Array.isArray(r.data?.users)) ? r.data.users : [];
+        }
         setResults(prev => ({ ...prev, people: users }));
       } else if (activeTab === 'hashtags') {
         const r = await api.trendingHashtags(100);
@@ -302,7 +329,7 @@ export default function SearchScreen() {
               {u.name || u.email?.split('@')[0]}
             </Text>
             <Text style={[styles.rowSub, { color: colors.textSecondary }]} numberOfLines={1}>
-              {u.email}
+              {u.username ? `@${u.username}` : u.email /* [2026-10-21 tg4] */}
             </Text>
           </View>
         </TouchableOpacity>
@@ -571,7 +598,7 @@ export default function SearchScreen() {
         if (!u?.email) continue;
         const name = u.name || u.email.split('@')[0];
         const id = `u:${u.email}`;
-        rows.push({ id, k: 'r', t: name, sb: u.email, tiles: contactTile(u.email, name), hl: 1 });
+        rows.push({ id, k: 'r', t: name, sb: u.username ? `@${u.username}` : u.email /* [2026-10-21 tg4] */, tiles: contactTile(u.email, name), hl: 1 });
         meta.set(id, () => router.push(`/u/${encodeURIComponent(u.email)}`));
       }
       if (!rows.length && !loading) note(typed ? tt('feed.noResults', 'Sem resultados') : tt('search.peopleHint', 'Busque pessoas pelo nome ou @usuário'));
