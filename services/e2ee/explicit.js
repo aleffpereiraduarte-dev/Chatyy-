@@ -340,6 +340,11 @@ export async function reportExplicit(t, cid, { kind = 'thread', email = '', reas
 // ───────────────────────────────────────────────────────────── exportar (no aparelho)
 
 const _TYPE_LABEL = { image: 'foto', video: 'vídeo', audio: 'áudio', voice: 'áudio', file: 'arquivo', sticker: 'figurinha', gif: 'GIF' };
+// [e2ee5 WP-15] rótulo da mídia no export, traduzido (fallback = pt-BR acima)
+function _typeLabel(t, type) {
+  const k = type === 'voice' ? 'audio' : type;
+  return _TYPE_LABEL[type] ? _tx(t, 'e2ee5.x.media_' + k, _TYPE_LABEL[type]) : '';
+}
 
 /**
  * Exporta a conversa a partir do que está decifrado NESTE aparelho (nada vai ao servidor).
@@ -355,7 +360,7 @@ export function exportConversationLocal({ t, messages, me, name = '', format = '
   const out = [];
   for (const { m, ts } of rows) {
     const txt = plainOf(m);
-    const media = _TYPE_LABEL[m.type] ? `<${_TYPE_LABEL[m.type]}>` : '';
+    const media = _TYPE_LABEL[m.type] ? `<${_typeLabel(t, m.type)}>` : '';
     if (!txt && !media) continue; // não decifrada aqui → fica de fora (nunca o envelope)
     out.push({ id: m.id, at: new Date(ts || Date.now()).toISOString(), from: _nameOf(m, me, t), type: m.type || 'text', text: txt || media });
   }
