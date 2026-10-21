@@ -277,6 +277,41 @@ export async function webClearAll() {
   try { indexedDB.deleteDatabase(IDB_NAME); _idb = null; } catch {}
 }
 
+// [2026-10-21 troca-conta] Troca de conta (não é logout): o IndexedDB fica.
+// conversations/messages são carimbadas com `_acct` e a leitura filtra pela
+// conta ativa → só as linhas SEM carimbo (legado, dono desconhecido) saem.
+// Stores sem conta (cache, contatos, e-mails, conv_read_state) são limpos;
+// `cursors` fica (a chave já leva a conta). Lança em erro → quem chama cai no
+// webClearAll() (falha-fechado).
+export async function webClearForAccountSwitch() {
+  const d = await getIDB();
+  if (!d) return;
+  const names = Array.from(d.objectStoreNames || []);
+  const wipe = ['cache', 'contacts', 'emails', 'conv_read_state'].filter((n) => names.includes(n));
+  const stamped = ['conversations', 'messages'].filter((n) => names.includes(n));
+  const all = wipe.concat(stamped);
+  if (!all.length) return;
+  await new Promise((resolve, reject) => {
+    let tx;
+    try { tx = d.transaction(all, 'readwrite'); } catch (e) { reject(e); return; }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('idb_switch_clear'));
+    tx.onabort = () => reject(tx.error || new Error('idb_switch_clear_abort'));
+    for (const n of wipe) { try { tx.objectStore(n).clear(); } catch {} }
+    for (const n of stamped) {
+      try {
+        const req = tx.objectStore(n).openCursor();
+        req.onsuccess = () => {
+          const c = req.result;
+          if (!c) return;
+          if (!c.value || !c.value._acct) { try { c.delete(); } catch {} }
+          c.continue();
+        };
+      } catch {}
+    }
+  });
+}
+
 // ── Diagnostic: IDB row counts + browser quota estimate ──
 // Mirror of localDb.js getCacheSize — see that file for rationale.
 // Surfacing the number lets settings/debug show how much persisted data

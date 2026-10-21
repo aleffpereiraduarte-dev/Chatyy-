@@ -529,7 +529,7 @@ function getSavedCredentials() {
 //   • AsyncStorage `u:*` keys (already user-scoped by key prefix).
 //   • AsyncStorage `mail_*` keys (may include auth state / saved creds).
 //   • SecureStore (bio_token etc).
-async function clearAccountScopedMmkv() {
+async function clearAccountScopedMmkv(opts) {
   try {
     const { remove: mmkvRemove } = require('../services/mmkv');
     mmkvRemove('chat_conversations');
@@ -537,12 +537,69 @@ async function clearAccountScopedMmkv() {
     mmkvRemove('omc_call_history');
   } catch {}
   // [2026-10-21 bia-cache] conversa da Bia salva no aparelho (bia_thread_v1_<conta>)
-  try { require('../services/biaPrefs').clearBiaThreads(); } catch {}
+  // [2026-10-21 troca-conta] já é por conta → só sai no logout (keepPerAccount na troca/cold start)
+  if (!(opts && opts.keepPerAccount)) { try { require('../services/biaPrefs').clearBiaThreads(); } catch {} }
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('chatyy_convs_v1');
     }
   } catch {}
+}
+
+// [2026-10-21 troca-conta] Troca de conta SEM apagar a conta (nível WhatsApp).
+// Antes a troca rodava o mesmo wipe do logout (clearAllCache + clearChatCache +
+// dbClearAll + clearLocalDb + wipeNativeStore + purgeEmailCaches + Bia + IDB
+// inteiro na web) → ao voltar, chat_full_bootstrap:<email> sumia e o app
+// re-baixava todo o histórico. Cada camada já separa por conta (account_email
+// no chatyy.db, sufixo/hash no MMKV, um arquivo por conta no store nativo,
+// _acct no IndexedDB, cursores com prefixo da conta) — então aqui: grava o
+// pendente da conta que sai, aponta tudo para a conta nova e apaga SÓ o que
+// não tem dono. Lança/retorna false → quem chama faz o wipe antigo.
+// Kill switch (OTA): globalThis.__chatyy_switch_keep_data = false.
+// A conta anterior continua no aparelho (sessão guardada com token)?
+function _hasStoredSession(email) {
+  const e = String(email || '').trim().toLowerCase();
+  if (!e) return false;
+  try { return (api.getStoredAccounts() || []).some((a) => a && a.token && String(a.email || '').trim().toLowerCase() === e); } catch { return false; }
+}
+async function _rescopeForAccountSwitch(prevEmail, nextEmail) {
+  const next = String(nextEmail || '').trim();
+  if (!next) return false;
+  try { if (globalThis.__chatyy_switch_keep_data === false) return false; } catch {}
+  // 1. o que está em voo da conta que sai vai para o disco DELA
+  try { require('../services/nativeChatStore').flushNativeStoreBatch?.(); } catch {}
+  try { require('../services/nativeStoreRows').resetNativeStoreRows?.(); } catch {}
+  try { require('../services/screenPrefetch').cancelScreenPrefetch(); } catch {}
+  // histórico em 2º plano da conta que sai: com o bearer novo as conversas dela
+  // viriam "negadas" e ficariam marcadas — para; a conta nova reabre o dela.
+  try { require('../services/fullHistorySync').abortFullHistorySync(); } catch {}
+  // 2. chaves por conta (chatCache/offlineCache/api offline/cache.js u:) passam a
+  //    ser as da conta nova ANTES de qualquer leitura
+  api.setActiveAccountEmail(next);
+  // 3. sem dono → fora
+  const cc = require('../services/chatCache');
+  if (typeof cc.resetForAccountSwitch !== 'function') return false;
+  cc.resetForAccountSwitch();
+  await clearAccountScopedMmkv({ keepPerAccount: true });
+  if (Platform.OS === 'web') {
+    const ldb = require('../services/localDb');
+    if (typeof ldb.webClearForAccountSwitch !== 'function') return false;
+    await ldb.webClearForAccountSwitch();
+  } else {
+    const dbMod = require('../services/db');
+    const ldb = require('../services/localDb');
+    if (typeof dbMod.dbClearUnscopedForSwitch !== 'function' || typeof ldb.clearUnscopedForSwitch !== 'function') return false;
+    await dbMod.dbClearUnscopedForSwitch();
+    await ldb.clearUnscopedForSwitch();
+    // expo-chat-cache (e-mails/Drive/avatares) não separa conta
+    const NativeChatCache = _nativeChatCache();
+    if (NativeChatCache?.clearAll) await NativeChatCache.clearAll();
+  }
+  // 4. dono dos caches sem conta = a nova (o cold start não apaga de novo)
+  try { require('../services/mmkv').setString('omc_cache_owner', next.toLowerCase()); } catch {}
+  // 5. cursor de resume do WS desta conta
+  try { require('../services/websocket').default?.bindCursorAccount?.(next); } catch {}
+  return true;
 }
 
 // [2026-06-29 P0 PRIVACY] Defense-in-depth for the cross-account bare-key
@@ -558,7 +615,7 @@ async function clearMmkvIfAccountChanged(email) {
     if (!cur) return;
     const prev = String(getString('omc_cache_owner') || '').trim().toLowerCase();
     if (prev && prev !== cur) {
-      await clearAccountScopedMmkv();
+      await clearAccountScopedMmkv({ keepPerAccount: true });
       // [2026-10-04] Also wipe the native expo-chat-cache SQLite (emails/drive/
       // avatars — not account-namespaced) so a cold start as a DIFFERENT account
       // (clean logout never ran) doesn't paint the previous user's data.
@@ -1452,7 +1509,18 @@ export function AuthProvider({ children }) {
       try { api.resetAuthFailureSignal?.(); } catch {}
       const _newEmail = (r.data?.email || email || '').toLowerCase();
       const _isSwitch = !!_prevEmail && _prevEmail !== _newEmail;
-      if (!_prevEmail || _prevEmail !== _newEmail) {
+      // [2026-10-21 troca-conta] "Adicionar conta": a anterior continua no
+      // aparelho (sessão guardada) → mesmo re-escopo da troca, sem apagar os
+      // dados dela. Conta anterior sem sessão guardada → wipe de sempre.
+      let _addKept = false;
+      if (_isSwitch) {
+        if (_hasStoredSession(_prevEmail)) {
+          _lockCacheScopeSync(500);
+          setCacheUser(null);
+          try { _addKept = await _rescopeForAccountSwitch(_prevEmail, r.data?.email || email); } catch { _addKept = false; }
+        }
+      }
+      if (!_addKept && (!_prevEmail || _prevEmail !== _newEmail)) {
         await clearAccountScopedMmkv();
         // P0 PRIVACY: also wipe the native SQLite chat store so the new
         // identity never reads the previous account's messages/conversations.
@@ -1471,16 +1539,19 @@ export function AuthProvider({ children }) {
       // scope lock + setCacheUser(null) below keep the sync getters from
       // serving stale data; the brief paint flash is acceptable in exchange
       // for stable WS lifecycle.
-      if (_isSwitch) {
+      if (_isSwitch && !_addKept) {
         _lockCacheScopeSync(500);
         setCacheUser(null);
       }
-      await clearAllCache();
-      const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
+      if (!_addKept) {
+        await clearAllCache();
+        const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
+      }
       setCacheUser(r.data?.email || email);
       // Builder 2: point the durable store facade at the new identity BEFORE
       // setUser paints the chat UI, so frame-1 reads are already scoped.
       _chatStoreSetActiveAccount(r.data?.email || email);
+      if (_addKept) { try { require('../services/chatCache').unlockCacheScope?.(); } catch {} }
       setUser(r.data);
       // [2026-10-08 offline-first] Seed the offline user right at login so an
       // offline relaunch before the next online cold start still opens the app.
@@ -1593,7 +1664,14 @@ export function AuthProvider({ children }) {
     try { api.resetAuthFailureSignal?.(); } catch {}
     const _newEmail = (data?.email || '').toLowerCase();
     const _isSwitch = !!_prevEmail && _prevEmail !== _newEmail;
-    if (!_prevEmail || _prevEmail !== _newEmail) {
+    // [2026-10-21 troca-conta] adicionar conta (anterior segue guardada) = re-escopo, sem wipe.
+    let _addKept = false;
+    if (_isSwitch && _hasStoredSession(_prevEmail)) {
+      _lockCacheScopeSync(500);
+      setCacheUser(null);
+      try { _addKept = await _rescopeForAccountSwitch(_prevEmail, data?.email); } catch { _addKept = false; }
+    }
+    if (!_addKept && (!_prevEmail || _prevEmail !== _newEmail)) {
       await clearAccountScopedMmkv();
       // P0 PRIVACY: wipe native SQLite chat store on identity change.
       // Fail-closed so a throwing clear can't leave prior messages readable.
@@ -1604,15 +1682,18 @@ export function AuthProvider({ children }) {
     // Same paint-race fence as login() — see lockCacheScope. setUser(null)
     // removed (root cause 3 of reconnect storm fix 2026-05-19): the dual
     // fire was kicking MailContext's WS effect twice.
-    if (_isSwitch) {
+    if (_isSwitch && !_addKept) {
       _lockCacheScopeSync(500);
       setCacheUser(null);
     }
-    await clearAllCache();
-    const _clearChat = await getLazyClearChatCache(); await _clearChat();
+    if (!_addKept) {
+      await clearAllCache();
+      const _clearChat = await getLazyClearChatCache(); await _clearChat();
+    }
     setCacheUser(data?.email);
     // Builder 2: scope the durable store to the new identity before paint.
     _chatStoreSetActiveAccount(data?.email);
+    if (_addKept) { try { require('../services/chatCache').unlockCacheScope?.(); } catch {} }
     setUser(data);
     // Register the challenge-login account into the switcher + active marker
     // (parity with login()/loginWithToken(); this path skipped it, so the
@@ -1720,7 +1801,14 @@ export function AuthProvider({ children }) {
     // Replaces the previous aggressive clearAllPerAccountCaches() call
     // which also nuked the SQLite outbox + AsyncStorage `u:*` keys and
     // broke Android send (rollback 2026-05-11).
-    const shouldNuke = isAccountSwitch || !prevEmail;
+    // [2026-10-21 troca-conta] adicionar conta (anterior segue guardada) = re-escopo, sem wipe.
+    let _addKept = false;
+    if (isAccountSwitch && _hasStoredSession(prevEmail)) {
+      _lockCacheScopeSync(500);
+      try { _addKept = await _rescopeForAccountSwitch(prevEmail, data.email || email); } catch { _addKept = false; }
+      if (_addKept && Platform.OS === 'web') { try { navigator.serviceWorker?.controller?.postMessage({ type: 'NUKE_CACHES' }); } catch {} }
+    }
+    const shouldNuke = !_addKept && (isAccountSwitch || !prevEmail);
     if (shouldNuke) {
       await clearAccountScopedMmkv();
       // P0 PRIVACY: wipe native SQLite chat store too. This is the path the
@@ -1746,6 +1834,7 @@ export function AuthProvider({ children }) {
     setCacheUser(data.email || email);
     // Builder 2: scope the durable store to the new identity before paint.
     _chatStoreSetActiveAccount(data.email || email);
+    if (_addKept) { try { require('../services/chatCache').unlockCacheScope?.(); } catch {} }
     setUser(data);
     if (data.is_child) {
       _childRestrictions = data.child_restrictions || {};
@@ -2186,6 +2275,14 @@ export function AuthProvider({ children }) {
         try { await AsyncStorage.removeItem('chatyy_offline_user'); } catch {}
         _lockCacheScopeSync(500);
         setCacheUser(null);
+        // [2026-10-21 troca-conta] Nível WhatsApp: trocar de conta NÃO apaga os
+        // dados da conta (lista, conversas, cursores, store nativo, Bia, e-mail)
+        // — tudo já é separado por conta; só o que não tem dono sai. Voltar para
+        // a conta pinta na hora e só faz delta. Falhou algo → wipe antigo abaixo.
+        const _swPrevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
+        let _swKept = false;
+        try { _swKept = await _rescopeForAccountSwitch(_swPrevEmail, verified.email); } catch { _swKept = false; }
+        if (!_swKept) {
         try { await clearAllCache(); } catch {}
         // [2026-07-03] clearChatCache was referenced bare here but is NOT in
         // switchAccount's scope (only login()/completeLoginAfterChallenge()
@@ -2214,10 +2311,10 @@ export function AuthProvider({ children }) {
         // here (setActiveAccountEmail runs after setUser below), so purge
         // the durable store facade for it before the new identity paints.
         try {
-          const _prevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
-          _chatStoreClearForSwitch(_prevEmail);
+          _chatStoreClearForSwitch(_swPrevEmail);
         } catch {}
         await clearLocalChatStoreFailClosed();
+        } // fim do wipe antigo (_swKept = false)
         // P0 PRIVACY: the api.js SWR memory cache (get_profile, contacts,
         // feed_list, chat_list…) is keyed by action+params with NO account
         // component, and is only cleared on logout — NOT on switch. Without
@@ -2229,6 +2326,9 @@ export function AuthProvider({ children }) {
         // Builder 2: scope the durable store to the switched-to identity
         // BEFORE setUser so frame-1 reads never serve the prior account.
         _chatStoreSetActiveAccount(verified.email);
+        // [2026-10-21 troca-conta] todas as camadas já apontam p/ a conta nova
+        // (mesmo tick) → solta a trava para a lista pintar do cache no frame 1.
+        if (_swKept) { try { require('../services/chatCache').unlockCacheScope?.(); } catch {} }
         setUser(verified);
         // [2026-10-08 offline-first] re-seed the offline user for the NEW
         // identity (the old one was removed above) so an offline relaunch
@@ -2285,8 +2385,11 @@ export function AuthProvider({ children }) {
         // -to account doesn't see the previous account's cached chat data.
         if (Platform.OS === 'web') {
           try { navigator.serviceWorker?.controller?.postMessage({ type: 'NUKE_CACHES' }); } catch {}
-          try { require('../services/localDb').webClearAll?.(); } catch {}
+          if (!_swKept) { try { require('../services/localDb').webClearAll?.(); } catch {} } // re-escopo já limpou só o sem dono
         }
+        // [2026-10-21 troca-conta] fila nativa: credencial da conta nova (a da
+        // anterior segue no ChatOutbox, que é por conta, e termina os envios dela).
+        if (_swKept) { try { require('../services/nativeOutbox').configureNativeOutbox?.(true); } catch {} }
         loadAccounts();
         prefetchAvatar(verified.email);
         prefetchProfile(verified.email);

@@ -776,6 +776,9 @@ export async function searchMessagesFTS(query, limit = 50, conversationId = null
       if (Array.isArray(rows) && rows.length) {
         return rows.map(r => (r && r._row ? { ...r, id: r.id ?? r._row.id, conversation_id: r.conversation_id ?? r._row.conversation_id, created_at: r.created_at ?? r._row.created_at, _row: undefined } : r)).filter(Boolean);
       }
+      // [2026-10-21 troca-conta] db.js já buscou SÓ na conta ativa; o SELECT cru
+      // abaixo não filtra conta (o histórico das outras contas fica no aparelho).
+      if (dbMod.dbGetActiveAccount?.()) return [];
     }
   } catch {}
   try {
@@ -1350,6 +1353,29 @@ export async function clearLocalDb() {
   } catch (e) {
     console.warn('[localDb] clearLocalDb:', e?.message);
   }
+}
+
+// [2026-10-21 troca-conta] Troca de conta (não é logout): apaga só as tabelas
+// SEM dono. conversations/messages (carimbadas por conta no db.js) e
+// sync_state_kv (portões chat_full_bootstrap:<email> etc.) ficam → voltar para
+// a conta não refaz o histórico. offline_queue sai: ações da conta anterior
+// nunca podem rodar com o bearer da nova. Logout segue com clearLocalDb().
+export async function clearUnscopedForSwitch() {
+  if (Platform.OS === 'web') return;
+  if (!db) return;
+  await db.execAsync(`
+    DELETE FROM contacts;
+    DELETE FROM emails;
+    DELETE FROM feed_posts;
+    DELETE FROM calendar_events;
+    DELETE FROM drive_files;
+    DELETE FROM documents;
+    DELETE FROM notes;
+    DELETE FROM notifications;
+    DELETE FROM meeting_rooms;
+    DELETE FROM user_profiles;
+    DELETE FROM offline_queue;
+  `);
 }
 
 // ---------------------------------------------------------------------------

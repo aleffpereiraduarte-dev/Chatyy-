@@ -1587,17 +1587,21 @@ export async function dbSearchMessages(query, limit = 50, conversationId = null,
   const q = String(query || '').trim();
   if (!q) return [];
   const ftsQ = opts && opts.prefix ? ftsPrefixQuery(q) : ftsEscape(q);
+  // [2026-10-21 troca-conta] busca só nas linhas da conta ativa (a troca de conta
+  // não apaga mais o histórico das outras contas do aparelho).
+  const _ac = _acctScoped() ? acctClause(_activeAccount, _legacyOwner, 'm.account_email') : { sql: '', params: [] };
+  const _acL = _acctScoped() ? _acctSql() : { sql: '', params: [] };
   try {
     const sql = conversationId
       ? `SELECT m.* FROM messages_fts
          JOIN messages m ON m.id = messages_fts.rowid
-         WHERE messages_fts MATCH ? AND m.conversation_id = ? AND m.deleted = 0
+         WHERE messages_fts MATCH ? AND m.conversation_id = ? AND m.deleted = 0${_ac.sql}
          ORDER BY m.id DESC LIMIT ?`
       : `SELECT m.* FROM messages_fts
          JOIN messages m ON m.id = messages_fts.rowid
-         WHERE messages_fts MATCH ? AND m.deleted = 0
+         WHERE messages_fts MATCH ? AND m.deleted = 0${_ac.sql}
          ORDER BY m.id DESC LIMIT ?`;
-    const args = conversationId ? [ftsQ, conversationId, limit] : [ftsQ, limit];
+    const args = conversationId ? [ftsQ, conversationId, ..._ac.params, limit] : [ftsQ, ..._ac.params, limit];
     const rows = await _db.getAllAsync(sql, args);
     const out = rows.map(r => {
       try { return r.raw_json ? { ...JSON.parse(r.raw_json), _row: r } : r; }
@@ -1607,9 +1611,9 @@ export async function dbSearchMessages(query, limit = 50, conversationId = null,
   } catch {
     const like = `%${q.replace(/[%_]/g, '\\$&')}%`;
     const sql = conversationId
-      ? `SELECT * FROM messages WHERE content LIKE ? ESCAPE '\\' AND conversation_id = ? AND deleted = 0 ORDER BY id DESC LIMIT ?`
-      : `SELECT * FROM messages WHERE content LIKE ? ESCAPE '\\' AND deleted = 0 ORDER BY id DESC LIMIT ?`;
-    const args = conversationId ? [like, conversationId, limit] : [like, limit];
+      ? `SELECT * FROM messages WHERE content LIKE ? ESCAPE '\\' AND conversation_id = ? AND deleted = 0${_acL.sql} ORDER BY id DESC LIMIT ?`
+      : `SELECT * FROM messages WHERE content LIKE ? ESCAPE '\\' AND deleted = 0${_acL.sql} ORDER BY id DESC LIMIT ?`;
+    const args = conversationId ? [like, conversationId, ..._acL.params, limit] : [like, ..._acL.params, limit];
     try {
       const rows = await _db.getAllAsync(sql, args);
       const out = rows.map(r => { try { return r.raw_json ? JSON.parse(r.raw_json) : r; } catch { return r; } });
@@ -1629,6 +1633,23 @@ export async function dbClearAll() {
   await _runTx('dbClearAll', async (db) => { await db.execAsync(`
     DELETE FROM messages;
     DELETE FROM conversations;
+    DELETE FROM contacts;
+    DELETE FROM emails;
+    DELETE FROM calendar_events;
+    DELETE FROM files;
+    DELETE FROM settings;
+    DELETE FROM sync_state;
+    DELETE FROM pending_messages;
+  `); });
+}
+
+// [2026-10-21 troca-conta] Troca de conta: apaga SÓ as tabelas sem dono
+// (contatos/e-mails/agenda/arquivos/ajustes/sync_state/pendentes legados).
+// messages/conversations ficam — são carimbadas por conta (account_email) e
+// toda leitura filtra pela conta ativa. Logout continua com dbClearAll().
+export async function dbClearUnscopedForSwitch() {
+  if (isWeb || !_db) return;
+  await _runTx('dbClearUnscopedForSwitch', async (db) => { await db.execAsync(`
     DELETE FROM contacts;
     DELETE FROM emails;
     DELETE FROM calendar_events;

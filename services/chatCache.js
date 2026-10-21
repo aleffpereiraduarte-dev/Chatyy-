@@ -726,6 +726,34 @@ export async function clearChatCache() {
   }
 }
 
+// [2026-10-21 troca-conta] Troca de conta SEM apagar a conta (nível WhatsApp).
+// clearChatCache() acima apaga TODO `chat_*` — inclusive os blobs JÁ separados
+// por conta (lista/mensagens de cada conta) → voltar para a conta A refazia o
+// sync inteiro. Aqui: grava o que está pendente (sob a chave da conta que sai),
+// zera a memória e apaga SÓ as chaves sem dono (legado sem conta / pendentes
+// antigas) — tudo que não estiver na lista abaixo sai (falha-fechado).
+const _SWITCH_KEEP = [
+  /^chat_msgs_a[0-9a-f]+_/,            // chatCache: mensagens por conta (hash)
+  /^chat_conversations_[^_].*@/,       // chatCache: lista por conta (e-mail)
+  /^chat_msgs_v2__[0-9a-f]+_/,         // smartChatCache: mensagens por conta
+  /^chat_(convs|index)_v2_[0-9a-f]+$/, // smartChatCache: lista/índice por conta
+  /^chat_device_registry:/,            // por e-mail
+  /^chat_capture_block_v1$/, /^chat_adv_default_v1$/, // mapas { email: … }
+  /^chat_adv_privacy_v1$/,             // flag da CONVERSA (igual p/ todos os membros)
+  /^chat_last_prune_at$/,
+];
+export function resetForAccountSwitch() {
+  try { flushCacheWrites(); } catch {}
+  _hotCache.clear();
+  try {
+    const keys = _kvGetAllKeys().filter(k => typeof k === 'string' && k.startsWith('chat_') && !_SWITCH_KEEP.some(re => re.test(k)));
+    keys.forEach(k => _kvRemove(k));
+  } catch {}
+  if (Platform.OS === 'web') {
+    try { if (typeof localStorage !== 'undefined') localStorage.removeItem('chatyy_convs_v1'); } catch {} // gêmeo legado sem conta
+  }
+}
+
 // --- Pending (unsent) message persistence ---
 
 // Rate-limit the deprecation warning so a noisy retry loop doesn't spam.

@@ -78,11 +78,9 @@ export function setCwpEnabled(on) {
   try { globalThis.__chatyy_cwp_ws = !!on; } catch {}
 }
 
-// Resume token persistence key. Per-account scoping isn't needed: the value
-// is just a high-water id from a single server-side sequence (ws_event_log)
-// and is also gated by the WS auth (server only replays events for the
-// authed email). On account switch the next auth_success starts emitting
-// new event_ids from wherever that user's tail is — drift, not corruption.
+// Resume token persistence key. [2026-10-21 troca-conta] Também gravado POR
+// CONTA (`<chave>:<email>` em MMKV, ver bindCursorAccount): o id é de uma
+// sequência global e o resume de B com o cursor de A pulava eventos de B.
 const WS_LAST_EVENT_ID_KEY = '@chatyy:ws:last_event_id';
 // Persist every N events (10 — matches spec). Cheap: AsyncStorage writes
 // are async and we don't await them.
@@ -487,6 +485,7 @@ class MailWebSocket {
     this._lastEventIdPersistedAt = 0;
     this._eventIdSinceFlush = 0;
     this._resumeInFlight = false;
+    this._cursorAccount = ''; // [2026-10-21 troca-conta] conta dona de _lastEventId (bindCursorAccount)
     this._loadLastEventId(); // Fire-and-forget — populates this._lastEventId
 
     // ─── Auth-reject storm guard (P0 2026-05-25) ───
@@ -2523,6 +2522,8 @@ class MailWebSocket {
         this._orphanHealTried = false;
         this.userId = msg.user_id || msg.account_id;
         this.email = msg.email;
+        // [2026-10-21 troca-conta] cursor de resume DESTA conta antes do resume (_onAuthenticated).
+        try { this.bindCursorAccount(msg.email); } catch {}
         // [2026-10-07 native-send] Capabilities anunciadas pelo hub p/ ESTA conta
         // (ex.: 'native_send' = chat_send de texto direto no hub Go). Recalculado
         // a cada auth — hub antigo / conta fora do canário → [] → HTTP de sempre.
@@ -3796,6 +3797,7 @@ class MailWebSocket {
     try {
       const raw = await AsyncStorage.getItem(WS_LAST_EVENT_ID_KEY);
       if (!raw) return;
+      if (this._cursorAccount) return; // [2026-10-21 troca-conta] cursor por conta já carregado
       const n = parseInt(raw, 10);
       if (Number.isFinite(n) && n > this._lastEventId) {
         this._lastEventId = n;
@@ -3812,8 +3814,32 @@ class MailWebSocket {
     try {
       const v = String(this._lastEventId || 0);
       AsyncStorage.setItem(WS_LAST_EVENT_ID_KEY, v).catch(() => {});
+      if (this._cursorAccount) { try { require('./mmkv').setString(WS_LAST_EVENT_ID_KEY + ':' + this._cursorAccount, v); } catch {} }
       this._lastEventIdPersistedAt = Date.now();
     } catch {}
+  }
+
+  // [2026-10-21 troca-conta] Cursor de resume POR CONTA. ws_event_log.id é um
+  // serial GLOBAL filtrado por e-mail: com 1 cursor só, A→B mandava o cursor de A
+  // no resume de B (maior → cursor_ahead/full_sync; menor → pulava eventos de B
+  // entre os dois ids). Agora: grava o da conta que sai e carrega o da que entra
+  // (MMKV síncrono; 0 = sem cursor → servidor manda o high-water). 1º bind do
+  // processo sem cursor salvo = mantém o valor legado global (era desta conta).
+  bindCursorAccount(email) {
+    const e = String(email || '').trim().toLowerCase();
+    if (!e || e === this._cursorAccount) return;
+    const prev = this._cursorAccount || '';
+    let mm = null;
+    try { mm = require('./mmkv'); } catch {}
+    if (prev && mm) { try { mm.setString(WS_LAST_EVENT_ID_KEY + ':' + prev, String(this._lastEventId || 0)); } catch {} }
+    this._cursorAccount = e;
+    let n = 0;
+    try { n = parseInt((mm && mm.getString(WS_LAST_EVENT_ID_KEY + ':' + e)) || '0', 10) || 0; } catch { n = 0; }
+    if (n > 0 || prev) {
+      this._lastEventId = n > 0 ? n : 0;
+      this._resumeInFlight = false;
+    }
+    if (mm && this._lastEventId > 0) { try { mm.setString(WS_LAST_EVENT_ID_KEY + ':' + e, String(this._lastEventId)); } catch {} }
   }
 
   /**
