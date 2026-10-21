@@ -246,8 +246,10 @@ export function StickerDropSheet({ visible, files = [], onClose, onSendSticker, 
     setBusy(mode); setNote('');
     let ok = 0; let fail = 0; const urls = [];
     for (const f of files) {
+      // [2026-10-21] exceção de rede deixava o botão girando para sempre (busy preso).
+      let r = null;
       // eslint-disable-next-line no-await-in-loop
-      const r = await api.stickerUpload(f.blob || f, { packId: mode === 'send' ? 'none' : null });
+      try { r = await api.stickerUpload(f.blob || f, { packId: mode === 'send' ? 'none' : null }); } catch { r = null; }
       const s = r?.data?.sticker || null;
       if (r?.success && s) { ok++; urls.push(s.abs_url || stickerAbsUrl(s.url)); } else fail++;
     }

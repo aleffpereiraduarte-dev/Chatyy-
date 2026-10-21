@@ -193,7 +193,8 @@ export default function StickerMyPacksScreen() {
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('common.delete'), style: 'destructive', onPress: async () => {
         setPacks((prev) => prev.filter((p) => p.id !== pack.id));
-        const r = await api.chatStickerPackDelete(pack.id);
+        let r = null;
+        try { r = await api.chatStickerPackDelete(pack.id); } catch { r = { success: false }; }
         if (r?.success === false) { Alert.alert(t('common.error'), t('stickers.actionFailed')); refresh(); }
       } },
     ]);

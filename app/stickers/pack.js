@@ -92,15 +92,18 @@ export default function StickerPackScreen() {
   const stickerMenu = useCallback((s, index) => {
     if (!isOwner) { setSheet({ url: s.url }); return; }
     Alert.alert(t('chat.sticker'), '', [
-      { text: t('stickers.useAsCover'), onPress: async () => { await api.stickerPackUpdate(pack.id, { coverStickerId: s.id }); load(); } },
+      // [2026-10-21] apiCall lança offline: sem try a ação falhava calada (rejeição sem catch) e a lista ficava errada.
+      { text: t('stickers.useAsCover'), onPress: async () => { try { const r = await api.stickerPackUpdate(pack.id, { coverStickerId: s.id }); if (r?.success === false) throw new Error('x'); } catch { Alert.alert(t('common.error'), t('stickers.actionFailed')); } load(); } },
       ...(index > 0 ? [{ text: t('stickers.moveToStart'), onPress: async () => {
         const ids = [s.id, ...stickers.filter(x => x.id !== s.id).map(x => x.id)];
         setStickers((prev) => [s, ...prev.filter(x => x.id !== s.id)]);
-        await api.stickerPackReorderStickers(pack.id, ids);
+        try { const r = await api.stickerPackReorderStickers(pack.id, ids); if (r?.success === false) throw new Error('x'); }
+        catch { Alert.alert(t('common.error'), t('stickers.actionFailed')); load(); }
       } }] : []),
       { text: t('stickers.removeFromPack'), style: 'destructive', onPress: async () => {
         setStickers((prev) => prev.filter(x => x.id !== s.id));
-        await api.stickerPackRemoveItem(pack.id, s.id);
+        try { const r = await api.stickerPackRemoveItem(pack.id, s.id); if (r?.success === false) throw new Error('x'); }
+        catch { Alert.alert(t('common.error'), t('stickers.actionFailed')); }
         load();
       } },
       { text: t('common.cancel'), style: 'cancel' },
@@ -155,7 +158,8 @@ export default function StickerPackScreen() {
     Alert.alert(t('stickers.deletePackTitle'), pack.name, [
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('common.delete'), style: 'destructive', onPress: async () => {
-        const r = await api.chatStickerPackDelete(pack.id);
+        let r = null;
+        try { r = await api.chatStickerPackDelete(pack.id); } catch { r = { success: false }; }
         if (r?.success === false) { Alert.alert(t('common.error'), t('stickers.actionFailed')); return; }
         router.back();
       } },
@@ -166,9 +170,11 @@ export default function StickerPackScreen() {
     const n = newName.trim();
     if (!n || !pack) return;
     setRenaming(false);
-    const r = await api.stickerPackUpdate(pack.id, { name: n });
+    let r = null;
+    try { r = await api.stickerPackUpdate(pack.id, { name: n }); } catch { r = { success: false }; }
     if (r?.success !== false) setPack(_d(r).pack || { ...pack, name: n });
-  }, [newName, pack]);
+    else Alert.alert(t('common.error'), t('stickers.actionFailed'));
+  }, [newName, pack, t]);
 
   const displayName = pack ? (pack.name === 'My Stickers' && isOwner ? t('stickers.myStickers') : pack.name) : '';
 

@@ -93,7 +93,9 @@ export default function StickerImportScreen() {
       let packId = null;
       if (dest === 'new') {
         const nm = newName.trim() || t('stickers.importedPackName');
-        const c = await api.stickerPackCreate({ name: nm });
+        // [2026-10-21] apiCall lança offline → `running` ficava preso (botão girando para sempre).
+        let c = null;
+        try { c = await api.stickerPackCreate({ name: nm }); } catch { c = null; }
         packId = _d(c).id || null;
         if (!packId) { fail += images.length; done += images.length; out.push({ kind: 'images', ok: false, reason: 'create_failed' }); }
       } else if (dest !== 'mine') packId = dest;
