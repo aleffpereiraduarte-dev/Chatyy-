@@ -601,12 +601,15 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
               disabled={saving}
               style={{
                 width: 64, height: 64, borderRadius: 32,
-                backgroundColor: '#0A84FF',
+                // [2026-10-21 grafite] botão claro como no criador de figurinhas (azul iOS destoava do tema).
+                backgroundColor: '#FFFFFF',
                 alignItems: 'center', justifyContent: 'center',
-                ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(10,132,255,0.4)' } : {}),
+                ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(0,0,0,0.35)' } : {}),
               }}
+              accessibilityRole="button"
+              accessibilityLabel={t?.('common.save', 'Salvar') || 'Salvar'}
             >
-              {saving ? <ActivityIndicator color="#fff" /> : <IconCheck size={26} color="#fff" />}
+              {saving ? <ActivityIndicator color="#18181B" /> : <IconCheck size={26} color="#18181B" />}
             </TouchableOpacity>
           </View>
 
