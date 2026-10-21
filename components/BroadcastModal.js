@@ -47,20 +47,28 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
   };
 
   const handleSave = async () => {
-    if (selected.length === 0) return;
+    if (selected.length === 0 || saving) return;
     setSaving(true);
+    // [grupos 2026-10-21] nome padrão sem acento ("Transmissao") e falha calada
+    // (a folha ficava parada sem dizer nada). Agora: nome traduzido + alerta.
+    const listName = name.trim() || (t?.('chat.broadcastList') || 'Lista de transmissão');
+    const fail = (msg) => { try { require('../services/alerts').safeAlert(t?.('common.error') || 'Erro', msg); } catch {} };
     try {
       let r;
       if (editBroadcast) {
-        r = await api.chatBroadcastUpdate(editBroadcast.id, name || 'Transmissao', selected);
+        r = await api.chatBroadcastUpdate(editBroadcast.id, listName, selected);
       } else {
-        r = await api.chatBroadcastCreate(name || 'Transmissao', selected);
+        r = await api.chatBroadcastCreate(listName, selected);
       }
-      if (r.success) {
+      if (r?.success) {
         onCreated?.();
         onClose();
+      } else {
+        fail(t?.('common.genericError') || 'Não foi possível completar a ação. Tente de novo em instantes.');
       }
-    } catch {}
+    } catch {
+      fail(t?.('common.networkError') || 'Erro de rede. Verifique sua conexão.');
+    }
     setSaving(false);
   };
 
@@ -84,8 +92,8 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
           {/* Header */}
           <ModalHeader
             title={editBroadcast
-              ? (t?.('chat.editBroadcast') || 'Editar transmissao')
-              : (t?.('chat.newBroadcast') || 'New broadcast list')}
+              ? (t?.('chat.editBroadcast') || 'Editar lista de transmissão')
+              : (t?.('chat.newBroadcast') || 'Nova lista de transmissão')}
             onClose={onClose}
             rightActionLabel={t?.('common.save') || 'Salvar'}
             onRightAction={handleSave}
@@ -97,7 +105,7 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
             <TextInput
               value={name}
               onChangeText={setName}
-              placeholder={t?.('chat.broadcastName') || 'List name'}
+              placeholder={t?.('chat.broadcastName') || 'Nome da lista'}
               placeholderTextColor={colors.textTertiary}
               style={{
                 backgroundColor: colors.background, borderRadius: 10, paddingHorizontal: 16,
@@ -108,8 +116,8 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
 
           {/* Selected count */}
           {selected.length > 0 && (
-            <Text style={{ paddingHorizontal: 16, paddingBottom: 8, color: colors.primary, fontSize: 13, fontWeight: '600' }}>
-              {selected.length} {t?.('chat.broadcastMembers') || 'members'}
+            <Text style={{ paddingHorizontal: 16, paddingBottom: 8, color: colors.textSecondary, fontSize: 13, fontWeight: '600' }}>
+              {selected.length} {t?.('chat.broadcastMembers') || 'membros'}
             </Text>
           )}
 
@@ -118,7 +126,7 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
             <TextInput
               value={search}
               onChangeText={setSearch}
-              placeholder={t?.('chat.searchContacts') || 'Search contacts...'}
+              placeholder={t?.('chat.searchContacts') || 'Buscar contatos…'}
               placeholderTextColor={colors.textTertiary}
               style={{
                 backgroundColor: colors.background, borderRadius: 20, paddingHorizontal: 16,

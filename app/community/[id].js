@@ -22,6 +22,7 @@ import { peekCached, putCached } from '../../hooks/useCachedAction'; // [2026-10
 // web / kill switch (__chatyy_native_communities = false) / erro → ScrollView JS.
 import NativeCommunityDetail from '../../components/communities/NativeCommunityDetail';
 import { nativeCommunitiesEnabled, markNativeCommunitiesFailed } from '../../components/communities/communityRows';
+import { communityErrorText, communityNetErrorText } from '../../components/communities/communityErrors'; // [grupos 2026-10-21] erro do servidor em inglês → traduzido
 
 const TABS = [
   { key: 'announcements', labelKey: 'community.tabAnnouncements', fallback: 'Anúncios' },
@@ -100,10 +101,10 @@ export default function CommunityScreen() {
         setGroups(r.data.groups || []);
         putCached(['community', id], { community: r.data.community, groups: r.data.groups || [] });
       } else if (!silent) {
-        Alert.alert(t('common.error') || 'Erro', r.message || r.error || (t('community.notFound') || 'Comunidade não encontrada'));
+        Alert.alert(t('common.error') || 'Erro', communityErrorText(t, r, 'community.notFound', 'Comunidade não encontrada'));
       }
     } catch (e) {
-      if (!silent) Alert.alert(t('common.error') || 'Erro', String(e?.message || e));
+      if (!silent) Alert.alert(t('common.error') || 'Erro', communityNetErrorText(t));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -138,9 +139,9 @@ export default function CommunityScreen() {
           Alert.alert(community?.name || 'Bem-vindo', r.data.welcome_message);
         }
       } else {
-        Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha ao entrar');
+        Alert.alert(t('common.error') || 'Erro', communityErrorText(t, r, 'community.joinFailed', 'Não foi possível entrar na comunidade'));
       }
-    } catch (e) { Alert.alert(t('common.error') || 'Erro', String(e?.message || e)); }
+    } catch (e) { Alert.alert(t('common.error') || 'Erro', communityNetErrorText(t)); }
   };
 
   const onLeave = () => {
@@ -152,9 +153,11 @@ export default function CommunityScreen() {
         {
           text: t('community.leave') || 'Sair', style: 'destructive',
           onPress: async () => {
-            const r = await api.communityLeave(community?.id);
-            if (r.success) router.back();
-            else Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
+            try {
+              const r = await api.communityLeave(community?.id);
+              if (r?.success) router.back();
+              else Alert.alert(t('common.error') || 'Erro', communityErrorText(t, r));
+            } catch { Alert.alert(t('common.error') || 'Erro', communityNetErrorText(t)); } // [grupos 2026-10-21] rede caída = rejeição sem aviso
           },
         },
       ]
@@ -171,9 +174,10 @@ export default function CommunityScreen() {
         setAnnounceText('');
         Alert.alert(t('common.success') || 'Sucesso', t('community.announceSent') || 'Anúncio enviado');
       } else {
-        Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
+        Alert.alert(t('common.error') || 'Erro', communityErrorText(t, r, 'community.announceFailed', 'Não foi possível enviar o aviso'));
       }
-    } finally { setPosting(false); }
+    } catch { Alert.alert(t('common.error') || 'Erro', communityNetErrorText(t)); } // texto fica no campo
+    finally { setPosting(false); }
   };
 
   const onAddGroup = async () => {
@@ -221,9 +225,11 @@ export default function CommunityScreen() {
       name = (t('community.newGroupDefault') || 'Novo grupo');
     }
     if (!name || !name.trim()) return;
-    const r = await api.communityAddGroup(community.id, { name: name.trim(), kind: 'topic' });
-    if (r.success) load(true);
-    else Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
+    try {
+      const r = await api.communityAddGroup(community.id, { name: name.trim(), kind: 'topic' });
+      if (r?.success) load(true);
+      else Alert.alert(t('common.error') || 'Erro', communityErrorText(t, r, 'community.addGroupFailed', 'Não foi possível adicionar o grupo'));
+    } catch { Alert.alert(t('common.error') || 'Erro', communityNetErrorText(t)); }
   };
 
   // Cheap inline markdown for the announcement preview. Supports bold,
@@ -277,9 +283,11 @@ export default function CommunityScreen() {
     // [2026-10-16 polish-r2] Folha P&B (era Alert com até 5 botões: o Android
     // só mostra 3 e "Remover" sumia). Mesmas ações.
     const run = (fn) => async () => {
-      const r = await fn();
-      if (r.success) loadMembers();
-      else Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
+      try {
+        const r = await fn();
+        if (r?.success) loadMembers();
+        else Alert.alert(t('common.error') || 'Erro', communityErrorText(t, r));
+      } catch { Alert.alert(t('common.error') || 'Erro', communityNetErrorText(t)); }
     };
     const roleIcon = { admin: IconShield, mod: IconAward, member: IconUser };
     setRoleMenu({

@@ -308,6 +308,11 @@ export default function SearchScreen() {
     return m;
   }, [convIndex]);
 
+  // [grupos 2026-10-21] Busca de pessoas sem resultado → convite com o link pessoal.
+  const inviteToChatyy = useCallback(() => {
+    try { require('../services/inviteContact').shareInvite(t, '').catch(() => {}); } catch {}
+  }, [t]);
+
   // Renderers per tab.
   const renderPeople = () => (
     <FlashList
@@ -338,6 +343,15 @@ export default function SearchScreen() {
         <View style={{ alignItems: 'center', paddingTop: 40 }}>{/* [2026-10-16 mascote] procurando com a lupa */}
           <ChatyyMascot pose="search" size={124} dark={!!isDark} />
           <Text style={[styles.emptyText, { color: colors.textSecondary, paddingTop: 6 }]}>{t('feed.noResults') || 'Sem resultados'}</Text>
+          {/* [grupos 2026-10-21] ninguém encontrado → convidar para o Chatyy */}
+          <TouchableOpacity
+            onPress={inviteToChatyy}
+            style={{ marginTop: 16, paddingHorizontal: 20, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary }}
+            accessibilityRole="button"
+            accessibilityLabel={t('search.inviteToChatyy', 'Convidar para o Chatyy')}
+          >
+            <Text style={{ color: colors.onPrimary, fontSize: 15, fontWeight: '600' }}>{t('search.inviteToChatyy', 'Convidar para o Chatyy')}</Text>
+          </TouchableOpacity>
         </View>
       ) : (!loading ? (
         // [2026-10-14 vis3] estado vazio inicial — antes a tela ficava em branco.
@@ -601,7 +615,14 @@ export default function SearchScreen() {
         rows.push({ id, k: 'r', t: name, sb: u.username ? `@${u.username}` : u.email /* [2026-10-21 tg4] */, tiles: contactTile(u.email, name), hl: 1 });
         meta.set(id, () => router.push(`/u/${encodeURIComponent(u.email)}`));
       }
-      if (!rows.length && !loading) note(typed ? tt('feed.noResults', 'Sem resultados') : tt('search.peopleHint', 'Busque pessoas pelo nome ou @usuário'));
+      if (!rows.length && !loading) {
+        note(typed ? tt('feed.noResults', 'Sem resultados') : tt('search.peopleHint', 'Busque pessoas pelo nome ou @usuário'));
+        // [grupos 2026-10-21] ninguém com esse nome/número → convidar (WhatsApp/Telegram).
+        if (typed) {
+          rows.push({ id: 'a:invite', k: 'r', t: tt('search.inviteToChatyy', 'Convidar para o Chatyy'), sb: tt('search.inviteToChatyyDesc', 'Mande o link para quem ainda não usa o Chatyy'), sl: 2, gl: 'userPlus', gs: 'r' });
+          meta.set('a:invite', inviteToChatyy);
+        }
+      }
     } else if (tab === 'hashtags') {
       const list = typed ? results.hashtags : trendingTags;
       if (!typed && list.length) rows.push({ id: 's:trending', k: 's', t: tt('search.trending', 'Em alta') });
@@ -650,7 +671,7 @@ export default function SearchScreen() {
     nativeMeta.current = meta;
     return rows;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nativeOn, tab, query, results, trendingTags, trendingSounds, loading, t, chatSections]);
+  }, [nativeOn, tab, query, results, trendingTags, trendingSounds, loading, t, chatSections, inviteToChatyy]);
   const onNativePress = useCallback((id) => { const fn = nativeMeta.current.get(id); if (fn) fn(); }, []);
   // Seção com "Ver todas" (Mensagens locais → aba Mensagens).
   const onNativeAction = useCallback((id, action) => { if (action === 'section') { const fn = nativeMeta.current.get(id); if (fn) fn(); } }, []);

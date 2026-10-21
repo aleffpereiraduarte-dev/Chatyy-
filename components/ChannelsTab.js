@@ -419,8 +419,10 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
     } catch {
       setChannels(prev => prev.map(c => (c.id === ch.id ? { ...c, is_member: wasMember } : c)));
       haptic.error();
+      // [grupos 2026-10-21] o botão só "voltava" sem dizer nada → aviso.
+      try { require('./ui/Toast').showToast({ message: wasMember ? (t('channel.unfollowFailed', 'Não foi possível deixar de seguir o canal')) : (t('chat.channelJoinFailed', 'Não foi possível seguir o canal')), kind: 'error' }); } catch {}
     }
-  }, []);
+  }, [t]);
 
   // Server already filters/sorts per top-level filter; 'subscribed' asks for
   // include_following, so keep only the ones I follow. Channels followed from
@@ -724,7 +726,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
         setNewPost('');
         loadPosts();
       } else {
-        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('channel.postFailed') || 'Não foi possível publicar'));
+        Alert.alert(t('common.error') || 'Erro', t('channel.postFailed') || 'Não foi possível publicar'); // [grupos 2026-10-21] apiMsg vinha em inglês
       }
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('channel.postFailed') || 'Não foi possível publicar');
@@ -766,7 +768,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
         setNewPost('');
         loadPosts();
       } else {
-        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('channel.postFailed') || 'Não foi possível publicar'));
+        Alert.alert(t('common.error') || 'Erro', t('channel.postFailed') || 'Não foi possível publicar'); // [grupos 2026-10-21] apiMsg vinha em inglês
       }
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('channel.uploadFailed') || 'Não foi possível enviar a mídia');
@@ -1048,7 +1050,7 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
         setCategory('general');
         onClose();
       } else {
-        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('channel.postFailed') || 'Não foi possível criar o canal'));
+        Alert.alert(t('common.error') || 'Erro', t('channel.createFailed', 'Não foi possível criar o canal')); // [grupos 2026-10-21] apiMsg em inglês; postFailed dizia 'publicar'
       }
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('common.tryAgain') || 'Tentar novamente');

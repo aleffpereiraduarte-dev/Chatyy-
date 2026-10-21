@@ -240,7 +240,9 @@ export default function GroupNewDetailsScreen() {
         return;
       }
       haptic.error();
-      safeAlert(T('common.error', 'Erro'), r?.message || T(isChannel ? 'common.genericError' : 'chat.createGroupError', 'Não foi possível criar.'));
+      // [grupos 2026-10-21] erro do servidor em inglês → texto traduzido (PT passa).
+      const _m = String(r?.message || '');
+      safeAlert(T('common.error', 'Erro'), /[À-ÿ]/.test(_m) ? _m : T(isChannel ? 'common.genericError' : 'chat.createGroupError', 'Não foi possível criar.'));
     } catch {
       haptic.error();
       safeAlert(T('common.error', 'Erro'), T('common.networkError', 'Erro de rede'));

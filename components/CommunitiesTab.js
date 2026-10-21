@@ -21,6 +21,7 @@ import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14
 // binário antigo / web / kill switch / erro → FlatList JS abaixo, idêntico.
 import NativeCommunityList from './communities/NativeCommunityList';
 import { nativeCommunitiesEnabled, markNativeCommunitiesFailed } from './communities/communityRows';
+import { communityErrorText } from './communities/communityErrors'; // [grupos 2026-10-21] erro do servidor em inglês → traduzido
 
 import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const ACCENT = '#111111';
@@ -150,7 +151,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         setCreateDesc('');
         loadCommunities();
       } else {
-        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('community.createFailed') || 'Não foi possível criar a comunidade'));
+        Alert.alert(t('common.error') || 'Erro', communityErrorText(t, res, 'community.createFailed', 'Não foi possível criar a comunidade'));
       }
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('community.createFailed') || 'Não foi possível criar a comunidade');
@@ -172,7 +173,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         setAnnounceCommunity(null);
         setAnnounceText('');
       } else {
-        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('common.failed') || 'Falhou'));
+        Alert.alert(t('common.error') || 'Erro', communityErrorText(t, res));
       }
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('community.announceFailed') || 'Não foi possível enviar o aviso');
@@ -191,7 +192,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         if (expandedId === communityId) fetchInfo(communityId);
         loadCommunities();
       } else {
-        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('common.failed') || 'Falhou'));
+        Alert.alert(t('common.error') || 'Erro', communityErrorText(t, res));
       }
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('community.addGroupFailed') || 'Não foi possível adicionar o grupo');
@@ -205,7 +206,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         if (expandedId === communityId) fetchInfo(communityId);
         loadCommunities();
       } else {
-        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('common.failed') || 'Falhou'));
+        Alert.alert(t('common.error') || 'Erro', communityErrorText(t, res));
       }
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('common.tryAgain') || 'Tentar novamente');

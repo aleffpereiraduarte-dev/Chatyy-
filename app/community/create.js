@@ -14,6 +14,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { BorderRadius, Spacing } from '../../constants/theme';
 import * as api from '../../services/api';
 import { IconArrowLeft, IconCheck } from '../../components/Icons';
+import { communityErrorText, communityNetErrorText } from '../../components/communities/communityErrors'; // [grupos 2026-10-21]
 
 const STEPS = ['name', 'handle', 'description', 'photo', 'rules'];
 
@@ -66,7 +67,7 @@ export default function CommunityCreateScreen() {
         Alert.alert(t('common.error') || 'Erro', t('channel.uploadFailed') || 'Não foi possível enviar a mídia');
       }
     } catch (e) {
-      Alert.alert(t('common.error') || 'Erro', String(e?.message || e));
+      Alert.alert(t('common.error') || 'Erro', communityNetErrorText(t));
     }
   };
 
@@ -86,10 +87,10 @@ export default function CommunityCreateScreen() {
       if (r.success && r.data?.community_id) {
         router.replace(`/community/${r.data.community_id}`);
       } else {
-        Alert.alert(t('common.error') || 'Erro', api.apiMsg(r) || t('community.createFailed'));
+        Alert.alert(t('common.error') || 'Erro', communityErrorText(t, r, 'community.createFailed', 'Não foi possível criar a comunidade'));
       }
     } catch (e) {
-      Alert.alert(t('common.error') || 'Erro', String(e?.message || e));
+      Alert.alert(t('common.error') || 'Erro', communityNetErrorText(t));
     } finally {
       setSubmitting(false);
     }

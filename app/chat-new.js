@@ -491,6 +491,15 @@ export default function ChatNewScreen() {
     } else { Alert.alert(title, message, buttons); }
   };
 
+  // [grupos 2026-10-21] O servidor responde erros em inglês ("Cannot start chat
+  // with this user", "Failed to create conversation (PG)"…) e o alerta mostrava
+  // isso cru. Mensagem já em português (limite do grupo, privacidade) passa.
+  const _srvMsg = (r, fb) => {
+    const m = String(r?.message || '');
+    if (/cannot start chat with this user/i.test(m)) return t('chat.cannotStartChat', 'Não é possível iniciar uma conversa com esta pessoa.');
+    return /[À-ÿ]/.test(m) ? m : fb;
+  };
+
   // [2026-10-15 native-group-create] Fluxo nativo de grupo (fixo por montagem;
   // falha nativa → volta ao JS na hora). ?mode=group abre direto na seleção.
   const [_ngcOn, _setNgcOn] = useState(() => !pickMode && nativeGroupCreateEnabled());
@@ -927,10 +936,10 @@ export default function ChatNewScreen() {
           params: { id: String(cid), name: channel.name || '', type: channel.type || 'channel' },
         }, { replace: true });
       } else {
-        safeAlert(t('common.error') || 'Erro', r?.message || t('uiG.chatNew.joinChannelFailed'));
+        safeAlert(t('common.error') || 'Erro', t('uiG.chatNew.joinChannelFailed')); // [grupos 2026-10-21] r.message vinha em inglês
       }
     } catch (e) {
-      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+      safeAlert(t('common.error') || 'Erro', t('common.networkError', 'Erro de rede. Verifique sua conexão.')); // era "offline"/"Network request failed" cru
     } finally {
       setJoiningChannelId(null);
     }
@@ -1372,7 +1381,7 @@ export default function ChatNewScreen() {
           if (rs?.success && sid) require('../services/openConversation').openConversation({ pathname: '/chat-conversation', params: { id: String(sid), name: t('chat.savedMessages') || 'Saved Messages' } }, { replace: true });
         } catch {}
       } else {
-        safeAlert(t('common.error'), r?.message || t('chat.createError'));
+        safeAlert(t('common.error'), _srvMsg(r, t('chat.createError')));
       }
     } catch {
       safeAlert(t('common.error'), t('common.networkError'));
@@ -1400,7 +1409,7 @@ export default function ChatNewScreen() {
         try { require('../components/mascot/ConfettiHost').celebrate({ y: 0.42 }); } catch {} // [2026-10-16 mascote]
         require('../services/openConversation').openConversation(`/chat-conversation?id=${convId}&name=${encodeURIComponent(r.data?.name || finalName)}&type=group`, { replace: true });
       } else {
-        safeAlert(t('common.error'), r?.message || t('chat.createGroupError'));
+        safeAlert(t('common.error'), _srvMsg(r, t('chat.createGroupError')));
       }
     } catch {
       safeAlert(t('common.error'), t('common.networkError'));
@@ -1416,7 +1425,7 @@ export default function ChatNewScreen() {
       if (r.success && convId) {
         require('../services/openConversation').openConversation(`/chat-conversation?id=${convId}&name=${encodeURIComponent(groupName.trim())}&type=channel`, { replace: true });
       } else {
-        safeAlert(t('common.error'), r?.message || t('common.genericError'));
+        safeAlert(t('common.error'), _srvMsg(r, t('common.genericError')));
       }
     } catch {
       safeAlert(t('common.error'), t('common.networkError'));
@@ -1469,7 +1478,7 @@ export default function ChatNewScreen() {
       if (r.success) {
         safeAlert('', t('chat.inviteSentTo', { email }));
       } else {
-        safeAlert(t('common.error'), r.message || t('common.genericError'));
+        safeAlert(t('common.error'), _srvMsg(r, t('common.genericError')));
       }
     } catch {
       safeAlert(t('common.error'), t('common.networkError'));
@@ -2447,14 +2456,17 @@ export default function ChatNewScreen() {
                   const sendIt = (text) => {
                     const v = (text || '').trim();
                     if (!v) return;
+                    // [grupos 2026-10-21] título tinha "{count}" cru (chave com
+                    // parâmetro chamada sem ele) e falha/rede caída era calada.
                     api.chatBroadcastSend(bl.id, v).then(r => {
                       if (r?.success) {
-                        safeAlert(
-                          t('chat.broadcastSent') || 'Enviado',
-                          `${r.data?.sent ?? count} / ${r.data?.total ?? count}`
-                        );
+                        const sent = Number(r.data?.sent ?? count) || 0;
+                        const total = Number(r.data?.total ?? count) || 0;
+                        safeAlert(t('chat.broadcastSent', { count: sent }), sent < total ? `${sent} / ${total}` : '');
+                      } else {
+                        safeAlert(t('common.error', 'Erro'), t('common.genericError', 'Não foi possível completar a ação. Tente de novo em instantes.'));
                       }
-                    }).catch(() => {});
+                    }).catch(() => { safeAlert(t('common.error', 'Erro'), t('common.networkError', 'Erro de rede. Verifique sua conexão.')); });
                   };
                   if (Platform.OS === 'ios' && Alert.prompt) {
                     Alert.prompt(promptTitle, t('chat.broadcastSend') || 'Mensagem para a lista', sendIt);
@@ -2472,7 +2484,10 @@ export default function ChatNewScreen() {
                   // Long-press → quick delete (Telegram parity).
                   if (!api.chatBroadcastDelete) return;
                   const confirmDelete = () => {
-                    api.chatBroadcastDelete(bl.id).then(() => loadBroadcastLists()).catch(() => {});
+                    api.chatBroadcastDelete(bl.id).then((r) => {
+                      loadBroadcastLists();
+                      if (r && r.success === false) safeAlert(t('common.error', 'Erro'), t('common.genericError', 'Não foi possível completar a ação. Tente de novo em instantes.'));
+                    }).catch(() => { safeAlert(t('common.error', 'Erro'), t('common.networkError', 'Erro de rede. Verifique sua conexão.')); }); // [grupos 2026-10-21] falha não é mais calada
                   };
                   if (Platform.OS === 'web') {
                     if (window.confirm(`${t('common.delete') || 'Excluir'}?`)) confirmDelete();
@@ -3007,7 +3022,7 @@ export default function ChatNewScreen() {
             {creating ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} /> : (
               <>
                 <IconUsers size={18} color={colors.onPrimary || '#fff'} />
-                <Text style={sty.createBtnText}>{selectedMembers.length === 1 ? t('chat.createGroupOne') : t('chat.createGroup', { count: selectedMembers.length }) /* [2026-10-10 qa-sweep] "1 membros" */}</Text>
+                <Text style={[sty.createBtnText, { color: colors.onPrimary || '#fff' } /* [grupos 2026-10-21] branco fixo sumia no botão claro do Grafite escuro */]}>{selectedMembers.length === 1 ? t('chat.createGroupOne') : t('chat.createGroup', { count: selectedMembers.length }) /* [2026-10-10 qa-sweep] "1 membros" */}</Text>
               </>
             )}
           </PressableScale>
@@ -3025,7 +3040,7 @@ export default function ChatNewScreen() {
             {creating ? <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} /> : (
               <>
                 <Text style={{ fontSize: 16, marginRight: 6, fontWeight: '700', color: colors.onPrimary || '#fff' /* [2026-10-11] was default (black) on the black CTA → invisible */ }}>{'#'}</Text>
-                <Text style={sty.createBtnText}>{t('chat.createChannel')}</Text>
+                <Text style={[sty.createBtnText, { color: colors.onPrimary || '#fff' } /* [grupos 2026-10-21] branco fixo sumia no botão claro do Grafite escuro */]}>{t('chat.createChannel')}</Text>
               </>
             )}
           </PressableScale>
@@ -3042,7 +3057,7 @@ export default function ChatNewScreen() {
         {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
         <SheetKeyboardAvoider style={{ flex: 1 }}>
         <View style={sty.modalOverlay}>
-          <View style={[sty.qrModal, { backgroundColor: isDark ? '#1c1c1e' : colors.surface }]}>
+          <View style={[sty.qrModal, { backgroundColor: colors.surface }]}>
             <View style={[sty.qrModalHeader, { borderBottomColor: colors.border }]}>
               <Text style={[sty.qrModalTitle, { color: colors.text }]}>{t('chat.qrCode')}</Text>
               <TouchableOpacity onPress={() => setShowQrModal(false)} style={{ padding: 8 }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
@@ -3075,18 +3090,18 @@ export default function ChatNewScreen() {
 
                 <View style={{ flexDirection: 'row', gap: 12, marginTop: 20 }}>
                   <TouchableOpacity
-                    style={[sty.qrActionBtn, { backgroundColor: '#111111' }]}
+                    style={[sty.qrActionBtn, { backgroundColor: colors.primary }]}
                     onPress={handleQrScan}
                   >
-                    <IconSearch size={18} color="#fff" />
-                    <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{t('chat.qrScan')}</Text>
+                    <IconSearch size={18} color={colors.onPrimary} />
+                    <Text style={{ color: colors.onPrimary, fontWeight: '600', fontSize: 14 }}>{t('chat.qrScan')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[sty.qrActionBtn, { backgroundColor: '#111111' }]}
+                    style={[sty.qrActionBtn, { backgroundColor: colors.primary }]}
                     onPress={handleShareQrImage}
                   >
-                    <IconMail size={18} color="#fff" />
-                    <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{t('chat.shareLink')}</Text>
+                    <IconMail size={18} color={colors.onPrimary} />
+                    <Text style={{ color: colors.onPrimary, fontWeight: '600', fontSize: 14 }}>{t('chat.shareLink')}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -3131,10 +3146,10 @@ export default function ChatNewScreen() {
                   </>
                 )}
                 <TouchableOpacity
-                  style={[sty.qrActionBtn, { backgroundColor: '#111111', marginTop: 16, alignSelf: 'stretch' }]}
+                  style={[sty.qrActionBtn, { backgroundColor: colors.primary, marginTop: 16, alignSelf: 'stretch' }]}
                   onPress={() => setQrMode('show')}
                 >
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>{t('chat.qrShowMine')}</Text>
+                  <Text style={{ color: colors.onPrimary, fontWeight: '600' }}>{t('chat.qrShowMine')}</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -3165,7 +3180,7 @@ export default function ChatNewScreen() {
         {/* [2026-10-11 android-kav] Modal edge-to-edge não redimensiona c/ teclado no Android */}
         <SheetKeyboardAvoider style={{ flex: 1 }}>
         <View style={sty.modalOverlay}>
-          <View style={[sty.qrModal, { backgroundColor: isDark ? '#1c1c1e' : colors.surface }]}>
+          <View style={[sty.qrModal, { backgroundColor: colors.surface }]}>
             <View style={[sty.qrModalHeader, { borderBottomColor: colors.border }]}>
               <Text style={[sty.qrModalTitle, { color: colors.text }]} numberOfLines={1}>
                 {broadcastComposeList?.name || (t('chat.broadcastList') || 'Lista de transmissão')}
@@ -3190,7 +3205,7 @@ export default function ChatNewScreen() {
               autoFocus
             />
             <TouchableOpacity
-              style={[sty.qrActionBtn, { backgroundColor: '#111111', marginTop: 16, alignSelf: 'stretch', opacity: (broadcastSending || !broadcastComposeText.trim()) ? 0.5 : 1 }]}
+              style={[sty.qrActionBtn, { backgroundColor: colors.primary, marginTop: 16, alignSelf: 'stretch', opacity: (broadcastSending || !broadcastComposeText.trim()) ? 0.5 : 1 }]}
               disabled={broadcastSending || !broadcastComposeText.trim()}
               onPress={() => {
                 const bl = broadcastComposeList;
@@ -3203,23 +3218,25 @@ export default function ChatNewScreen() {
                 }
                 api.chatBroadcastSend(bl.id, v, 'text', '', '', '', broadcastCmiRef.current).then(r => {
                   setBroadcastSending(false);
-                  setBroadcastComposeList(null);
-                  setBroadcastComposeText('');
-                  // Session over either way (the modal closes and the text is
-                  // cleared even on failure) — next compose is a new blast.
-                  broadcastCmiRef.current = null;
                   if (r?.success) {
-                    safeAlert(
-                      t('chat.broadcastSent') || 'Enviado',
-                      `${r.data?.sent ?? count} / ${r.data?.total ?? count}`
-                    );
+                    setBroadcastComposeList(null);
+                    setBroadcastComposeText('');
+                    broadcastCmiRef.current = null; // envio concluído → próximo é outro disparo
+                    const sent = Number(r.data?.sent ?? count) || 0;
+                    const total = Number(r.data?.total ?? count) || 0;
+                    safeAlert(t('chat.broadcastSent', { count: sent }), sent < total ? `${sent} / ${total}` : '');
+                  } else {
+                    // [grupos 2026-10-21] falha: o texto FICA (antes fechava e apagava
+                    // calado); mesmo client_message_id no reenvio → servidor deduplica.
+                    safeAlert(t('common.error', 'Erro'), t('common.genericError', 'Não foi possível completar a ação. Tente de novo em instantes.'));
                   }
                 }).catch(() => {
                   setBroadcastSending(false);
+                  safeAlert(t('common.error', 'Erro'), t('common.networkError', 'Erro de rede. Verifique sua conexão.'));
                 });
               }}
             >
-              <Text style={{ color: '#fff', fontWeight: '600' }}>
+              <Text style={{ color: colors.onPrimary, fontWeight: '600' }}>
                 {broadcastSending ? (t('common.sending') || 'Enviando...') : (t('common.send') || 'Enviar')}
               </Text>
             </TouchableOpacity>

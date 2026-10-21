@@ -10997,6 +10997,16 @@ export default {
   "joinLink.channelInvalid": "Este canal não existe ou não é mais público.",
   "joinLink.offline": "Sem conexão. Verifique sua internet e tente de novo.",
   "joinLink.retry": "Tentar de novo",
+  "search.inviteToChatyy": "Convidar para o Chatyy",
+  "search.inviteToChatyyDesc": "Mande o link para quem ainda não usa o Chatyy",
+  "community.handleTaken": "Esse @handle já está em uso. Escolha outro.",
+  "community.notMember": "Você não participa desta comunidade.",
+  "community.rateLimited": "Muitas tentativas. Espere um pouco e tente de novo.",
+  "community.noPermission": "Só administradores podem fazer isso.",
+  "community.joinFailed": "Não foi possível entrar na comunidade",
+  "chat.cannotStartChat": "Não é possível iniciar uma conversa com esta pessoa.",
+  "channel.unfollowFailed": "Não foi possível deixar de seguir o canal",
+  "channel.createFailed": "Não foi possível criar o canal",
 
   // Onboarding/login UX (2026-10-04)
   "onb.stepLabel": "Passo {n} de {total}",

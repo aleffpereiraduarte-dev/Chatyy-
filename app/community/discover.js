@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, Image,
-  ActivityIndicator, RefreshControl, TextInput, Animated, Easing,
+  ActivityIndicator, RefreshControl, TextInput, Animated, Easing, Alert,
 } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderSafeArea } from '../../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
@@ -13,6 +13,7 @@ import { BorderRadius } from '../../constants/theme';
 import * as api from '../../services/api';
 import { IconArrowLeft, IconPlus } from '../../components/Icons';
 import ScreenEmptyState from '../../components/ScreenEmptyState';
+import { communityErrorText, communityNetErrorText } from '../../components/communities/communityErrors'; // [grupos 2026-10-21]
 
 // Slide-up entrance for discovery cards. Each card translates 24px up while
 // fading in, staggered 60ms per index. Native driver (transform+opacity).
@@ -116,16 +117,28 @@ export default function CommunityDiscoverScreen() {
   useEffect(() => { load(); }, [cat]);
   useEffect(() => { loadMy(); }, [loadMy]);
 
+  // [grupos 2026-10-21] entrar falhava calado (e rede caída = rejeição sem
+  // aviso); toque duplo disparava 2 pedidos. Agora: trava por item + alerta.
+  const [joiningId, setJoiningId] = useState(null);
   const onJoin = async (item) => {
-    const r = await api.communityJoin(item.id);
-    if (r.success) router.push(`/community/${item.id}`);
+    if (!item?.id || joiningId) return;
+    setJoiningId(item.id);
+    try {
+      const r = await api.communityJoin(item.id);
+      if (r?.success) router.push(`/community/${item.id}`);
+      else Alert.alert(t('common.error') || 'Erro', communityErrorText(t, r, 'community.joinFailed', 'Não foi possível entrar na comunidade'));
+    } catch {
+      Alert.alert(t('common.error') || 'Erro', communityNetErrorText(t));
+    } finally {
+      setJoiningId(null);
+    }
   };
 
   const renderItem = ({ item, index }) => (
     <SlideUpCard index={index}>
     <TouchableOpacity
       onPress={() => router.push(`/community/${item.id}`)}
-      style={[sty.row, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}
+      style={[sty.row, { backgroundColor: colors.surface } /* [grupos 2026-10-21] Grafite */]}
     >
       <View style={sty.avatarWrap}>
         {item.photo_url ? (
@@ -149,8 +162,10 @@ export default function CommunityDiscoverScreen() {
         </Text>
       </View>
       {!item.is_member && (
-        <TouchableOpacity onPress={() => onJoin(item)} style={[sty.joinBtn, { backgroundColor: colors.primary }]}>
-          <Text style={[sty.joinBtnText, { color: colors.onPrimary }]}>{t('community.join') || 'Entrar'}</Text>
+        <TouchableOpacity onPress={() => onJoin(item)} disabled={!!joiningId} style={[sty.joinBtn, { backgroundColor: colors.primary, opacity: joiningId && joiningId !== item.id ? 0.5 : 1 }]} accessibilityRole="button" accessibilityState={{ busy: joiningId === item.id }}>
+          {joiningId === item.id
+            ? <ActivityIndicator size="small" color={colors.onPrimary} />
+            : <Text style={[sty.joinBtnText, { color: colors.onPrimary }]}>{t('community.join') || 'Entrar'}</Text>}
         </TouchableOpacity>
       )}
     </TouchableOpacity>
@@ -187,7 +202,7 @@ export default function CommunityDiscoverScreen() {
           placeholder={t('common.search') || 'Buscar…'}
           placeholderTextColor={colors.textSecondary}
           returnKeyType="search"
-          style={[sty.search, { backgroundColor: isDark ? '#1c1c1e' : '#f0f0f3', color: colors.text }]}
+          style={[sty.search, { backgroundColor: colors.surfaceVariant || colors.surface, color: colors.text }]}
         />
       </View>
       )}
@@ -208,7 +223,7 @@ export default function CommunityDiscoverScreen() {
             label={t(item.labelKey) || item.fallback}
             style={sty.chip}
             activeBg={colors.primary}
-            idleBg={isDark ? '#1c1c1e' : '#f0f0f3'}
+            idleBg={colors.surfaceVariant || colors.surface}
             activeColor={colors.onPrimary}
             idleColor={colors.text}
           />
@@ -225,7 +240,7 @@ export default function CommunityDiscoverScreen() {
             <TouchableOpacity
               key={c.id}
               onPress={() => router.push(`/community/${c.id}`)}
-              style={[sty.row, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}
+              style={[sty.row, { backgroundColor: colors.surface } /* [grupos 2026-10-21] Grafite */]}
             >
               <View style={sty.avatarWrap}>
                 {c.photo_url ? (
