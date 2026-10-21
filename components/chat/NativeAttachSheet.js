@@ -327,6 +327,15 @@ export default function NativeAttachSheet({
   // armada no toque do "+"; o resultado chega por onArmedResult.
   openNowRef.current = (opts) => {
     if (openRef.current) return true;
+    // [2026-10-21 attach-android-armed] Android: o "+" do composer nativo (api 8)
+    // já apresentou a folha armada no toque; a conversa (onAttach{nativeOpened})
+    // chama open() sem saber — pergunta ao nativo (síncrono) e não abre outra.
+    if (Platform.OS === 'android' && !(opts && opts.alreadyOpen)) {
+      try {
+        const m0 = getNA();
+        if (m0 && typeof m0.isArmedOpen === 'function' && m0.isArmedOpen(armIdRef.current)) opts = { ...(opts || null), alreadyOpen: true };
+      } catch {}
+    }
     if (opts && opts.alreadyOpen) {
       openRef.current = true;
       // teclado fechado: onArmedShown chega ANTES do onAttach (mesmo toque) → já existe
@@ -351,6 +360,32 @@ export default function NativeAttachSheet({
     return true;
   };
 
+  // [2026-10-21 attach-android-armed] Android: attach api >= 4 + composer api >= 8
+  // = o "+" apresenta a folha pré-montada NO MESMO QUADRO do toque (sem ida ao
+  // JS), IME descendo em paralelo. Fora do painel de anexos (attachPanel) e do
+  // "+" instantâneo desligado. Kill switches OTA:
+  // globalThis.__chatyy_attach_android_armed = false (= onAttach → openSheet) ·
+  // globalThis.__chatyy_attach_tgwin_wait = true (entra só após o IME descer) ·
+  // globalThis.__chatyy_attach_android_prebuild = false (monta no toque).
+  const armAndroid = (m) => {
+    let on = true;
+    try { if (globalThis.__chatyy_attach_android_armed === false || globalThis.__chatyy_attach_armed === false) on = false; } catch {}
+    try { if (m.apiVersion() < 4) on = false; } catch { on = false; }
+    try {
+      const kn = require('../../utils/kbNativeTransitions');
+      if (kn.nativeComposerApi() < 8) on = false;
+      if (!kn.androidAttachInstantOn()) on = false;
+      if (kn.androidAttachPanelOn && kn.androidAttachPanelOn()) on = false;
+    } catch { on = false; }
+    if (!on) return undefined;
+    const id = armIdRef.current;
+    const extra = {};
+    try { if (globalThis.__chatyy_attach_tgwin_wait === true) extra.tgWaitKeyboard = true; } catch {}
+    try { if (globalThis.__chatyy_attach_android_prebuild === false) extra.noPrebuild = true; } catch {}
+    try { m.armSheet(id, { ...buildOptions(null), ...extra }); } catch {}
+    return () => { try { m.armSheet(id, null); } catch {} };
+  };
+
   // [2026-10-20 attach-armed] arma a folha no nativo (composer api 14 + attach
   // api 10): o "+" a apresenta no mesmo toque. Kill switch OTA:
   // globalThis.__chatyy_attach_armed = false.
@@ -360,7 +395,9 @@ export default function NativeAttachSheet({
   ]);
   useEffect(() => {
     const m = getNA();
-    if (!m || Platform.OS !== 'ios' || typeof m.armSheet !== 'function') return undefined;
+    if (!m || typeof m.armSheet !== 'function') return undefined;
+    if (Platform.OS === 'android') return armAndroid(m); // [2026-10-21 attach-android-armed]
+    if (Platform.OS !== 'ios') return undefined;
     let on = true;
     try { if (globalThis.__chatyy_attach_armed === false) on = false; } catch {}
     try { if (m.apiVersion() < 10) on = false; } catch { on = false; }

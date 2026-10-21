@@ -184,11 +184,19 @@ export async function openCamera(options: AttachOptions): Promise<CameraResult |
   return (await m.openCamera(options || {})) || null;
 }
 
-/** [apiVersion 10] Arma a folha no nativo: o "+" do composer (api 14) a apresenta no mesmo toque. options null = desarma. */
+/** [apiVersion 10] Arma a folha no nativo: o "+" do composer (api 14) a apresenta no mesmo toque. options null = desarma.
+ *  Android: attach apiVersion 4 + composer api 8 (folha pré-montada; opções extras tgWaitKeyboard / noPrebuild). */
 export function armSheet(id: string, options: AttachOptions | null): void {
   const m = mod() as any;
   if (!m || killed() || typeof m.armSheet !== 'function') return;
   try { m.armSheet(id, options || null)?.catch?.(() => {}); } catch {}
+}
+
+/** [Android apiVersion 4] A folha armada deste dono (id) está na tela (aberta pelo "+" nativo)? Síncrono, nunca lança. */
+export function isArmedOpen(id: string): boolean {
+  const m = mod() as any;
+  if (!m || typeof m.isArmedOpen !== 'function') return false;
+  try { return !!m.isArmedOpen(String(id || '')); } catch { return false; }
 }
 
 /** [apiVersion 11] Folha armada ENTROU na tela ({ id }) — tgWindow.

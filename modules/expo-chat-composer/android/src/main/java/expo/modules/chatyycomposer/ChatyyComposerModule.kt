@@ -100,7 +100,10 @@ class ChatyyComposerModule : Module() {
     // 7 = [2026-10-20 attach-inputview] props attachPanel/attachPanelOpen +
     //     onAttach{panel:true, open} sem descer o IME + hideImeKeepFocus(): o
     //     painel de anexos (JS) entra no lugar do teclado, "+" vira teclado.
-    Function("apiVersion") { 7 }
+    // 8 = [2026-10-21 attach-android-armed] "+" chama o expo-chat-attach (api 4)
+    //     por reflexão (AttachPlusHub): a folha armada entra no mesmo toque;
+    //     onAttach leva nativeOpened:true quando ela foi apresentada.
+    Function("apiVersion") { 8 }
     // [2026-10-19 core-chat] kill switch da pausa ao ir p/ 2º plano (JS:
     // globalThis.__chatyy_voice_bg_pause = false → setVoiceBgPause(false)).
     Function("setVoiceBgPause") { on: Boolean -> ChatyyComposerView.voiceBgPause = on }

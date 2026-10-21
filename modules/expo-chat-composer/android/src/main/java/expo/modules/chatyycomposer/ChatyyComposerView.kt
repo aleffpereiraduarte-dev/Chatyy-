@@ -624,8 +624,18 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
         onAttach(mapOf("hadKeyboard" to had, "instant" to true, "panel" to true, "open" to !attachPanelOpen))
         return@setOnClickListener
       }
+      val tapAt = android.os.SystemClock.uptimeMillis()
       hideKeyboard()
-      onAttach(mapOf("hadKeyboard" to had, "instant" to attachInstant))
+      // [2026-10-21 attach-android-armed] api 8: folha nativa ARMADA pelo JS
+      // (expo-chat-attach api 4) entra NO MESMO TOQUE, antes de qualquer ida ao
+      // JS; o IME desce em paralelo (animação do sistema) por trás dela. O JS
+      // só fica sabendo (nativeOpened) e o resultado vem por onArmedResult.
+      val nativeOpened = attachInstant && NCAttachPlusBridge.plus(plusButton, had, tapAt)
+      val body = HashMap<String, Any>()
+      body["hadKeyboard"] = had
+      body["instant"] = attachInstant
+      if (nativeOpened) { body["nativeOpened"] = true; armedPlusAt = tapAt }
+      onAttach(body)
     }
     addView(plusButton)
     plusSpinner.visibility = View.GONE
@@ -999,6 +1009,8 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
   // attachInstant (api 5): onAttach{instant:true} → o JS abre a folha nativa no
   // mesmo toque (sem os 80 ms + render). Kill switch: prop attachInstant=false.
   var attachInstant = true
+  // [2026-10-21 attach-android-armed] uptime do último "+" que abriu a folha armada (restoreGuard).
+  private var armedPlusAt = 0L
   // [2026-10-20 attach-inputview] api 7: "+" alterna o painel de anexos do JS
   // (no lugar do IME) e vira ícone de teclado com ele aberto. Kill switch:
   // prop attachPanel=false (JS: globalThis.__chatyy_attach_inputview = false).
@@ -1306,7 +1318,11 @@ class ChatyyComposerView(context: Context, appContext: AppContext) : ExpoView(co
     // [2026-10-19 android-parity] restoreGuard: o IME estava fechado quando a
     // janela perdeu o foco → se reabrir sozinho logo depois de voltar, fecha.
     if (!hasWindowFocus) {
-      imeAtFocusLoss = imeVisibleNow()
+      // [2026-10-21 attach-android-armed] folha armada tira o foco da janela no
+      // MESMO toque em que o IME foi mandado descer (insets ainda dizem "aberto"):
+      // conta como fechado, senão o guard deixaria o IME reabrir ao voltar.
+      val sincePlus = android.os.SystemClock.uptimeMillis() - armedPlusAt
+      imeAtFocusLoss = if (armedPlusAt > 0 && sincePlus in 0..1000) false else imeVisibleNow()
       focusRegainAt = 0L
     } else if (restoreGuard && !appInBackground) {
       val at = android.os.SystemClock.uptimeMillis()

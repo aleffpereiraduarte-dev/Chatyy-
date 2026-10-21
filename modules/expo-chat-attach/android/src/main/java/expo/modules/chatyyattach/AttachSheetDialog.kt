@@ -11,6 +11,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.text.TextUtils
 import android.util.Log
@@ -134,6 +135,63 @@ class AttachSheetDialog(
 
   private var spring: SpringAnimation? = null
   private val holder = FloatValueHolder(0f)
+
+  // ─── [2026-10-21 attach-android-armed] folha armada (toque no "+" nativo) ──
+  /** Activity dona (o módulo descarta a pré-montada se a Activity mudou). */
+  val hostActivity: Activity get() = host
+  /** uptimeMillis do toque no "+" (0 = aberta pelo JS / openSheet). */
+  var tapAt = 0L
+  /** true = apresentada pelo toque no "+" (resultado vai por onArmedResult). */
+  var armedPresented = false
+  /** {show, anim, fetch, assets, n} em ms desde o toque (= iOS api 12). */
+  val openTiming = HashMap<String, Int>()
+  val isFinished: Boolean get() = finished
+  private var prepared = false
+  private var fetchGen = 0
+  private var fetching = false
+  private var mediaAt = 0L
+  private var lastFetchMs = -1
+  private fun sinceTap(): Int = if (tapAt > 0) (SystemClock.uptimeMillis() - tapAt).toInt() else -1
+
+  /** Pré-instancia (onCreate: views + consulta da galeria em 2º plano) SEM mostrar. */
+  fun prepare(): Boolean {
+    if (prepared) return true
+    return try { create(); prepared = true; true } catch (t: Throwable) {
+      Log.w(TAG, "prepare failed: ${t.message}"); false
+    }
+  }
+
+  /** Pré-montada que nunca apareceu: solta tudo sem resultado. */
+  fun discard() {
+    if (finished) return
+    finished = true
+    realDismiss()
+  }
+
+  /** Chamado logo depois do show() da folha armada. */
+  fun onArmedPresent() {
+    if (tapAt <= 0) return
+    val now = SystemClock.uptimeMillis()
+    if (mediaAt > 0 && !fetching) {
+      // galeria já veio na pré-montagem: miniaturas no 1º quadro
+      openTiming["fetch"] = max(0, lastFetchMs)
+      openTiming["assets"] = 0
+      openTiming["n"] = bucket(media.size)
+    }
+    // pré-montada há mais de 2 s → confere de novo (foto nova, permissão), sempre fora da main
+    if (!fetching && (mediaAt == 0L || now - mediaAt > 2000L)) refreshAuthorization()
+  }
+
+  private fun bucket(n: Int): Int = if (n < 100) 0 else if (n < 1000) 1 else if (n < 10000) 2 else 3
+
+  private fun noteAssets(fetchMs: Int, n: Int, full: Boolean) {
+    if (tapAt <= 0) return
+    if (openTiming["assets"] == null) {
+      openTiming["fetch"] = fetchMs
+      openTiming["assets"] = sinceTap()
+    }
+    if (full) openTiming["n"] = bucket(n)
+  }
 
   private val adapter = GridAdapter()
   private val layoutManager = object : GridLayoutManager(ctx, 3) {
@@ -325,7 +383,12 @@ class AttachSheetDialog(
       val ime = ins.getInsets(WindowInsetsCompat.Type.ime())
       statusInset = sys.top
       navInset = sys.bottom
-      val newIme = max(0, ime.bottom - sys.bottom)
+      val rawIme = max(0, ime.bottom - sys.bottom)
+      // [2026-10-21 attach-android-armed] folha armada entra no MESMO toque com o
+      // teclado do composer ainda descendo por trás dela: esse IME não é da
+      // legenda (expandiria a folha / subiria a barra). Só segue IME que a
+      // legenda abriu (ou o que já seguia, descendo).
+      val newIme = if (rawIme > 0 && imeInset == 0 && !caption.hasFocus()) 0 else rawIme
       val opened = newIme > 0 && imeInset == 0
       imeInset = newIme
       bar.setPadding(0, 0, 0, max(navInset, dp(12f)))
@@ -510,9 +573,10 @@ class AttachSheetDialog(
       laidOut = true
       pos = winH.toFloat()
       applyPos()
+      if (tapAt > 0 && openTiming["show"] == null) openTiming["show"] = sinceTap()
       root.post {
         CAUtil.haptic(root, "select")
-        animateTo(collapsedPos, 0f)
+        animateTo(collapsedPos, 0f) { if (tapAt > 0 && openTiming["anim"] == null) openTiming["anim"] = sinceTap() }
         cascadeActions()
         startCameraIfPossible()
       }
@@ -674,27 +738,58 @@ class AttachSheetDialog(
   private fun refreshAuthorization() {
     val access = CAUtil.mediaAccess(ctx)
     if (access == "none") {
+      fetchGen++
+      fetching = false
       permText.text = cfg.t("permPrompt", "Permita o acesso às fotos para enviar as mais recentes com um toque.")
       permBtn.text = cfg.t("permAllow", "Permitir acesso")
       permView.visibility = View.VISIBLE
       banner.visibility = View.GONE
       media = emptyList()
+      mediaAt = 0L
       adapter.notifyDataSetChanged()
       return
     }
     permView.visibility = View.GONE
     banner.visibility = if (access == "partial") View.VISIBLE else View.GONE
+    // [2026-10-21 attach-android-armed] sempre fora da main, com geração (permissão/
+    // nova consulta no meio descartam a velha) e em 2 etapas quando a grade está
+    // vazia: 1ª página (48) entra logo, o resto (até 1500) é anexado depois —
+    // miniaturas progressivas (Glide) desde o 1º quadro.
+    val gen = ++fetchGen
+    fetching = true
+    val t0 = SystemClock.uptimeMillis()
+    val quick = media.isEmpty() && selected.isEmpty()
     CAMediaStore.io.execute {
+      if (quick) {
+        val first = try { CAMediaStore.queryRecent(ctx, 48) } catch (t: Throwable) { Log.w(TAG, "query1: ${t.message}"); emptyList() }
+        val ms1 = (SystemClock.uptimeMillis() - t0).toInt()
+        CAUtil.main.post {
+          if (finished || gen != fetchGen || first.isEmpty() || media.isNotEmpty()) return@post
+          media = first
+          adapter.notifyDataSetChanged()
+          noteAssets(ms1, first.size, false)
+        }
+      }
       val list = try { CAMediaStore.queryRecent(ctx, 1500) } catch (t: Throwable) { Log.w(TAG, "query: ${t.message}"); emptyList() }
+      val ms = (SystemClock.uptimeMillis() - t0).toInt()
       CAUtil.main.post {
-        if (finished) return@post
+        if (finished || gen != fetchGen) return@post
+        fetching = false
+        mediaAt = SystemClock.uptimeMillis()
+        lastFetchMs = ms
+        val old = media
         media = list
         // Seleção que deixou de existir (acesso parcial reduzido).
         val keys = list.map { it.key }.toHashSet()
         val before = selected.size
         selected.retainAll { keys.contains(it) }
         if (selected.size != before) refreshSelectionUi(true)
-        adapter.notifyDataSetChanged()
+        // 1ª página já na tela e igual ao começo da lista cheia → só anexa o resto
+        val off = if (cfg.allowCamera) 1 else 0
+        val prefix = old.isNotEmpty() && old.size <= list.size && old.indices.all { old[it].key == list[it].key }
+        if (selected.size != before || !prefix) adapter.notifyDataSetChanged()
+        else if (old.size < list.size) adapter.notifyItemRangeInserted(off + old.size, list.size - old.size)
+        noteAssets(ms, list.size, true)
       }
     }
   }
