@@ -1,6 +1,6 @@
 import Foundation
 import UIKit
-import LiveKit
+import LiveKitClient
 
 // [e2ee5 WP-13 2026-10-21] Ligações E2EE v5 no iOS (LiveKitClient 2.0.18, frame encryption AES-GCM).
 //
