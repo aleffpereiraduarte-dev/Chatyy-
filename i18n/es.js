@@ -14303,7 +14303,7 @@ export default {
   "games.rules.stop.2": "Quien complete todo puede decir BASTA: el otro tiene 10 segundos más. Sin BASTA, la ronda termina en 3 minutos.",
   "games.rules.stop.3": "En la revisión aparecen las respuestas; puedes impugnar una respuesta del otro que no valga.",
   "games.rules.stop.4": "Puntos por categoría: 10 respuesta única, 5 igual a la del otro, 0 vacía, con letra equivocada o impugnada.",
-  "games.rules.desenho.1": "3 rondas, alternando quién dibuja. Quien dibuja ve la palabra; el otro solo la categoría y el largo.",
+  "games.rules.desenho.1": "4 rondas, alternando quién dibuja. Quien dibuja ve la palabra; el otro solo la categoría y el largo.",
   "games.rules.desenho.2": "Dibuja con el dedo (¡sin escribir la palabra!). Puedes cambiar el color, deshacer, borrar o saltar la palabra.",
   "games.rules.desenho.3": "Quien adivina escribe sus intentos; acentos y mayúsculas no importan. Cada ronda dura 60 segundos.",
   "games.rules.desenho.4": "Acierto: quien adivinó gana 50 puntos y quien dibujó 25, más un bono por rapidez. Gana quien sume más.",

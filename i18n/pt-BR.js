@@ -14382,7 +14382,7 @@ export default {
   "games.rules.stop.2": "Quem preencher tudo pode pedir STOP: o outro ainda tem 10 segundos para terminar. Sem STOP, a rodada acaba em 3 minutos.",
   "games.rules.stop.3": "Na revisão as respostas aparecem; você pode contestar uma resposta do outro que não valha.",
   "games.rules.stop.4": "Pontos por categoria: 10 resposta única, 5 resposta igual à do outro, 0 vazia, com letra errada ou contestada.",
-  "games.rules.desenho.1": "3 rodadas, alternando quem desenha. Quem desenha vê a palavra; o outro vê só a categoria e o tamanho.",
+  "games.rules.desenho.1": "4 rodadas, alternando quem desenha. Quem desenha vê a palavra; o outro vê só a categoria e o tamanho.",
   "games.rules.desenho.2": "Desenhe com o dedo (sem escrever a palavra!). Dá para trocar a cor, desfazer, limpar ou pular a palavra.",
   "games.rules.desenho.3": "Quem adivinha digita os chutes; acento e maiúsculas não importam. Cada rodada tem 60 segundos.",
   "games.rules.desenho.4": "Acertou: quem adivinhou ganha 50 pontos e quem desenhou 25, mais bônus pela rapidez. Vence quem somar mais.",
