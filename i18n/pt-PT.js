@@ -13572,6 +13572,10 @@ export default {
   "mural.feed.end": "Já viu tudo",
   "mural.feed.backToFeed": "Voltar ao feed",
   "mural.feed.reported": "Obrigado. Vamos analisar.",
+  "mural.feed.errorSub": "Verifique a sua ligação e tente novamente.",
+  "mural.feed.inviteTitle": "Comece o seu mural",
+  "mural.feed.inviteSub": "Conte uma novidade ou partilhe uma foto. Os seus amigos veem aqui.",
+  "mural.feed.refreshFail": "Sem ligação. A mostrar o que já estava guardado.",
   // [mural-cerebro 2026-10-20] Por que estou vendo isto / Não tenho interesse / Ajustes do Mural
   "mural.why.menu": "Porque estou a ver isto?",
   "mural.why.title": "Porque estou a ver isto?",

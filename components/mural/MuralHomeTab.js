@@ -56,7 +56,7 @@ function _prime(posts) {
   for (const p of posts) { try { store.primePost(p); } catch {} }
 }
 
-function useMuralFeed(tab, enabled) {
+function useMuralFeed(tab, enabled, t) {
   const [st, setSt] = useState(() => {
     const cached = _readCache(tab);
     if (cached) _prime(cached);
@@ -79,6 +79,8 @@ function useMuralFeed(tab, enabled) {
     busy.current = false;
     const d = r && r.success && r.data ? r.data : null;
     if (!d || !Array.isArray(d.posts)) {
+      // [2026-10-21 polish] puxar p/ atualizar sem rede com posts na tela: avisa em vez de calar
+      if (mode === 'refresh' && cur.posts.length) { try { require('../ui/Toast').showToast({ message: t ? t('mural.feed.refreshFail', 'Sem conexão. Mostrando o que já estava salvo.') : 'Sem conexão. Mostrando o que já estava salvo.', kind: 'error' }); } catch {} }
       setSt((s) => ({ ...s, loading: false, refreshing: false, error: true, loaded: true }));
       return;
     }
@@ -91,7 +93,7 @@ function useMuralFeed(tab, enabled) {
       const railAt = Number.isFinite(Number(d.rail_at)) ? Math.max(0, Math.min(6, Number(d.rail_at))) : (mode === 'more' ? s.railAt : 1);
       return { posts, cursor: d.next_cursor || null, hasMore: !!d.has_more, loading: false, refreshing: false, error: false, loaded: true, fromCache: false, fs, railAt };
     });
-  }, [tab]);
+  }, [tab, t]);
 
   useEffect(() => {
     if (enabled && !st.loaded && !busy.current) load('first');
@@ -255,8 +257,8 @@ function MuralHomeTab(props) {
   const seg = MURAL_SEGMENTS.includes(segment) ? segment : 'foryou';
   const setSeg = useCallback((k) => { try { require('../../constants/theme').haptic.select(); } catch {} onSegmentChange && onSegmentChange(k); }, [onSegmentChange]);
 
-  const forYou = useMuralFeed('foryou', active && seg === 'foryou');
-  const following = useMuralFeed('following', active && seg === 'following');
+  const forYou = useMuralFeed('foryou', active && seg === 'foryou', t);
+  const following = useMuralFeed('following', active && seg === 'following', t);
   const feed = seg === 'following' ? following : forYou;
 
   const [reelsMounted, setReelsMounted] = useState(seg === 'reels');
@@ -419,9 +421,12 @@ function MuralHomeTab(props) {
 
   const empty = feed.loaded && !feed.loading && !feed.posts.length && !pending.length ? (
     <View style={s.empty}>
+      <View style={[s.emptyIc, { backgroundColor: th.chip }]}>
+        <MIcon name={feed.error ? 'globe' : seg === 'following' ? 'users' : 'edit'} size={30} color={th.muted} />
+      </View>
       <Text style={[s.emptyTitle, { color: th.text }]}>{feed.error ? t('mural.feed.error', 'Não foi possível carregar o Mural') : t('mural.feed.empty', 'Nada por aqui ainda')}</Text>
       <Text style={[s.emptySub, { color: th.muted }]}>
-        {feed.error ? '' : (seg === 'following' ? t('mural.feed.emptyFollowing', 'Siga pessoas ou converse com amigos para ver as publicações delas aqui.') : t('mural.feed.emptyForYou', 'Ainda não há publicações. Que tal fazer a primeira?'))}
+        {feed.error ? t('mural.feed.errorSub', 'Verifique sua conexão e tente de novo.') : (seg === 'following' ? t('mural.feed.emptyFollowing', 'Siga pessoas ou converse com amigos para ver as publicações delas aqui.') : t('mural.feed.emptyForYou', 'Ainda não há publicações. Que tal fazer a primeira?'))}
       </Text>
       <Pressable onPress={() => (feed.error ? feed.load('first') : openComposer('text'))} style={[s.emptyBtn, { backgroundColor: th.accent }]} accessibilityRole="button">
         <Text style={{ color: th.accentInk, fontWeight: '700', fontSize: 15 }}>{feed.error ? t('mural.feed.retry', 'Tentar de novo') : t('mural.publish', 'Publicar')}</Text>
@@ -429,8 +434,28 @@ function MuralHomeTab(props) {
     </View>
   ) : (!feed.loaded && !feed.posts.length ? <PostSkeleton count={2} /> /* [2026-10-20 ux] skeleton em vez de spinner */ : null);
 
+  // [2026-10-21 polish] pouco conteúdo (1-3 posts, fim da lista) → convite p/ publicar, no lugar do rodapé vazio
+  const fewPosts = feed.loaded && !feed.loading && !feed.hasMore && rows.length > 0 && feed.posts.length > 0 && feed.posts.length <= 3;
+  const invite = fewPosts ? (
+    <View style={[s.invite, { backgroundColor: th.card }, shadow]}>
+      <View style={[s.inviteIc, { backgroundColor: th.chip }]}>
+        <MIcon name="edit" size={22} color={th.text} />
+      </View>
+      <Text style={[s.inviteTitle, { color: th.text }]}>{t('mural.feed.inviteTitle', 'Comece o seu mural')}</Text>
+      <Text style={[s.emptySub, { color: th.muted, marginTop: 4 }]}>{t('mural.feed.inviteSub', 'Conte uma novidade ou compartilhe uma foto. Seus amigos veem aqui.')}</Text>
+      <View style={s.inviteRow}>
+        <Pressable onPress={() => openComposer('text')} style={[s.emptyBtn, { marginTop: 0, backgroundColor: th.accent }]} accessibilityRole="button">
+          <Text style={{ color: th.accentInk, fontWeight: '700', fontSize: 15 }}>{t('mural.publish', 'Publicar')}</Text>
+        </Pressable>
+        <Pressable onPress={() => openComposer('photo')} style={[s.emptyBtn, s.inviteBtn2, { marginTop: 0, backgroundColor: th.chip }]} accessibilityRole="button" accessibilityLabel={t('mural.feed.photo', 'Foto')}>
+          <MIcon name="image" size={18} color={th.text} />
+          <Text style={{ color: th.text, fontWeight: '700', fontSize: 15 }}>{t('mural.feed.photo', 'Foto')}</Text>
+        </Pressable>
+      </View>
+    </View>
+  ) : null;
   const footer = feed.loading && feed.posts.length ? <ActivityIndicator style={{ marginVertical: 18 }} color={th.muted} />
-    : (feed.loaded && !feed.hasMore && feed.posts.length > 3 ? <Text style={[s.end, { color: th.muted }]}>{t('mural.feed.end', 'Você viu tudo')}</Text> : null);
+    : invite || (feed.loaded && !feed.hasMore && feed.posts.length > 3 ? <Text style={[s.end, { color: th.muted }]}>{t('mural.feed.end', 'Você viu tudo')}</Text> : null);
 
   const reelsOn = seg === 'reels';
   const rtTop = Platform.OS === 'web' ? 10 : Math.max(insets.top || 0, Platform.OS === 'android' ? 24 : 44) + 2;
@@ -484,7 +509,7 @@ export default memo(MuralHomeTab);
 const s = StyleSheet.create({
   root: { flex: 1 },
   head: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 2 },
-  title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.6 },
+  title: { fontSize: 34, fontWeight: '800', letterSpacing: -1.19 }, // [2026-10-21 polish] = título grande Grafite (Conversas)
   seg: { flexDirection: 'row', gap: 4, marginHorizontal: 16, marginTop: 8, borderRadius: THEME_V2 ? 999 : 12, padding: 3 },
   segBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7, borderRadius: THEME_V2 ? 999 : 9 },
   segOnShadow: Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,.12)' } : { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
@@ -501,7 +526,13 @@ const s = StyleSheet.create({
   railTile: { width: 104, height: 168, borderRadius: THEME_V2 ? 14 : 12, overflow: 'hidden' },
   railMeta: { position: 'absolute', left: 7, bottom: 6, flexDirection: 'row', alignItems: 'center', gap: 3 },
   railMetaTxt: { color: '#fff', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 3, textShadowOffset: { width: 0, height: 1 } },
-  empty: { alignItems: 'center', paddingHorizontal: 32, paddingTop: 48 },
+  empty: { alignItems: 'center', paddingHorizontal: 32, paddingTop: 40 },
+  emptyIc: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  invite: { alignItems: 'center', marginHorizontal: 10, marginTop: 4, marginBottom: 16, paddingHorizontal: 20, paddingVertical: 22, borderRadius: THEME_V2 ? 22 : 18 },
+  inviteIc: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
+  inviteTitle: { fontSize: 17, fontWeight: '700', textAlign: 'center' },
+  inviteRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  inviteBtn2: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   emptyTitle: { fontSize: 18, fontWeight: '700', textAlign: 'center' },
   emptySub: { fontSize: 14.5, textAlign: 'center', marginTop: 6, lineHeight: 20 },
   emptyBtn: { marginTop: 18, borderRadius: 999, paddingHorizontal: 22, paddingVertical: 11 },

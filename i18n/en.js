@@ -14966,6 +14966,10 @@ export default {
   "mural.feed.end": "You're all caught up",
   "mural.feed.backToFeed": "Back to feed",
   "mural.feed.reported": "Thanks. We'll review it.",
+  "mural.feed.errorSub": "Check your connection and try again.",
+  "mural.feed.inviteTitle": "Start your wall",
+  "mural.feed.inviteSub": "Share some news or a photo. Your friends will see it here.",
+  "mural.feed.refreshFail": "No connection. Showing what was saved.",
   // [mural-cerebro 2026-10-20] Por que estou vendo isto / Não tenho interesse / Ajustes do Mural
   "mural.why.menu": "Why am I seeing this?",
   "mural.why.title": "Why am I seeing this?",
