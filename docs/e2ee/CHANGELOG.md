@@ -1,5 +1,12 @@
 # Contrato E2EE v5 — histórico
 
+## e2ee5-contrato/1.1 — 21/10/2026 (WP-00)
+- §6.11: API JS do host (`services/crypto`) normativa — `proposta-host-api.md` do WP-04 aceita,
+  com senha do store web (HMAC com CryptoKey não-exportável), web só com bytes (sem
+  `encryptFile`), nomes do vínculo no celular (`linkAccept`/`linkPhonePoll`).
+- §6.2: na web o `HttpTransport` não exige `Send + Sync`.
+- §6.3: funções de mídia recebem bytes/strings por valor (UniFFI).
+
 ## e2ee5-contrato/1.0 — 21/10/2026 (WP-00)
 - Primeira versão. Fixa: ids (§1), envelope `e2e:5` + payload v1 por tipo (§2), eventos
   `chatyy.*` (§3), 20 ações `e2ee5_*` com autorização, rate limits e códigos (§4), eventos WS

@@ -1,0 +1,26 @@
+[package]
+name = "chatyy-crypto-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+chatyy-crypto = { path = ".." }
+
+[[bin]]
+name = "decrypt_bytes"
+path = "fuzz_targets/decrypt_bytes.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "envelope"
+path = "fuzz_targets/envelope.rs"
+test = false
+doc = false
+
+[workspace]

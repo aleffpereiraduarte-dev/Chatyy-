@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Versão** | `e2ee5-contrato/1.0` (1.0.0) — 21/10/2026 |
+| **Versão** | `e2ee5-contrato/1.1` (1.1.0) — 21/10/2026 (1.0 → 1.1: §6.11 API JS do host, aditivo) |
 | **Dono** | WP-00 (líder/arquiteto). Mudanças só por PR neste arquivo + entrada em `CHANGELOG.md`. |
 | **Implementação de referência** | `native/chatyy-crypto` (WP-01) e o servidor falso dos testes `native/chatyy-crypto/tests/common/fake_server.rs` (conformidade do WP-05). |
 | **Base** | `/root/e2ee-2026-10-21/PLANO.md` + DECISÕES DO FOUNDER (21/10: todas as recomendações aprovadas, "nível WhatsApp"). |
@@ -255,7 +255,7 @@ O aparelho atual nunca recebe o próprio evento.
 ### 4.2 Ações
 
 **4.2.1 `e2ee5_status`** — sempre disponível.
-Req `{}` → `{"uid":"42","user_id":"@u42:chatyy","contract":"e2ee5-contrato/1.0","enabled":true,
+Req `{}` → `{"uid":"42","user_id":"@u42:chatyy","contract":"e2ee5-contrato/1.1","enabled":true,
 "kill":false,"flags":{"e2ee5_native":true,"e2ee5_media":false,"e2ee5_calls":false,
 "e2ee5_link":false,"e2ee5_backup":false,"e2ee5_push_decrypt":false},"device_limit":5,
 "devices":[{"device_id":"P…","kind":"P","last_seen":1729500000000,"signed":true}],
@@ -475,6 +475,7 @@ trait HttpTransport: Send + Sync {
 struct HttpResponse { status: u16, body: String }
 enum TransportError { Network { msg: String } }
 ```
+Na web (wasm) o trait não exige `Send + Sync` (o `fetch` vive numa thread só); o resto é igual.
 `action` vem **sem** o prefixo (`"keys_upload"`); o host faz
 `POST {base}/api/email.php?action=e2ee5_<action>` com os cabeçalhos do §4.1 e devolve status e
 corpo crus (inclusive 4xx/5xx). O núcleo interpreta `{success,data,message}`.
@@ -483,12 +484,12 @@ Timeout recomendado: 15 s (NSE: 5 s).
 ### 6.3 Funções livres
 | Função | Retorno |
 |---|---|
-| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.0; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
+| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.1; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
 | `new_device_id(prefix: "P"\|"W"\|"T"\|"X")` | `String` |
 | `envelope_version(content)` | `Option<u64>` (5, ou outro N → placeholder "Atualize") |
-| `encrypt_bytes(plain) / decrypt_bytes(data, info_json)` | `EncryptedBytes{data, info_json}` / bytes |
+| `encrypt_bytes(plain: bytes) / decrypt_bytes(data: bytes, info_json)` | `EncryptedBytes{data, info_json}` / bytes |
 | `encrypt_file(in, out) / decrypt_file(in, out, info_json)` | `EncryptedFile{info_json, size}` / `u64`. Decifra em `<out>.part` e só renomeia se o SHA-256 conferir |
-| `safety_number_for(uid_a, msk_a, uid_b, msk_b)` | `SafetyNumber{digits, qr_payload}` |
+| `safety_number_for(uid_a, msk_a, uid_b, msk_b)` (não exportada pelo UniFFI; a web pode expor) | `SafetyNumber{digits, qr_payload}` |
 
 ### 6.4 `CryptoCore`
 ```text
@@ -591,6 +592,27 @@ dropped_untrusted, store_reloads}` — só contagens. `flush_metrics()` envia e 
   WebCrypto não-exportável — WP-04).
 - Valores próprios do núcleo no store (custom values): cursores `td_since`/`dc_since`,
   `session_seen` (para o filtro de 3 meses) e `convs` conhecidas.
+
+### 6.11 API JS do host (`services/crypto`, web = WP-04, nativo = WP-03) — NORMATIVA
+A tabela completa (nomes, argumentos, retornos e `.code` de erro) está em
+[`proposta-host-api.md`](proposta-host-api.md) e **vale como parte deste contrato** desde a 1.1,
+com estas decisões do WP-00:
+1. Nomes = §6.3/§6.4 em camelCase; structs em camelCase (`envelope_json` → `envelopeJson`);
+   JSON aninhado devolvido pelo núcleo continua **string** (`payloadJson`, `contentJson`,
+   `infoJson`, `utdJson`); bytes = `Uint8Array`; tudo Promise, exceto `isEnabled()`.
+2. `trust` em JS: `'verified' | 'tofu' | 'changed'`. Erro: `Error` com `.code` (`utd`,
+   `invalid_input`, `transport`, `server`, `store`, `lock_busy`, `identity`,
+   `identity_violation`, `media`, `link`, `backup`, `internal`, + `disabled`, `unsupported`,
+   `not_ready`, `not_open`, `wasm_*`, `worker_error`, `terminated`) e `.reason` para `utd`.
+3. **Senha do store web** (aprovada): `base64(HMAC-SHA256(K, "chatyy-e2ee5-store-v1|<uid>|<device_id>"))`,
+   `K` = CryptoKey HMAC **não-exportável** guardada no IndexedDB `chatyy-e2ee5-meta` com o
+   `device_id`. Sem o registro ⇒ aparelho novo (store órfão apagado).
+4. **Web não tem `encryptFile`/`decryptFile`** (só bytes). Nativo tem os dois.
+5. Vínculo, lado celular (WP-03/WP-12): `linkAccept(qrPayload, {convIds, sinceMs})` →
+   `{checkCode}` e `linkPhonePoll()` → `{state: 'waiting_device'|'waiting_upload'|'sent'|'done',
+   deviceId?, chunks?}` (espelha `LinkPhoneState` do §6.7). Lado web: `linkBegin`,
+   `linkPoll`, `linkSendDevice`, `linkCompleteUpload`, `linkCancel` como na proposta.
+6. O host esconde `store_dir`, `store_passphrase`, `role`, `holder_suffix`; o JS passa só `uid`.
 
 ---
 
