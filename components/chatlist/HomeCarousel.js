@@ -357,7 +357,11 @@ export const BiaCarouselItem = memo(function BiaCarouselItem({ isDark, t, router
   const daily = useBiaDaily(_lc?.language || 'pt-BR');
   let hello = sug.hello;
   let line = '';
-  if (daily && daily.line) {
+  // [2026-10-21] balão fixo e curto (founder): "Oi, sou a Bia. Fale comigo" — nunca corta.
+  // A frase do dia volta com globalThis.__chatyy_bia_daily_bubble = true.
+  if (globalThis.__chatyy_bia_daily_bubble !== true) {
+    line = tc(t, 'homeCarousel.biaHello', 'Oi, sou a Bia. Fale comigo');
+  } else if (daily && daily.line) {
     const word = t(biaGreetingKey());
     hello = daily.name ? `${word}, ${daily.name}` : word;
     line = daily.line;

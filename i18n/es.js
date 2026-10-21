@@ -13823,6 +13823,7 @@ export default {
   "me.plusSubFree": "Suscríbete para tener más espacio",
   "homeCarousel.viewStatus": "Ver estado",
   "homeCarousel.openChat": "Abrir chat",
+  "homeCarousel.biaHello": "Hola, soy Bia. Háblame",
   "homeCarousel.chatOptions": "Opciones del chat",
   "homeCarousel.statusNew": "Estado nuevo",
   "homeCarousel.statusSeen": "Estado visto",

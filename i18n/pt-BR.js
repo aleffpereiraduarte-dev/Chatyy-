@@ -13908,6 +13908,7 @@ export default {
   "homeCarousel.pinStoryHint": "Toque para ver o status. Toque e segure para abrir a conversa.",
   "me.publicProfile": "Meu mural",
   "me.publicProfileSub": "Suas publicações de texto e fotos",
+  "homeCarousel.biaHello": "Oi, sou a Bia. Fale comigo",
   "me.lists": "Listas",
   "me.broadcast": "Mensagens de transmissão",
   // [2026-10-18 onb-telegram] boas-vindas com cartões

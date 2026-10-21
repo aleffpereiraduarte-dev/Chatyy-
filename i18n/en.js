@@ -13830,6 +13830,7 @@ export default {
   "homeCarousel.pinStoryHint": "Tap to view the status. Touch and hold to open the chat.",
   "me.publicProfile": "My wall",
   "me.publicProfileSub": "Your text and photo posts",
+  "homeCarousel.biaHello": "Hi, I'm Bia. Talk to me",
   "me.lists": "Lists",
   "me.broadcast": "Broadcast messages",
   // [2026-10-18 onb-telegram] boas-vindas com cartões
