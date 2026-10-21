@@ -14304,7 +14304,7 @@ export default {
   "games.rules.stop.2": "Whoever fills everything can call STOP: the other gets 10 more seconds. Without STOP, the round ends in 3 minutes.",
   "games.rules.stop.3": "In the review the answers show up; you can challenge an answer of the other player that doesn't count.",
   "games.rules.stop.4": "Points per category: 10 unique answer, 5 same as the other's, 0 empty, wrong letter or challenged.",
-  "games.rules.desenho.1": "3 rounds, taking turns drawing. The drawer sees the word; the other sees only the category and length.",
+  "games.rules.desenho.1": "4 rounds, taking turns drawing. The drawer sees the word; the other sees only the category and length.",
   "games.rules.desenho.2": "Draw with your finger (no writing the word!). You can change color, undo, clear or skip the word.",
   "games.rules.desenho.3": "The guesser types guesses; accents and capitals don't matter. Each round lasts 60 seconds.",
   "games.rules.desenho.4": "Correct: the guesser gets 50 points and the drawer 25, plus a speed bonus. Most points wins.",
