@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ChatyyCryptoModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.chatyycrypto.ChatyyCryptoModule"]
+  }
+}

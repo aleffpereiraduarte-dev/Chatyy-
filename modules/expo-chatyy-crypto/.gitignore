@@ -1,0 +1,6 @@
+# Artefatos do núcleo (WP-02: ci/fetch-prebuilt.sh / build-*.sh --install). Nunca commitar.
+ios/ChatyyCryptoCore.xcframework/
+ios/Generated/
+android/src/main/jniLibs/
+android/src/main/java/com/chatyy/
+android/build/

@@ -1,0 +1,9 @@
+{
+  "name": "expo-chatyy-crypto",
+  "version": "0.1.0",
+  "description": "Chatyy E2EE v5 native host (WP-03): Expo module + public Swift/Kotlin API over the chatyy-crypto Rust core (UniFFI). Stub unless the prebuilt core is installed (native/chatyy-crypto/ci/fetch-prebuilt.sh).",
+  "main": "index.ts",
+  "types": "index.ts",
+  "private": true,
+  "license": "Apache-2.0"
+}

@@ -419,6 +419,7 @@
       "./plugins/with-photos-backup",
       "./plugins/with-broadcast-extension",
       "./plugins/with-live-activity",
+      "./plugins/with-chatyy-crypto",
       "expo-asset",
       [
         "expo-local-authentication",

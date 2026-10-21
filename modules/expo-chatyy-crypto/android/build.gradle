@@ -1,0 +1,73 @@
+// [e2ee5 WP-03] Módulo Expo do núcleo E2EE v5 (chatyy-crypto, Rust/UniFFI) — Android.
+//
+// Dois modos, decididos na configuração do Gradle:
+//   NÚCLEO — src/main/jniLibs/<abi>/libchatyy_crypto.so + bindings Kotlin geradas em
+//            src/main/java/com/chatyy/crypto/core/chatyy_crypto.kt (instaladas por
+//            native/chatyy-crypto/ci/fetch-prebuilt.sh android modules/expo-chatyy-crypto ou
+//            native/chatyy-crypto/build-android.sh --install modules/expo-chatyy-crypto — WP-02).
+//            Compila src/core/java (ChatyyCrypto público + transporte OkHttp) + JNA.
+//   STUB   — sem os artefatos (todo build normal): src/stub/java, info().coreLinked=false,
+//            toda chamada rejeita 'unsupported'. Sem .so, sem JNA.
+// Forçar: env CHATYY_CRYPTO_CORE=0 (stub mesmo com artefatos) / =1 (falha se faltarem).
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.chatyycrypto'
+version = '0.1.0'
+
+def coreKt = file("src/main/java/com/chatyy/crypto/core/chatyy_crypto.kt")
+def jniDir = file("src/main/jniLibs")
+def hasSo = jniDir.isDirectory() && (jniDir.listFiles() ?: []).any { it.isDirectory() && new File(it, "libchatyy_crypto.so").isFile() }
+def hasCore = coreKt.isFile() && hasSo
+def force = (System.getenv("CHATYY_CRYPTO_CORE") ?: "").trim()
+if (force == "1" && !hasCore) {
+  throw new GradleException("[expo-chatyy-crypto] CHATYY_CRYPTO_CORE=1 mas faltam jniLibs/<abi>/libchatyy_crypto.so ou bindings Kotlin — rode native/chatyy-crypto/ci/fetch-prebuilt.sh android modules/expo-chatyy-crypto")
+}
+def useCore = hasCore && force != "0"
+logger.lifecycle("[expo-chatyy-crypto] núcleo ${useCore ? 'LIGADO (.so + bindings)' : 'ausente → stub'}")
+
+android {
+  namespace "expo.modules.chatyycrypto"
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    // R8 do app: JNA + bindings UniFFI usam reflexão (sem isso = crash só no release).
+    consumerProguardFiles 'consumer-rules.pro'
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  sourceSets {
+    main {
+      java.srcDirs += [useCore ? 'src/core/java' : 'src/stub/java']
+      if (!useCore) {
+        java.exclude 'com/chatyy/crypto/core/**'
+        jniLibs.srcDirs = []
+      }
+    }
+  }
+
+  packagingOptions {
+    // A .so do núcleo já vem stripped (release, strip=symbols) e alinhada a 16 KB.
+    doNotStrip '**/libchatyy_crypto.so'
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  // Mesma versão que o app já carrega (expo-chat-transport): zero bytes novos.
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+  if (useCore) {
+    // UniFFI fala com a .so por JNA (mesma versão fixada no WP-02: ci/env.sh CC_JNA_VERSION).
+    implementation 'net.java.dev.jna:jna:5.14.0@aar'
+  }
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
