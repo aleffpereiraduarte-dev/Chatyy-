@@ -6895,7 +6895,23 @@ export async function chatDelete(messageId, mode = 'for_all') {
   // was clear; the outbox drainer will retry the network side.
   const deletedAt = new Date().toISOString();
   await _localUpdateMessage(messageId, { deleted_at: deletedAt });
-  return apiCall('chat_delete_message', { message_id: messageId, mode, client_action_id: _chatActionId() }, 'POST');
+  const r = await apiCall('chat_delete_message', { message_id: messageId, mode, client_action_id: _chatActionId() }, 'POST');
+  _emitLocalDeleted(messageId, mode, r);
+  return r;
+}
+
+// [prevapagada 2026-10-21] Apagou (p/ mim ou p/ todos) com sucesso → avisa a LISTA pelo
+// barramento LOCAL (nunca vai à rede): a prévia da conversa muda junto com a bolha, sem
+// esperar o WS (`delete` / `message_hidden`). ChatListTab acha a linha pelo id da última msg.
+function _emitLocalDeleted(messageId, mode, r) {
+  try {
+    if (messageId == null || !r || r.success === false) return;
+    require('./websocket').default?._emit?.('chat_local_deleted', {
+      message_id: messageId,
+      mode: mode === 'for_me' ? 'for_me' : 'for_all',
+      deleted_at: new Date().toISOString(),
+    });
+  } catch {}
 }
 
 export async function chatDeleteBulk(messageIds, mode = 'for_me') {
@@ -6913,7 +6929,7 @@ export async function chatDeleteBulk(messageIds, mode = 'for_me') {
   const worker = async () => {
     while (cur < ids.length) {
       const i = cur++;
-      try { results[i] = await apiCall('chat_delete_message', { message_id: ids[i], mode, client_action_id: _chatActionId() }, 'POST'); }
+      try { results[i] = await apiCall('chat_delete_message', { message_id: ids[i], mode, client_action_id: _chatActionId() }, 'POST'); _emitLocalDeleted(ids[i], mode, results[i]); }
       catch (e) { results[i] = { success: false, message: e?.message }; }
     }
   };

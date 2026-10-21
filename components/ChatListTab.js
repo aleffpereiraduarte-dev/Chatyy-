@@ -455,6 +455,87 @@ function _sameLm(a, b, meLc) {
       && Math.abs(_tsMs(a.created_at) - _tsMs(b.created_at)) < 120000) return true;
   return false;
 }
+// [prevapagada 2026-10-21] Bug founder: "apaguei e a mensagem continua na prévia da lista".
+// Apagar p/ MIM a última msg → o chat_list devolve a ANTERIOR (mais velha); a regra
+// "snapshot mais velho que a linha local → mantém a local" (_mergeServerConvRowBase)
+// guardava a msg apagada p/ sempre. Agora: (1) registro das msgs apagadas/ocultas
+// (id real + client id, 10 min) → a linha local com uma delas nunca vence o servidor;
+// (2) o chat_list traz conv_max_message_id → prévia local com id <= isso já foi vista
+// pelo snapshot, então a escolha do servidor manda (cobre outro aparelho + cold start).
+// Kill: globalThis.__chatyy_prevapagada_off = true.
+const _lmGone = new Map(); // 'i:<id>' | 'c:<cmi>' → { mode, at }
+const _LM_GONE_TTL = 600000;
+function _lmGoneNote(id, cmi, mode) {
+  const now = Date.now();
+  if (_lmGone.size > 400) {
+    for (const [k, v] of _lmGone) { if (now - v.at > _LM_GONE_TTL || _lmGone.size > 300) _lmGone.delete(k); else break; }
+  }
+  const v = { mode: mode === 'for_me' ? 'for_me' : 'for_all', at: now };
+  if (id != null && id !== '') _lmGone.set('i:' + String(id), v);
+  if (cmi) _lmGone.set('c:' + String(cmi), v);
+}
+function _lmGoneOf(lm) {
+  if (!lm || typeof lm !== 'object' || !_lmGone.size) return null;
+  const now = Date.now();
+  const keys = [];
+  if (lm.id != null) keys.push('i:' + String(lm.id));
+  const cmi = lm.client_message_id || lm._client_id;
+  if (cmi) keys.push('c:' + String(cmi));
+  for (const k of keys) {
+    const v = _lmGone.get(k);
+    if (v && now - v.at < _LM_GONE_TTL) return v;
+  }
+  return null;
+}
+function _lmMatchesGone(lm, mid, cmi) {
+  if (!lm || typeof lm !== 'object') return false;
+  if (mid != null && lm.id != null && String(lm.id) === String(mid)) return true;
+  const lc = lm.client_message_id || lm._client_id;
+  return !!(cmi && lc && String(lc) === String(cmi));
+}
+// A prévia local NÃO pode vencer o snapshot do servidor (ver acima).
+function _lmServerOwns(oldLm, c) {
+  if (!oldLm || globalThis.__chatyy_prevapagada_off === true) return false;
+  if (oldLm._fromHide) return true; // prévia provisória montada do cache após apagar p/ mim
+  if (_lmGoneOf(oldLm)) return true;
+  const mx = c ? Number(c.conv_max_message_id) : 0;
+  return mx > 0 && _lmIsRealId(oldLm.id) && Number(oldLm.id) <= mx;
+}
+// Prévia provisória (WhatsApp: a anterior VISÍVEL p/ mim) a partir das msgs já em
+// memória/MMKV da conversa; null = nenhuma conhecida (o chat_list confirma em ~1 s).
+function _lmPrevVisibleFromCache(convId, goneIds) {
+  try {
+    const arr = require('../services/smartChatCache').getCachedMessagesSync?.(convId, 200) || [];
+    for (let i = arr.length - 1; i >= 0; i--) {
+      const m = arr[i];
+      if (!m || typeof m !== 'object' || m.id == null) continue;
+      if (goneIds.has(String(m.id)) || _lmGoneOf(m)) continue;
+      if (m._hidden || m.hidden_for_me || m.is_hidden || m.is_scheduled || m.scheduled_at) continue;
+      const ty = String(m.type || 'text');
+      if ((m.deleted_at || m.deleted) && (ty === 'system' || ty === 'call_card')) continue;
+      const del = !!(m.deleted_at || m.deleted || m.is_deleted);
+      return {
+        id: m.id,
+        sender_email: m.sender_email || m.sender || '',
+        sender_name: m.sender_name || '',
+        content: del ? '' : (typeof m.content === 'string' ? m.content : ''),
+        type: del ? 'text' : ty,
+        created_at: m.created_at || null,
+        file_name: del ? null : (m.file_name || null),
+        file_url: del ? null : (m.file_url || null),
+        thumb_url: null,
+        caption: del ? undefined : m.caption,
+        duration: del ? undefined : m.duration,
+        deleted: del,
+        deleted_at: del ? (m.deleted_at || new Date().toISOString()) : null,
+        delivered_at: m.delivered_at || null,
+        read_at: m.read_at || null,
+        _fromHide: Date.now(),
+      };
+    }
+  } catch {}
+  return null;
+}
 // [2026-10-17 visto-lista-conversa] Mesmo piso AO VIVO que a conversa usa
 // (services/peerReadLive, alimentado pelo transporte, peer-only, TTL 2 min): um
 // snapshot do chat_list vindo da réplica atrasada do edge não rebaixa a prévia
@@ -525,7 +606,7 @@ function _mergeServerConvRowBase(old, c, meLc) {
   const oldLm = old.last_message && typeof old.last_message === 'object' ? old.last_message : null;
   const newLm = c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
   let keepOld = false;
-  if (oldLm && !_sameLm(oldLm, newLm, meLc)) {
+  if (oldLm && !_sameLm(oldLm, newLm, meLc) && !_lmServerOwns(oldLm, c)) { // [prevapagada 2026-10-21]
     const oMs = _convActivityMs(old);
     const nMs = _convActivityMs(c);
     if (oMs !== nMs) keepOld = oMs > nMs;
@@ -6277,7 +6358,80 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
       // affected message IS the conversation's last_message — older messages
       // don't drive the preview.
       const _delMsgId = (d) => d?.message_id ?? d?.id ?? d?.msg_id;
+      // [prevapagada 2026-10-21] Apagada p/ TODOS (WS `delete`, os 2 lados + meus outros
+      // aparelhos) ou p/ MIM (`message_hidden` do canal próprio / ACK local do api.chatDelete):
+      // casa por id real OU client id (prévia otimista "Você: …" ainda com id tmp_), nas
+      // DUAS listas (ativas + arquivadas). for_all → lápide (⊘ "Você apagou…"/"Esta mensagem
+      // foi apagada", sem miniatura); for_me → a anterior visível do cache local (ou vazia)
+      // na hora + chat_list confirma (a linha local não vence mais o servidor).
+      const _applyLmGone = (d, mode) => {
+        try {
+          if (!d || typeof d !== 'object') return;
+          const mid = _delMsgId(d);
+          const cmi = d.client_message_id || null;
+          if (mid == null && !cmi) return;
+          _lmGoneNote(mid, cmi, mode);
+          const cid = d.conversation_id != null ? String(d.conversation_id) : null;
+          const delAt = d.deleted_at || new Date().toISOString();
+          let hit = false;
+          const patchRow = (c) => {
+            if (!c || (cid && String(c.id) !== cid && String(c.conversation_id) !== cid)) return c;
+            const lm = c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+            if (!lm || !_lmMatchesGone(lm, mid, cmi)) return c;
+            hit = true;
+            if (mode !== 'for_me') {
+              if (lm.deleted && lm.deleted_at) return c;
+              return {
+                ...c,
+                last_message: {
+                  ...lm, content: '', type: 'text', file_url: null, file_name: null, file_size: 0,
+                  thumb_url: null, thumbnail_url: null, thumb_b64: null, caption: null, duration: null,
+                  image_variants: null, link_preview: null, is_view_once: 0,
+                  deleted: true, deleted_at: delAt,
+                },
+              };
+            }
+            const gone = new Set([String(lm.id)]);
+            if (mid != null) gone.add(String(mid));
+            const prevLm = _lmPrevVisibleFromCache(c.id ?? c.conversation_id, gone);
+            return {
+              ...c,
+              last_message: prevLm,
+              last_message_at: (prevLm && prevLm.created_at) || c.last_message_at,
+              last_message_type: prevLm ? prevLm.type : null,
+              last_message_sender: prevLm ? prevLm.sender_email : null,
+            };
+          };
+          const patchList = (prev) => {
+            if (!Array.isArray(prev) || !prev.length) return prev;
+            let ch = false;
+            const out = prev.map((c) => { const n = patchRow(c); if (n !== c) ch = true; return n; });
+            return ch ? out : prev;
+          };
+          setConversations(patchList);
+          setArchivedConversations(patchList);
+          // for_me: a anterior real vem do servidor (cache local pode não ter a conversa).
+          // `hit` é marcado dentro do updater; a linha também vale pelo ref (updater adiado).
+          if (mode === 'for_me') {
+            const rows = conversationsRef.current || [];
+            if (hit || rows.some((c) => c && c.last_message && _lmMatchesGone(c.last_message, mid, cmi))) _scheduleUnreadRecompute();
+          }
+        } catch {}
+      };
       unsubs.push(mailWs.on('delete', (data) => {
+        const d = data && typeof data === 'object' && data.data && typeof data.data === 'object' && (data.data.id != null || data.data.message_id != null) ? data.data : data;
+        if (d?.conversation_id == null || _delMsgId(d) == null) return;
+        if (globalThis.__chatyy_prevapagada_off === true) { _applyLmGoneLegacy(d); return; }
+        _applyLmGone(d, 'for_all');
+      }));
+      // ACK local de api.chatDelete/chatDeleteBulk (barramento local, nunca vai à rede):
+      // a prévia muda no MESMO instante que a bolha, sem esperar o WS.
+      unsubs.push(mailWs.on('chat_local_deleted', (d) => {
+        if (globalThis.__chatyy_prevapagada_off === true) return;
+        if (!d || d.message_id == null) return;
+        _applyLmGone(d, d.mode === 'for_me' ? 'for_me' : 'for_all');
+      }));
+      const _applyLmGoneLegacy = (data) => {
         const convId = data?.conversation_id;
         const mid = _delMsgId(data);
         if (convId == null || mid == null) return;
@@ -6302,7 +6456,7 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
             };
           });
         });
-      }));
+      };
       unsubs.push(mailWs.on('edit', (data) => {
         const convId = data?.conversation_id;
         const mid = _delMsgId(data);
@@ -6497,6 +6651,8 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
         try {
           const d = raw && raw.data && raw.data.conversation_id != null ? raw.data : raw;
           if (!d || d.conversation_id == null || d.message_id == null) return;
+          // [prevapagada 2026-10-21] prévia = a anterior visível já (cache) + servidor confirma
+          if (globalThis.__chatyy_prevapagada_off !== true) { _applyLmGone(d, 'for_me'); return; }
           const row = (conversationsRef.current || []).find(_matchCid(String(d.conversation_id)));
           const lm = row && row.last_message;
           // a prévia era a mensagem escondida → a anterior vem do servidor
