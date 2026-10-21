@@ -15238,4 +15238,11 @@ export default {
   "calls.scheduleLoadFailed": "Couldn't load",
   "calls.cancelFailed": "Couldn't cancel. Please try again.",
   "call.declineSendFailed": "Not sent. Please try again.",
+  "common.closeMenu": "Close menu",
+  "common.openMenu": "Open menu",
+  "compose.a11yExpand": "Expand",
+  "compose.a11yMinimize": "Minimize",
+  "compose.a11yRestore": "Restore",
+  "compose.a11yMaximize": "Maximize",
+  "signatures.bodyPlaceholder": "-- \nName\nTitle\ncompany.com",
 };

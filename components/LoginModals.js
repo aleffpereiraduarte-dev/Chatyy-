@@ -237,7 +237,7 @@ export function HelpModal({ visible, onClose }) {
   ];
 
   const renderTicket = () => {
-    const isDisabled = !ticketEmail.trim() || !ticketMessage.trim();
+    const isDisabled = !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ticketEmail.trim()) || !ticketMessage.trim();
     return (
       <>
         <TouchableOpacity onPress={() => setView('main')} style={ms.backBtn} activeOpacity={0.6}>
@@ -319,11 +319,11 @@ export function HelpModal({ visible, onClose }) {
           activeOpacity={0.75}
         >
           {sending ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
           ) : (
             <>
-              <IconSend size={16} color={isDisabled ? colors.textTertiary : '#fff'} style={{ marginRight: 8 }} />
-              <Text style={[ms.submitText, { color: isDisabled ? colors.textTertiary : '#fff' }]}>{t('help.send')}</Text>
+              <IconSend size={16} color={isDisabled ? colors.textTertiary : (colors.onPrimary || '#fff')} style={{ marginRight: 8 }} />
+              <Text style={[ms.submitText, { color: isDisabled ? colors.textTertiary : (colors.onPrimary || '#fff') }]}>{t('help.send')}</Text>
             </>
           )}
         </TouchableOpacity>

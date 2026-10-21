@@ -794,6 +794,8 @@ export default function ComposeScreen() {
     if (uid) {
       getMessage(uid, params.folder || 'INBOX').then(r => {
         if (!alive) return;
+        // [2026-10-21] falha ao carregar o original → avisa (antes abria vazio calado).
+        if (!(r?.success && r.data)) { setError(t('compose.errorConnection')); return; }
         if (r.success && r.data) {
           const orig = r.data;
           setOrigMsg(orig);
@@ -894,7 +896,7 @@ export default function ComposeScreen() {
             }
           }
         }
-      }).catch(() => {}).finally(() => { if (alive) setLoading(false); });
+      }).catch(() => { if (alive) setError(t('compose.errorConnection')); }).finally(() => { if (alive) setLoading(false); });
     } else {
       setLoading(false);
     }

@@ -664,8 +664,11 @@ function SignupPhoneLegacy() {
   // [wave14a] PIN desligado pelo código do e-mail → mesmo fim do login com token.
   const onPinResetLoggedIn = async (d) => {
     if (phoneViaFirebaseRef.current) { fbSignOut(); }
-    await loginWithToken(d.token, d.email);
+    // [2026-10-21] loginWithToken devolve {success:false} sem lançar.
+    let lr = null;
+    try { lr = await loginWithToken(d.token, d.email); } catch { lr = null; }
     if (!mountedRef.current) return;
+    if (!lr?.success) { setPinResetOpen(false); setError(t('login.errorConnection')); return; }
     setPinResetOpen(false); setLockRequired(false); setLockPin(''); setLockChallenge('');
     clearSignupDraft();
     goStep('done');
@@ -728,7 +731,15 @@ function SignupPhoneLegacy() {
         // Existing account — log in, then probe iCloud / Drive for an
         // existing backup tied to this phone (reinstall scenario). On
         // any probe error or web platform we just navigate immediately.
-        try { await loginWithToken(r.data.token, r.data.email); } catch {}
+        // [2026-10-21] não dizer "Tudo pronto" sem sessão: o retorno era ignorado.
+        let lr = null;
+        try { lr = await loginWithToken(r.data.token, r.data.email); } catch { lr = null; }
+        if (!mountedRef.current) return;
+        if (!lr?.success) {
+          setError(t('login.errorConnection'));
+          setBusy(false);
+          return;
+        }
         try { require('../services/nativeTelemetry').markAuthDone('login'); } catch {} // [otp-wa 2026-10-18]
         clearSignupDraft(); // [2026-10-07 signup-ux]
         goStep('done');
@@ -939,7 +950,7 @@ function SignupPhoneLegacy() {
           // [2026-10-13 consent-lgpd] conta nova → sem auto-redirect (ver consentHold).
           _maybePromptRestoreThenGoChat({ hold: true });
         } else {
-          setError(lr?.message || (t('signupPhone.signupError') || 'Falha ao entrar após criar conta'));
+          setError(_errText(lr, 'signupPhone.signupError'));
         }
       } else {
         // [2026-10-07 signup-ux] friendly + actionable: a handle taken in the

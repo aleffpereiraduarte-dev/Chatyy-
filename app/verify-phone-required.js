@@ -10,7 +10,7 @@ import {
   View, Text, TextInput, TouchableOpacity, ActivityIndicator,
   KeyboardAvoidingView, Platform, ScrollView, Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -71,17 +71,26 @@ export default function VerifyPhoneRequiredScreen() {
     }
   };
 
+  // [2026-10-21] autofill (SMS/WhatsApp) + botão chamavam em paralelo — a 2ª
+  // chegava com o código já consumido e mostrava "código inválido".
+  const verifyBusyRef = useRef(false);
+  const _vpParams = useLocalSearchParams();
+  const _fromSettings = String((_vpParams && _vpParams.from) || '') === 'settings';
   const verifyCode = async (codeArg) => {
     const code = typeof codeArg === 'string' ? codeArg : codeStateRef.current;
+    if (verifyBusyRef.current) return;
     setError('');
     if (code.length !== 6) { try { hError(); } catch {} setError(t('verifyPhoneReq.codeLength')); return; }
+    verifyBusyRef.current = true;
     setLoading(true);
     try {
       const r = await api.verifyPhoneCheck(phone, code);
       if (r?.success) {
         try { hSuccess(); } catch {}
         // Refresh user data — server now returns needs_phone_verification=false
-        await refreshAuth();
+        try { await refreshAuth(); } catch {}
+        // Vindo de Ajustes › Recuperação (push) → volta pra lá; senão inbox.
+        if (_fromSettings) { try { if (router.canGoBack?.()) { router.back(); return; } } catch {} }
         router.replace('/inbox');
       } else {
         try { hError(); } catch {}
@@ -91,6 +100,7 @@ export default function VerifyPhoneRequiredScreen() {
       try { hError(); } catch {}
       setError(t('compose.errorConnection'));
     } finally {
+      verifyBusyRef.current = false;
       setLoading(false);
     }
   };

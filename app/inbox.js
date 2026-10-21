@@ -552,7 +552,13 @@ function InboxScreenInner() {
         refresh();
         try { loadFolders(); } catch {}
         try { (await import('../services/pushNotifications')).refreshBadgeCount?.(); } catch {}
-      } catch (e) { console.warn('markAllRead failed', e); }
+      } catch (e) {
+        // [2026-10-21] otimista sem volta: na falha a lista ficava "lida"
+        // enquanto o servidor seguia não lido. Recarrega a verdade.
+        console.warn('markAllRead failed', e);
+        try { refresh(); } catch {}
+        try { loadFolders(); } catch {}
+      }
     };
     // Round-6 gap-closer: when 50+ are visible the user almost certainly
     // wants to mark EVERY unread in the folder (not just the page they
@@ -1303,8 +1309,18 @@ function InboxScreenInner() {
   };
 
   const handleReportSpam = async (email) => {
-    const { reportSpam } = await import('../services/api');
-    await reportSpam(email.uid, currentFolder);
+    // [2026-10-21] offline lançava (rejeição sem catch) e success:false era ignorado.
+    try {
+      const { reportSpam } = await import('../services/api');
+      const r = await reportSpam(email.uid, currentFolder);
+      if (r && r.success === false) {
+        Alert.alert(t('common.error'), r.message || t('compose.errorConnection'));
+        return;
+      }
+    } catch {
+      Alert.alert(t('common.error'), t('compose.errorConnection'));
+      return;
+    }
     refresh();
     if (selectedEmail?.uid === email.uid) setSelectedEmail(null);
   };
@@ -1323,7 +1339,9 @@ function InboxScreenInner() {
       const learned = res?.data?.learned;
       const sender = res?.data?.sender;
       if (learned && sender) {
-        const msg = (t('email.notSpamLearned') || 'Aprendido — emails de @ vão pra Inbox').replace('@sender', `@${sender}`).replace('@', `@${sender}`);
+        // [2026-10-21] o 2º .replace('@') pegava o "@" recém-inserido ("@x.comx.com").
+        const _who = String(sender).includes('@') ? String(sender) : `@${sender}`;
+        const msg = t('email.notSpamLearned', 'Aprendido — emails de @sender vão pra Inbox').replace('@sender', _who);
         if (Platform.OS === 'web') {
           // Lightweight toast — non-blocking
           try {
@@ -1587,7 +1605,7 @@ function InboxScreenInner() {
           {/* Scrim is always dark (rgba 0,0,0,.5) — ink must stay white in both
               themes (textOnPrimary is black in dark mode → was invisible). */}
           <ActivityIndicator size="large" color="#ffffff" />
-          <Text style={[s.switchText, { color: '#ffffff' }]}>{t('account.switching', { email: '' })}</Text>
+          <Text style={[s.switchText, { color: '#ffffff' }]}>{t('account.switchingShort', 'Entrando...')}</Text>
         </View>
       )}
 
@@ -1616,7 +1634,7 @@ function InboxScreenInner() {
           {isDesktop && <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600', marginLeft: 2 }}>{t('chat.tabChats')}</Text>}
         </TouchableOpacity>
         {!isDesktop && (
-          <TouchableOpacity onPress={() => { setShowSidebar(!showSidebar); if (!showSidebar) setShowMenu(false); }} style={s.menuBtn} accessibilityLabel={showSidebar ? 'Close menu' : 'Open menu'} accessibilityRole="button">
+          <TouchableOpacity onPress={() => { setShowSidebar(!showSidebar); if (!showSidebar) setShowMenu(false); }} style={s.menuBtn} accessibilityLabel={showSidebar ? t('common.closeMenu', 'Fechar menu') : t('common.openMenu', 'Abrir menu')} accessibilityRole="button">
             {showSidebar ? (
               <IconX size={22} color={colors.text} />
             ) : (
@@ -2338,7 +2356,7 @@ function InboxScreenInner() {
                 onChangeText={setSwitchLoginPassword}
                 autoFocus
                 onSubmitEditing={async () => {
-                  if (!switchLoginPassword.trim()) return;
+                  if (!switchLoginPassword.trim() || switchLoginLoading) return;
                   setSwitchLoginLoading(true);
                   setSwitchLoginError('');
                   try {

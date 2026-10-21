@@ -11,7 +11,7 @@
  * signatures_delete / signatures_set_default. Server inserts the chosen
  * signature into outgoing mail in `case 'send'` automatically.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, Alert, Switch, FlatList,
@@ -62,26 +62,34 @@ export default function EmailSignaturesScreen() {
     setIsDefault(!!s.is_default);
   };
 
+  // [2026-10-21] sem trava 2 toques criavam assinaturas duplicadas; offline o
+  // apiCall lança (rejeição sem catch) e o erro era 'Failed' fixo em inglês.
+  const savingRef = useRef(false);
   const handleSave = async () => {
+    if (savingRef.current) return;
     const n = name.trim();
     const b = bodyHtml.trim();
     if (!n || !b) {
       Alert.alert(t('settings.signatures') || 'Assinaturas', t('signatures.required') || 'Nome e corpo obrigatórios');
       return;
     }
-    if (editing && editing !== 'new') {
-      const r = await apiCall('signatures_update', {
-        id: editing.id, name: n, body_html: b, alias_email: aliasEmail.trim().toLowerCase(), is_default: isDefault,
-      }, 'POST');
-      if (!r.success) { Alert.alert('', r.message || 'Failed'); return; }
-    } else {
-      const r = await apiCall('signatures_create', {
-        name: n, body_html: b, alias_email: aliasEmail.trim().toLowerCase(), is_default: isDefault,
-      }, 'POST');
-      if (!r.success) { Alert.alert('', r.message || 'Failed'); return; }
+    savingRef.current = true;
+    try {
+      const r = (editing && editing !== 'new')
+        ? await apiCall('signatures_update', {
+          id: editing.id, name: n, body_html: b, alias_email: aliasEmail.trim().toLowerCase(), is_default: isDefault,
+        }, 'POST')
+        : await apiCall('signatures_create', {
+          name: n, body_html: b, alias_email: aliasEmail.trim().toLowerCase(), is_default: isDefault,
+        }, 'POST');
+      if (!r?.success) { Alert.alert(t('common.error'), r?.message || t('compose.errorConnection')); return; }
+      reset();
+      load();
+    } catch {
+      Alert.alert(t('common.error'), t('compose.errorConnection'));
+    } finally {
+      savingRef.current = false;
     }
-    reset();
-    load();
   };
 
   const handleDelete = (s) => {
@@ -93,8 +101,10 @@ export default function EmailSignaturesScreen() {
         {
           text: t('common.delete') || 'Remover', style: 'destructive',
           onPress: async () => {
-            const r = await apiCall('signatures_delete', { id: s.id }, 'POST');
-            if (r.success) load();
+            try {
+              const r = await apiCall('signatures_delete', { id: s.id }, 'POST');
+              if (r?.success) load(); else Alert.alert(t('common.error'), r?.message || t('compose.errorConnection'));
+            } catch { Alert.alert(t('common.error'), t('compose.errorConnection')); }
           },
         },
       ],
@@ -102,8 +112,10 @@ export default function EmailSignaturesScreen() {
   };
 
   const setDefault = async (s) => {
-    const r = await apiCall('signatures_set_default', { id: s.id }, 'POST');
-    if (r.success) load();
+    try {
+      const r = await apiCall('signatures_set_default', { id: s.id }, 'POST');
+      if (r?.success) load(); else Alert.alert(t('common.error'), r?.message || t('compose.errorConnection'));
+    } catch { Alert.alert(t('common.error'), t('compose.errorConnection')); }
   };
 
   return (
@@ -138,7 +150,7 @@ export default function EmailSignaturesScreen() {
             style={[s.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant, height: 160, textAlignVertical: 'top' }]}
             value={bodyHtml} onChangeText={setBodyHtml}
             multiline
-            placeholder={'-- \nNome\nCargo\nempresa.com'}
+            placeholder={t('signatures.bodyPlaceholder', '-- \nNome\nCargo\nempresa.com')}
             placeholderTextColor={colors.textTertiary}
           />
 

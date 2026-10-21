@@ -15316,4 +15316,11 @@ export default {
   "calls.scheduleLoadFailed": "Não foi possível carregar",
   "calls.cancelFailed": "Não foi possível cancelar. Tente de novo.",
   "call.declineSendFailed": "Não foi enviada. Tente de novo.",
+  "common.closeMenu": "Fechar menu",
+  "common.openMenu": "Abrir menu",
+  "compose.a11yExpand": "Expandir",
+  "compose.a11yMinimize": "Minimizar",
+  "compose.a11yRestore": "Restaurar",
+  "compose.a11yMaximize": "Maximizar",
+  "signatures.bodyPlaceholder": "-- \nNome\nCargo\nempresa.com",
 };

@@ -22,6 +22,7 @@ export default function RecoveryApprove() {
   const [req, setReq] = useState(null);
   const [result, setResult] = useState(''); // '' | approved | denied | wrong | expired | none
   const [, setTick] = useState(0);
+  const [netErr, setNetErr] = useState(false); // [2026-10-21] falha de rede ≠ "expirou
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -51,6 +52,7 @@ export default function RecoveryApprove() {
   const respond = async (approve, number) => {
     if (!req || busy) return;
     setBusy(true);
+    setNetErr(false);
     try {
       const r = await recoveryDeviceRespond(req.challenge_id, approve, number);
       if (r?.success) {
@@ -60,7 +62,11 @@ export default function RecoveryApprove() {
         setResult('expired');
       }
       setReq(null);
-    } catch { setResult('expired'); setReq(null); }
+    } catch {
+      // Rede caiu: mantém o pedido na tela p/ tentar de novo (antes dizia "expirou").
+      try { hWarning?.(); } catch {}
+      setNetErr(true);
+    }
     finally { setBusy(false); }
   };
 
@@ -110,6 +116,7 @@ export default function RecoveryApprove() {
           >
             {busy ? <ActivityIndicator color={colors.background} /> : <Text style={[s.denyText, { color: colors.background }]}>{t('rec.approve.deny')}</Text>}
           </TouchableOpacity>
+          {netErr ? <Text style={[s.warn, { color: colors.error }]} accessibilityLiveRegion="polite">{t('rec.err.network')}</Text> : null}
           <Text style={[s.warn, { color: colors.textTertiary }]}>{t('rec.approve.warn')}</Text>
           <Text style={[s.timer, { color: colors.textTertiary }]}>{t('rec.approve.expiresIn', { s: left })}</Text>
         </>

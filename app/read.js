@@ -480,19 +480,25 @@ export default function ReadScreen() {
     try { if (row) await ctxRemoveLabel(row.uid, label); else await removeLabel(u, label, folder); } catch {}
   };
 
-  const handleReportSpam = async (e) => {
-    const { reportSpam } = await import('../services/api');
-    await reportSpam(uid, folder);
+  // [2026-10-21] offline rejeitava sem catch e success:false fechava o leitor
+  // como se tivesse dado certo.
+  const _reportAs = async (which) => {
+    try {
+      const apiSvc = await import('../services/api');
+      const r = await (which === 'spam' ? apiSvc.reportSpam : apiSvc.reportHam)(uid, folder);
+      if (r && r.success === false) {
+        Alert.alert(t('common.error'), r.message || t('compose.errorConnection'));
+        return;
+      }
+    } catch {
+      Alert.alert(t('common.error'), t('compose.errorConnection'));
+      return;
+    }
     refresh();
     router.back();
   };
-
-  const handleReportHam = async (e) => {
-    const { reportHam } = await import('../services/api');
-    await reportHam(uid, folder);
-    refresh();
-    router.back();
-  };
+  const handleReportSpam = async (e) => _reportAs('spam');
+  const handleReportHam = async (e) => _reportAs('ham');
 
   if (loading) {
     return (

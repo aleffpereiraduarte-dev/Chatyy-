@@ -477,6 +477,7 @@ export default function LoginScreen() {
   const fbConfirmRef = useRef(null);
   const fbIdTokenRef = useRef(null);
   const phoneViaFirebaseRef = useRef(false);
+  const phoneVerifyInFlightRef = useRef(false); // [2026-10-21] trava de verificação OTP
   const [qrToken, setQrToken] = useState(null);
   const [qrCountdown, setQrCountdown] = useState(60);
   const [qrStatus, setQrStatus] = useState('idle'); // idle, loading, pending, confirmed, expired
@@ -704,6 +705,7 @@ export default function LoginScreen() {
         } else {
           try { await SecureStore.deleteItemAsync('bio_password'); } catch {}
           try { goToPasswordRef.current?.(savedEmail); } catch {}
+          setError(t('login.biometricExpired'));
         }
       } else {
         // Biometric OK but nothing to log in with — advance to password
@@ -1264,11 +1266,29 @@ export default function LoginScreen() {
   // --- Device verification challenge polling ---
   const startChallengePoll = useCallback((chId, chEmail) => {
     if (challengePollRef.current) clearInterval(challengePollRef.current);
+    // [2026-10-21] ticks async podiam se sobrepor (rede lenta > 2 s) e concluir
+    // o login 2x; e o poll nunca parava. Trava + prazo de 10 min.
+    let _tickBusy = false;
+    const _until = Date.now() + 10 * 60 * 1000;
     challengePollRef.current = setInterval(async () => {
+      if (_tickBusy) return;
+      if (Date.now() > _until) {
+        clearInterval(challengePollRef.current);
+        challengePollRef.current = null;
+        if (mountedRef.current) setVerificationStep('denied');
+        return;
+      }
+      _tickBusy = true;
       try {
         const r = await api.checkLoginChallenge(chId, chEmail);
         if (!mountedRef.current) return;
-        if (r.success && r.data) {
+        if (r?.success && r.data && r.data.status === 'expired') {
+          clearInterval(challengePollRef.current);
+          challengePollRef.current = null;
+          setVerificationStep('denied');
+          return;
+        }
+        if (r?.success && r.data) {
           if (r.data.status === 'approved') {
             clearInterval(challengePollRef.current);
             challengePollRef.current = null;
@@ -1325,7 +1345,7 @@ export default function LoginScreen() {
           }
           // 'pending' — keep polling
         }
-      } catch {}
+      } catch {} finally { _tickBusy = false; }
     }, 2000);
   }, [password, completeLoginAfterChallenge, router]);
 
@@ -1678,8 +1698,12 @@ export default function LoginScreen() {
   const handlePinResetLoggedIn = async (d) => {
     const fullPhone = phoneCountryCode + phoneNumber.replace(/[^0-9]/g, '').replace(/^0+/, '');
     if (phoneViaFirebaseRef.current) { fbSignOut(); }
-    await loginWithToken(d.token, d.email);
+    // [2026-10-21] loginWithToken devolve {success:false} sem lançar — não
+    // mostrar sucesso nem navegar sem sessão.
+    let lr = null;
+    try { lr = await loginWithToken(d.token, d.email); } catch { lr = null; }
     if (!mountedRef.current) return;
+    if (!lr?.success) { setPinResetOpen(false); setError(t('login.errorConnection')); shake(); return; }
     setPinResetOpen(false);
     setPhoneRequiresLock(false);
     setPhoneLockPin('');
@@ -1692,9 +1716,15 @@ export default function LoginScreen() {
   };
 
   const handlePhoneVerifyOtp = async () => {
-    safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
     const code = phoneOtp.join('');
     if (code.length !== 6) return;
+    // [2026-10-21] autofill (SMS Android / WhatsApp / oneTimeCode iOS) pode
+    // disparar 2 verificações — a 2ª chegava com o código consumido e mostrava
+    // "Código incorreto" enquanto a 1ª logava.
+    if (phoneVerifyInFlightRef.current) return;
+    phoneVerifyInFlightRef.current = true;
+    let _loggedIn = false;
+    safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
     setError('');
     setPhoneVerifying(true);
     try {
@@ -1753,7 +1783,16 @@ export default function LoginScreen() {
       if (r.success && r.data?.token) {
         // The Chatyy bearer is now the real session — drop the Firebase one.
         if (phoneViaFirebaseRef.current) { fbSignOut(); }
-        await loginWithToken(r.data.token, r.data.email);
+        let lr = null;
+        try { lr = await loginWithToken(r.data.token, r.data.email); } catch { lr = null; }
+        if (!mountedRef.current) return;
+        if (!lr?.success) {
+          setError(t('login.errorConnection'));
+          shake();
+          setPhoneVerifying(false);
+          return;
+        }
+        _loggedIn = true; // mantém a trava: a tela já vai navegar
         try { require('../services/nativeTelemetry').markAuthDone('login'); } catch {} // [otp-wa 2026-10-18]
         saveLastIdentifier(fullPhone);
         showSuccessPop();
@@ -1763,6 +1802,7 @@ export default function LoginScreen() {
         return;
       }
       if (r.success && r.data?.exists === false && r.data?.verify_token) {
+        _loggedIn = true; // navega p/ cadastro — código já consumido
         // New account path — jump to the name step with verify_token in
         // hand. signup-phone reads `step` and `verify_token` params and
         // mounts directly at the name input.
@@ -1803,6 +1843,8 @@ export default function LoginScreen() {
       setError(t('login.errorConnection'));
       shake();
     } finally {
+      if (!_loggedIn) phoneVerifyInFlightRef.current = false;
+      else setTimeout(() => { phoneVerifyInFlightRef.current = false; }, 4000); // volta p/ a tela (ex.: voltar do cadastro) destrava
       if (mountedRef.current) setPhoneVerifying(false);
     }
   };

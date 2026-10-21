@@ -114,7 +114,7 @@ export default function RecoveryOptions() {
                 onPress={Platform.OS !== 'web' ? () => router.push('/change-phone') : undefined}
               />
             ) : (
-              <SettingsRow icon={IconMessageSquare} title={t('rec.opts.addPhone')} subtitle={t('rec.opts.addPhoneSub')} onPress={() => router.push('/verify-phone-required')} />
+              <SettingsRow icon={IconMessageSquare} title={t('rec.opts.addPhone')} subtitle={t('rec.opts.addPhoneSub')} onPress={() => router.push({ pathname: '/verify-phone-required', params: { from: 'settings' } })} />
             )}
           </SettingsGroup>
 

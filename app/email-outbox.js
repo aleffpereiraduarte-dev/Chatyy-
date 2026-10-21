@@ -56,7 +56,10 @@ export default function EmailOutboxScreen() {
   const statusOf = (e) => {
     if (e.status === 'sending') return { text: t('emailOutbox.statusSending'), color: colors.primary, Icon: IconSend };
     if (e.status === 'failed') {
-      const why = e.lastError === 'attachment_lost' ? t('emailOutbox.attachmentLost') : (e.lastError || '');
+      // [2026-10-21] códigos crus (send_failed/network/upload/…) viravam texto na tela.
+      const le = String(e.lastError || '');
+      const why = le === 'attachment_lost' ? t('emailOutbox.attachmentLost')
+        : (!le ? '' : (/^[a-z0-9_]+$/i.test(le) || /network|fetch|timeout|offline|upload|failed/i.test(le)) ? t('compose.errorConnection') : le.slice(0, 120));
       return { text: t('emailOutbox.statusFailed') + (why ? ' · ' + why : ''), color: colors.error, Icon: IconAlertTriangle };
     }
     if (offline || e.lastError === 'offline') return { text: t('emailOutbox.statusOffline'), color: colors.textSecondary, Icon: IconWifiOff };

@@ -59,6 +59,22 @@ function IconRestore({ size = 16, color = 'currentColor' }) {
   return <Text style={{ fontSize: size, color, lineHeight: size }}>&#x2750;</Text>;
 }
 
+// [2026-10-21] validação de destinatário (mesmas regras do app/compose.js).
+function _isValidRcpt(entry) {
+  if (!entry || typeof entry !== 'string') return false;
+  let addr = entry.trim();
+  const m = addr.match(/<([^>]+)>/);
+  if (m) addr = m[1].trim();
+  if (!addr || addr.length > 254) return false;
+  const at = addr.indexOf('@');
+  if (at <= 0 || at !== addr.lastIndexOf('@')) return false;
+  const local = addr.slice(0, at);
+  const domain = addr.slice(at + 1);
+  if (!local || local.length > 64 || !domain || domain.length > 255) return false;
+  if (/\s/.test(local) || /\s/.test(domain) || !domain.includes('.')) return false;
+  return true;
+}
+
 export default function ComposeModal({ params, onClose }) {
   const { user } = useAuth();
   const { refresh } = useMail();
@@ -148,7 +164,7 @@ export default function ComposeModal({ params, onClose }) {
     const uid = params?.reply_uid || params?.forward_uid;
     if (uid) {
       getMessage(uid, params?.folder || 'INBOX').then(r => {
-        if (r.success && r.data) {
+        if (r?.success && r.data) {
           const orig = r.data;
 
           if (params?.reply_uid) {
@@ -190,8 +206,11 @@ export default function ComposeModal({ params, onClose }) {
             setQuotedHtml(Platform.OS === 'web' && DOMPurify ? DOMPurify.sanitize(fwdBody) : fwdBody);
             setBody('');
           }
+        } else {
+          // [2026-10-21] antes abria vazio (sem Para/assunto/citação) calado.
+          setError(t('compose.errorConnection'));
         }
-      }).catch(() => {}).finally(() => setLoading(false));
+      }).catch(() => { setError(t('compose.errorConnection')); }).finally(() => setLoading(false));
     } else {
       setLoading(false);
       // Load signature for new compose
@@ -304,13 +323,26 @@ export default function ComposeModal({ params, onClose }) {
   // Keep ref always up-to-date
   useEffect(() => { handleSendRef.current = handleSend; });
 
+  // [2026-10-21] trava síncrona: 2 cliques (ou Ctrl+Enter + clique) dentro dos
+  // 60 ms do flush punham o e-mail na fila 2x. Solta quando `sending` volta a false.
+  const sendGuardRef = useRef(false);
+  useEffect(() => { if (!sending) sendGuardRef.current = false; }, [sending]);
+
   const doSend = () => {
+    if (sendGuardRef.current) return;
     const currentTo = toValueRef.current;
     if (currentTo.length === 0) { setError(t('compose.errorRecipient')); return; }
     if (!body.trim() && !subject.trim()) { setError(t('compose.errorEmpty')); return; }
+    // Mesmo critério do compose.js: endereço malformado em Para/Cc/Cco não vai p/ fila.
+    const _badRcpt = [...currentTo, ...cc, ...bcc].find(c => !_isValidRcpt(c?.email));
+    if (_badRcpt) {
+      setError(t('compose.errorInvalidRecipient', { email: String(_badRcpt?.email || '').slice(0, 80) }));
+      return;
+    }
 
     const delay = undoDelayRef.current;
     setError('');
+    sendGuardRef.current = true;
     setSending(true);
 
     // [2026-10-17 email-send-gmail] Gmail model: hand the message to the
@@ -446,7 +478,7 @@ export default function ComposeModal({ params, onClose }) {
         onPress={() => setMinimized(prev => !prev)}
         activeOpacity={0.9}
         accessibilityRole="button"
-        accessibilityLabel={minimized ? 'Expand compose window' : 'Minimize compose window'}
+        accessibilityLabel={minimized ? t('compose.a11yExpand', 'Expandir') : t('compose.a11yMinimize', 'Minimizar')}
       >
         <Text style={cm.headerTitle} numberOfLines={1}>
           {subject ? subject : windowTitle}
@@ -458,7 +490,7 @@ export default function ComposeModal({ params, onClose }) {
             onPress={(e) => { e.stopPropagation(); setMinimized(prev => !prev); }}
             style={cm.iconBtn}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel={minimized ? 'Expandir' : 'Minimizar'}
+            accessibilityLabel={minimized ? t('compose.a11yExpand', 'Expandir') : t('compose.a11yMinimize', 'Minimizar')}
           >
             {minimized
               ? <IconChevronUp size={16} color="#fff" />
@@ -472,7 +504,7 @@ export default function ComposeModal({ params, onClose }) {
               onPress={(e) => { e.stopPropagation(); setMaximized(prev => !prev); }}
               style={cm.iconBtn}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              accessibilityLabel={maximized ? 'Restaurar' : 'Maximizar'}
+              accessibilityLabel={maximized ? t('compose.a11yRestore', 'Restaurar') : t('compose.a11yMaximize', 'Maximizar')}
             >
               {maximized ? <IconRestore size={14} color="#fff" /> : <IconMaximize size={14} color="#fff" />}
             </TouchableOpacity>
@@ -509,9 +541,9 @@ export default function ComposeModal({ params, onClose }) {
               {/* Status Bars */}
               {undoCountdown > 0 && (
                 <Animated.View style={[cm.statusBar, { backgroundColor: colors.toastBg, opacity: undoOpacity }]}>
-                  <Text style={cm.statusBarText}>{t('compose.undoSending', { n: undoCountdown })}</Text>
+                  <Text style={[cm.statusBarText, { color: colors.toastText }]}>{t('compose.undoSending', { n: undoCountdown })}</Text>
                   <TouchableOpacity onPress={cancelUndoSend}>
-                    <Text style={[cm.statusBarAction, { color: colors.primary }]}>{t('undo.button')}</Text>
+                    <Text style={[cm.statusBarAction, { color: colors.toastText, textDecorationLine: 'underline' }]}>{t('undo.button')}</Text>
                   </TouchableOpacity>
                 </Animated.View>
               )}

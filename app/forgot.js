@@ -273,9 +273,14 @@ export default function ForgotPassword() {
   }, [now, step, deviceState, deviceUntil]);
 
   // ── 3) código ─────────────────────────────────────────────────────
+  // [2026-10-21] auto-envio (closure com `loading` velho) + botão podiam
+  // verificar 2x; a 2ª apagava o código e mostrava erro já na etapa de senha.
+  const verifyingRef = useRef(false);
   const handleVerify = async (c0) => {
     const c = String(c0 || code).replace(/\D/g, '');
     if (c.length < 6) { setError(t('forgot.validation.codeLength')); return; }
+    if (verifyingRef.current) return;
+    verifyingRef.current = true;
     setError(''); setInfo('');
     setLoading(true);
     try {
@@ -284,7 +289,7 @@ export default function ForgotPassword() {
       else if (isExpiredSession(r)) restart(t('rec.err.sessionExpired'));
       else { setError(errText(r, 'forgot.validation.invalidCode')); setCode(''); setCodeKey(k => k + 1); }
     } catch { setError(t('forgot.validation.connectionError')); }
-    finally { setLoading(false); }
+    finally { verifyingRef.current = false; setLoading(false); }
   };
   const handleCodeChange = (c) => {
     setCode(c);

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import FastImage from './FastImage'; // [2026-10-09 expo-image]
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, UIManager, TextInput, Modal as RNModal, FlatList, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, UIManager, TextInput, Modal as RNModal, FlatList, useWindowDimensions, Alert } from 'react-native';
 import { getString as mmkvGetString, setString as mmkvSetString } from '../services/mmkv';
 // DOMPurify is web-only — lazy load to avoid crash on native
 let DOMPurify = null;
@@ -282,8 +282,13 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       if (r?.success && (r.data?.translation || r.data?.translated)) {
         setTranslatedHtml(r.data.translation || r.data.translated);
         setShowTranslation(true);
+      } else {
+        // [2026-10-21] falha calada: spinner sumia e nada acontecia.
+        Alert.alert(t('common.error'), r?.message || t('compose.errorConnection'));
       }
-    } catch {} finally {
+    } catch {
+      if (translateUidRef.current === currentUid) Alert.alert(t('common.error'), t('compose.errorConnection'));
+    } finally {
       setTranslating(false);
     }
   };
@@ -1760,7 +1765,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         {(email.body_text || '').length > 300 && (
           <TouchableOpacity
             style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+            disabled={actionItemsLoading}
             onPress={async () => {
+              if (actionItemsLoading) return;
               setActionItemsLoading(true);
               try {
                 const api = require('../services/api');
@@ -1835,8 +1842,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         <TouchableOpacity
           style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={async () => {
-            const r = await blockSender(email.from);
-            if (r.success) setBlocked(true);
+            try {
+              const r = await blockSender(email.from);
+              if (r?.success) setBlocked(true);
+              else Alert.alert(t('common.error'), r?.message || t('compose.errorConnection'));
+            } catch { Alert.alert(t('common.error'), t('compose.errorConnection')); }
           }}
           accessibilityLabel={blocked ? t('reader.blocked') : t('reader.block')}
           accessibilityRole="button"
@@ -1849,8 +1859,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         <TouchableOpacity
           style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
           onPress={async () => {
-            const r = await muteThread(email.uid, folder || 'INBOX');
-            if (r.success) setMuted(true);
+            try {
+              const r = await muteThread(email.uid, folder || 'INBOX');
+              if (r?.success) setMuted(true);
+              else Alert.alert(t('common.error'), r?.message || t('compose.errorConnection'));
+            } catch { Alert.alert(t('common.error'), t('compose.errorConnection')); }
           }}
           accessibilityLabel={muted ? t('reader.muted') : t('reader.mute')}
           accessibilityRole="button"
