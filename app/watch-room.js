@@ -87,7 +87,12 @@ export function Eq({ playing, color = '#fff', h = 14 }) {
 /** Reação que sobe e some (2,2 s). */
 function Floater({ r, x, onDone }) {
   const a = useRef(new Animated.Value(0)).current;
-  useEffect(() => { Animated.timing(a, { toValue: 1, duration: 2200, easing: Easing.out(Easing.quad), useNativeDriver: true }).start(onDone); }, [a, onDone]);
+  // [2026-10-21] onDone chega como arrow nova a cada render (a sala re-renderiza a
+  // cada 500 ms) — nas deps reiniciava a animação e a anterior chamava onDone
+  // com finished:false → a reação sumia em ≤0,5 s. Ref = callback mais recente.
+  const doneRef = useRef(onDone);
+  useEffect(() => { doneRef.current = onDone; });
+  useEffect(() => { Animated.timing(a, { toValue: 1, duration: 2200, easing: Easing.out(Easing.quad), useNativeDriver: true }).start(() => { try { doneRef.current && doneRef.current(); } catch {} }); }, [a]);
   const Ic = REACT_ICON[r] || IconHeart;
   return (
     <Animated.View pointerEvents="none" style={{
@@ -107,13 +112,15 @@ function Floater({ r, x, onDone }) {
 /** Mensagem por cima do vídeo (5 s). */
 function OverMsg({ m, onDone }) {
   const a = useRef(new Animated.Value(0)).current;
+  const doneRef = useRef(onDone);
+  useEffect(() => { doneRef.current = onDone; });
   useEffect(() => {
     Animated.sequence([
       Animated.timing(a, { toValue: 1, duration: 250, useNativeDriver: true }),
       Animated.delay(3800),
       Animated.timing(a, { toValue: 0, duration: 700, useNativeDriver: true }),
-    ]).start(onDone);
-  }, [a, onDone]);
+    ]).start(() => { try { doneRef.current && doneRef.current(); } catch {} });
+  }, [a]);
   return (
     <Animated.View style={[st.ovMsg, { opacity: a, transform: [{ translateY: a.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }] }]}>
       <Text style={st.ovMsgTx} numberOfLines={2}><Text style={{ fontWeight: '800' }}>{m.n} </Text>{m.text}</Text>
@@ -144,6 +151,8 @@ export default function WatchRoom() {
   const [lyr, setLyr] = useState(null);
   const [duck, setDuck] = useState(WT.isCallSpeaking());
   const [, setTick] = useState(0);
+  // [2026-10-21] 1ª consulta terminou (sem sessão → "Sessão encerrada", não spinner eterno)
+  const [checked, setChecked] = useState(false);
   const toastAnim = useRef(new Animated.Value(0)).current;
   const toastTimer = useRef(null);
   const lastSeq = useRef(0);
@@ -216,7 +225,7 @@ export default function WatchRoom() {
     });
     const offR = WT.onReact(cid, (d) => { if (d && d.e !== me) pushFloat(d.r); });
     const leave = WT.enterRoom(cid);
-    WT.refresh(cid).then((x) => { if (x) setS(x); }).catch(() => {});
+    WT.refresh(cid).then((x) => { if (x) setS(x); }).catch(() => {}).finally(() => setChecked(true));
     const iv = setInterval(() => setTick((n) => (n + 1) % 1e6), 500);
     const offSp = WT.onCallSpeaking(setDuck);
     return () => { off(); offR(); offSp(); leave(); clearInterval(iv); clearTimeout(toastTimer.current); };
@@ -321,8 +330,10 @@ export default function WatchRoom() {
   const seekTo = (x) => { if (!s || !dur) return; if (!canCtl) { deny(); return; } const p = Math.max(0, Math.min(dur, (x / Math.max(1, trackW)) * dur)); doCmd('seek', { pos: p, delta: Math.round(p - WT.positionNow(s)) }); };
   const setCtrl = (mode) => {
     if (!isHost) { deny(); return; }
-    WT.cmd(cid, 'ctrl', { mode }).catch(() => {});
-    showToast(mode === 'host' ? WT.tr(t, 'watch.ctrlHostOn', 'Só o anfitrião controla') : WT.tr(t, 'watch.ctrlAllOn', 'Todos podem controlar'));
+    WT.cmd(cid, 'ctrl', { mode }).then((r) => {
+      if (r && r.ok) showToast(mode === 'host' ? WT.tr(t, 'watch.ctrlHostOn', 'Só o anfitrião controla') : WT.tr(t, 'watch.ctrlAllOn', 'Todos podem controlar'));
+      else { showToast(WT.tr(t, 'watch.cmdFailed', 'Não deu certo. Tente de novo.')); WT.refresh(cid).catch(() => {}); }
+    }).catch(() => {});
   };
   const openCatalog = () => router.push({ pathname: music ? '/listen-catalog' : '/watch-catalog', params: { cid, name: convName, tab: music ? '' : 'filmes', mode: 'add' } });
   const goPip = () => { WT.setPip({ cid, name: convName }); router.back(); };
@@ -330,7 +341,7 @@ export default function WatchRoom() {
     try {
       require('../services/alerts').safeAlert(WT.tr(t, 'watch.endTitle', 'Encerrar a sessão?'), WT.tr(t, 'watch.endBody', 'Todo mundo para de assistir. O cartão fica na conversa.'), [
         { text: WT.tr(t, 'common.cancel', 'Cancelar'), style: 'cancel' },
-        { text: WT.tr(t, 'watch.end', 'Encerrar'), style: 'destructive', onPress: () => { WT.cmd(cid, 'end').then(() => router.back()).catch(() => {}); } },
+        { text: WT.tr(t, 'watch.end', 'Encerrar'), style: 'destructive', onPress: () => { WT.cmd(cid, 'end').then((r) => { if (r && (r.ok || r.error === 'no_session')) router.back(); else showToast(WT.tr(t, 'watch.endFailed', 'Não deu para encerrar. Tente de novo.')); }).catch(() => {}); } },
       ]);
     } catch {}
   };
@@ -346,9 +357,15 @@ export default function WatchRoom() {
     try {
       const api = require('../services/api');
       const r = await api.chatSend(cid, `${tl} · ${txt}`, 'text');
+      if (r && r.success === false) throw new Error('send_failed');
       const id = r && r.data && (r.data.id ?? r.data.message_id);
       if (id != null) seenMsg.current.add(String(id));
-    } catch {}
+    } catch {
+      // [2026-10-21] não deixa o comentário parecer enviado
+      setChat((c) => c.filter((x) => x.k !== mine.k));
+      setDraft((d) => d || txt);
+      showToast(WT.tr(t, 'watch.sendFailed', 'Não foi enviado. Tente de novo.'));
+    }
   };
 
   // sincronia (texto + cor)
@@ -411,7 +428,9 @@ export default function WatchRoom() {
     return (
       <View style={[st.root, { alignItems: 'center', justifyContent: 'center' }]}>
         <StatusBar barStyle="light-content" />
-        <ActivityIndicator color="#fff" />
+        {checked ? (
+          <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700' }}>{WT.tr(t, 'watch.ended', 'Sessão encerrada')}</Text>
+        ) : <ActivityIndicator color="#fff" />}
         <Pressable style={{ marginTop: 20 }} onPress={() => router.back()}><Text style={{ color: GRAY }}>{WT.tr(t, 'common.close', 'Fechar')}</Text></Pressable>
       </View>
     );

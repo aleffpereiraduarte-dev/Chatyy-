@@ -87,18 +87,21 @@ export default function DeclineWithMessageSheet() {
     setBusy(true);
     try {
       const { chatCallDeclineWithMessage } = require('../services/api');
-      await chatCallDeclineWithMessage(
+      const r = await chatCallDeclineWithMessage(
         pending.callId,
         pending.conversationId || '',
         pending.toEmail || '',
         text
       );
-    } catch (e) {
-      if (__DEV__) console.warn('[DeclineWithMessage]', e?.message);
-    } finally {
-      setBusy(false);
+      if (r && r.success === false) throw new Error(r.message || 'send_failed');
       setVisible(false);
       setPending(null);
+    } catch (e) {
+      if (__DEV__) console.warn('[DeclineWithMessage]', e?.message);
+      // [2026-10-21] falha não fecha a folha calada (a mensagem se perdia): avisa e deixa tentar de novo.
+      try { require('./ui/Toast').showToast({ message: t('call.declineSendFailed', 'Não foi enviada. Tente de novo.'), kind: 'error' }); } catch {}
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -128,7 +131,7 @@ export default function DeclineWithMessageSheet() {
                 style={[styles.row, { borderBottomColor: isDark ? '#2c2c2e' : '#E5E7EB' }]}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.rowText, { color: colors.tint || '#1976d2' }]}>{p}</Text>
+                <Text style={[styles.rowText, { color: colors.primary }]}>{p}</Text>
               </TouchableOpacity>
             ))}
             <View style={styles.customRow}>
@@ -149,7 +152,7 @@ export default function DeclineWithMessageSheet() {
                 style={styles.sendBtn}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.sendText, { color: customText.trim() ? (colors.tint || '#1976d2') : '#9CA3AF' }]}>
+                <Text style={[styles.sendText, { color: customText.trim() ? colors.primary : colors.textTertiary }]}>
                   {t('common.send') || 'Enviar'}
                 </Text>
               </TouchableOpacity>

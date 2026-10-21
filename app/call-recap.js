@@ -41,6 +41,8 @@ export default function CallRecapScreen() {
   const [showFullTranscript, setShowFullTranscript] = useState(false);
   const pollTimer = useRef(null);
   const attemptsRef = useRef(0);
+  // [2026-10-21] resposta que chega depois de sair da tela não reagenda o poll
+  const aliveRef = useRef(true);
 
   const fetchRecap = async () => {
     if (!callId) {
@@ -50,6 +52,7 @@ export default function CallRecapScreen() {
     }
     try {
       const resp = await api.chatCallRecap(String(callId));
+      if (!aliveRef.current) return;
       if (resp && resp.success && resp.data) {
         if (resp.data.pending) {
           setPending(true);
@@ -69,15 +72,18 @@ export default function CallRecapScreen() {
         setError(resp?.message || t('callRecap.error') || 'Erro ao gerar resumo');
       }
     } catch (e) {
-      setError(e?.message || 'Network error');
+      if (!aliveRef.current) return;
+      setError(t('common.networkError', 'Erro de rede. Verifique sua conexão.'));
     } finally {
-      setLoading(false);
+      if (aliveRef.current) setLoading(false);
     }
   };
 
   useEffect(() => {
+    aliveRef.current = true;
     fetchRecap();
     return () => {
+      aliveRef.current = false;
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -116,7 +122,17 @@ export default function CallRecapScreen() {
 
         {error && !loading && (
           <View style={styles.center}>
-            <Text style={[styles.error, { color: '#ef4444' }]}>{error}</Text>
+            <Text style={[styles.error, { color: colors.error || '#dc2626' }]}>{error}</Text>
+            {callId ? (
+              <TouchableOpacity
+                onPress={() => { attemptsRef.current = 0; setError(null); setLoading(true); fetchRecap(); }}
+                style={[styles.retryBtn, { backgroundColor: colors.primary }]}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+              >
+                <Text style={[styles.retryText, { color: colors.onPrimary || '#fff' }]}>{t('common.tryAgain', 'Tentar de novo')}</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         )}
 
@@ -185,4 +201,6 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 15, fontWeight: '600', marginBottom: 8 },
   cardBody: { fontSize: 15, lineHeight: 22 },
   transcriptHeader: { flexDirection: 'row', alignItems: 'center', minHeight: 32 },
+  retryBtn: { marginTop: 16, paddingHorizontal: 22, paddingVertical: 11, borderRadius: 999 },
+  retryText: { fontSize: 15, fontWeight: '700' },
 });

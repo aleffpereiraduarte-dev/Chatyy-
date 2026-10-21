@@ -206,6 +206,9 @@ export default function CallInfoSheet({ item, visible, onClose, calls, onCall, o
     let alive = true;
     setServerRows(null);
     setBlocked(null);
+    // [2026-10-21] fechar no meio da busca pulava o setLoading(false) (alive=false)
+    // → ao reabrir um contato só com telefone ficava spinner eterno.
+    setLoading(!!email);
     // Perfil: cópia local primeiro (sem rede), depois profile_get.
     if (email) {
       try {

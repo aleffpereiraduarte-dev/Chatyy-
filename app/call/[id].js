@@ -84,6 +84,9 @@ export default function CallLinkLobbyScreen() {
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
   const [camDenied, setCamDenied] = useState(false);
+  // [2026-10-21] erro de rede ao abrir/entrar → "Tentar de novo" (antes só Fechar + e.message cru)
+  const [retryN, setRetryN] = useState(0);
+  const [canRetry, setCanRetry] = useState(false);
   const autoJoinedRef = useRef(false);
 
   // ── Fetch link info for the lobby ──
@@ -119,13 +122,14 @@ export default function CallLinkLobbyScreen() {
         });
       } catch (e) {
         if (cancelled) return;
-        setErr(String(e?.message || e));
+        setErr(tr(t, 'common.networkError', 'Erro de rede. Verifique sua conexão.'));
+        setCanRetry(true);
         setStatus((s) => (s === 'joining' ? s : 'error'));
       }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading, user?.email, linkId]);
+  }, [authLoading, user?.email, linkId, retryN]);
 
   // ── Join → mint token → hand off to the existing call screen ──
   const handleJoin = useCallback(async () => {
@@ -191,7 +195,8 @@ export default function CallLinkLobbyScreen() {
         + `&contactName=${encodeURIComponent(title || tr(t, 'calls.callLink', 'Chamada'))}`
       );
     } catch (e) {
-      setErr(String(e?.message || e));
+      setErr(tr(t, 'common.networkError', 'Erro de rede. Verifique sua conexão.'));
+      setCanRetry(true);
       setStatus('error');
     }
   }, [linkId, info, router, t, user?.email, camOn, camDenied, micOn]);
@@ -288,6 +293,16 @@ export default function CallLinkLobbyScreen() {
         >
           <Text style={{ color: text, fontWeight: '600', fontSize: 15 }}>{tr(t, 'common.close', 'Fechar')}</Text>
         </PressableScale>
+        {status === 'error' && canRetry ? (
+          <PressableScale
+            onPress={() => { setCanRetry(false); setErr(''); setStatus('loading'); setRetryN((n) => n + 1); }}
+            scaleTo={0.96}
+            accessibilityRole="button"
+            style={{ marginTop: 10, minHeight: 48, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 12, borderRadius: 24, backgroundColor: ink }}
+          >
+            <Text style={{ color: onInk, fontWeight: '700', fontSize: 15 }}>{tr(t, 'common.tryAgain', 'Tentar de novo')}</Text>
+          </PressableScale>
+        ) : null}
       </Center>
     );
   }

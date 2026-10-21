@@ -3049,39 +3049,41 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
     const number = item.to_number || '';
     const name = item.contactName || item.contact_name || '';
     if (kind === 'delete') return handleDeleteEntry(item);
+    // [2026-10-21] ações do menu com retorno visual (toast) e só APIs reais:
+    // voipBlockCaller/addBlockedCaller/voipReportSpam/reportSpamCaller nunca
+    // existiram → bloquear/denunciar número puro não fazia nada, calado.
+    const _toast = (message, k) => { try { require('./ui/Toast').showToast({ message, kind: k || 'success' }); } catch {} };
+    const _isChatyy = !!(caller && String(caller).includes('@'));
     if (kind === 'copyNumber') {
       try {
         const Clipboard = require('expo-clipboard');
         await Clipboard.setStringAsync(number || caller || '');
+        _toast(t?.('common.copied', 'Copiado') || 'Copiado');
       } catch {}
       return;
     }
     if (kind === 'block') {
-      // Block surfaces via existing voipBlockCaller / addBlockedCaller helper
-      // when present; fallback Alert if not wired.
+      if (!_isChatyy) { _toast(t?.('calls.onlyChatyyContacts', 'Disponível só para contatos do Chatyy.') || '', 'info'); return; }
       try {
         const api = require('../services/api');
-        // [2026-10-19 callinfo] voipBlockCaller/addBlockedCaller nunca existiram →
-        // bloquear não fazia nada. Contato Chatyy (e-mail) = chatBlockUser real.
-        if (caller && String(caller).includes('@') && typeof api.chatBlockUser === 'function') {
-          await api.chatBlockUser(String(caller));
-        } else if (typeof api.voipBlockCaller === 'function') {
-          await api.voipBlockCaller(caller || number);
-        } else if (typeof api.addBlockedCaller === 'function') {
-          await api.addBlockedCaller(caller || number);
-        }
-      } catch {}
+        const r = await api.chatBlockUser(String(caller));
+        if (r && r.success === false) throw new Error('block_failed');
+        _toast(t?.('calls.blockedToast', 'Contato bloqueado') || 'Contato bloqueado');
+      } catch {
+        _toast(t?.('calls.actionFailed', 'Não deu certo. Tente de novo.') || '', 'error');
+      }
       return;
     }
     if (kind === 'report') {
+      if (!_isChatyy) { _toast(t?.('calls.onlyChatyyContacts', 'Disponível só para contatos do Chatyy.') || '', 'info'); return; }
       try {
         const api = require('../services/api');
-        if (typeof api.voipReportSpam === 'function') {
-          await api.voipReportSpam(caller || number);
-        } else if (typeof api.reportSpamCaller === 'function') {
-          await api.reportSpamCaller(caller || number);
-        }
-      } catch {}
+        const r = await api.chatReportUser(String(caller), 'spam_call', undefined, false);
+        if (r && r.success === false) throw new Error('report_failed');
+        _toast(t?.('calls.reportedToast', 'Denúncia enviada. Obrigado.') || '');
+      } catch {
+        _toast(t?.('calls.actionFailed', 'Não deu certo. Tente de novo.') || '', 'error');
+      }
       return;
     }
     if (kind === 'addContact') {
@@ -3096,7 +3098,7 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
         }
       } catch {}
     }
-  }, [handleDeleteEntry]);
+  }, [handleDeleteEntry, t]);
 
   const [rowMenu, setRowMenu] = useState(null);
   const handleRowLongPress = useCallback((item) => {
@@ -3265,7 +3267,10 @@ function ChatCallsTab({ colors, isDark, t, user, router, largeTitle, onLargeTitl
         // unscoped mirror populated, so the cold-start seed resurrected the
         // just-cleared list on the next open.
         try { _writeCallHistoryCache([]); } catch {}
-      } catch {}
+      } catch {
+        // [2026-10-21] falha não pode ser calada (lista continuava igual sem aviso)
+        try { require('./ui/Toast').showToast({ message: t?.('calls.clearFailed', 'Não foi possível limpar. Tente de novo.') || '', kind: 'error' }); } catch {}
+      }
     };
     if (Platform.OS === 'web') {
       if (confirm(t?.('calls.clearConfirm') || 'Limpar todo o histórico de ligações?')) doIt();

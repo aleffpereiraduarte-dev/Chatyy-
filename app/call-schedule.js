@@ -21,27 +21,33 @@ import { IconArrowLeft, IconCalendar, IconPhone, IconX, IconClock } from '../com
 import AvatarCircle from '../components/AvatarCircle';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 
+// [2026-10-21] tempos relativos/datas passam pelo i18n (eram fixos em pt e dd/mm).
 function formatRelative(iso, t) {
   if (!iso) return '';
   const now = Date.now();
   const ts = new Date(iso).getTime();
   if (!ts) return '';
   const diffMin = Math.round((ts - now) / 60000);
-  if (diffMin <= -2) return t('time.ago') ? `${Math.abs(diffMin)} min atrás` : 'agora';
-  if (diffMin <= 0) return 'agora';
-  if (diffMin < 60) return `em ${diffMin} min`;
+  if (diffMin <= -60) { const hh = Math.round(-diffMin / 60); return hh < 24 ? t('calls.rel.hoursAgo', { n: hh, defaultValue: 'há {n} h' }) : t('calls.rel.daysAgo', { n: Math.round(hh / 24), defaultValue: 'há {n} d' }); }
+  if (diffMin <= -2) return t('calls.rel.minAgo', { n: Math.abs(diffMin), defaultValue: 'há {n} min' });
+  if (diffMin <= 0) return t('calls.rel.now', 'agora');
+  if (diffMin < 60) return t('calls.rel.inMin', { n: diffMin, defaultValue: 'em {n} min' });
   const h = Math.round(diffMin / 60);
-  if (h < 24) return `em ${h}h`;
+  if (h < 24) return t('calls.rel.inHours', { n: h, defaultValue: 'em {n} h' });
   const d = Math.round(h / 24);
-  return `em ${d}d`;
+  return t('calls.rel.inDays', { n: d, defaultValue: 'em {n} d' });
 }
 
-function formatDateTime(iso) {
+function formatDateTime(iso, language) {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  try {
+    return d.toLocaleString(language || undefined, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  } catch {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
 }
 
 export default function CallScheduleScreen() {
@@ -49,8 +55,10 @@ export default function CallScheduleScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [calls, setCalls] = useState([]);
+  // [2026-10-21] falha de carga ≠ "Nenhuma chamada agendada"
+  const [loadErr, setLoadErr] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   // Force re-render every 30s so the "em Xmin" labels and the Iniciar
@@ -64,8 +72,9 @@ export default function CallScheduleScreen() {
       const r = await api.callScheduleList();
       if (r?.success) {
         setCalls(Array.isArray(r.data?.calls) ? r.data.calls : []);
-      }
-    } catch {}
+        setLoadErr(false);
+      } else setLoadErr(true);
+    } catch { setLoadErr(true); }
     finally { setLoading(false); setRefreshing(false); }
   }, []);
 
@@ -127,7 +136,11 @@ export default function CallScheduleScreen() {
     try {
       const r = await api.callScheduleCancel(call.id);
       if (r?.success) setCalls(prev => prev.filter(c => c.id !== call.id));
-    } catch {}
+      else throw new Error(r?.message || 'cancel_failed');
+    } catch (e) {
+      const m = e?.message && e.message !== 'cancel_failed' && !/network|offline|fetch/i.test(e.message) ? e.message : t('calls.cancelFailed', 'Não foi possível cancelar. Tente de novo.');
+      try { require('../components/ui/Toast').showToast({ message: m, kind: 'error' }); } catch {}
+    }
   }, [t]);
 
   const meLc = (user?.email || '').toLowerCase();
@@ -172,11 +185,20 @@ export default function CallScheduleScreen() {
         </View>
       ) : calls.length === 0 ? (
         <View style={styles.center}>
-          <ScreenEmptyState
-            kind="meetings"
-            title={t('calls.noScheduled') || 'Nenhuma chamada agendada'}
-            subtitle={t('calls.scheduleHint') || 'Toque em "Agendar" na aba de Ligações.'}
-          />
+          {loadErr ? (
+            <ScreenEmptyState
+              kind="meetings"
+              title={t('calls.scheduleLoadFailed', 'Não foi possível carregar')}
+              subtitle={t('common.networkError', 'Erro de rede. Verifique sua conexão.')}
+              cta={{ label: t('common.tryAgain', 'Tentar de novo'), onPress: () => load(true) }}
+            />
+          ) : (
+            <ScreenEmptyState
+              kind="meetings"
+              title={t('calls.noScheduled') || 'Nenhuma chamada agendada'}
+              subtitle={t('calls.scheduleHint') || 'Toque em "Agendar" na aba de Ligações.'}
+            />
+          )}
         </View>
       ) : (
         <ScrollView
@@ -202,7 +224,7 @@ export default function CallScheduleScreen() {
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                         <IconClock size={13} color={colors.textSecondary} />
                         <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>
-                          {formatRelative(call.scheduled_at, t)} · {formatDateTime(call.scheduled_at)}
+                          {formatRelative(call.scheduled_at, t)} · {formatDateTime(call.scheduled_at, language)}
                         </Text>
                       </View>
                       <Text style={{ color: colors.textTertiary, fontSize: FontSize.xs }}>
@@ -243,7 +265,7 @@ export default function CallScheduleScreen() {
                       color: canJoin ? colors.onPrimary : colors.textTertiary,
                       fontSize: FontSize.sm, fontWeight: '600', marginLeft: 6,
                     }}>
-                      {canJoin ? (t('calls.start') || 'Iniciar') : (t('calls.notYet') || formatRelative(call.scheduled_at, t))}
+                      {canJoin ? (t('calls.start') || 'Iniciar') : (lateOk ? (t('calls.notYet') || 'Ainda não') : t('calls.slotPassed', 'Já passou'))}
                     </Text>
                   </TouchableOpacity>
                 </View>

@@ -128,10 +128,11 @@ const STR = {
   },
 };
 function strings(lang) {
+  // [2026-10-21] idiomas fora de pt/es caem no inglês (fr/de/ja viam português)
   const l = String(lang || 'pt').toLowerCase();
-  if (l.startsWith('en')) return STR.en;
+  if (l.startsWith('pt')) return STR.pt;
   if (l.startsWith('es')) return STR.es;
-  return STR.pt;
+  return STR.en;
 }
 
 function normalize(d) {
