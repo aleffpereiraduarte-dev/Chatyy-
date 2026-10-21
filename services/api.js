@@ -641,7 +641,11 @@ async function _lbTimed(url, ms) {
   try {
     const res = await _fetchWithTimeout(url + '/health', ms);
     if (!res || res.status >= 500) return null;
-    return _lbNow() - t0;
+    const dt = _lbNow() - t0;
+    // [2026-10-21 lb-freeze] app congelado em 2º plano (Android pausa timers): a amostra
+    // estourava o próprio timeout (beacon com 99999 ms) → descarta, não é RTT real.
+    if (!(dt > 0) || dt > ms + 1500) return null;
+    return dt;
   } catch { return null; }
 }
 const _lbActive = () => { try { const s = require('react-native').AppState.currentState; return !s || s === 'active'; } catch { return true; } };
@@ -729,6 +733,7 @@ async function _lbDetect(opts) {
     const near = Array.isArray(list.near) && list.near.length ? list.near : null;
     const cands = L.pickCandidates({ list, near, tz: L.deviceTz(), current: curUsable ? cur : null, lastGood: st.lastGood, max: eco ? 3 : 4 });
     const results = await _lbMeasure(cands, eco ? 1 : 2);
+    if (!_lbActive()) return; // [2026-10-21 lb-freeze] foi p/ 2º plano no meio da medição → não decide com ela
     const anyOk = Object.keys(results).some(k => typeof results[k] === 'number');
     if (!anyOk) return; // offline / rede péssima: mantém e tenta no próximo gatilho
     st.results = { ...results };
