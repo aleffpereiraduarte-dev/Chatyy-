@@ -47,6 +47,8 @@ export default function SmartRepliesBar({ conversationId, lastIncomingId, onPick
       return;
     }
     if (lastFetchedIdRef.current === lastIncomingId) return;
+    // [e2ee5 WP-17] conversa E2EE: sugestão automática desligada (o servidor não lê a conversa).
+    try { if (require('../../services/e2ee/explicit').isE2eeConv(conversationId)) { setReplies([]); return; } } catch {}
     lastFetchedIdRef.current = lastIncomingId;
 
     let cancelled = false;

@@ -15332,7 +15332,12 @@ function ChatConversationInnerBody() {
   const submitReport = async (reason) => {
     setShowReportModal(false);
     try {
-      const _rr = await api.chatReportUser(reportTargetEmail, reason, reportMessageId);
+      // [e2ee5 WP-17] E2EE: aviso sempre + até 10 mensagens decifradas aqui (o denunciante manda).
+      const _x5 = require('../services/e2ee/explicit');
+      const _rr = _x5.isE2eeConv(conversationId)
+        ? await _x5.reportExplicit(t, conversationId, { kind: 'user', email: reportTargetEmail, reason, messageId: reportMessageId, messages })
+        : await api.chatReportUser(reportTargetEmail, reason, reportMessageId);
+      if (_rr && _rr.cancelled) { setReportTargetEmail(''); setReportMessageId(null); return; }
       // [2026-10-21 polish-conv] apiCall resolve {success:false} em erro HTTP → antes dizia "denunciado" mesmo falhando.
       if (_rr && _rr.success === false) throw new Error('report_failed');
       runAfterNativeSheet(() => safeAlert(t('chat.userReported'))); // [native-sheets-v2] alerta só depois do sheet descer
@@ -15358,6 +15363,11 @@ function ChatConversationInnerBody() {
           style: 'destructive',
           onPress: async () => {
             try {
+              const _x5 = require('../services/e2ee/explicit'); // [e2ee5 WP-17]
+              if (_x5.isE2eeConv(conversationId)) {
+                const _r5 = await _x5.reportExplicit(t, conversationId, { kind: 'thread', action: 'block_and_leave', messages: messagesRef.current || [] });
+                if (_r5 && _r5.cancelled) return;
+              } else
               await api.chatReportThread?.(conversationId, '', 'block_and_leave');
               safeAlert(t('chat.userReported') || 'Denúncia recebida');
               try { router.back(); } catch {}
@@ -17902,6 +17912,7 @@ function ChatConversationInnerBody() {
     if (!Array.isArray(messages) || messages.length === 0) return;
     // [2026-10-18 wa-parity] E2EE: o servidor só vê ciphertext — igual ao fluxo manual, não traduz.
     try { if (require('../services/e2eeV4').isConversationE2ee(conversationId)) return; } catch {}
+    try { if (require('../services/e2ee/explicit').isE2eeConv(conversationId)) return; } catch {} // [e2ee5 WP-17] tradução automática desligada em E2EE
     const targetShort = String(autoTranslateLocale).toLowerCase().split('-')[0];
 
     // 1) Seed from server-provided cached translations. This is the warm
@@ -21898,6 +21909,12 @@ function ChatConversationInnerBody() {
         // direct API response as fallback). Rate-limited server-side.
         try {
           const aiPrompt = extractChatyyAiPrompt(text);
+          // [e2ee5 WP-17] E2EE: aviso + só a pergunta vai à Bia (sem guardar); resposta só para mim.
+          if (aiPrompt && conversationId > 0 && require('../services/e2ee/explicit').isE2eeConv(conversationId)) {
+            require('../services/e2ee/explicit').biaMention(t, conversationId, aiPrompt).then((row) => {
+              if (row && mountedRef.current) setMessages(prev => [...prev, row]);
+            }).catch(() => {});
+          } else
           if (aiPrompt && conversationId > 0) {
             setAiTyping(true);
             if (aiTypingTimerRef.current) clearTimeout(aiTypingTimerRef.current);
@@ -25979,7 +25996,7 @@ function ChatConversationInnerBody() {
   // so subsequent taps return instantly. We persist on the message object so
   // the same client doesn't refetch on re-render and so a fresh sync still
   // sees the transcript (server stores it too).
-  const handleTranscribeAudio = useCallback(async (msg) => {
+  const handleTranscribeAudio = useCallback(async (msg, _e5opt) => {
     if (!msg || typeof msg.id !== 'number') return;
     if (msg.transcript || msg.transcription) return;
     if (msg._transcribing) return; // já em andamento — evita duplo POST
@@ -25997,6 +26014,26 @@ function ChatConversationInnerBody() {
       };
       if (wait > 0) setTimeout(apply, wait); else apply();
     };
+    // [e2ee5 WP-17] conversa E2EE: transcreve NO APARELHO o áudio já decifrado; o servidor só com
+    // toque do usuário + aviso (automático = só no aparelho), sem cache no servidor.
+    try {
+      const _x = require('../services/e2ee/explicit');
+      if (_x.isE2eeConv(msg.conversation_id || conversationId, msg)) {
+        const _r = await _x.transcribeMessage(t, msg.conversation_id || conversationId, msg, language, { allowServer: !(_e5opt && _e5opt.auto) });
+        if (!mountedRef.current) return;
+        if (_r && _r.text) {
+          settle({ transcript: _r.text, _transcribeError: null });
+          try {
+            txRevealedRef.current = { ...txRevealedRef.current, [String(msg.id)]: _r.text };
+            const AS = require('@react-native-async-storage/async-storage').default;
+            AS.setItem(TX_REVEALED_KEY, JSON.stringify(txRevealedRef.current)).catch(() => {});
+          } catch {}
+        } else {
+          settle({ _transcribeError: (_r && _r.error === 'cancelled') ? null : 'unavailable' });
+        }
+        return;
+      }
+    } catch {}
     // [2026-10-09 android-ml-parity] Fallback no aparelho (iOS SFSpeech /
     // Android 13+ SpeechRecognizer, próximo binário) quando o servidor falha
     // ou não transcreve — o áudio não sai do celular. Binário sem o módulo →
@@ -26072,7 +26109,7 @@ function ChatConversationInnerBody() {
       for (const m of cand) {
         if (cancelled || !mountedRef.current) return;
         _autoTxDoneRef.current.add(m.id);
-        try { await handleTranscribeAudio(m); } catch {}
+        try { await handleTranscribeAudio(m, { auto: true }); } catch {} // [e2ee5 WP-17] auto = sem servidor em E2EE
       }
     }, 1200);
     return () => { cancelled = true; clearTimeout(tm); };
@@ -26899,7 +26936,11 @@ function ChatConversationInnerBody() {
     if (!conversationId) return;
     const doReport = async (leave) => {
       try {
-        const r = await api.chatReportThread(conversationId, '', 'report');
+        const _x5 = require('../services/e2ee/explicit'); // [e2ee5 WP-17]
+        const r = _x5.isE2eeConv(conversationId)
+          ? await _x5.reportExplicit(t, conversationId, { kind: 'thread', action: 'report', messages })
+          : await api.chatReportThread(conversationId, '', 'report');
+        if (r && r.cancelled) return;
         if (r && r.success === false) throw new Error(r.message || r.error || 'report_failed');
       } catch (e) {
         safeAlert(t('common.error') || 'Erro', _gNetErr(t, e, 'w12e.reportFailed', 'Não foi possível enviar a denúncia.'));
@@ -28768,6 +28809,26 @@ function ChatConversationInnerBody() {
       });
       return;
     }
+    // [e2ee5 WP-17] conversa E2EE: só este texto, por toque, aparelho primeiro; senão aviso + servidor sem cache.
+    try {
+      const _x = require('../services/e2ee/explicit');
+      if (msg && _x.isE2eeConv(conversationId, msg)) {
+        const _txt = (msg.type === 'audio' || msg.type === 'voice') ? String(msg.transcript || msg.transcription || '') : _x.plainOf(msg);
+        if (!_txt.trim()) { safeAlert(t('common.error') || 'Erro', (msg.type === 'audio' || msg.type === 'voice') ? (t('chatConv.transcribeFailed') || 'Transcreva o áudio primeiro.') : t('chatConv.translateError')); return; }
+        const _loc = t('_locale') || 'pt-BR';
+        const _ts = _loc.split('-')[0];
+        setTranslatedMessages(prev => ({ ...prev, [msg.id]: { text: '', loading: true, targetLang: _ts } }));
+        try {
+          const _r = await _x.translateExplicit(t, conversationId, _txt, _loc);
+          setTranslatedMessages(prev => ({ ...prev, [msg.id]: { text: _r.translation, loading: false, sourceLang: _r.sourceLang || null, targetLang: _ts } }));
+        } catch (_e) {
+          setTranslatedMessages(prev => { const c = { ...prev }; delete c[msg.id]; return c; });
+          const _m = _x.errorText(t, _e);
+          if (_m) errRetry(_m, () => handleTranslate(msg));
+        }
+        return;
+      }
+    } catch {}
     // Voice/audio messages get a transcribe→translate chain. The transcript
     // is rendered alongside the translation so the user can see the
     // original wording too. Existing text/image flow falls through unchanged.
@@ -41495,6 +41556,8 @@ function ChatConversationInnerBody() {
         onClose={() => setShowExportModal(false)}
         conversationId={conversationId}
         conversationName={conversationName}
+        localMessages={messages} /* [e2ee5 WP-17] E2EE: exporta no aparelho */
+        currentEmail={currentEmail}
         colors={colors}
         t={t}
       />)}</LazyMount>
@@ -42310,6 +42373,18 @@ function ChatConversationInnerBody() {
                     } catch {}
                     const targetMsg = selectedMsg;
                     setSelectedMsg(null);
+                    // [e2ee5 WP-17] E2EE: transcreve o áudio decifrado no aparelho (ou aviso + servidor sem cache), sem resumo automático.
+                    try {
+                      const _x5 = require('../services/e2ee/explicit');
+                      if (_x5.isE2eeConv(conversationId, targetMsg)) {
+                        setAudioTranscription({ loading: true });
+                        const r5 = await _x5.transcribeMessage(t, conversationId, targetMsg, language);
+                        if (!mountedRef.current) return;
+                        if (r5 && r5.text) setAudioTranscription({ text: r5.text, summary: '', keyPoints: [], sentiment: '' });
+                        else setAudioTranscription(r5 && r5.error === 'cancelled' ? null : { error: _mt('chatConv.transcribeFailed', 'Falha na transcrição') });
+                        return;
+                      }
+                    } catch {}
                     if (!targetMsg?.file_url) return;
                     const FS = require('expo-file-system/legacy');
                     const localFile = FS.cacheDirectory + 'ai_transcribe_' + Date.now() + '.m4a';

@@ -592,6 +592,14 @@ function ConversationSummarySheetInner({
     range: r, currentEmail, meLabel, firstUnreadId, unreadCount: Number(unreadCount) || 0,
   }), [currentEmail, meLabel, firstUnreadId, unreadCount]);
 
+  // [e2ee5 WP-17] itens só com texto já decifrado aqui (sem "..."/estado de espera).
+  const e5Items = useCallback((r) => {
+    let x5 = null;
+    try { x5 = require('../../services/e2ee/explicit'); } catch {}
+    const src = (messagesRef.current || []).filter((m) => m && (!m._e2e || (x5 && x5.plainOf(m))));
+    return buildLocalItems(src, { range: r, currentEmail, meLabel, firstUnreadId, unreadCount: Number(unreadCount) || 0 });
+  }, [currentEmail, meLabel, firstUnreadId, unreadCount]);
+
   const baseParams = useCallback((r, extra) => {
     const p = {
       conversation_id: conversationId,
@@ -628,6 +636,24 @@ function ConversationSummarySheetInner({
     }
     setStatus('loading'); setErrMsg(''); setCopied(false);
     const api = require('../../services/api');
+    // [e2ee5 WP-17] conversa E2EE: aviso + só as mensagens decifradas NESTE aparelho do alcance
+    // escolhido vão ao resumo (e2ee5x_summarize, no_store) — nunca o chat_ai_digest do servidor.
+    let _x5 = null;
+    try { _x5 = require('../../services/e2ee/explicit'); } catch {}
+    if (_x5 && _x5.isE2eeConv(conversationId)) {
+      const items = e5Items(r);
+      if (items.length < 1) { done(null, false); return; }
+      try {
+        const txt = await _x5.summarizeExplicit(t, conversationId, items.map((x) => ({ n: x.sender, t: x.content })), locale);
+        if (my !== reqRef.current) return;
+        done(txt ? withLocalPeriod(parseLegacySummary(txt), items) : null, false); // false: perguntas seguem liberadas
+      } catch (e) {
+        if (my !== reqRef.current) return;
+        if (e && e.code === 'cancelled') { setStatus('empty'); return; }
+        fail(_x5.errorText(t, e));
+      }
+      return;
+    }
     const done = (d, isLegacy) => {
       if (my !== reqRef.current) return;
       const empty = !d || (!d.summary && !d.prose && !d.topics.length && !d.decisions.length && !d.todos.length && !d.dates.length && !d.questions.length);
@@ -680,7 +706,7 @@ function ConversationSummarySheetInner({
       else if (r2 && r2.success) done(null, true);
       else fail(r2 && r2.message);
     } catch (e) { fail(e && e.message); }
-  }, [conversationId, lastId, locale, baseParams, localItems, length, perPerson, view]);
+  }, [conversationId, lastId, locale, baseParams, localItems, length, perPerson, view, e5Items, t]);
 
   // Trocar Resumo/Tópicos NÃO refaz (a resposta traz os dois); tamanho e "Por pessoa" sim.
   useEffect(() => {
@@ -691,12 +717,27 @@ function ConversationSummarySheetInner({
 
   const sendQuestion = useCallback(async () => {
     const q = question.trim();
-    if (!q || legacy) return;
+    let _e5q = false; try { _e5q = require('../../services/e2ee/explicit').isE2eeConv(conversationId); } catch {} // [e2ee5 WP-17]
+    if (!q || (legacy && !_e5q)) return;
     const my = ++askReqRef.current;
     setAsk({ q, loading: true, answer: '', refs: [], error: '' });
     setQuestion('');
     try {
       const api = require('../../services/api');
+      // [e2ee5 WP-17] E2EE: pergunta à Bia com o trecho escolhido (alcance), aviso + no_store.
+      let _x5 = null;
+      try { _x5 = require('../../services/e2ee/explicit'); } catch {}
+      if (_x5 && _x5.isE2eeConv(conversationId)) {
+        try {
+          const ans = await _x5.askBiaExplicit(t, conversationId, q, e5Items(range).map((x) => ({ n: x.sender, t: x.content })), locale);
+          if (my !== askReqRef.current) return;
+          setAsk({ q, loading: false, answer: cleanText(ans) || '—', refs: [], error: '' });
+        } catch (e) {
+          if (my !== askReqRef.current) return;
+          setAsk({ q, loading: false, answer: '', refs: [], error: e && e.code === 'cancelled' ? '' : _x5.errorText(t, e) });
+        }
+        return;
+      }
       let r = await api.chatAiDigest(baseParams(range, { question: q.slice(0, 300) }));
       if (r && r.success && r.data && r.data.need_messages) {
         r = await api.chatAiDigest(baseParams(range, { question: q.slice(0, 300), messages: localItems(range) }));
@@ -712,7 +753,7 @@ function ConversationSummarySheetInner({
       if (my !== askReqRef.current) return;
       setAsk({ q, loading: false, answer: '', refs: [], error: (e && e.message) || tr(t, 'chatSum.errorTitle', 'Não foi possível resumir') });
     }
-  }, [question, legacy, baseParams, range, localItems, t]);
+  }, [question, legacy, baseParams, range, localItems, t, conversationId, e5Items, locale]);
 
   // ── ações ──
   const title = tr(t, 'chatSum.title', 'Resumo da Bia');

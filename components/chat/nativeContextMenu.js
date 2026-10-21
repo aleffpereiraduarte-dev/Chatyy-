@@ -392,6 +392,19 @@ async function _transcribe(targetMsg, H) {
     if (!check.allowed) { safeAlert(require('../../services/brandPlan').PLAN_NAME, getUpsellMessage('ai_transcribe', t)); return; }
     trackFeatureUsage('ai_transcribe');
   } catch {}
+  // [e2ee5 WP-17] E2EE: áudio decifrado no aparelho → transcreve aqui (ou aviso + servidor sem
+  // cache); nunca baixa o file_url (blob cifrado) nem resume automaticamente.
+  try {
+    const _x5 = require('../../services/e2ee/explicit');
+    if (_x5.isE2eeConv(H.conversationId, targetMsg)) {
+      const setTx5 = (v) => { if (H.mountedRef.current) H.setAudioTranscription(v); };
+      setTx5({ loading: true });
+      const r5 = await _x5.transcribeMessage(t, H.conversationId, targetMsg, H.language || (typeof t === 'function' ? t('_locale') : ''));
+      if (r5 && r5.text) setTx5({ text: r5.text, summary: '', keyPoints: [], sentiment: '' });
+      else setTx5(r5 && r5.error === 'cancelled' ? null : { error: mt('chatConv.transcribeFailed', 'Falha na transcrição') });
+      return;
+    }
+  } catch {}
   if (!targetMsg?.file_url) return;
   const FS = require('expo-file-system/legacy');
   const localFile = FS.cacheDirectory + 'ai_transcribe_' + Date.now() + '.m4a';

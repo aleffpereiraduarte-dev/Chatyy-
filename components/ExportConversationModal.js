@@ -58,6 +58,8 @@ function ExportConversationModalInner({
   onClose,
   conversationId,
   conversationName = '',
+  localMessages = null, // [e2ee5 WP-17] lista decifrada da tela (export no aparelho em E2EE)
+  currentEmail = '',
   colors: colorsProp,
   t: tProp,
 }) {
@@ -122,7 +124,17 @@ function ExportConversationModalInner({
     setErrorMsg('');
     const opts = computeRange();
     try {
-      if (format === 'zip') {
+      // [e2ee5 WP-17] conversa E2EE: o servidor não lê o conteúdo → gera aqui, do texto já decifrado
+      // neste aparelho (nada sai do celular até o usuário compartilhar). .zip vira .txt.
+      let _x5 = null;
+      try { _x5 = require('../services/e2ee/explicit'); } catch {}
+      const _e5 = !!(_x5 && _x5.isE2eeConv(conversationId));
+      let r;
+      if (_e5) {
+        const L = _x5.exportConversationLocal({ t, messages: localMessages || [], me: currentEmail, name: conversationName, format: format === 'json' ? 'json' : 'txt', from: opts.from, to: opts.to });
+        r = { success: true, data: format === 'json' ? { body: JSON.parse(L.content), messages: L.count } : { text: L.count ? L.content : '', messages: L.count } };
+      }
+      if (format === 'zip' && !_e5) {
         const r = await api.chatExportZip(conversationId, opts);
         if (!r?.success || !r.data?.url) {
           throw new Error(r?.message || (t('chatConv.exportFailed') || 'Falha ao exportar'));
@@ -163,7 +175,7 @@ function ExportConversationModalInner({
 
       // txt / json — server returns inline content.
       const serverFmt = format === 'json' ? 'json' : 'text';
-      const r = await api.chatExport(conversationId, serverFmt, opts);
+      if (!_e5) r = await api.chatExport(conversationId, serverFmt, opts);
       if (!r?.success) throw new Error(r?.message || (t('chatConv.exportFailed') || 'Falha ao exportar'));
 
       let content;
@@ -175,6 +187,7 @@ function ExportConversationModalInner({
       }
       if (!content) throw new Error(t('chatConv.exportEmpty') || 'Nada para exportar nesse período.');
 
+      if (_e5 && serverFmt === 'json' && !(r.data && r.data.messages)) throw new Error(t('chatConv.exportEmpty') || 'Nada para exportar nesse período.');
       const filename = sanitizeFilename(conversationName, format === 'json' ? 'json' : 'txt');
       const mime = format === 'json' ? 'application/json' : 'text/plain';
 
