@@ -36,7 +36,7 @@ import {
   BiaTypingBubble, BiaChatComposer, BiaChipsStrip, biaMsgTs, biaDayKey, biaDayLabel,
 } from '../components/bia/BiaChatLayout';
 import { biaToolLabel } from '../components/BiaRich';
-import { biaTtsRate, biaAutoRead } from '../services/biaPrefs'; // [2026-10-21 bia-ajustes] velocidade + mãos livres
+import { biaTtsRate, biaAutoRead, readBiaThread, writeBiaThread, removeBiaThread } from '../services/biaPrefs'; // [2026-10-21 bia-ajustes] velocidade + mãos livres
 import { safeAlert } from '../services/alerts';
 import { IconEye } from '../components/Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
@@ -713,11 +713,25 @@ export default function OneScreen() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
 
-  const [messages, setMessages] = useState([]);
+  // [2026-10-21 bia-cache] conversa da Bia salva no aparelho (MMKV, por conta): abre JÁ com o
+  // histórico no 1º quadro (como o WhatsApp) e o servidor só sincroniza por trás. Cache com a
+  // última mensagem há < 2 h = conversa atual (mesma regra da tela); mais velho = começa nova
+  // (saudação na hora, sem esperar a rede). Sem cache nenhum = espera o servidor (sem saudação).
+  const [bootThread] = useState(() => {
+    if (!biaChatLayoutOn()) return null;
+    // user ainda não carregou no 1º quadro (web) → conta ativa síncrona do api.js
+    let acct = user?.email || '';
+    if (!acct) { try { acct = api.getActiveAccountEmail() || ''; } catch {} }
+    const c = acct ? readBiaThread(acct) : null;
+    if (!c) return null;
+    const fresh = Number.isFinite(c.at) && Date.now() - c.at < 2 * 60 * 60 * 1000 && !!c.cid;
+    return { ...c, fresh };
+  });
+  const [messages, setMessages] = useState(() => (bootThread && bootThread.fresh ? bootThread.msgs : []));
   const [inputText, setInputText] = useState('');
   const [attachedImage, setAttachedImage] = useState(null); // { uri, base64, mimeType }
   const [loading, setLoading] = useState(false);
-  const [conversationId, setConversationId] = useState(null);
+  const [conversationId, setConversationId] = useState(() => (bootThread && bootThread.fresh ? bootThread.cid : null));
   // Suggested follow-up chips for the most-recent AI reply. Rendered as a
   // SmartReplyChips strip under the last assistant message — tap = autosend.
   // Cleared whenever the user types, picks an image, switches threads, or
@@ -778,7 +792,7 @@ export default function OneScreen() {
   // velho → conversation_id antigo (até de conversa apagada) ou nulo a cada fala.
   const turnSeqRef = useRef(0);
   const inflightAiMsgIdRef = useRef(null);
-  const conversationIdRef = useRef(null);
+  const conversationIdRef = useRef(bootThread && bootThread.fresh ? bootThread.cid : null);
   const loadingRef = useRef(false);
   const pttEpochRef = useRef(0); // invalida transcrição do mic em voo ao entrar no modo voz
   useEffect(() => { conversationIdRef.current = conversationId; }, [conversationId]);
@@ -892,7 +906,7 @@ export default function OneScreen() {
   const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
 
   const [initialLoaded, setInitialLoaded] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(() => !bootThread); // [bia-cache] cache decide na hora
 
   // Load conversations and auto-restore the most recent one
   const loadConversations = useCallback(async (autoRestore = false) => {
@@ -905,7 +919,9 @@ export default function OneScreen() {
       else if (Array.isArray(cached)) convos = cached;
       if (convos.length > 0) {
         setConversations(convos);
-        setInitialLoading(false); // Show UI immediately with cached data
+        // [bia-cache] layout de conversa: a LISTA em cache não diz se há conversa atual → não solta
+        // a saudação aqui (era o "pisca": saudação + sugestões e só depois o histórico)
+        if (!biaChatLayoutOn()) setInitialLoading(false); // Show UI immediately with cached data
       }
     }
     try {
@@ -936,6 +952,30 @@ export default function OneScreen() {
       // a fresh conversation. Also cross-check with the local `lastActiveAt`
       // ref bumped on every send/reply — if local activity is older than 2h,
       // we ALWAYS start fresh regardless of what the server timestamp says.
+      // [bia-cache] abriu pintada do cache do aparelho → só sincroniza com o servidor por trás
+      // (troca as mensagens só se mudaram e se nada está em andamento; conversa sumiu = nova).
+      if (autoRestore && bootThread && bootThread.fresh && conversationIdRef.current === bootThread.cid) {
+        try {
+          const hRes = await api.oneHistory(bootThread.cid);
+          const msgs = hRes?.data?.messages || (Array.isArray(hRes?.data) ? hRes.data : []);
+          if (hRes?.success !== false && conversationIdRef.current === bootThread.cid && !loadingRef.current) {
+            if (msgs.length > 0) {
+              const mapped = msgs.map((m, i) => ({
+                id: `h-${i}`, role: m.role, content: m.content, serverId: m.id || 0, ts: m.created_at || null,
+                actions: (() => { try { return m.tool_calls ? (JSON.parse(m.tool_calls || '[]') || []) : []; } catch { return []; } })(),
+                userName: firstName,
+              }));
+              const sig = (arr) => arr.filter(m => m.role === 'user' || m.role === 'assistant').map(m => m.role + '|' + (m.content || '')).join('\u0001');
+              setMessages(prev => (prev.some(m => m._streaming || m._toolPending) || sig(prev) === sig(mapped) ? prev : mapped));
+            } else if (hRes?.success) {
+              conversationIdRef.current = null;
+              setConversationId(null);
+              setMessages(prev => (prev.some(m => m._streaming || m._toolPending) ? prev : []));
+            }
+          }
+        } catch {}
+        return;
+      }
       if (autoRestore && convos.length > 0 && !conversationId && messages.length === 0) {
         const last = convos[0]; // most recent
         const lastUpdated = new Date(last.updated_at || last.created_at);
@@ -1027,6 +1067,16 @@ export default function OneScreen() {
     if (persistable.length === 0) return;
     setCache('one_messages_' + conversationId, persistable, 7776000000).catch(() => {});
   }, [messages, conversationId]);
+  // [bia-cache] espelho síncrono (MMKV) p/ abrir pintado; conversa nova/apagada = some do aparelho
+  useEffect(() => {
+    if (!biaChatLayoutOn()) return;
+    let acct = user?.email || '';
+    if (!acct) { try { acct = api.getActiveAccountEmail() || ''; } catch {} }
+    if (!acct) return;
+    if (!conversationId) { if (!messages.length && initialLoaded) removeBiaThread(acct); return; }
+    if (messages.some(m => m && (m._streaming || m._toolPending))) return; // grava o turno pronto
+    writeBiaThread(acct, conversationId, messages);
+  }, [messages, conversationId, user?.email, initialLoaded]);
 
   // Proactive daily briefing disabled: user feedback said the auto-fired
   // "me dá um briefing rápido" prompt felt intrusive on every cold open.

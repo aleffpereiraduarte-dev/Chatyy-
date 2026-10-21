@@ -6,7 +6,7 @@
 //   bia_pref_daily      frase do dia no início (padrão ligado; '0' = desligado)
 // As preferências do SERVIDOR (tom, tamanho, idioma, voz, memória, acesso a dados)
 // continuam em ai_memory (email.php → ai-memory.php).
-import { getString, setString } from './mmkv';
+import { getString, setString, remove as mmkvRemove, getAllKeys } from './mmkv';
 
 export const BIA_TTS_RATES = [0.8, 1, 1.25, 1.5];
 
@@ -52,4 +52,68 @@ export function biaToneId(raw) {
   if (!low) return '';
   const tn = BIA_TONES.find(x => x.match.some(m => low.startsWith(m)));
   return tn ? tn.id : 'custom';
+}
+
+// ── [2026-10-21 bia-cache] conversa atual da Bia salva no aparelho (por conta) ──
+// Abre a Bia JÁ com o histórico no 1º quadro (como o WhatsApp); o servidor só
+// sincroniza por trás. MMKV síncrono (chave não é lazy). Limpa no "Apagar conversas
+// com a Bia" e no logout (AuthContext.clearAccountScopedMmkv → clearBiaThreads).
+const THREAD_PFX = 'bia_thread_v1_';
+const THREAD_MAX = 60;
+function _acctKey(email) { return THREAD_PFX + String(email || 'anon').trim().toLowerCase(); }
+function _slimMsg(m) {
+  if (!m || (m.role !== 'user' && m.role !== 'assistant')) return null;
+  const content = typeof m.content === 'string' ? m.content : '';
+  const img = typeof m.imageUri === 'string' && !/^data:/i.test(m.imageUri) ? m.imageUri : undefined;
+  if (!content && !img) return null;
+  const o = { id: m.id, role: m.role, content };
+  if (m.serverId) o.serverId = m.serverId;
+  if (m.ts) o.ts = m.ts;
+  else if (typeof m.id === 'number' && m.id > 1e12) o.ts = m.id;
+  if (img) o.imageUri = img;
+  if (Array.isArray(m.actions) && m.actions.length) {
+    try { const s = JSON.stringify(m.actions); if (s.length < 20000) o.actions = m.actions; } catch {}
+  }
+  return o;
+}
+function _tsOf(m) {
+  if (!m) return NaN;
+  const v = m.ts;
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string') {
+    let s = v.trim().replace(' ', 'T');
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += 'Z';
+    const n = Date.parse(s);
+    if (Number.isFinite(n)) return n;
+  }
+  return NaN;
+}
+/** { cid, msgs, at } ou null. `at` = hora da última mensagem (regra das 2 h da tela). */
+export function readBiaThread(email) {
+  try {
+    const raw = getString(_acctKey(email));
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    if (!v || !Array.isArray(v.msgs)) return null;
+    return v;
+  } catch { return null; }
+}
+export function writeBiaThread(email, cid, messages) {
+  try {
+    if (!cid || !Array.isArray(messages)) return;
+    const msgs = messages.map(_slimMsg).filter(Boolean).slice(-THREAD_MAX);
+    if (!msgs.length) return;
+    let at = NaN;
+    for (let i = msgs.length - 1; i >= 0 && !Number.isFinite(at); i--) at = _tsOf(msgs[i]);
+    if (!Number.isFinite(at)) at = Date.now();
+    setString(_acctKey(email), JSON.stringify({ cid, msgs, at }));
+  } catch {}
+}
+export function removeBiaThread(email) {
+  try { mmkvRemove(_acctKey(email)); } catch {}
+}
+export function clearBiaThreads() {
+  try {
+    (getAllKeys() || []).forEach((k) => { if (String(k).startsWith(THREAD_PFX)) mmkvRemove(k); });
+  } catch {}
 }

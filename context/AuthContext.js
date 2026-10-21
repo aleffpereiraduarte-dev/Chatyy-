@@ -536,6 +536,8 @@ async function clearAccountScopedMmkv() {
     mmkvRemove('omc_profile');
     mmkvRemove('omc_call_history');
   } catch {}
+  // [2026-10-21 bia-cache] conversa da Bia salva no aparelho (bia_thread_v1_<conta>)
+  try { require('../services/biaPrefs').clearBiaThreads(); } catch {}
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('chatyy_convs_v1');

@@ -20,7 +20,7 @@
 // Kill switch (OTA): globalThis.__chatyy_bia_chat_layout = false → tela antiga da Bia.
 import React, { memo, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TextInput, Pressable, Animated, Easing, Platform, StyleSheet, Image, ScrollView, Linking,
+  View, Text, TextInput, Pressable, Animated, Easing, Platform, StyleSheet, Image, ScrollView, Linking, Dimensions,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import {
@@ -35,6 +35,15 @@ import BiaOrb from './BiaOrb';
 import { BiaFadeIn, BiaMessageActions, GlyphWave } from './BiaUI';
 
 const ND = Platform.OS !== 'web';
+
+// [2026-10-21 bia-texto-cortado] largura MÁXIMA da bolha em pontos (como a conversa: BUBBLE_MAX_W),
+// não em %. Com % num pai que se ajusta ao conteúdo o iOS media o texto com uma largura e
+// desenhava com outra → a última palavra da linha saía cortada ("O mais recente é dc") e a
+// linha seguinte sumia. Em pontos o texto é medido já na largura certa e sempre quebra.
+const _WIN_W = (() => { try { return Dimensions.get('window').width || 390; } catch { return 390; } })();
+const _WIDE = Platform.OS === 'web' && _WIN_W >= 900;
+const OWN_MAX_W = _WIDE ? 520 : Math.round(Math.min(_WIN_W, 620) * 0.8);
+const AI_MAX_W = _WIDE ? 600 : Math.round(Math.min(_WIN_W, 620) * 0.88);
 
 export function biaChatLayoutOn() {
   try { return globalThis.__chatyy_bia_chat_layout !== false; } catch { return true; }
@@ -326,7 +335,9 @@ export const BiaChatRow = memo(function BiaChatRow({
           style={[ms.bubble, ms.bubbleOther, !streaming && time ? ms.bubbleAi : null, { backgroundColor: c.recv }, bubbleRecvStyle(isDark), Platform.OS === 'web' ? { cursor: 'default' } : null]}
           accessibilityHint={onCopy ? t('biaChat.tapForActions') : undefined}
         >
-          <BiaMarkdown text={shown} color={c.recvText} isDark={isDark} streaming={streaming && !toolPending} t={t} dense />
+          <View style={ms.aiText}>
+            <BiaMarkdown text={shown} color={c.recvText} isDark={isDark} streaming={streaming && !toolPending} t={t} dense />
+          </View>
           {toolPending ? <View style={{ paddingTop: 6 }}><TypingDots color={c.sub} /></View> : null}
           {!streaming && time ? (
             <View style={ms.metaAi}>
@@ -378,14 +389,15 @@ const ms = StyleSheet.create({
   notice: { maxWidth: 420, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 },
   noticeText: { fontSize: 12.5, lineHeight: 17, textAlign: 'center', fontWeight: '500' },
   noticeLink: { fontWeight: '700' },
-  row: { marginBottom: 6, maxWidth: '84%' },
+  row: { marginBottom: 6, maxWidth: OWN_MAX_W },
   rowOwn: { alignSelf: 'flex-end', marginRight: 8 },
   rowOther: { alignSelf: 'flex-start', marginLeft: 8 },
-  rowAi: { maxWidth: '88%' },
+  rowAi: { maxWidth: AI_MAX_W },
   bubble: { borderRadius: 18, paddingHorizontal: 12, paddingTop: 7, paddingBottom: 7, minWidth: 74, flexShrink: 1, alignSelf: 'flex-start' },
-  bubbleOwn: { alignSelf: 'flex-end', borderBottomRightRadius: 5 },
-  bubbleOther: { borderBottomLeftRadius: 5 },
+  bubbleOwn: { alignSelf: 'flex-end', borderBottomRightRadius: 5, maxWidth: OWN_MAX_W },
+  bubbleOther: { borderBottomLeftRadius: 5, maxWidth: AI_MAX_W },
   bubbleAi: { paddingBottom: 20 },
+  aiText: { alignSelf: 'stretch', flexShrink: 1, paddingRight: 3 }, // folga do último glifo (iOS mede um tico estreito)
   bubbleMedia: { paddingHorizontal: 4, paddingTop: 4 },
   media: { width: 232, height: 232, borderRadius: 14 },
   text: { fontSize: 16, lineHeight: 21.5, letterSpacing: -0.15, paddingRight: 3 },

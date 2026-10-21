@@ -37,7 +37,7 @@ import { safeAlert } from '../../../services/alerts';
 import { HapticsCompat as Haptics } from '../../../services/haptics';
 import {
   BIA_TTS_RATES, biaTtsRate, setBiaTtsRate, biaAutoRead, setBiaAutoRead, biaDailyUserOn, setBiaDailyUserOn,
-  BIA_VOICES, BIA_DEFAULT_VOICE, BIA_TONES, biaToneId,
+  BIA_VOICES, BIA_DEFAULT_VOICE, BIA_TONES, biaToneId, clearBiaThreads,
 } from '../../../services/biaPrefs';
 
 const LANGS = ['auto', 'pt', 'en', 'es', 'fr', 'de', 'it'];
@@ -174,6 +174,7 @@ export default function BiaCategory() {
           const r = await oneHistoryDelete({ clearAll: true });
           if (r?.success === false) throw new Error('fail');
           setCache('one_conversations', { success: true, data: { conversations: [] } }, 7776000000).catch(() => {});
+          clearBiaThreads(); // [bia-cache] conversa salva no aparelho também some
           try { Haptics.notificationAsync?.('success'); } catch {}
           safeAlert(t('biaSet.clearHistoryDone'), '', [{ text: t('common.ok') }]);
         } catch { failToast(); }
