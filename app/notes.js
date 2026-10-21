@@ -2742,6 +2742,7 @@ export default function NotesScreen() {
 
 // ---- Note Editor (Full Screen - Premium) ----
 function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, colorRef, pinnedRef, stickyRef, notebookRef, tagsRef, reminderRef, reminder = null, onEnsureSaved, allNotes = [], onOpenNote, onClose, onAutoSave, onDelete, onSendEmail, onExportPdf, onCopyText, allTags = [] }) {
+  const insets = useSafeAreaInsets(); // [2026-10-21] usado no header/peek (iOS) — faltava neste componente → ReferenceError
   const [title, setTitle] = useState(titleRef.current);
   const [content, setContent] = useState(contentRef.current);
   const [selectedColor, setSelectedColor] = useState(colorRef.current);
