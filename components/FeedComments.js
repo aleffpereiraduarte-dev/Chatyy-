@@ -35,7 +35,7 @@ function insertComment(prev, newComment, replyParent) {
   }
   let placed = false;
   const next = prev.map((c) => {
-    if (c.id === parentId) {
+    if (String(c.id) === String(parentId)) { // [2026-10-21 fix] id do WS pode vir como texto
       placed = true;
       const replies = Array.isArray(c.replies) ? c.replies : [];
       return { ...c, replies: [...replies, newComment] };
@@ -533,6 +533,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     try {
       const r = await api.feedComments(post.id, pageNum);
       if (r.success && r.data) {
+        if (pageNum > 1) setPage(pageNum);
         const newComments = r.data.comments || r.data || [];
         if (pageNum === 1) {
           setMeta({
@@ -617,7 +618,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         // feed_comment_new WS event inflated the count without adding a row.
         currentCountRef.current += 1;
         onCommentCountChange?.(currentCountRef.current);
-        return [data, ...prev];
+        return insertComment(prev, data, null); // [2026-10-21 fix] resposta ao vivo entra no fio (antes virava comentário raiz)
       });
     });
     // [anon-comment 2026-10-14] apagado/ocultado pelo dono, por denúncias ou pelo admin.
@@ -645,9 +646,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     // can't scroll-to-load while they're typing/sending anyway).
     if (sending || recording) return;
     if (hasMore && !loading && !loadingMore) {
-      const nextPage = page + 1;
-      setPage(nextPage);
-      loadComments(nextPage);
+      loadComments(page + 1); // [2026-10-21 fix] página avança só quando chega (loadComments)
     }
   }, [hasMore, loading, loadingMore, page, loadComments, sending, recording]);
 
@@ -711,6 +710,9 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
             listRef.current?.scrollToOffset?.({ offset: 0, animated: true });
           }, 100);
         }
+      } else if (r && r.success === false && !r.queued && !r._deferred) {
+        // [2026-10-21 fix] recusado → avisa (antes nada acontecia e parecia travado; o texto fica no campo)
+        showNotice(t('feed.anon.err.generic') || 'Não foi possível enviar. Tente de novo.');
       }
     } catch {
       // Offline / 5xx — queue and keep the optimistic comment mounted so

@@ -625,9 +625,10 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
             try { putCached(['feed_p1', algorithm], newPosts.slice(0, 30)); } catch {}
           }
         } else {
+          setPage(pageNum); // [2026-10-21 fix] página só avança quando chegou (erro não pula página)
           setPosts(prev => {
-            const existingIds = new Set(prev.map(p => p.id));
-            const unique = newPosts.filter(p => !existingIds.has(p.id));
+            const existingIds = new Set(prev.map(p => String(p.id)));
+            const unique = newPosts.filter(p => !existingIds.has(String(p.id)));
             if (unique.length === 0) return prev; // nothing new, keep reference
             const merged = [...prev, ...unique];
             lastFeedFpRef.current = _feedFingerprint(merged);
@@ -786,9 +787,11 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
           setPosts(prev => {
             // O(1) dedup via ref-backed Set — prev.some() on 1k+ posts was
             // linear per broadcast; a Set scan stays flat as the feed grows.
-            if (!feedIdSetRef.current) feedIdSetRef.current = new Set(prev.map(p => p.id));
-            if (feedIdSetRef.current.has(data.post.id)) return prev;
-            feedIdSetRef.current.add(data.post.id);
+            // [2026-10-21 fix] o Set era zerado na montagem e nunca recebia os posts carregados →
+            // post já na lista (inclusive o meu) entrava 2× (key duplicada). Confere a lista atual.
+            const _nid = String(data.post.id);
+            if (prev.some(p => String(p.id) === _nid)) return prev;
+            if (feedIdSetRef.current) feedIdSetRef.current.add(data.post.id);
             const next = [data.post, ...prev];
             lastFeedFpRef.current = _feedFingerprint(next);
             _saveFeedToMMKV(next);
@@ -893,7 +896,6 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     const nextPage = page + 1;
-    setPage(nextPage);
     loadPosts(nextPage);
   }, [loadingMore, hasMore, page, loadPosts]);
 
@@ -935,6 +937,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
   const handlePostCreated = useCallback((newPost) => {
     if (newPost) {
       setPosts(prev => {
+        if (prev.some(x => String(x.id) === String(newPost.id))) return prev; // [2026-10-21 fix] WS pode ter chegado antes
         const next = [newPost, ...prev];
         lastFeedFpRef.current = _feedFingerprint(next);
         _saveFeedToMMKV(next);

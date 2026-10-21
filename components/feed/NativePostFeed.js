@@ -258,6 +258,7 @@ function NativePostFeedInner(props) {
   const propsRef = useRef(props);
   propsRef.current = props;
   const likeInFlight = useRef(new Set());
+  const likeWant = useRef(new Map()); // [2026-10-21 fix] último estado de curtida que o usuário deixou, por post
   const saveInFlight = useRef(new Set());
 
   const runTranslate = useCallback(async (post) => {
@@ -289,8 +290,10 @@ function NativePostFeedInner(props) {
     const doLike = async (post, liked, likes) => {
       const id = String(post.id);
       patchPost(post.id, { user_liked: liked, liked_by_me: liked, like_count: likes, likes_count: likes });
+      likeWant.current.set(id, liked); // [2026-10-21 fix] 2º toque com pedido em voo: guarda o desejado e reconcilia no fim
       if (likeInFlight.current.has(id)) return;
       likeInFlight.current.add(id);
+      let again = false;
       try {
         const r = await api.feedLike(post.id);
         if (r?.success && r.data) {
@@ -298,7 +301,11 @@ function NativePostFeedInner(props) {
           if (r.data.liked !== undefined) { p.user_liked = !!r.data.liked; p.liked_by_me = !!r.data.liked; }
           const sc = r.data.likes_count ?? r.data.like_count;
           if (sc !== undefined) { p.like_count = Number(sc); p.likes_count = Number(sc); }
-          if (Object.keys(p).length) patchPost(post.id, p);
+          if (r.data.liked !== undefined && likeWant.current.get(id) !== !!r.data.liked) again = true;
+          else if (Object.keys(p).length) patchPost(post.id, p);
+        } else if (r && r.success === false && !r.queued && !r._deferred && !r.offline) {
+          const was = !liked; // recusou → desfaz
+          patchPost(post.id, { user_liked: was, liked_by_me: was, like_count: Math.max(0, likes + (was ? 1 : -1)), likes_count: Math.max(0, likes + (was ? 1 : -1)) });
         }
       } catch {
         try {
@@ -311,6 +318,10 @@ function NativePostFeedInner(props) {
       } finally {
         likeInFlight.current.delete(id);
       }
+      if (again) {
+        // feed_like é toggle: manda de novo p/ chegar no estado que o usuário deixou
+        try { await api.feedLike(post.id); } catch {}
+      }
     };
     const doSave = async (post, saved) => {
       const id = String(post.id);
@@ -321,6 +332,8 @@ function NativePostFeedInner(props) {
         const r = await api.feedBookmark(post.id);
         if (r?.success && r.data && r.data.bookmarked !== undefined) {
           patchPost(post.id, { user_bookmarked: !!r.data.bookmarked, bookmarked_by_me: !!r.data.bookmarked });
+        } else if (r && r.success === false && !r.queued && !r._deferred && !r.offline) {
+          patchPost(post.id, { user_bookmarked: !saved, bookmarked_by_me: !saved }); // [2026-10-21 fix] recusou → desfaz
         }
       } catch {
         patchPost(post.id, { user_bookmarked: !saved, bookmarked_by_me: !saved });

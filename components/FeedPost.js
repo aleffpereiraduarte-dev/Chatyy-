@@ -848,6 +848,10 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         // servers used `like_count`. Read both so the count actually syncs.
         const serverCount = r.data.likes_count ?? r.data.like_count;
         if (serverCount !== undefined) setLikeCount(Number(serverCount));
+      } else if (r && r.success === false && !r.queued && !r._deferred && !r.offline) {
+        // [2026-10-21 fix] servidor recusou → desfaz (antes o coração ficava vermelho)
+        setLiked(wasLiked);
+        setLikeCount(prev => wasLiked ? prev + 1 : Math.max(0, prev - 1));
       }
     } catch {
       // Network error — DON'T roll back the optimistic state. Instead,
@@ -926,6 +930,8 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       const r = await api.feedBookmark(post.id);
       if (r.success && r.data) {
         if (r.data.bookmarked !== undefined) setBookmarked(!!r.data.bookmarked);
+      } else if (r && r.success === false && !r.queued && !r._deferred && !r.offline) {
+        setBookmarked(was); // [2026-10-21 fix] recusou → desfaz
       }
     } catch {
       setBookmarked(was);
