@@ -31749,6 +31749,7 @@ function ChatConversationInnerBody() {
             msg={vMsg}
             colors={colors}
             isOwn={isOwn}
+            ownInk={ownTextColor} ownSubtle={ownMetaColor} /* [2026-10-21 view-once WA] tinta da bolha própria */
             t={t}
             currentEmail={currentEmail}
             onView={async (messageId) => {

@@ -32,6 +32,7 @@ import {
   vstack, hstack, zstack, text, image, avatar, loader, videoNote, icon, toArgb, spacer, iconPaths,
 } from './nativeNodes';
 import { inkAlpha, onInk, pollStats, pollTexts, showPollVotes } from './pollLook'; // [2026-10-16 poll-wa]
+import { viewOncePaths, viewOnceRingPaths, viewOnceState } from './viewOnceGlyphs'; // [2026-10-21 view-once WA]
 import {
   IconMapPin, IconUser, IconUserPlus, IconPlus, IconPhone, IconVideo, IconCalendar, IconClock,
   IconCheckCircle, IconHelpCircle, IconPlay, IconPencil, IconMusic, IconEye, IconLock,
@@ -1081,39 +1082,48 @@ function buildStatusReply(m, row, ctx, C, own) {
 }
 
 function buildViewOnce(m, row, ctx, C, own) {
+  // [2026-10-21 view-once WA] Visual WhatsApp, glifos por PATHS crus (iconPaths,
+  // components/chat/viewOnceGlyphs.js) — nunca mais "círculo cinza vazio":
+  //   enviando → anel de progresso (_uploadPct) ou spinner nativo (indeterminado)
+  //   enviada  → "1" em círculo tracejado · aberta/expirada → círculo com ✓
+  //   recebida não aberta → "1" tracejado + "Toque para ver" (vo_open)
+  // Sem fundo circular: se o glifo faltasse, não sobraria disco vazio.
   const col = C.colors || {};
   const V = _viewOnce(m, ctx);
   const title = V.isAudio ? _tr(C, 'chatConv.viewOnceVoiceLabel', 'Áudio único') : V.isVideo ? _tr(C, 'chatConv.viewOnceVideo', 'Vídeo único') : _tr(C, 'chatConv.viewOncePhoto', 'Foto única');
-  let accent; let subtle; let circleBg; let Ic; let sub;
-  if (own) {
-    // [2026-10-17 polish-chat] enviada = tinta da PRÓPRIA bolha (col.text #111
-    // sumia na bolha preta do claro); círculo = tinta a 14% (contraste nos 2 temas).
-    accent = C.ownText || col.text || '#111111'; subtle = C.ownMeta || col.textSecondary || 'rgba(0,0,0,0.5)';
-    circleBg = inkAlpha(accent, 0.14);
-    Ic = V.isAudio ? IconMic : V.isVideo ? IconVideo : IconEye;
-    sub = V.anyViewed ? _tr(C, 'chatConv.viewOnceOpened', 'Visualizada') : _tr(C, 'chatConv.viewOnceSent', 'Visualização única');
-  } else if (!V.locked) {
-    // [2026-10-16 native-cover] receptor, ainda não vista (mesmo visual do pill do ViewOnceMessage)
-    accent = col.primary || '#111111'; subtle = col.textSecondary || '#666666';
-    const w0 = _clampW(180, 260, 36 + 10 + Math.max(_estW(title, 14, true), _estW(_tr(C, 'chatConv.tapToView', 'Toque para ver'), 12)) + 8);
-    row.bl = [hstack([
-      vstack([icon(V.isAudio ? IconMic : V.isVideo ? IconVideo : IconEye, { s: 18, c: accent })], { w: 36, h: 36, r: 18, bg: inkAlpha(accent, 0.14), al: 'c', jc: 'c' }),
-      vstack([text(title, { fs: 14, fw: 700, c: accent, ml: 1 }), text(_tr(C, 'chatConv.tapToView', 'Toque para ver'), { fs: 12, c: subtle, ml: 1, m: [1, 0, 0, 0] })], { fl: 1 }),
-    ], { g: 10, al: 'c', p: [6, 4, 6, 0], w: w0, a: 'vo_open' })];
-    row.cw = w0; row.pad = PAD; row.mp = 'below';
-    return;
+  const S = viewOnceState(m, own, V.locked, V.anyViewed);
+  const ink = own ? (C.ownText || '#FFFFFF') : (C.otherInk || col.text || '#111111');
+  const subtle = own ? (C.ownMeta || inkAlpha(ink, 0.6)) : (col.textSecondary || C.otherMeta || '#666666');
+  let glyph = null; let sub; let glyphInk = ink; let action;
+  if (S.st === 'sending') {
+    sub = _tr(C, 'chatConv.sending', 'Enviando...');
+    glyph = S.pct != null
+      ? iconPaths(viewOnceRingPaths(Math.max(0.04, S.pct), ink, inkAlpha(ink, 0.25)), { s: 24 })
+      : loader({ s: 20, c: ink });
+  } else if (S.st === 'opened') {
+    sub = V.isAudio && !own ? _tr(C, 'chatConv.viewOnceVoiceExpired', 'Áudio expirado') : _tr(C, 'chatConv.viewOnceOpened', 'Aberta');
+    glyphInk = subtle;
+    glyph = iconPaths(viewOncePaths('opened', glyphInk), { s: 24 });
+  } else if (S.st === 'unopened') {
+    sub = _tr(C, 'chatConv.tapToView', 'Toque para ver');
+    glyphInk = col.primary || ink;
+    glyph = iconPaths(viewOncePaths('one', glyphInk), { s: 24 });
+    action = 'vo_open';
   } else {
-    accent = col.primary || '#111111'; subtle = col.textSecondary || '#666666';
-    circleBg = inkAlpha(accent, 0.12); // [2026-10-17 polish-chat] era #111 12% (sumia no escuro)
-    Ic = V.isAudio ? IconMic : IconCheck;
-    sub = V.isAudio ? _tr(C, 'chatConv.viewOnceVoiceExpired', 'Áudio expirado') : _tr(C, 'chatConv.viewOnceOpened', 'Aberta');
+    sub = _tr(C, 'chatConv.viewOnceSent', 'Visualização única');
+    glyph = iconPaths(viewOncePaths('one', ink), { s: 24 });
   }
-  const w = _clampW(180, 260, 32 + 10 + Math.max(_estW(title, 14, true), _estW(sub, 12)) + 10 + 13 + 4);
+  const titleInk = S.st === 'opened' ? subtle : ink;
+  const w = _clampW(170, 260, 28 + 10 + Math.max(_estW(title, 14, true), _estW(sub, 12)) + 8);
+  const o = { g: 10, al: 'c', p: [6, 4, 6, 0], w };
+  if (action) o.a = action;
   row.bl = [hstack([
-    vstack([icon(Ic, { s: 16, c: accent })], { w: 32, h: 32, r: 16, bg: circleBg, al: 'c', jc: 'c' }),
-    vstack([text(title, { fs: 14, fw: 600, c: accent, ml: 1 }), text(sub, { fs: 12, c: subtle, it: 1, ml: 1, m: [1, 0, 0, 0] })], { fl: 1 }),
-    icon(IconLock, { s: 13, c: subtle }),
-  ], { g: 10, al: 'c', p: [6, 4, 6, 0], w })];
+    vstack([glyph], { w: 28, h: 28, al: 'c', jc: 'c' }),
+    vstack([
+      text(title, { fs: 14, fw: 600, c: titleInk, ml: 1 }),
+      text(sub, { fs: 12, c: subtle, it: S.st === 'opened' ? 1 : 0, ml: 1, m: [1, 0, 0, 0] }),
+    ], { fl: 1 }),
+  ], o)];
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
 

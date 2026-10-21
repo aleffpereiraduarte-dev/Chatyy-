@@ -4,9 +4,29 @@ import {
   Image, ActivityIndicator, Platform, StatusBar as RNStatusBar, BackHandler,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { IconEye, IconLock, IconVideo, IconCheck, IconX, IconMic, IconPlay, IconPause } from './Icons';
+import { IconLock, IconX, IconMic, IconPlay, IconPause } from './Icons';
 import ChatyySecureView from './chat/ChatyySecureView'; // [2026-10-19 secure-view] view-once sempre protegido
 import { secureViewAvailable } from '../services/captureBlock';
+import Svg, { Path } from 'react-native-svg';
+import { viewOncePaths, viewOnceRingPaths, viewOnceState } from './chat/viewOnceGlyphs'; // [2026-10-21 view-once WA]
+
+// [2026-10-21 view-once WA] Glifo "1" tracejado / ✓ aberta / anel de envio —
+// MESMOS paths do cartão nativo (viewOnceGlyphs). Sem disco de fundo.
+function VOGlyph({ kind, color, pct, track, size = 24 }) {
+  if (kind === 'sending' && (pct == null)) return <ActivityIndicator size="small" color={color} />;
+  const ps = kind === 'sending' ? viewOnceRingPaths(Math.max(0.04, pct), color, track || 'rgba(127,127,127,0.3)') : viewOncePaths(kind, color);
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" strokeLinecap="round" strokeLinejoin="round">
+      {ps.map((p, i) => <Path key={i} d={p.d} stroke={p.k} strokeWidth={p.w} fill="none" />)}
+    </Svg>
+  );
+}
+function _rgbaOf(hex, a) {
+  const h = String(hex || '').replace('#', '');
+  if (h.length !== 6) return `rgba(127,127,127,${a})`;
+  const n = parseInt(h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
 
 let _expoVideoMod = null;
 function loadExpoVideo() {
@@ -354,7 +374,7 @@ function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, on
 // para ver" e, no toque, monta este componente escondido com autoOpen → abre
 // direto o MESMO viewer (mesmas regras de queima/captura). onAutoDone quando
 // fecha (ou quando já estava visto/expirado).
-export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, currentEmail, autoOpen = false, onAutoDone }) {
+export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, currentEmail, autoOpen = false, onAutoDone, ownInk, ownSubtle }) {
   const safeColors = {
     surface: '#fff',
     border: '#e0e0e0',
@@ -434,30 +454,31 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
     // [fix 2026-10-01] Was hardcoded WHITE text (assumed a dark bubble), but the
     // own bubble is LIGHT (#F1F3F5) in light mode → white-on-light = "muito
     // apagada". Use theme text colors so it contrasts on both own-bubble tones.
-    const accent = safeColors.text || '#111111';
-    const subtle = safeColors.textSecondary || 'rgba(0,0,0,0.5)';
-    const sub = vbHasAny
-      ? (t?.('chatConv.viewOnceOpened') || 'Visualizada')
-      : (t?.('chatConv.viewOnceSent') || 'Visualização única');
+    // [2026-10-21 view-once WA] tinta da PRÓPRIA bolha (grafite #34343A → branco);
+    // antes colors.text (#18181B) = ícone invisível na bolha escura.
+    const accent = ownInk || '#FFFFFF';
+    const subtle = ownSubtle || _rgbaOf(accent, 0.6);
+    const S = viewOnceState(msg, true, false, vbHasAny);
+    const sub = S.st === 'sending'
+      ? (t?.('chatConv.sending') || 'Enviando...')
+      : S.st === 'opened'
+        ? (t?.('chatConv.viewOnceOpened') || 'Aberta')
+        : (t?.('chatConv.viewOnceSent') || 'Visualização única');
     const title = isAudio
       ? (t?.('chatConv.viewOnceVoiceLabel') || 'Áudio único')
       : isVideo
         ? (t?.('chatConv.viewOnceVideo') || 'Vídeo único')
         : (t?.('chatConv.viewOncePhoto') || 'Foto única');
+    const opened = S.st === 'opened';
     return (
       <View style={s.expiredRow}>
-        <View style={[s.expiredIconCircle, { backgroundColor: (safeColors.text || '#111111') + '1f' }]}>
-          {isAudio
-            ? <IconMic size={16} color={accent} />
-            : isVideo
-              ? <IconVideo size={16} color={accent} />
-              : <IconEye size={16} color={accent} />}
+        <View style={s.glyphBox}>
+          <VOGlyph kind={S.st === 'sent' ? 'one' : S.st} color={opened ? subtle : accent} pct={S.pct} track={_rgbaOf(accent, 0.25)} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[s.expiredTitle, { color: accent }]} numberOfLines={1}>{title}</Text>
-          <Text style={[s.expiredSub, { color: subtle }]} numberOfLines={1}>{sub}</Text>
+          <Text style={[s.expiredTitle, { color: opened ? subtle : accent }]} numberOfLines={1}>{title}</Text>
+          <Text style={[s.expiredSub, { color: subtle }, !opened && { fontStyle: 'normal' }]} numberOfLines={1}>{sub}</Text>
         </View>
-        <IconLock size={13} color={subtle} />
       </View>
     );
   }
@@ -480,14 +501,13 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
       : (t?.('chatConv.viewOnceOpened') || 'Aberta');
     return (
       <View style={s.expiredRow}>
-        <View style={[s.expiredIconCircle, { backgroundColor: 'rgba(17, 17, 17,0.12)' }]}>
-          {isAudio ? <IconMic size={16} color={accent} /> : <IconCheck size={16} color={accent} />}
+        <View style={s.glyphBox}>
+          {isAudio ? <IconMic size={18} color={subtle} /> : <VOGlyph kind="opened" color={subtle} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[s.expiredTitle, { color: accent }]} numberOfLines={1}>{title}</Text>
+          <Text style={[s.expiredTitle, { color: subtle }]} numberOfLines={1}>{title}</Text>
           <Text style={[s.expiredSub, { color: subtle }]} numberOfLines={1}>{subLabel}</Text>
         </View>
-        <IconLock size={13} color={subtle} />
       </View>
     );
   }
@@ -526,8 +546,8 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
         accessibilityRole="button"
         accessibilityLabel={t?.('chatConv.tapToView') || 'Toque para ver'}
       >
-        <View style={[s.tapIconCircle, { backgroundColor: 'rgba(17, 17, 17,0.14)' }]}>
-          {isVideo ? <IconVideo size={18} color={accent} /> : <IconEye size={18} color={accent} />}
+        <View style={s.glyphBox}>
+          <VOGlyph kind="one" color={accent} />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={[s.tapTitle, { color: accent }]} numberOfLines={1}>
@@ -835,6 +855,7 @@ const s = StyleSheet.create({
   expiredSub: { fontSize: 12, marginTop: 1, fontStyle: 'italic' },
   tapRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingRight: 4, minWidth: 200 },
   tapIconCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  glyphBox: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' }, // [2026-10-21 view-once WA]
   tapTitle: { fontSize: 14, fontWeight: '600' },
   tapSub: { fontSize: 12, marginTop: 1 },
 });

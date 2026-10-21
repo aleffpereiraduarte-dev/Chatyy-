@@ -13,7 +13,33 @@
 // Ícones: `icon(IconX, {s, c})` converte o componente do components/Icons.js
 // (react-native-svg) em paths SVG em tempo de execução → o nativo desenha o
 // MESMO ícone P&B do JS (parser de path SVG no Swift/Kotlin).
+import React from 'react';
 import { toArgb } from './argb';
+
+// [2026-10-21 view-once ícone] RAIZ do "círculo vazio" em TODO cartão nativo:
+// com o React Compiler (app.json experiments.reactCompiler) cada IconX do
+// components/Icons.js vira `const $ = c(n)` (useMemoCache). Chamado FORA do
+// render (aqui, p/ extrair os paths) o dispatcher do React é null → LANÇA →
+// o try/catch engolia → ps vazio → icon() null → só o círculo de fundo.
+// Solução: durante a extração troca o dispatcher por um falso que só
+// responde useMemoCache (cache "vazio" = sentinela → o componente recalcula
+// tudo) e RESTAURA o original (mesmo se chamado dentro de um render).
+const _MEMO_SENTINEL = Symbol.for('react.memo_cache_sentinel');
+const _FAKE_DISPATCHER = {
+  useMemoCache(n) { const a = new Array(Math.max(0, n | 0)); for (let i = 0; i < a.length; i++) a[i] = _MEMO_SENTINEL; return a; },
+  useMemo(fn) { return fn(); },
+  useCallback(fn) { return fn; },
+  useContext(ctx) { return ctx ? ctx._currentValue : undefined; },
+  readContext(ctx) { return ctx ? ctx._currentValue : undefined; },
+};
+function _withFakeDispatcher(fn) {
+  let I = null;
+  try { I = React.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE || null; } catch { I = null; }
+  if (!I || typeof I !== 'object' || !('H' in I)) return fn();
+  const prev = I.H;
+  I.H = _FAKE_DISPATCHER;
+  try { return fn(); } finally { I.H = prev; }
+}
 
 // ─── construtores ───────────────────────────────────────────────────────────
 // Todos aceitam `o` com as props comuns: m, p, w, h, bg, r, bc, bw, a, op, fl,
@@ -172,8 +198,10 @@ export function icon(Comp, o = {}) {
       if (o.sw) props.strokeWidth = o.sw;
       let el = null;
       const C = (Comp && typeof Comp === 'object' && Comp.type) ? Comp.type : Comp;
-      if (typeof C === 'function') el = C(props);
-      _walk(el, { fill: 0, stroke: toArgb(color), sw: o.sw || 1.9 }, out, color, 0);
+      _withFakeDispatcher(() => {
+        if (typeof C === 'function') el = C(props);
+        _walk(el, { fill: 0, stroke: toArgb(color), sw: o.sw || 1.9 }, out, color, 0);
+      });
     } catch {}
     ent = { ps: out.slice(), vb: out.vb || 24 };
     if (byColor.size > 16) byColor.clear();
