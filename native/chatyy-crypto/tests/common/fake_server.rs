@@ -178,7 +178,7 @@ impl FakeServer {
             None => return err(401, "unauthorized"),
         };
         match action {
-            "status" => ok(json!({"user_id": me, "contract": "e2ee5-contrato/1.3", "enabled": true, "kill": false})),
+            "status" => ok(json!({"user_id": me, "contract": "e2ee5-contrato/1.5", "enabled": true, "kill": false})),
             "keys_upload" => {
                 if let Some(dk) = b.get("device_keys").filter(|v| !v.is_null()) {
                     if dk["user_id"] != json!(me) || dk["device_id"] != json!(dev) {

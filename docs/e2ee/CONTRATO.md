@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Versão** | `e2ee5-contrato/1.3` (1.3.0) — 21/10/2026 (1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n; 1.3: códigos/campos do WP-07, `e2e_np` e flag NSE do WP-10, fila NSE→app do núcleo) |
+| **Versão** | `e2ee5-contrato/1.5` (1.5.0) — 21/10/2026 (1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n; 1.3: códigos/campos do WP-07, `e2e_np` e flag NSE do WP-10, fila NSE→app do núcleo; 1.4: §2.8 tipos ricos e mídia cifrada do WP-09/WP-11; 1.5: §0.3bis privada inteira, §4.6 `e2ee5x_*` e denúncia do WP-16) |
 | **Dono** | WP-00 (líder/arquiteto). Mudanças só por PR neste arquivo + entrada em `CHANGELOG.md`. |
 | **Implementação de referência** | `native/chatyy-crypto` (WP-01) e o servidor falso dos testes `native/chatyy-crypto/tests/common/fake_server.rs` (conformidade do WP-05). |
 | **Base** | `/root/e2ee-2026-10-21/PLANO.md` + DECISÕES DO FOUNDER (21/10: todas as recomendações aprovadas, "nível WhatsApp"). |
@@ -32,6 +32,13 @@ Documentos irmãos:
    com MAJOR diferente do servidor **não ativa** o E2EE (fica em texto, sem erro para o usuário).
 3. **O servidor nunca lê conteúdo** de conversa `e2ee_mode=1`: nem para IA, busca, prévia,
    moderação, hashtags, tradução, transcrição, resumo ou push.
+3bis. **Conversa `e2ee_mode=1` é privada INTEIRA para leitores do servidor**: nenhuma rota que lê
+   conteúdo (Bia/One, busca, unified-search, tradução, transcrição, resumo, export, moderação
+   automática, jogos…) lê qualquer linha dela — nem as mensagens antigas em texto anteriores a
+   `e2ee_since_pts`. Rota JSON responde `e2ee5_server_read_refused`; a Bia responde "Não consigo
+   ler esta conversa: ela é protegida com criptografia de ponta a ponta. Quer me mandar o
+   trecho?". A única entrada de conteúdo é o que o **cliente** manda por pedido explícito (§4.6)
+   ou por denúncia (§4.6).
 4. **Logs**: só ids (`conv_id`, `mid`, `device_id`, `session_id`), contagens e tamanhos. Nunca
    conteúdo, chave, pickle, segredo do QR, bearer, chave de recuperação, corpo de to-device.
 5. **Falhar fechado**: falta de sodium, assinatura inválida, versão desconhecida, chave ausente
@@ -211,6 +218,48 @@ envelope `{"e2e":5,…}` com payload `t:"reaction"`. Prévia de push: "reagiu à
 
 ---
 
+### 2.8 Adendos 1.4 (WP-09/WP-11 — tipos ricos e mídia cifrada no cliente; todos aditivos)
+Implementação: `services/e2ee/payload.js` (montar/ler), `services/e2ee/e2ee5Media.js` (variantes, cifra,
+upload opaco, download+decifra), `api/e2ee5_media.php` (servidor). Notas: `/root/e2ee-2026-10-21/wp11/NOTAS.md`.
+
+1. **Campos aditivos do payload**: `batch` (string ≤ 64; álbum = N mensagens `image`/`video` de 1 envio,
+   o cliente agrupa depois de decifrar — o servidor não vê `batch_id`); `M.lqip` (JPEG ~40 px em base64,
+   < 6 KB, o LQIP que a bolha pinta antes do download; o `blurhash` continua); `M.poster` = objeto de mídia
+   `{kind:"poster", url, file, w, h, size, mime}`; `M.title` (áudio); `contacts[].avatar`/`.chatyy`;
+   `t:"location_request"` (`body` ≤ 200, `type` grosso `text`). `media[]` com mais de 1 item: o leitor
+   v1 do app mostra só o 1º (o app envia álbum como mensagens separadas com `batch`).
+2. **Reação cifrada (substitui o texto do §2.7)**: `chat_react {message_id, emoji:"e2e", enc:<envelope>,
+   rx_kind:"reaction"|"state", remove?:1, silent?:1}`. A coluna `emoji` recebe o **próprio envelope**
+   (`{"e2e":5…}` = reação; `v{"e2e":5…}` = **estado por pessoa**) e `enc` recebe o envelope também — assim
+   todos os agregadores atuais (lista, WS `reaction`, sync, Rust) transportam a reação cifrada sem mudança e
+   o cliente decifra e reagrupa. 1 reação + 1 estado por pessoa por mensagem (troca = apaga o meu do
+   mesmo tipo + insere; `remove:1` retira). Só em mensagem cifrada; emoji em claro em mensagem cifrada =
+   `e2ee5_plaintext_refused`; em mensagem em claro (de antes da ativação) segue como hoje. O payload da
+   reação/estado traz `target_mid` (ou `poll_mid`) e o cliente **descarta** o que não bate com a mensagem
+   onde está (o servidor não consegue mover reação de lugar). Push: reação = "reagiu à sua mensagem"
+   (sem emoji); estado = sem push.
+3. **Estados por pessoa** (reação `rx_kind:"state"`): `t:"poll_vote"` (`poll_mid`, `option_ids` — vazio =
+   retirar; apuração no cliente; **substitui** a linha `poll_vote` com `sys_hidden` do §2.4),
+   `t:"meetup_rsvp"` (`target_mid`, `status` = `going`|`maybe`|`not_going`; substitui o RSVP em tabela
+   própria do WP-07 F2), `t:"live_loc"` (`target_mid`, `lat`, `lng`, `acc?`, `stopped?` — posição ao vivo
+   da mensagem `location` com `live`; só vale o estado do REMETENTE da mensagem). Enquete cifrada no app:
+   `poll.id = "e5:<mid>"`.
+4. **Upload opaco (§2.4.1)**: o cliente cifra cada arquivo (nativo `encrypt_file`; web `encrypt_bytes`) e
+   sobe pelo Rust/edge `POST /api/rust/upload[/init|chunk|complete]` com `context=e2e`,
+   `Content-Type: application/octet-stream` e nome aleatório de 22 caracteres (sem extensão) → URL
+   `https://media.chatyy.com.br/e2e/<id>_<aleatório>`; reserva: `chat_upload` com `opaque=1` no US →
+   `e2e/<24 base64url>`, `{success, data:{opaque:1, url, size}}`, sem linha em `chat_messages`. Em conversa
+   `e2ee_mode=1` o `chat_upload` sem `opaque=1` (e o `chat_upload_finalize` do edge) = `e2ee5_plaintext_refused`;
+   `opaque=1` em conversa normal = `e2ee5_not_e2ee`. O edge nunca processa upload de conversa E2EE.
+   Nenhum processo de mídia (Imagick, ffmpeg, HLS, waveform, thumb, LQIP, blurhash) toca `e2e/`.
+5. **Download**: o cliente guarda o ciphertext (nativo `documentDirectory/e2ee5-media/enc`; web Cache
+   Storage `chatyy-e2ee5-media-v1`) e decifra para uma cópia de exibição descartável (nativo
+   `cacheDirectory/e2ee5-media/plain`; web `blob:` da aba). Vídeo/áudio: baixa e decifra inteiro antes de
+   tocar (o SHA-256 confere só no fim). Byte trocado ⇒ `media` ⇒ "não foi possível abrir".
+6. **Fora desta versão (o app recusa localmente, nada sai em claro)**: visualização única de mídia,
+   reação com figurinha, editar encontro, sessão de voz que sobe o áudio enquanto grava, prévia de link
+   gerada no cliente, agendada/enviar-quando-online de mídia.
+
 ## 3. Eventos to-device `chatyy.*` (cifrados Olm aparelho→aparelho)
 
 Enviados com `CryptoCore.send_to_device(event_type, targets, content_json)`; chegam em
@@ -255,7 +304,7 @@ O aparelho atual nunca recebe o próprio evento.
 ### 4.2 Ações
 
 **4.2.1 `e2ee5_status`** — sempre disponível.
-Req `{}` → `{"uid":"42","user_id":"@u42:chatyy","contract":"e2ee5-contrato/1.3","enabled":true,
+Req `{}` → `{"uid":"42","user_id":"@u42:chatyy","contract":"e2ee5-contrato/1.5","enabled":true,
 "kill":false,"flags":{"e2ee5_native":true,"e2ee5_media":false,"e2ee5_calls":false,
 "e2ee5_link":false,"e2ee5_backup":false,"e2ee5_push_decrypt":false},"device_limit":5,
 "devices":[{"device_id":"P…","kind":"P","last_seen":1729500000000,"signed":true}],
@@ -410,6 +459,33 @@ Rate limit: 10/h por uid (tentativas de restauração).
 | `e2ee5_forward_client` | 409 | (chat.php) `chat_forward`/`chat_forward_multi`/`chat_clone_to_saved`/broadcast de mensagem cifrada — o cliente recifra e envia por conta própria |
 | `e2ee5_forbidden` | 403 | (`conversation_state set:0`) em grupo só admin rebaixa a criptografia |
 
+### 4.6 Pedido explícito do usuário (`e2ee5x_*`, WP-16) e denúncia
+Fonte: `/root/e2ee-2026-10-21/wp16/API.md`. O cliente manda **o trecho já decifrado** que o
+usuário escolheu, depois do aviso "isto sai da criptografia" (D2). O servidor **não guarda
+nada**: sem cache, sem log de conteúdo (só ids/tamanhos/códigos), sem moderação.
+- `POST email.php?action=<ação>`, bearer normal. Obrigatórios em todas: `conversation_id`
+  (o usuário tem de ser **membro** da conversa) e `no_store: true` (sem ele ⇒ 400 `e2ee5x_bad_request`).
+- Kill: arquivo `api/.e2ee5x-off` ⇒ 503 `e2ee5x_disabled`.
+
+| Ação | Entrada | `data` | Limite |
+|---|---|---|---|
+| `e2ee5x_translate` | `text` (≤ 5000), `target` (`pt-BR`, `en`, `es`…) | `{translation, target}` | 60/10 min |
+| `e2ee5x_transcribe` | **multipart**: `file` (áudio decifrado no aparelho, ≤ 15 MB), `conversation_id`, `no_store=1`, `language?` | `{transcript, language}` | 30/10 min |
+| `e2ee5x_summarize` | `messages:[{n:"nome", t:"texto"}]` (≤ 300 itens, ≤ 24.000 chars), `lang?` | `{summary}` | 30/10 min |
+| `e2ee5x_ask` | `question` (≤ 2000), `excerpt:[{n,t}]` (≤ 100 itens, ≤ 16.000 chars), `lang?` | `{answer}` — o cliente **cifra e publica** com `via:"bia"` (§2.3) | 30/10 min |
+
+Erros: `e2ee5x_bad_request` 400 · `e2ee5x_not_member` 403 · `rate_limited` 429 ·
+`e2ee5x_unavailable` 502 · `e2ee5x_disabled` 503. Nada disso roda sem toque do usuário
+(tradução e resumo automáticos ficam desligados em E2EE).
+
+**Denúncia (D3)** — sem ação nova; fila central `mod_report` (`moderation_core.php`):
+`{content_type:"message"|"group", content_id, conversation_id, reason, description?,
+message_ids:[mid…] (≤ 10), evidence_texts:{"<mid>":"texto decifrado no aparelho"}}`.
+Em conversa E2EE (ou conteúdo `{"e2e"`) o servidor usa **só** `evidence_texts` (o envelope nunca
+entra na evidência) e grava `source:"reporter_supplied_unverified"`; sem texto do denunciante
+a evidência fica só com ids/tipo/hora. `chat_report_user` e `chat_report_thread` aceitam os
+mesmos `message_ids` + `evidence_texts` (espelho na fila central). Limites: 10/h, 40/dia.
+
 ### 4.4 JSON canônico e verificação (PHP)
 Algoritmo Matrix: remover `signatures` e `unsigned`; serializar com chaves ordenadas
 (código de ponto), sem espaços, UTF-8 sem escapar não-ASCII, números inteiros.
@@ -522,7 +598,7 @@ Timeout recomendado: 15 s (NSE: 5 s).
 ### 6.3 Funções livres
 | Função | Retorno |
 |---|---|
-| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.3; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
+| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.5; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
 | `new_device_id(prefix: "P"\|"W"\|"T"\|"X")` | `String` |
 | `envelope_version(content)` | `Option<u64>` (5, ou outro N → placeholder "Atualize") |
 | `encrypt_bytes(plain: bytes) / decrypt_bytes(data: bytes, info_json)` | `EncryptedBytes{data, info_json}` / bytes |

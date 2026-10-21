@@ -1,5 +1,24 @@
 # Contrato E2EE v5 — histórico
 
+## e2ee5-contrato/1.5 — 21/10/2026 (WP-00, a pedido do WP-16)
+- §0.3bis: conversa `e2ee_mode=1` é privada INTEIRA para leitores do servidor (inclusive o texto
+  antigo antes de `e2ee_since_pts`); resposta `e2ee5_server_read_refused` / frase da Bia.
+- §4.6: `e2ee5x_translate` / `e2ee5x_transcribe` / `e2ee5x_summarize` / `e2ee5x_ask` (membro da
+  conversa, `no_store: true` obrigatório, sem cache/log de conteúdo, kill `.e2ee5x-off`, erros `e2ee5x_*`).
+- §4.6: denúncia por `mod_report` com `message_ids` + `evidence_texts`, marcada
+  `source:"reporter_supplied_unverified"`; o envelope nunca entra na evidência.
+
+## e2ee5-contrato/1.4 — 21/10/2026 (WP-09/WP-11)
+- §2.8 novo: campos aditivos (`batch`, `M.lqip`, `M.poster` como objeto de mídia, `M.title`, `contacts[].avatar`,
+  `t:"location_request"`).
+- §2.8.2 reação cifrada: a coluna `emoji` guarda o PRÓPRIO envelope (`{"e2e":5…}` reação / `v{"e2e":5…}` estado) e
+  `enc` também (no lugar de `emoji="e2e"`), para os agregadores atuais levarem a reação sem mudança; push genérico.
+- §2.8.3 estados por pessoa como reação `rx_kind:"state"`: `poll_vote` (substitui a linha com `sys_hidden`),
+  `meetup_rsvp` (substitui a tabela de RSVP do WP-07 F2), `live_loc` (posição ao vivo).
+- §2.8.4/5 upload opaco (`context=e2e`, octet-stream, nome aleatório; reserva `chat_upload opaque=1`), recusa de
+  mídia em claro em conversa E2EE, cache local do ciphertext + cópia de exibição descartável.
+- §2.8.6 fora desta versão: visualização única de mídia, reação com figurinha, editar encontro, sessão de voz.
+
 ## e2ee5-contrato/1.3 — 21/10/2026 (WP-00, a pedido do WP-07/WP-10)
 - §4.3 códigos novos do chat.php: `e2ee5_server_read_refused` (409), `e2ee5_forward_client` (409),
   `e2ee5_forbidden` (403, rebaixar grupo sem ser admin).
