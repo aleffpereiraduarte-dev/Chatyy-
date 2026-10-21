@@ -39,7 +39,7 @@ import {
   Modal,
   Pressable,
 } from 'react-native';
-import { IconX, IconStop, IconTrash, IconLock, IconSend } from '../Icons';
+import { IconX, IconStop, IconTrash, IconLock, IconSend, IconChevronUp } from '../Icons';
 
 import { a11yLabel } from '../../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 let _camera = null;
@@ -664,7 +664,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
             ]}
           >
             <IconLock size={14} color="#fff" />
-            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>↑</Text>
+            <IconChevronUp size={12} color="#fff" />
           </Animated.View>
         )}
 

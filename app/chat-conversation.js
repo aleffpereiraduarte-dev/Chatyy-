@@ -7443,7 +7443,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                   }}>
                     {already
                       ? <IconCheck size={18} color={colors.textSecondary} strokeWidth={3} />
-                      : <Text style={{ color: colors.onPrimary || '#fff', fontSize: 22, fontWeight: '300', marginTop: -2 }}>+</Text>}
+                      : <IconPlus size={18} color={colors.onPrimary || '#fff'} />}
                   </View>
                 </TouchableOpacity>
               );
@@ -41165,13 +41165,17 @@ function ChatConversationInnerBody() {
       {/* Audio Transcription + Summary modal */}
       {audioTranscription && (
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.7)', justifyContent:'center', alignItems:'center', padding:16, zIndex:99999 }}>
-          <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:20, maxWidth:500, width:'100%', maxHeight:'85%' }}>
+          <View style={{ backgroundColor:colors.surface, borderRadius:22, padding:20, maxWidth:500, width:'100%', maxHeight:'85%' }}>
+            {/* [2026-10-21 polish-conv] título via i18n (era 'Audio' fixo), X em SVG com alvo de toque */}
             <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
               <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
                 <IconMic size={18} color={colors.text} />
-                <Text style={{ fontSize:18, fontWeight:'700', color:colors.text }}>Audio</Text>
+                <Text style={{ fontSize:18, fontWeight:'700', color:colors.text }}>{_mt('chatConv.audio', 'Áudio')}</Text>
               </View>
-              <TouchableOpacity onPress={() => setAudioTranscription(null)}><Text style={{ fontSize:24, color:colors.textSecondary }}>×</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setAudioTranscription(null)} hitSlop={10} accessibilityRole="button" accessibilityLabel={_mt('common.close', 'Fechar')}
+                style={{ width:32, height:32, borderRadius:16, alignItems:'center', justifyContent:'center', backgroundColor: colors.surface2 || colors.surfaceVariant || 'transparent' }}>
+                <IconX size={16} color={colors.textSecondary} />
+              </TouchableOpacity>
             </View>
             {audioTranscription.loading ? (
               <View style={{ padding:20, alignItems:'center' }}>
@@ -41179,7 +41183,7 @@ function ChatConversationInnerBody() {
                 <Text style={{ color:colors.textSecondary, marginTop:8 }}>{_mt('chatConv.transcribing', 'Transcrevendo...')}</Text>
               </View>
             ) : audioTranscription.error ? (
-              <Text style={{ color:'#ef4444' }}>Erro: {audioTranscription.error}</Text>
+              <Text style={{ color: isDark ? '#FCA5A5' : '#B42318', fontSize:14, lineHeight:20 }}>{audioTranscription.error}</Text>
             ) : (
               <ScrollView>
                 {audioTranscription.summary ? (

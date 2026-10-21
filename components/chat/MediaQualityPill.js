@@ -116,7 +116,7 @@ export default function MediaQualityPill({ level, onChange, files, t }) {
 
       <Modal visible={sheet} transparent animationType="fade" onRequestClose={() => setSheet(false)} statusBarTranslucent>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={() => setSheet(false)}>
-          <Pressable style={{ backgroundColor: '#1c1c1e', borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingTop: 8, paddingBottom: 28, paddingHorizontal: 16 }} onPress={() => {}}>
+          <Pressable style={{ backgroundColor: '#151517', borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingTop: 8, paddingBottom: 28, paddingHorizontal: 16 }} onPress={() => {}}>
             <View style={{ alignSelf: 'center', width: 36, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.25)', marginBottom: 12 }} />
             <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', marginBottom: 4 }}>
               {t('mediaQuality.sheetTitle') || 'Qualidade de envio'}

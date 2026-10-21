@@ -12,6 +12,7 @@ import { View, Text, Pressable, Animated, Easing, Platform, StyleSheet } from 'r
 import ChatyyMascot from '../mascot/ChatyyMascot';
 import { useReducedMotion, isReduceMotionEnabled } from '../reducedMotion';
 import { IconLock } from '../Icons';
+import { THEME_V2 as _THEME_V2, grafite as _grafite } from '../../constants/theme';
 
 const ND = Platform.OS !== 'web';
 
@@ -61,10 +62,12 @@ function ChatGreetingCard({ isDark, t, onGreet, canSend = true, offline = false,
       ? tr('mascot.emptyConvSub', 'Envie uma mensagem ou toque no aceno abaixo')
       : tr('chatConv.empty', 'Envie uma mensagem para iniciar a conversa.');
 
-  const cardBg = isDark ? 'rgba(28,28,30,0.78)' : 'rgba(255,255,255,0.80)';
-  const border = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)';
-  const fg = isDark ? '#F5F5F7' : '#111111';
-  const fg2 = isDark ? 'rgba(245,245,247,0.66)' : 'rgba(17,17,17,0.62)';
+  // [2026-10-21 polish-conv] Grafite: cartão/linha/texto da paleta (eram cinzas iOS).
+  const _g = _THEME_V2 ? _grafite(isDark) : null;
+  const cardBg = _g ? (isDark ? 'rgba(26,26,29,0.82)' : 'rgba(255,255,255,0.82)') : (isDark ? 'rgba(28,28,30,0.78)' : 'rgba(255,255,255,0.80)');
+  const border = _g ? _g.line : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)');
+  const fg = _g ? _g.text : (isDark ? '#F5F5F7' : '#111111');
+  const fg2 = _g ? _g.text2 : (isDark ? 'rgba(245,245,247,0.66)' : 'rgba(17,17,17,0.62)');
 
   const cardStyle = {
     opacity: Animated.multiply(enter, out.interpolate({ inputRange: [0, 1], outputRange: [1, 0] })),
