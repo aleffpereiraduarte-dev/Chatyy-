@@ -1,4 +1,15 @@
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
+
+// [push-bg 2026-10-21] Som/vibração IN-APP só com o app ATIVO (tela visível). Em 2º plano
+// o JS (e o WS nativo) seguem vivos alguns segundos/minutos (modos audio/voip) e a bolha
+// chegava pelo WS → AudioServicesPlaySystemSound + haptic tocavam/vibravam NA HORA e o
+// banner do push remoto só aparecia segundos depois ("vibra e depois chega"). Em 2º
+// plano quem toca é só o push do sistema. Kill: globalThis.__chatyy_rx_fx_bg = true.
+function _fxAllowed() {
+  if (Platform.OS === 'web') return true;
+  if (globalThis.__chatyy_rx_fx_bg === true) return true;
+  try { return AppState.currentState === 'active'; } catch { return true; }
+}
 
 let _haptics = null;
 let _audioModule = null;
@@ -120,6 +131,7 @@ async function playNativeSound() {
 // ============================================================
 
 export async function triggerHaptic(type = 'email') {
+  if (!_fxAllowed()) return;
   const h = await getHaptics();
   if (!h) return;
 
@@ -303,6 +315,7 @@ export async function playChatSendSound() {
 
 /** Play short sound when receiving a message (in-app, while chat is open) */
 export async function playChatReceiveSound() {
+  if (!_fxAllowed()) return;
   if (Platform.OS === 'web') {
     _webChatReceive();
     return;
@@ -324,4 +337,34 @@ export async function playChatReceiveSound() {
     const h = await getHaptics();
     if (h) await h.impactAsync(h.ImpactFeedbackStyle.Soft);
   } catch {}
+}
+
+/**
+ * [push-preview 2026-10-21b] Chegada com a CONVERSA ABERTA (nível WhatsApp): só o
+ * som curto, SEM vibração, e depois que a bolha pinta (2 frames). Antes: som + haptic
+ * Soft + haptic Light extra (e a lista por baixo tocava outro) disparados no setState,
+ * antes da bolha aparecer → "vibra antes de chegar". 1 som por 1,5 s.
+ * Kill (volta o tap): globalThis.__chatyy_thread_rx_haptic = true.
+ */
+export function playThreadReceiveSound() {
+  const run = () => {
+    try {
+      if (!_fxAllowed()) return;
+      if (Platform.OS === 'web') { _webChatReceive(); return; }
+      const now = Date.now();
+      const recent = (now - (globalThis.__chatyyThreadRxAt || 0)) < 1500;
+      if (!recent) {
+        globalThis.__chatyyThreadRxAt = now;
+        try { globalThis.__chatyyRxSoundAt = now; } catch {}
+        try { getNativeChat()?.playReceiveSound?.(); } catch {}
+      }
+      if (globalThis.__chatyy_thread_rx_haptic === true && !recent) {
+        getHaptics().then((h) => { try { h && h.impactAsync(h.ImpactFeedbackStyle.Soft); } catch {} }).catch(() => {});
+      }
+    } catch {}
+  };
+  try {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(run));
+    else setTimeout(run, 32);
+  } catch { run(); }
 }

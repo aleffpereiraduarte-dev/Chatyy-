@@ -612,7 +612,34 @@ function _wsPreviewWasShown(mid) {
   const t = _wsPreviewShown.get(String(mid));
   return !!t && Date.now() - t < 60000;
 }
+// [push-preview 2026-10-21b] A lista recebeu a bolha (WS) fora da conversa: em vez de
+// vibrar/tocar na hora e o banner vir 0,1-0,4 s depois, segura o som até o push_preview
+// (que toca + mostra junto). Reserva: 1,2 s sem banner → toca como antes.
+const _rxSoundTimers = new Map(); // message_id → timeout
+function _rxSoundCancel(mid) {
+  const k = String(mid || '');
+  const t = _rxSoundTimers.get(k);
+  if (t) { clearTimeout(t); _rxSoundTimers.delete(k); return true; }
+  return false;
+}
+export function noteListRxSound(msg) {
+  try {
+    if (globalThis.__chatyy_ws_push_preview === false || Platform.OS === 'web') return false;
+    if (AppState.currentState !== 'active') return false;
+    const mid = String(msg?.id ?? msg?.message_id ?? '');
+    if (!mid || mid.startsWith('tmp_')) return false;
+    if (_wsPreviewWasShown(mid)) return true; // banner já saiu e já tocou
+    if (_rxSoundTimers.has(mid)) return true;
+    _rxSoundTimers.set(mid, setTimeout(() => {
+      _rxSoundTimers.delete(mid);
+      if (_wsPreviewWasShown(mid)) return;
+      try { require('./notificationSound').playChatReceiveSound(); } catch {}
+    }, 1200));
+    return true;
+  } catch { return false; }
+}
 async function _onWsPushPreview(p) {
+  const _pmid = p?.data?.message_id;
   try {
     if (globalThis.__chatyy_ws_push_preview === false || Platform.OS === 'web') return;
     if (!p || typeof p !== 'object' || !_onForegroundNotification) return;
@@ -622,12 +649,12 @@ async function _onWsPushPreview(p) {
     const ts = Number(p.ts || 0);
     if (!(ts > 0) || Math.abs(Date.now() - ts * 1000) > 20000) return;
     if (AppState.currentState !== 'active') return; // fora de vista → banner do sistema (push)
-    if (_pushMasterEnabled === false) return;
+    if (_pushMasterEnabled === false) { _rxSoundCancel(_pmid); return; }
     if (_activeConversationId != null && String(data.conversation_id) === String(_activeConversationId)) return;
-    if (_fgCallActive()) return;
+    if (_fgCallActive()) { _rxSoundCancel(_pmid); return; }
     const cs = await _readConvSettings(data.conversation_id);
-    if (cs && cs.notify_messages === false) return;
-    if (cs && _isMutedNow(cs.mute_until) && data.type !== 'chat_mention') return;
+    if (cs && cs.notify_messages === false) { _rxSoundCancel(_pmid); return; }
+    if (cs && _isMutedNow(cs.mute_until) && data.type !== 'chat_mention') { _rxSoundCancel(_pmid); return; }
     if (AppState.currentState !== 'active') return;
     let body = String(p.body || '');
     if (data.preview_when === 'never') {
@@ -635,6 +662,7 @@ async function _onWsPushPreview(p) {
     }
     const mid = String(data.message_id);
     if (_wsPreviewWasShown(mid)) return;
+    _rxSoundCancel(mid); // o som sai AQUI, junto com o banner
     // Som + vibração UMA vez: se a lista/conversa já tocou o som de chegada (WS
     // da bolha, < 3 s), o banner não vibra de novo; senão toca aqui (respeita
     // som 'silent' da conversa) e o banner também não vibra por cima.

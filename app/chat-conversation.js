@@ -18655,7 +18655,8 @@ function ChatConversationInnerBody() {
           // from sender relay) skip the sound so the user's own sends stay
           // quiet past the outbound "whoosh". Respects chatyySettings.sounds.
           if (msg.sender_email !== currentEmail && chatyySettings.sounds !== false) {
-            try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
+            // [push-preview 2026-10-21b] conversa aberta: só som, depois da bolha pintar, sem vibrar.
+            try { require('../services/notificationSound').playThreadReceiveSound(); } catch {}
           }
           // iMessage-style screen effects: play once when an inbound message
           // carries one. Bubble effects play themselves via MessageBubbleEffect
@@ -20050,11 +20051,9 @@ function ChatConversationInnerBody() {
           // Trigger receive sound only for genuinely new messages from others
           if (isFromOther) {
             if (msg.type === 'gift') { try { require('../components/gifts/giftFx').celebrateGiftReceived(msg); } catch {} } // [gift-premium 2026-10-16]
-            try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
-            // iMessage-style mini-tap haptic when a new bubble slides in.
-            if (Platform.OS !== 'web') {
-              try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-            }
+            // [push-preview 2026-10-21b] conversa aberta: só som, depois da bolha pintar, sem
+            // vibrar (antes: haptic Soft + este Light + o da lista = 2-3 vibrações antes da bolha).
+            try { require('../services/notificationSound').playThreadReceiveSound(); } catch {}
             if (msg.effect && SCREEN_EFFECT_IDS.has(msg.effect)) {
               playScreenEffect(msg.effect);
               if (msg.id && !String(msg.id).startsWith('tmp_')) {

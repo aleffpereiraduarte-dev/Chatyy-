@@ -6116,9 +6116,15 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           // its own receive sound for the open thread). Throttled to 1/1.2s.
           if (!isSelf) {
             const now = Date.now();
-            if (now - _lastNotifyAt > 1200) {
+            // [push-preview 2026-10-21b] Conversa ABERTA → quem toca é ela (só som, sem
+            // vibrar). Fora dela: som + vibração saem JUNTO com o banner do push_preview
+            // (pushNotifications.noteListRxSound; reserva de 1,2 s se o banner não vier).
+            const _openHere = (() => { const a = activeConvId(); return a != null && String(a) === String(data.conversation_id); })();
+            if (!_openHere && now - _lastNotifyAt > 1200) {
               _lastNotifyAt = now;
-              try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
+              let _armed = false;
+              try { _armed = require('../services/pushNotifications').noteListRxSound?.(data) === true; } catch {}
+              if (!_armed) { try { require('../services/notificationSound').playChatReceiveSound(); } catch {} }
             }
             // WhatsApp parity: a delivered message means the sender stopped
             // typing — drop their "digitando…" on this row instantly instead of
