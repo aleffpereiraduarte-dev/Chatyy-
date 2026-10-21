@@ -186,10 +186,7 @@ export function ensureSession() {
       // WhatsApp: os contatos veem "o código de segurança mudou"). Web = só pelo QR do celular
       // (F4); exceção D4/QA com flag explícita.
       const webOk = _g().__chatyy_e2ee5_web_bootstrap === true;
-      // [e2ee5 WP-14] conta com backup no servidor: oferece restaurar (mesma identidade) antes de criar outra.
-      let _defer = false;
-      try { _defer = require('./backup').shouldDeferBootstrap(st); if (_defer) require('./backup').offerRestore(); } catch (_) { _defer = false; }
-      if ((Platform.OS !== 'web' || webOk) && !_defer) {
+      if (Platform.OS !== 'web' || webOk) {
         try {
           await c.bootstrapIdentity();
           try { await c.sync(); } catch (_) {}
@@ -203,7 +200,6 @@ export function ensureSession() {
     _wireOnce();
     _wireNative();
     _armPeriodic();
-    try { require('./link').onSession(_sess); require('./backup').onSession(_sess); } catch (_) {} // [e2ee5 WP-12/WP-14]
     if (s1) _onSyncResult(s1);
     for (const cid of Array.from(_waiting.keys())) _retryWaiting(cid); // "aguardando" de antes da sessão
     _log('session', { uid: _sess.uid, dev: _sess.deviceId, signed: _sess.signed });
@@ -281,8 +277,6 @@ function _onSyncResult(r) {
   } catch (_) {}
   try {
     for (const ev of (Array.isArray(r.chatyyEvents) ? r.chatyyEvents : [])) {
-      if (ev && typeof ev.eventType === 'string' && ev.eventType.startsWith('chatyy.call_')) { try { require('../callE2ee').e2ee5HandleEvent(ev); } catch (_) {} continue; } // [e2ee5 WP-13]
-      if (ev && ev.eventType === 'chatyy.link.revoked') { try { require('./link').onChatyyEvent(ev); } catch (_) {} continue; } // [e2ee5 WP-12]
       if (!ev || (ev.eventType !== 'chatyy.decrypt_report' && ev.eventType !== 'chatyy.key_resend')) continue;
       let c = null;
       try { c = JSON.parse(ev.contentJson || '{}'); } catch (_) {}
@@ -362,6 +356,7 @@ function _wireOnce() {
       decryptRow({ id: d.e2e_mid, conversation_id: d.e2e_conv, client_message_id: d.e2e_cmid || '', content: d.e2e_c, _senderUid: d.e2e_sender_uid }, d.e2e_conv).catch(() => {});
     }
   });
+  ws.on('chat_send_rejected', (raw) => { _onRejectedE5(dataOf(raw)); }); // [e2ee5 WP-06b] aceite regional recusou no dreno
   ws.on('chat_send_error', (raw) => {
     const d = dataOf(raw);
     if (!d || !d.conversation_id) return;
@@ -454,7 +449,6 @@ function _applyState(k, d, prev) {
   };
   _conv.set(k, ns);
   if (!prev || prev.mode !== ns.mode) _nativeNoteConv(k, ns.mode);
-  try { require('../callE2ee').e2ee5NoteConv(k, ns); } catch (_) {} // [e2ee5 WP-13] dica nativa p/ o toque com o app morto
   if (_sess && ns.mode === 1) {
     try {
       if (prev && Array.isArray(prev.members) && prev.members.length) {
@@ -569,6 +563,7 @@ export async function sealText(convId, text, opts) {
  */
 export async function sealForSend(convId, content, type, fileUrl, cmid, opts) {
   if (!isOn() || convId == null || convId === '') return null;
+  _rememberSent(cmid, convId, content, type, fileUrl, opts);
   const k = String(convId);
   let mode = convModeSync(k);
   if (mode == null) { const st = await convState(k).catch(() => null); mode = st ? st.mode : 0; }
@@ -603,6 +598,63 @@ function _extraOf(m) {
   if (m.mention_all) x.mention_all = true;
   if (m.edit_of) x.edit_of = m.edit_of;
   return x;
+}
+
+// ── [e2ee5 WP-08c←WP-06b] recusa no DRENO do aceite regional (`chat_send_rejected` com data.code
+// e2ee5_plaintext_refused / e2ee5_not_e2ee): atualiza o e2ee_mode, recifra (ou volta a texto, se a
+// conversa foi rebaixada) e reenvia com o MESMO client_message_id (o servidor deduplica; a
+// re-tentativa vai direto ao US — regionalAccept marca o bypass). Texto só em MEMÓRIA nesta sessão.
+const _sentText = new Map(); // cmid → {conv, text, replyToId, at}
+const _resent = new Set();
+function _rememberSent(cmid, convId, content, type, fileUrl, opts) {
+  if (!cmid || fileUrl || (type && type !== 'text') || typeof content !== 'string' || !content) return;
+  let text = content;
+  if (isEnvelope(content)) { const e = _plain.get(keyOf(content)); if (!e || e.t !== 'text') return; text = e.text; }
+  const reply = opts && opts.reply;
+  _sentText.set(String(cmid), { conv: String(convId), text, replyToId: reply && reply.id != null ? reply.id : null, at: Date.now() });
+  if (_sentText.size > 300) _sentText.delete(_sentText.keys().next().value);
+}
+const _E5_RETRY_CODES = new Set(['e2ee5_plaintext_refused', 'e2ee5_not_e2ee']);
+/** A tela pode deixar a bolha no relógio (em vez de "não enviada"): vamos reenviar sozinhos. */
+export function willRetryRejected(data) {
+  if (!isOn() || !data) return false;
+  const code = String(data.code || (data.data && data.data.code) || '');
+  const cmid = String(data.client_message_id || '');
+  if (!_E5_RETRY_CODES.has(code) || !cmid || _resent.has(cmid)) return false;
+  const s = _sentText.get(cmid);
+  return !!(s && Date.now() - s.at < 6 * 3600 * 1000);
+}
+async function _onRejectedE5(data) {
+  if (!willRetryRejected(data)) return;
+  const cmid = String(data.client_message_id);
+  _resent.add(cmid); // uma vez por mensagem (sem laço recusa → reenvio)
+  if (_resent.size > 500) _resent.delete(_resent.values().next().value);
+  const s = _sentText.get(cmid);
+  const conv = String(data.conversation_id || s.conv);
+  try {
+    const code = String(data.code || (data.data && data.data.code) || '');
+    if (code === 'e2ee5_plaintext_refused') { try { _health()?.recordPlaintextRefused(); } catch (_) {} }
+    const st = await convState(conv, { force: true });
+    if (!st) return;
+    // fila nativa/SQLite: troca o conteúdo da MESMA linha e devolve à fila (o worker reenvia, FIFO mantido)
+    let ob = null; let row = null;
+    try { ob = require('../messageOutbox'); const pend = (await ob.getPending(conv)) || []; row = pend.find((r) => r && String(r.client_message_id) === cmid) || null; } catch (_) { row = null; }
+    if (ob && row) {
+      let content = s.text;
+      if (st.mode === 1) content = await sealText(conv, s.text, { cmid, reply: s.replyToId != null ? { id: s.replyToId } : null });
+      await ob.updatePayload(cmid, { content, _e2e: st.mode === 1, _e2eWanted: st.mode === 1 });
+      await ob.requeue(cmid);
+      try { require('../sendWorker').poke?.(); } catch (_) {}
+      _emitLocal('e2ee5_resent', { conversation_id: conv, client_message_id: cmid, temp_id: data.temp_id || null, via: 'outbox' });
+      return;
+    }
+    // web / sem linha na fila: reenvio direto (sealForSend decide pelo estado novo)
+    const r = await _A().chatSend(conv, s.text, 'text', s.replyToId, null, null, data.temp_id || null, cmid, null, { skipRust: true });
+    _emitLocal('e2ee5_resent', { conversation_id: conv, client_message_id: cmid, temp_id: data.temp_id || null, ok: !!(r && r.success), data: r && r.success ? r.data : null });
+  } catch (e) {
+    _log('resend_fail', { conv, code: e && e.code });
+    _emitLocal('e2ee5_resent', { conversation_id: conv, client_message_id: cmid, temp_id: data.temp_id || null, ok: false });
+  }
 }
 
 /** Depois do chat_send (api): id do servidor ↔ texto local; recusa por estado → re-busca o estado. */
@@ -1066,9 +1118,6 @@ export function rowNeedsRefresh(m, key) {
 // ───────────────────────────────────────────────────────────── mensagens de sistema
 
 /** 'on' | 'off' | null para `{"sys":"e2ee_on"|"e2ee_off"}` (sem JSON cru na UI). */
-/** [e2ee5 WP-13] Reinjeta chatyy.* que o NATIVO consumiu (fila e2e_events do Android) no caminho normal. */
-export function dispatchChatyyEvents(list) { if (Array.isArray(list) && list.length) _onSyncResult({ chatyyEvents: list }); }
-
 export function sysKind(content) {
   try {
     const o = typeof content === 'string' ? (content.trim().charAt(0) === '{' ? JSON.parse(content) : null) : content;
@@ -1241,6 +1290,6 @@ const e2ee5 = {
   wsAuthFields, convState, convModeSync, convStateSync, isConvE2eeSync, watchConversation, prepareConversation,
   setConversationMode, sealText, sealEdit, sealForSend, sealMetaOf, peek, peekByMid, peekFailure, noteServerId,
   decryptRow, applyToRow, foldEdits, rowNeedsRefresh, sysKind, sysText, previewText, searchLocal, forwardClient,
-  outboxScrub, relayScrub, afterSend, editViaSend, editOf, listLocal, sessionSync, deviceIdSync, myUidSync, isReadySync,
+  outboxScrub, relayScrub, afterSend, editViaSend, editOf, listLocal, willRetryRejected, sessionSync, deviceIdSync, myUidSync, isReadySync,
 };
 export default e2ee5;

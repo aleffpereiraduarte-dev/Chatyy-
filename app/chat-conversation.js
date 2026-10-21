@@ -15769,7 +15769,20 @@ function ChatConversationInnerBody() {
         });
       });
     } catch {}
-    return () => { try { offConv(); } catch {} try { offPlain && offPlain(); } catch {} };
+    // [e2ee5 WP-06b] reenvio automático depois de recusa E2EE no dreno regional: resultado na bolha.
+    let offResent = null;
+    try {
+      offResent = require('../services/websocket').default.on('e2ee5_resent', (d) => {
+        if (!mountedRef.current || !d || String(d.conversation_id) !== String(conversationId) || d.via === 'outbox') return;
+        const cmi = String(d.client_message_id || '');
+        setMessages(prev => _mapKeep(prev, m => {
+          if (!m || !(m._client_id === cmi || m.client_message_id === cmi || (d.temp_id && m.id === d.temp_id))) return m;
+          if (d.ok && d.data && d.data.id != null) return { ...m, id: d.data.id, _failed: false, _pending: false, _queued: false, _sendError: undefined };
+          return { ...m, _failed: true, _pending: false, _queued: false, _sendError: 'e2ee5_resend_failed' };
+        }));
+      });
+    } catch {}
+    return () => { try { offConv(); } catch {} try { offPlain && offPlain(); } catch {} try { offResent && offResent(); } catch {} };
   }, [conversationId]);
   // [e2ee5] linhas t:edit que chegaram já decifradas (cache) → aplica no alvo e some da lista.
   useEffect(() => {
@@ -19223,6 +19236,8 @@ function ChatConversationInnerBody() {
         const rjId = data?.id != null ? String(data.id) : '';
         const rjLeaf = data?.reason === 'regate' || !!data?._leaf;
         if (!rjCmi && !rjTid && !rjId) return;
+        // [e2ee5 WP-06b] recusa E2EE no dreno: e2ee5.js recifra e reenvia sozinho (mesmo cmid) → relógio, não "não enviada"
+        let _e5Retry = false; try { _e5Retry = require('../services/e2ee/e2ee5').willRetryRejected(data); } catch {}
         setMessages(prev => {
           let hit = false;
           const next = prev.map(m => {
@@ -19234,6 +19249,7 @@ function ChatConversationInnerBody() {
             else if (!(rjLeaf && (byId || byCmi))) return m;
             if (rjLeaf) { try { require('../services/leafSeq').markRejected?.({ id: typeof m.id === 'number' ? m.id : rjId, client_message_id: rjCmi || m._client_id || m.client_message_id, conversation_id: conversationId, content: m.content, type: m.type, reason: 'regate' }); } catch {} }
             hit = true;
+            if (_e5Retry) return { ...m, _failed: false, _pending: true, _queued: true, _client_id: m._client_id || rjCmi || undefined }; // [e2ee5]
             return { ...m, _failed: true, _pending: false, _queued: false, _client_id: m._client_id || rjCmi || undefined, _leafRejected: rjLeaf || m._leafRejected, _sendError: String(data?.error || data?.reason || 'rejected') };
           });
           return hit ? next : prev;
