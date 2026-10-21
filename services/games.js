@@ -146,10 +146,14 @@ export function ensureGameWs() {
 
 // ─── textos e cartão ────────────────────────────────────────────────────────
 export const GAME_TYPES = ['damas', 'velha', 'cartas', 'quiz', 'forca'];
+// [jogos2 2026-10-21] Ligue 4, Batalha Naval, Dominó, Jogo da Memória (servidor: games_engine_<tipo>.php)
+GAME_TYPES.push('ligue4', 'naval', 'domino', 'memoria');
+const SUB_J2 = { ligue4: '4 em linha, fichas que caem', naval: 'Afunde os barcos do outro', domino: 'Clássico de 2', memoria: 'Vire pares de cartas' };
 const TITLE_FB = { velha: 'Jogo da Velha', damas: 'Damas', cartas: 'Cartas Coloridas', quiz: 'Quiz', forca: 'Forca' };
 // [jogos2b 2026-10-21] Termo em dupla / Pedra, papel e tesoura / Stop / Desenha e Adivinha (servidor: games_engine_<tipo>.php)
 NOVOS_TYPES.forEach((x) => { if (!GAME_TYPES.includes(x)) GAME_TYPES.push(x); });
 Object.assign(TITLE_FB, NOVOS_TITLES);
+Object.assign(TITLE_FB, { ligue4: 'Ligue 4', naval: 'Batalha Naval', domino: 'Dominó', memoria: 'Jogo da Memória' }); // [jogos2]
 export function tr(t, k, fb, vars) {
   let s = fb;
   try { const v = t ? t(k, vars ? { ...vars, defaultValue: fb } : fb) : fb; if (v && v !== k) s = v; } catch {}
@@ -160,6 +164,7 @@ export function gameTitle(t, type) { return tr(t, 'games.title.' + type, TITLE_F
 export function gameSubtitle(t, type) {
   const fb = { damas: 'Regras brasileiras, dama voa', velha: 'Rapidinho, 3 em linha', cartas: 'Descarte por cor ou número, 2 a 6', quiz: 'Todos respondem ao mesmo tempo', forca: 'Adivinhe a palavra em turnos' };
   Object.assign(fb, NOVOS_SUBS); // [jogos2b]
+  Object.assign(fb, SUB_J2); // [jogos2]
   return tr(t, 'games.sub.' + type, fb[type] || '');
 }
 export function parseGameContent(c) {
@@ -296,6 +301,8 @@ export function gameStatusLine(t, g, meEmail, now) {
       const i = g.info && g.info.i; const n = g.info && g.info.count;
       return i && n ? tr(t, 'games.status.quizProgress', 'Pergunta {i} de {n}', { i, n }) : tr(t, 'games.status.playing', 'Em andamento');
     }
+    // [jogos2] Batalha Naval: fase de posicionar (sem vez)
+    if (g.type === 'naval' && !g.turn && g.info && g.info.ph === 'place') return tr(t, 'games.naval.placing', 'Posicionando os barcos');
     { const nx = novosStatusLine(t, g, meEmail, tr, nameOf); if (nx) return nx; } // [jogos2b] termo/ppt/stop/desenho (sem vez)
     if (!g.turn) return tr(t, 'games.status.playing', 'Em andamento');
     if (_lc(g.turn) === me) return tr(t, 'games.status.yourTurn', 'Sua vez');
@@ -342,6 +349,11 @@ const ERR_FB = {
   already_accepted: 'Alguém já aceitou: não dá mais para cancelar', invite_expired: 'Este convite expirou', invite_cancelled: 'Este convite foi cancelado',
   not_pending: 'Este convite já foi respondido', draw_not_allowed: 'Este jogo não tem empate combinado', no_draw_offer: 'Não há proposta de empate',
   draw_wait: 'Jogue um lance antes de propor empate de novo', not_finished: 'A partida ainda não acabou',
+  // [jogos2] Ligue 4 / Batalha Naval / Dominó / Memória
+  column_full: 'Essa coluna está cheia', not_placing: 'Os barcos já foram posicionados', already_placed: 'Você já posicionou seus barcos',
+  bad_fleet: 'Posição de barcos inválida', ships_overlap: 'Os barcos não podem se sobrepor', not_firing: 'Espere os dois posicionarem os barcos',
+  already_shot: 'Você já atirou nessa casa', tile_not_in_hand: 'Essa pedra não está na sua mão', tile_no_fit: 'Essa pedra não encaixa',
+  choose_side: 'Escolha a ponta', can_play: 'Você tem pedra que encaixa', pile_empty: 'O monte acabou', card_taken: 'Esse par já saiu', card_up: 'Essa carta já está virada',
 };
 Object.assign(ERR_FB, NOVOS_ERRORS); // [jogos2b]
 export function gameErrorText(t, r) {

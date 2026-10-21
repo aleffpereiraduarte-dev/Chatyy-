@@ -23,6 +23,7 @@ import {
 
 export const INLINE_TYPES = { velha: 1, forca: 1, quiz: 1 };
 export const SHEET_TYPES = { damas: 1, cartas: 1 };
+Object.assign(SHEET_TYPES, { ligue4: 1, naval: 1, domino: 1, memoria: 1 }); // [jogos2 2026-10-21] abrem no painel
 
 Object.assign(SHEET_TYPES, { termo: 1, ppt: 1, stop: 1, desenho: 1 }); // [jogos2b 2026-10-21] simultâneos: abrem no painel
 

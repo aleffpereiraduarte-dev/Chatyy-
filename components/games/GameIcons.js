@@ -172,6 +172,55 @@ export function IconHourglass(p) {
   );
 }
 
+// [jogos2 2026-10-21] Ligue 4, Batalha Naval, Dominó, Jogo da Memória (traço 24×24; viram nós nativos)
+export function IconGameLigue4(p) {
+  return (
+    <S {...p}>
+      <Rect x="3" y="5" width="18" height="15" rx="3" />
+      <Circle cx="8" cy="10" r="1.6" />
+      <Circle cx="12" cy="10" r="1.6" />
+      <Circle cx="16" cy="10" r="1.6" />
+      <Circle cx="8" cy="15" r="1.6" />
+      <Circle cx="12" cy="15" r="1.6" />
+      <Circle cx="16" cy="15" r="1.6" />
+      <Path d="M12 2.2v1.6" />
+    </S>
+  );
+}
+export function IconGameNaval(p) {
+  return (
+    <S {...p}>
+      <Path d="M4 13.5h16l-2.6 4.2H6.6z" />
+      <Path d="M8 13.5V9.5h6l1.8 4" />
+      <Path d="M11 9.5V6" />
+      <Path d="M3 20.5c1.5 0 1.5-1 3-1s1.5 1 3 1 1.5-1 3-1 1.5 1 3 1 1.5-1 3-1 1.5 1 3 1" />
+    </S>
+  );
+}
+export function IconGameDomino(p) {
+  return (
+    <S {...p}>
+      <Rect x="7" y="2.8" width="10" height="18.4" rx="2.6" />
+      <Line x1="8.8" y1="12" x2="15.2" y2="12" />
+      <Circle cx="12" cy="7.4" r="0.9" />
+      <Circle cx="9.9" cy="15.3" r="0.9" />
+      <Circle cx="14.1" cy="15.3" r="0.9" />
+      <Circle cx="9.9" cy="18.1" r="0.9" />
+      <Circle cx="14.1" cy="18.1" r="0.9" />
+    </S>
+  );
+}
+export function IconGameMemoria(p) {
+  return (
+    <S {...p}>
+      <Rect x="2.8" y="5" width="9.4" height="13" rx="2" />
+      <Rect x="11.8" y="6" width="9.4" height="13" rx="2" />
+      <Path d="M16.5 10.2l.9 1.8 2 .3-1.45 1.4.35 2-1.8-.95-1.8.95.35-2-1.45-1.4 2-.3z" />
+      <Path d="M5.6 9.5l3.8 5M9.4 9.5l-3.8 5" />
+    </S>
+  );
+}
+
 // [jogos2b 2026-10-21] Termo em dupla, Pedra-papel-tesoura, Stop, Desenha e Adivinha (só Path/Rect: viram nós nativos)
 export function IconGameTermo(p) {
   return (
@@ -218,11 +267,16 @@ export function GameTypeIcon({ type, ...p }) {
     case 'cartas': return <IconGameCartas {...p} />;
     case 'quiz': return <IconGameQuiz {...p} />;
     case 'forca': return <IconGameForca {...p} />;
+    case 'ligue4': return <IconGameLigue4 {...p} />;
+    case 'naval': return <IconGameNaval {...p} />;
+    case 'domino': return <IconGameDomino {...p} />;
+    case 'memoria': return <IconGameMemoria {...p} />;
     case 'termo': case 'ppt': case 'stop': case 'desenho': { const N = NOVOS_ICONS[type]; return <N {...p} />; } // [jogos2b]
     default: return <IconGamepad {...p} />;
   }
 }
 export function gameTypeIconComp(type) {
   if (NOVOS_ICONS[type]) return NOVOS_ICONS[type]; // [jogos2b]
-  return { damas: IconGameDamas, velha: IconGameVelha, cartas: IconGameCartas, quiz: IconGameQuiz, forca: IconGameForca }[type] || IconGamepad;
+  return { damas: IconGameDamas, velha: IconGameVelha, cartas: IconGameCartas, quiz: IconGameQuiz, forca: IconGameForca,
+    ligue4: IconGameLigue4, naval: IconGameNaval, domino: IconGameDomino, memoria: IconGameMemoria }[type] || IconGamepad;
 }

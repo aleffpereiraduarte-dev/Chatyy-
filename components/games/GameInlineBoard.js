@@ -15,6 +15,7 @@ import { gamePalette, hTap } from './fx';
 import { PressScale, useRM } from './motion';
 import VelhaBoard from './boards/VelhaBoard';
 import { CardFace } from './boards/CartasBoard';
+import { Jogos2Thumb, JOGOS2_TYPES } from './jogos2Thumbs'; // [jogos2 2026-10-21]
 
 const ROWS = ['ABCDEFG', 'HIJKLMN', 'OPQRSTU', 'VWXYZ'];
 const LETTERS = ['A', 'B', 'C', 'D'];
@@ -183,6 +184,7 @@ function SheetThumb({ view, pal, t, me, onOpen }) {
       </View>
     );
   }
+  if (!inner && JOGOS2_TYPES[view.type]) inner = <Jogos2Thumb view={view} pal={pal} t={t} me={me} />; // [jogos2]
   if (!inner) return null;
   return (
     <Pressable onPress={onOpen} style={({ pressed }) => [st.thumb, { backgroundColor: pal.card, borderColor: pal.line, opacity: pressed ? 0.8 : 1 }]}
@@ -195,7 +197,7 @@ function SheetThumb({ view, pal, t, me, onOpen }) {
 /** O cartão tem tabuleiro para desenhar com esta visão? (mesma regra do GameInlineBoard e do nativo) */
 export function inlineHasBoard(view) {
   if (!view || !view.state) return false;
-  if (view.status === 'active') return ['velha', 'forca', 'quiz', 'damas', 'cartas'].includes(view.type);
+  if (view.status === 'active') return ['velha', 'forca', 'quiz', 'damas', 'cartas'].includes(view.type) || !!JOGOS2_TYPES[view.type]; // [jogos2]
   if (view.status === 'finished') return view.type === 'velha' || view.type === 'forca';
   return false;
 }
@@ -215,7 +217,7 @@ function GameInlineBoard({ g, currentEmail, colors, isDark, t, onOpen }) {
   if (view.type === 'velha') body = <InlineVelha view={view} pal={pal} t={t} />;
   else if (view.type === 'forca') body = <InlineForca view={view} pal={pal} t={t} me={me} rm={rm} />;
   else if (view.type === 'quiz') body = <InlineQuiz view={view} pal={pal} t={t} rm={rm} />;
-  else if (view.type === 'damas' || view.type === 'cartas') body = <SheetThumb view={view} pal={pal} t={t} me={me} onOpen={onOpen} />;
+  else if (view.type === 'damas' || view.type === 'cartas' || JOGOS2_TYPES[view.type]) body = <SheetThumb view={view} pal={pal} t={t} me={me} onOpen={onOpen} />; // [jogos2]
   if (!body) return null;
   return (
     <View style={[st.wrap, { backgroundColor: pal.bg }]}>

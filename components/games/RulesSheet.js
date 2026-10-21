@@ -44,6 +44,35 @@ export const RULES_FB = {
     'Em grupo, quem demora mais de 3 minutos perde a vez.',
   ],
 };
+// [jogos2 2026-10-21] Ligue 4, Batalha Naval, Dominó, Jogo da Memória
+Object.assign(RULES_FB, {
+  ligue4: [
+    'Grade de 7 colunas e 6 linhas. Quem criou joga com as vermelhas e começa.',
+    'Na sua vez, toque numa coluna: a ficha cai até a casa livre mais baixa.',
+    'Vence quem fizer 4 fichas em linha: na horizontal, na vertical ou na diagonal.',
+    'Grade cheia sem 4 em linha é empate. Também dá para propor empate.',
+  ],
+  naval: [
+    'Cada um posiciona 5 barcos num mar 10×10: tamanhos 5, 4, 3, 3 e 2, na horizontal ou na vertical.',
+    'Use Aleatório para sortear, toque num barco e em Girar para virar, ou toque numa casa para mover.',
+    'Os barcos de cada um ficam escondidos: nem o aplicativo do outro sabe onde estão.',
+    'Depois, os tiros se alternam: toque numa casa do mar do outro. Acertando ou não, a vez passa.',
+    'Quando todas as casas de um barco são atingidas, ele afunda. Vence quem afundar a frota inteira primeiro.',
+  ],
+  domino: [
+    'Dominó duplo-seis para 2: cada um recebe 7 pedras e 14 ficam no monte.',
+    'Começa quem tem a maior bucha (pedra dupla). A primeira pedra pode ser qualquer uma.',
+    'Na sua vez, encaixe uma pedra numa das pontas da mesa com o mesmo número.',
+    'Sem pedra que encaixe, compre do monte até conseguir; com o monte vazio, passe a vez.',
+    'Vence quem bater (ficar sem pedras). Se ninguém conseguir jogar, vence quem tiver menos pontos na mão.',
+  ],
+  memoria: [
+    '16 cartas viradas para baixo formam 8 pares de figuras.',
+    'Na sua vez, vire duas cartas. Se forem iguais, o par é seu e você joga de novo.',
+    'Se forem diferentes, as duas desviram e a vez passa. Preste atenção nas cartas do outro!',
+    'Acabaram as cartas: vence quem formou mais pares. Mesmo número de pares é empate.',
+  ],
+});
 
 Object.assign(RULES_FB, NOVOS_RULES); // [jogos2b 2026-10-21] termo/ppt/stop/desenho
 

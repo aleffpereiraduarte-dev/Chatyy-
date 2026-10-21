@@ -1432,6 +1432,13 @@ function _gameInlineNodes(g, ctx, C, tf, me) {
       vstack(info, { fl: 1, g: 3 }),
     ], { w: -1, g: 14, al: 'c', a: 'game:play' }));
   }
+  // [jogos2 2026-10-21] Ligue 4 / Batalha Naval / Dominó / Memória: miniatura ao vivo (abre no painel)
+  if (!kids.length) {
+    try {
+      const J2 = require('../games/jogos2Thumbs');
+      if (J2.JOGOS2_TYPES[v.type]) { const nd = J2.jogos2NativeNodes(v, { vstack, hstack, text }, { dark, ink, sub, accentSolid: dark ? '#FFD60A' : '#E0A800' }, tf, me); if (nd) kids.push(nd); }
+    } catch {}
+  }
   if (!kids.length) return null;
   if (err) kids.push(text(err, { fs: 12, fw: 700, c: bad, ta: 'c', w: -1, m: [4, 0, 0, 0] }));
   return vstack(kids, { w: -1, p: [10, 12, 6, 12], bg: dark ? '#000000' : '#FFFFFF' });

@@ -51,6 +51,11 @@ import PptBoard from '../../components/games/boards/PptBoard';
 import StopBoard from '../../components/games/boards/StopBoard';
 import DesenhoBoard from '../../components/games/boards/DesenhoBoard';
 import { NOVOS_POINTS } from '../../services/gamesNovos';
+// [jogos2 2026-10-21] Ligue 4 / Batalha Naval / Dominó / Jogo da Memória
+import Ligue4Board, { L4_COLORS } from '../../components/games/boards/Ligue4Board';
+import NavalBoard from '../../components/games/boards/NavalBoard';
+import DominoBoard from '../../components/games/boards/DominoBoard';
+import MemoriaBoard from '../../components/games/boards/MemoriaBoard';
 import {
   getGameView, subscribeGame, gameState, gameMove, gameResign, gameRematch, gameAccept, gameDecline, gameStart, gameJoin, gameCancel, gameDraw, gameFeature,
   gameTitle, gameStatusLine, resultHeadline, gameErrorText, gameCardActions, gameActionLabel, nameOf, playerStatusLabel, isMyTurn, tr, gameEndKind, isInviteExpired,
@@ -160,6 +165,11 @@ function Seat({ e, i, view, me, pal, t, rm, compact, offset }) {
   if (view.type === 'cartas') badge = <Text style={{ color: pal.sub, fontWeight: '800', fontSize: 11.5 }}>{tr(t, 'games.cartas.nShort', '{n} c.', { n: (S.counts || [])[i] ?? 0 })}</Text>;
   if (view.type === 'quiz' || view.type === 'forca') badge = <Text style={{ color: pal.ink, fontWeight: '800', fontSize: 11.5 }}>{(S.sc || [])[i] || 0}</Text>;
   if (NOVOS_POINTS[view.type]) badge = <Text style={{ color: pal.ink, fontWeight: '800', fontSize: 11.5 }}>{(S.sc || [])[i] || 0}</Text>; // [jogos2b]
+  // [jogos2]
+  if (view.type === 'ligue4') badge = <View style={[st.pieceDot, { backgroundColor: L4_COLORS[i === 0 ? 'R' : 'Y'], borderColor: 'rgba(0,0,0,0.18)' }]} />;
+  if (view.type === 'memoria') badge = <Text style={{ color: pal.ink, fontWeight: '800', fontSize: 11.5 }}>{tr(t, 'games.memoria.nPairs', '{n} pares', { n: (S.sc || [])[i] || 0 })}</Text>;
+  if (view.type === 'domino') badge = <Text style={{ color: pal.sub, fontWeight: '800', fontSize: 11.5 }}>{tr(t, 'games.domino.nShort', '{n} pedras', { n: (S.counts || [])[i] ?? 0 })}</Text>;
+  if (view.type === 'naval' && Array.isArray(S.left)) badge = <Text style={{ color: pal.sub, fontWeight: '800', fontSize: 11.5 }}>{tr(t, 'games.naval.nShips', '{n} barcos', { n: S.left[i] ?? 0 })}</Text>;
   // prazo da vez (só grupo de Cartas/Forca): ts (servidor) + afk_ms, convertido p/ o relógio do app
   const endsAt = turn && view.afk_ms && view.ts ? Number(view.ts) + Number(view.afk_ms) - (offset || 0) : null;
   return (
@@ -306,9 +316,9 @@ function ResultPanel({ view, me, pal, t, onAct, onOpenRematch, busy, rm, fresh, 
   const glowSt = useAnimatedStyle(() => ({ opacity: glow.value, transform: [{ scale: 1 + glow.value * 0.18 }] }));
   const kind = gameEndKind(view, me);
   const rk = Array.isArray(view.ranking) ? view.ranking : [];
-  const showSc = view.type === 'quiz' || view.type === 'forca' || view.type === 'cartas';
+  const showSc = view.type === 'quiz' || view.type === 'forca' || view.type === 'cartas' || view.type === 'memoria'; // [jogos2] memoria
   const seat = view.me !== null && view.me !== undefined;
-  const scoreTx = (r) => (view.type === 'cartas' ? tr(t, 'games.cartas.nCards', '{n} cartas', { n: r.sc }) : tr(t, 'games.points', '{n} pts', { n: r.sc }));
+  const scoreTx = (r) => (view.type === 'cartas' ? tr(t, 'games.cartas.nCards', '{n} cartas', { n: r.sc }) : view.type === 'memoria' ? tr(t, 'games.memoria.nPairs', '{n} pares', { n: r.sc }) : tr(t, 'games.points', '{n} pts', { n: r.sc }));
   const podium = showSc && rk.length >= 2 && !view.draw && !(view.type === 'forca' && view.hanged) && (view.type !== 'cartas' || rk.length >= 3);
   const rest = podium ? rk.slice(3, 8) : rk.slice(0, 6);
   const off = podium ? 3 : 0;
@@ -743,7 +753,7 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
   const fitH = docked && dockH > 0 ? Math.max(170, dockH - 40 - 36 - 12) : Math.max(300, winH - ins.top - ins.bottom - 230);
   let board = null;
   if (view.status === 'active' || view.status === 'finished') {
-    const sq = view.type === 'damas' || view.type === 'velha';
+    const sq = view.type === 'damas' || view.type === 'velha' || view.type === 'ligue4' || view.type === 'memoria'; // [jogos2]
     const P = { view, onMove, pal, busy, t, me, offset: offRef.current, onTick, maxW: wide ? (sq ? Math.min(colW, fitH) : colW) : (docked ? (sq ? Math.min(winW - 8, fitH) : winW) : (sq ? Math.min(winW, fitH + 40) : (embedded ? winW : undefined))) };
     if (view.type === 'velha') board = <VelhaBoard {...P} />;
     else if (view.type === 'damas') board = <DamasBoard {...P} />;
@@ -754,6 +764,10 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
     else if (view.type === 'ppt') board = <PptBoard {...P} />;
     else if (view.type === 'stop') board = <StopBoard {...P} />;
     else if (view.type === 'desenho') board = <DesenhoBoard {...P} />;
+    else if (view.type === 'ligue4') board = <Ligue4Board {...P} />; // [jogos2]
+    else if (view.type === 'naval') board = <NavalBoard {...P} />;
+    else if (view.type === 'domino') board = <DominoBoard {...P} />;
+    else if (view.type === 'memoria') board = <MemoriaBoard {...P} />;
   }
   const sendTyped = () => { const x = chatText; setChatText(''); sendQuick(x); };
   // Cartas: os adversários já sentam em volta da mesa dentro do tabuleiro (avatares + leque) → sem faixa duplicada
