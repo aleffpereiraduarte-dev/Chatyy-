@@ -249,9 +249,18 @@ object ChatMessagingStyleHandler {
             "rx:" + (d["message_id"] ?: "") + ":" + senderEmail + ":" + (d["emoji"] ?: "")
         else d["message_id"] ?: ""
 
+        // [e2ee5 WP-10 2026-10-21] Conversa E2EE (e2e=5): decifra a prévia no aparelho
+        // (ChatPushE2EE, núcleo chatyy-crypto, falha fechado → genérico do servidor). Só na 1ª
+        // entrega (redelivery já está no cache). O texto real fica SÓ em memória (e2ePlain).
+        val isE2E = d["e2e"] == "5"
+        val e2eText: String? = if (isE2E && !locked && !threadHasMid(ctx, conversationId, messageId)) {
+            val uid = try { ChatPushE2EE.candidateUid(ctx, d) } catch (_: Throwable) { null }
+            if (uid != null) try { ChatPushE2EE.preview(ctx, uid, d, lang) } catch (_: Throwable) { null } else null
+        } else null
+
         // Text without the sender prefix (MessagingStyle shows the Person) and
         // without the Expo-route "N mensagens não lidas" 2nd line.
-        var text = d["msg_preview"]?.takeIf { it.isNotBlank() } ?: run {
+        var text = e2eText ?: d["msg_preview"]?.takeIf { it.isNotBlank() } ?: run {
             var t = d["__text"] ?: d["body"] ?: ""
             if (d["__route"] == "expo" && (d["unread_count"]?.toIntOrNull() ?: 0) >= 2 && t.contains('\n')) {
                 t = t.substringBeforeLast('\n')
@@ -261,7 +270,7 @@ object ChatMessagingStyleHandler {
         }
         // [2026-10-12] The server body already says "reagiu ❤️ …" — only prefix
         // the emoji for older payloads that don't carry it in the text.
-        if (type == "chat_reaction") {
+        if (type == "chat_reaction" && !isE2E) {
             val e = d["emoji"] ?: ""
             if (e.isNotEmpty() && !text.contains(e)) text = "$e $text"
         }
@@ -279,9 +288,14 @@ object ChatMessagingStyleHandler {
             ChatPushImageCache.fetch(ctx, mediaUrl) ?: "" else ""
 
         // Persist (dedupe by message_id — FCM/Expo can redeliver).
+        // [e2ee5 WP-10] linha E2EE decifrada: no disco só o genérico (+ marca e2e); o texto real
+        // vai para o mapa em memória ANTES de gravar (o render relê o cache).
+        val e2eRow = e2eText != null && messageId.isNotEmpty()
+        if (e2eRow) e2ePut(conversationId, messageId, text.take(1000))
         val isNew = appendMessageToThread(
             ctx, conversationId,
-            ThreadMsg(senderEmail.ifEmpty { senderName }, senderName, text.take(1000), System.currentTimeMillis(), messageId, imgPath)
+            ThreadMsg(senderEmail.ifEmpty { senderName }, senderName, text.take(1000), System.currentTimeMillis(), messageId, imgPath,
+                e2e = e2eRow, stored = if (e2eRow) newMessageLabel(lang) else "")
         )
         if (!isNew) {
             Log.d(TAG, "duplicate push conv=$conversationId mid=$messageId — skip")
@@ -830,7 +844,20 @@ object ChatMessagingStyleHandler {
     // =========================================================================
 
     /** img = absolute path of a cached media thumbnail (cacheDir/chat_push_img), "" = none. */
-    private data class ThreadMsg(val key: String, val senderName: String, val text: String, val timestamp: Long, val mid: String, val img: String = "")
+    /** e2e=true: [text] é o decifrado (só memória); [stored] = o que vai ao disco (genérico). */
+    private data class ThreadMsg(val key: String, val senderName: String, val text: String, val timestamp: Long, val mid: String, val img: String = "",
+                                 val e2e: Boolean = false, val stored: String = "") {
+        val diskText: String get() = if (e2e) stored else text
+    }
+
+    // [e2ee5 WP-10] Texto decifrado por "conv|mid" — SÓ em memória (nunca SharedPreferences/disco).
+    // Processo morto → as linhas E2EE antigas voltam como "Nova mensagem" (seguro).
+    private val e2ePlain = object : LinkedHashMap<String, String>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 300
+    }
+    private fun e2ePut(conv: String, mid: String, text: String) { synchronized(e2ePlain) { e2ePlain["$conv|$mid"] = text } }
+    private fun e2eGet(conv: String, mid: String): String? = synchronized(e2ePlain) { e2ePlain["$conv|$mid"] }
+    private fun e2eDrop(conv: String) { synchronized(e2ePlain) { e2ePlain.keys.removeAll { it.startsWith("$conv|") } } }
 
     /** Read-only dedupe probe (saves a media download on FCM/Expo redelivery). */
     private fun threadHasMid(ctx: Context, conversationId: String, mid: String): Boolean =
@@ -849,7 +876,7 @@ object ChatMessagingStyleHandler {
                     if (arr.optJSONArray(i)?.optString(4, "") == m.mid) return false
                 }
             }
-            arr.put(JSONArray().put(m.senderName).put(m.text).put(m.timestamp).put(m.key).put(m.mid).put(m.img))
+            arr.put(JSONArray().put(m.senderName).put(m.diskText).put(m.timestamp).put(m.key).put(m.mid).put(m.img).put(if (m.e2e) "1" else ""))
             val trimmed = if (arr.length() > MAX_MESSAGES_PER_THREAD) {
                 val keep = JSONArray()
                 for (i in (arr.length() - MAX_MESSAGES_PER_THREAD) until arr.length()) keep.put(arr.get(i))
@@ -885,7 +912,13 @@ object ChatMessagingStyleHandler {
                 val name = item.optString(0)
                 // Legacy rows ([name, text, ts]) + legacy own reply ("Você").
                 val key = item.optString(3, "").ifEmpty { if (name == "Você") "me" else name }
-                out.add(ThreadMsg(key, name, item.optString(1), item.optLong(2), item.optString(4, ""), item.optString(5, "")))
+                val mid = item.optString(4, "")
+                val stored = item.optString(1)
+                if (item.optString(6, "") == "1") {
+                    out.add(ThreadMsg(key, name, e2eGet(conversationId, mid) ?: stored, item.optLong(2), mid, item.optString(5, ""), e2e = true, stored = stored))
+                } else {
+                    out.add(ThreadMsg(key, name, stored, item.optLong(2), mid, item.optString(5, "")))
+                }
             }
             out
         } catch (t: Throwable) {
@@ -898,7 +931,7 @@ object ChatMessagingStyleHandler {
         try {
             val arr = JSONArray()
             for (m in list.takeLast(MAX_MESSAGES_PER_THREAD)) {
-                arr.put(JSONArray().put(m.senderName).put(m.text).put(m.timestamp).put(m.key).put(m.mid).put(m.img))
+                arr.put(JSONArray().put(m.senderName).put(m.diskText).put(m.timestamp).put(m.key).put(m.mid).put(m.img).put(if (m.e2e) "1" else ""))
             }
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString("thread_$conversationId", arr.toString()).apply()
@@ -909,6 +942,7 @@ object ChatMessagingStyleHandler {
 
     /** Public: drop the thread cache when user marks the chat read. */
     fun clearThread(ctx: Context, conversationId: String) {
+        e2eDrop(conversationId)
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().remove("thread_$conversationId").apply()
     }
