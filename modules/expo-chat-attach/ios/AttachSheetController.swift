@@ -36,8 +36,12 @@ final class AttachSheetController: UIViewController,
   var onCaptionEditing: ((Bool) -> Void)?
 
   private let config: AttachConfig
-  private let imageManager = PHCachingImageManager()
+  // [2026-10-21 attach-first-frame] gerente compartilhado (cache sobrevive à folha)
+  private var imageManager: PHCachingImageManager { return AttachRecentsCache.shared.imageManager }
   private var fetchResult: PHFetchResult<PHAsset>?
+  /// [2026-10-21 attach-first-frame] instantâneo (disco/memória) mostrado
+  /// enquanto o fetch real não chega — só visual.
+  private var snapItems: [AttachRecentsCache.SnapItem] = []
   private var selected: [String] = []
   private var selectedAssets: [String: PHAsset] = [:]
   private var observerRegistered = false
@@ -86,7 +90,7 @@ final class AttachSheetController: UIViewController,
   private let sendSpinner = UIActivityIndicatorView(style: .medium)
   private let countBadge = UILabel()
 
-  private static let spacing: CGFloat = 2
+  static let spacing: CGFloat = 2
   private static let headerH: CGFloat = 52
   private var hdrH: CGFloat { return config.galleryMode ? 66 : AttachSheetController.headerH } // [2026-10-20 attach-freeze]
   // [2026-10-20 attach-freeze] modo galeria
@@ -184,6 +188,22 @@ final class AttachSheetController: UIViewController,
     if config.tgWindow { // [2026-10-20 attach-tgwin]
       animateInTg()
       cascadeActions()
+      // [2026-10-21 attach-first-frame] print do founder (759): grade 100%
+      // branca com o fetch aplicado em 0,1 s. Vigia: 0,6 s depois, se a
+      // coleção não reflete o resultado (itens/células visíveis), recarrega;
+      // timing vis=células visíveis, fix=1 quando precisou.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+        guard let self = self, !self.finished, self.permView.isHidden, let fr = self.fetchResult else { return }
+        let want = self.cameraOffset + fr.count
+        var vis = self.collectionView.visibleCells.count
+        if self.collectionView.numberOfItems(inSection: 0) != want || (want > 1 && vis <= 1) {
+          self.collectionView.reloadData()
+          self.collectionView.layoutIfNeeded()
+          self.openTiming["fix"] = 1
+          vis = self.collectionView.visibleCells.count
+        }
+        self.openTiming["vis"] = vis
+      }
       // [2026-10-21 attach-recents-cache] grade ainda sem fotos (cache frio):
       // o startRunning da câmera espera o fetch (disputavam CPU/IO no 759) —
       // no máx. 0,5 s.
@@ -806,10 +826,17 @@ final class AttachSheetController: UIViewController,
       return
     }
     openTiming["cache"] = 0
+    // [2026-10-21 attach-first-frame] PhotoKit frio: grade nasce com o
+    // instantâneo da última abertura (ids + miniaturas), troca pelo real sem piscar.
+    snapItems = AttachRecentsCache.shared.snapshotItems()
+    openTiming["snap"] = snapItems.count
+    if !snapItems.isEmpty { collectionView.reloadData() }
     AttachRecentsCache.shared.load { [weak self] r in
       guard let self = self, gen == self.fetchGen, !self.finished else { return }
+      self.snapItems = []
       self.fetchResult = r
       self.collectionView.reloadData()
+      self.collectionView.layoutIfNeeded() // [2026-10-21 attach-first-frame] células neste quadro
       self.noteFetched(t0)
     }
   }
@@ -894,6 +921,7 @@ final class AttachSheetController: UIViewController,
   private var cameraOffset: Int { return config.allowCamera ? 1 : 0 }
 
   func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+    if fetchResult == nil && !snapItems.isEmpty && permView.isHidden { return cameraOffset + snapItems.count }
     return cameraOffset + (fetchResult?.count ?? 0)
   }
 
@@ -917,6 +945,17 @@ final class AttachSheetController: UIViewController,
     }
     let cell = collectionView.dequeueReusableCell(withReuseIdentifier: CAAssetCell.reuseId, for: indexPath) as! CAAssetCell
     cell.badge.setTheme(fill: config.text, ink: config.bg)
+    if fetchResult == nil { // [2026-10-21 attach-first-frame] instantâneo (sem toque)
+      let i = indexPath.item - cameraOffset
+      if i >= 0, i < snapItems.count {
+        let it = snapItems[i]
+        cell.assetId = it.id
+        cell.configure(video: it.video, duration: it.duration)
+        cell.setSelected(number: nil, animated: false)
+        cell.imageView.image = AttachRecentsCache.shared.thumb(it.id)
+      }
+      return cell
+    }
     guard let a = asset(at: indexPath) else { return cell }
     let isVideo = a.mediaType == .video
     cell.assetId = a.localIdentifier
@@ -935,8 +974,17 @@ final class AttachSheetController: UIViewController,
     opts.resizeMode = .fast
     opts.isNetworkAccessAllowed = true
     let id = a.localIdentifier
-    cell.requestId = imageManager.requestImage(for: a, targetSize: thumbSize, contentMode: .aspectFill, options: opts) { [weak cell] img, _ in
+    // [2026-10-21 attach-first-frame] miniatura já em memória (aquecida/instantâneo)
+    // entra NESTE quadro; o PhotoKit só refina.
+    let warm = AttachRecentsCache.shared.thumb(id)
+    if let w = warm { cell.imageView.image = w }
+    let hadWarm = warm != nil
+    let warmIdx = indexPath.item - cameraOffset < AttachRecentsCache.warmCount
+    cell.requestId = imageManager.requestImage(for: a, targetSize: thumbSize, contentMode: .aspectFill, options: opts) { [weak cell] img, info in
+      let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+      if warmIdx, let img = img, !degraded { AttachRecentsCache.shared.storeThumb(img, id: id) }
       guard let cell = cell, cell.assetId == id else { return }
+      if hadWarm && (img == nil || degraded) { return } // não troca a nítida pela borrada
       cell.imageView.image = img
     }
     return cell
@@ -1290,6 +1338,7 @@ final class AttachSheetController: UIViewController,
   private func finish(_ result: [String: Any], byUser: Bool = true, velocity: CGFloat = 0) {
     guard !finished else { return }
     finished = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { AttachRecentsCache.shared.saveSnapshot() } // [2026-10-21 attach-first-frame]
     if captionField.isFirstResponder { captionField.resignFirstResponder() }
     if !config.motion { stopCamera() }
     postClose(AttachSheetController.willCloseNote, result, byUser: byUser)
@@ -1346,6 +1395,7 @@ final class AttachSheetController: UIViewController,
   func finishSilently() {
     guard !finished else { return }
     finished = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { AttachRecentsCache.shared.saveSnapshot() } // [2026-10-21 attach-first-frame]
     stopCamera()
     let cb = onFinish
     onFinish = nil
@@ -1465,8 +1515,15 @@ final class CAAlbumList: NSObject, UITableViewDataSource, UITableViewDelegate {
 /// por PHPhotoLibraryChangeObserver: abrir a folha não paga PhotoKit frio
 /// (1,1-1,6 s no 759). Vale só p/ o mesmo status de permissão em que foi
 /// buscado (negado/limitado→total refaz).
+/// [2026-10-21 attach-first-frame] + miniaturas: as ~18 primeiras ficam numa
+/// NSCache em memória (pré-pedidas no aquecimento, gerente de imagens
+/// compartilhado entre aberturas) e num instantâneo em disco (ids + JPEG
+/// pequeno, gravado ao fechar a folha): a grade nasce CHEIA no 1º quadro
+/// (WhatsApp/Telegram) mesmo com o PhotoKit frio no cold start; o
+/// instantâneo é só visual (toque espera o fetch real, ~0,1 s).
 final class AttachRecentsCache: NSObject, PHPhotoLibraryChangeObserver {
   static let shared = AttachRecentsCache()
+  static let warmCount = 18
   private static let queue = DispatchQueue(label: "br.com.chatyy.attach.recents", qos: .userInitiated)
   private let lock = NSLock()
   private var result: PHFetchResult<PHAsset>?
@@ -1475,7 +1532,38 @@ final class AttachRecentsCache: NSObject, PHPhotoLibraryChangeObserver {
   private var waiters: [(PHFetchResult<PHAsset>) -> Void] = []
   private var registered = false
 
+  /// Gerente de miniaturas compartilhado (cache do PhotoKit sobrevive à folha).
+  let imageManager = PHCachingImageManager()
+  private let thumbs: NSCache<NSString, UIImage> = {
+    let c = NSCache<NSString, UIImage>()
+    c.countLimit = 90
+    c.totalCostLimit = 24 * 1024 * 1024
+    return c
+  }()
+
+  struct SnapItem { let id: String; let video: Bool; let duration: Double }
+  private var snap: [SnapItem] = []
+  private var snapStatus: Int = -1
+  private var snapLoaded = false
+  private var snapSavedIds: [String] = []
+
   private static func usable(_ st: PHAuthorizationStatus) -> Bool { return st == .authorized || st == .limited }
+
+  /// Lado da miniatura (px) da grade de 3 colunas desta tela.
+  static var thumbPixelSize: CGSize {
+    let w = UIScreen.main.bounds.width
+    let side = floor((w - AttachSheetController.spacing * 2) / 3) * UIScreen.main.scale
+    return CGSize(width: side, height: side)
+  }
+
+  // MARK: miniaturas em memória
+
+  func thumb(_ id: String) -> UIImage? { return thumbs.object(forKey: id as NSString) }
+
+  func storeThumb(_ img: UIImage, id: String) {
+    let px = Int(img.size.width * img.scale * img.size.height * img.scale * 4)
+    thumbs.setObject(img, forKey: id as NSString, cost: max(1, px))
+  }
 
   /// Resultado pronto (main). nil = frio ou permissão mudou.
   func cached() -> PHFetchResult<PHAsset>? {
@@ -1485,11 +1573,36 @@ final class AttachRecentsCache: NSObject, PHPhotoLibraryChangeObserver {
     return result
   }
 
-  /// Aquece sem prompt de permissão (só autorizado/limitado).
+  /// Aquece sem prompt de permissão (só autorizado/limitado): fetch + as
+  /// primeiras miniaturas em memória + instantâneo do disco.
   func prewarm() {
     guard AttachRecentsCache.usable(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else { return }
-    if cached() != nil { return }
-    load(nil)
+    loadSnapshotIfNeeded(async: true)
+    if let r = cached() { warmThumbs(r); return }
+    load { [weak self] r in self?.warmThumbs(r) }
+  }
+
+  /// Pede (assíncrono, main) as primeiras miniaturas que ainda não estão em memória.
+  private func warmThumbs(_ r: PHFetchResult<PHAsset>) {
+    let n = min(AttachRecentsCache.warmCount, r.count)
+    guard n > 0 else { return }
+    let size = AttachRecentsCache.thumbPixelSize
+    var list: [PHAsset] = []
+    for i in 0..<n {
+      let a = r.object(at: i)
+      if thumb(a.localIdentifier) == nil { list.append(a) }
+    }
+    guard !list.isEmpty else { return }
+    let opts = PHImageRequestOptions()
+    opts.deliveryMode = .highQualityFormat
+    opts.resizeMode = .fast
+    opts.isNetworkAccessAllowed = true
+    for a in list {
+      let id = a.localIdentifier
+      imageManager.requestImage(for: a, targetSize: size, contentMode: .aspectFill, options: opts) { [weak self] img, _ in
+        if let img = img { self?.storeThumb(img, id: id) }
+      }
+    }
   }
 
   /// Busca fora do main; `done` no main com o resultado.
@@ -1519,9 +1632,99 @@ final class AttachRecentsCache: NSObject, PHPhotoLibraryChangeObserver {
   }
 
   func photoLibraryDidChange(_ changeInstance: PHChange) {
-    lock.lock(); defer { lock.unlock() }
+    lock.lock()
+    var changed: PHFetchResult<PHAsset>?
     if let r = result, let det = changeInstance.changeDetails(for: r) {
       result = det.fetchResultAfterChanges
+      changed = result
+    }
+    lock.unlock()
+    if let r = changed { DispatchQueue.main.async { self.warmThumbs(r) } }
+  }
+
+  // MARK: instantâneo em disco
+
+  private static var snapDir: URL? {
+    guard let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+    return base.appendingPathComponent("chatyy-attach-recents", isDirectory: true)
+  }
+
+  private static func fileName(_ id: String) -> String {
+    let safe = id.map { ($0.isLetter || $0.isNumber) ? String($0) : "_" }.joined()
+    return String(safe.prefix(80)) + ".jpg"
+  }
+
+  /// Itens do instantâneo (main). Vazio se a permissão mudou desde a gravação.
+  func snapshotItems() -> [SnapItem] {
+    let st = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    guard AttachRecentsCache.usable(st) else { return [] }
+    loadSnapshotIfNeeded(async: false)
+    lock.lock(); defer { lock.unlock() }
+    guard snapStatus == st.rawValue else { return [] }
+    return snap
+  }
+
+  private func loadSnapshotIfNeeded(async: Bool) {
+    lock.lock()
+    if snapLoaded { lock.unlock(); return }
+    snapLoaded = true
+    lock.unlock()
+    let work = {
+      guard let dir = AttachRecentsCache.snapDir,
+            let data = try? Data(contentsOf: dir.appendingPathComponent("manifest.json")),
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+            let items = obj["items"] as? [[String: Any]] else { return }
+      let st = (obj["status"] as? Int) ?? -1
+      var out: [SnapItem] = []
+      for it in items.prefix(AttachRecentsCache.warmCount) {
+        guard let id = it["id"] as? String else { continue }
+        if self.thumb(id) == nil {
+          guard let img = UIImage(contentsOfFile: dir.appendingPathComponent(AttachRecentsCache.fileName(id)).path) else { continue }
+          self.storeThumb(img, id: id)
+        }
+        out.append(SnapItem(id: id, video: (it["v"] as? Bool) ?? false, duration: (it["d"] as? Double) ?? 0))
+      }
+      self.lock.lock()
+      if self.snap.isEmpty { self.snap = out; self.snapStatus = st; self.snapSavedIds = out.map { $0.id } }
+      self.lock.unlock()
+    }
+    if async { AttachRecentsCache.queue.async(execute: work) } else { work() } // main: nunca espera a fila (fetch frio)
+  }
+
+  /// Grava (fora do main) as primeiras miniaturas de Recentes que estão em
+  /// memória. Chamado ao fechar a folha.
+  func saveSnapshot() {
+    guard let r = cached() else { return }
+    let st = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    let n = min(AttachRecentsCache.warmCount, r.count)
+    var items: [(SnapItem, UIImage)] = []
+    for i in 0..<n {
+      let a = r.object(at: i)
+      guard let img = thumb(a.localIdentifier) else { break } // só prefixo contínuo
+      items.append((SnapItem(id: a.localIdentifier, video: a.mediaType == .video, duration: a.duration), img))
+    }
+    let ids = items.map { $0.0.id }
+    lock.lock()
+    let same = ids == snapSavedIds && snapStatus == st.rawValue
+    if !same { snapSavedIds = ids; snap = items.map { $0.0 }; snapStatus = st.rawValue }
+    lock.unlock()
+    if same || items.isEmpty { return }
+    AttachRecentsCache.queue.async {
+      guard let dir = AttachRecentsCache.snapDir else { return }
+      let fm = FileManager.default
+      try? fm.removeItem(at: dir)
+      try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+      var man: [[String: Any]] = []
+      for (it, img) in items {
+        guard let jpg = img.jpegData(compressionQuality: 0.6) else { continue }
+        let url = dir.appendingPathComponent(AttachRecentsCache.fileName(it.id))
+        if (try? jpg.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])) != nil {
+          man.append(["id": it.id, "v": it.video, "d": it.duration])
+        }
+      }
+      if let data = try? JSONSerialization.data(withJSONObject: ["status": st.rawValue, "items": man]) {
+        try? data.write(to: dir.appendingPathComponent("manifest.json"), options: [.atomic])
+      }
     }
   }
 }

@@ -78,8 +78,12 @@ public class ChatyyAttachModule: Module {
     //     (PHFetchResult fora do main, mantido por change observer): a folha
     //     abre com a grade cheia no 1º quadro (759: 1,1-1,6 s só c/ a câmera);
     //     câmera ao vivo espera o fetch frio (máx. 0,5 s). timing.cache=1|0.
+    // 14 = [2026-10-21 attach-first-frame] miniaturas das ~18 primeiras de
+    //     Recentes aquecidas em memória no armSheet (gerente de imagens
+    //     compartilhado) + instantâneo em disco (ids + JPEG, gravado ao fechar):
+    //     grade cheia no 1º quadro mesmo com PhotoKit frio. timing.snap=N.
     Function("apiVersion") { () -> Int in
-      return 13
+      return 14
     }
 
     OnCreate {
