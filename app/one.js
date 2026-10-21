@@ -50,6 +50,30 @@ const FOLLOWUPS_RE = /\s*<followups>([\s\S]*?)<\/followups>\s*$/i;
 const FOLLOWUPS_OPEN_RE = /\s*<followups>[\s\S]*$/i;
 const FOLLOWUPS_TAG = '<followups>';
 const BIA_FAIL_RE = /^\s*(desculp|ops\b)|n[aã]o consigo (visualizar|ver|abrir|acessar|processar|ler)|n[aã]o consegui (processar|visualizar|ver|abrir|acessar|ler|entender)|n[aã]o foi poss[ií]vel|i (can'?t|cannot|couldn'?t|am unable to) (see|view|open|access|process)/i;
+// [2026-10-21 biachips] sugestões tolerantes: o modelo às vezes esquece o "|" ("como organizar meu
+// calendário?qual a…"), manda uma por linha ou um array JSON. Aceita string ou lista; separa por |,
+// quebra de linha, ;, • e por "?" seguido de letra (mantém o "?"). Máx. 3, até 60 caracteres.
+function splitFollowups(raw) {
+  let list = [];
+  if (Array.isArray(raw)) list = raw.map(x => (typeof x === 'string' ? x : ''));
+  else if (typeof raw === 'string') {
+    const tr = raw.trim();
+    if (tr.startsWith('[')) { try { const j = JSON.parse(tr); if (Array.isArray(j)) list = j.map(x => (typeof x === 'string' ? x : '')); } catch {} }
+    if (!list.length) list = [raw];
+  }
+  const out = [];
+  for (const item of list) {
+    String(item || '')
+      .replace(/([?？])\s*(?=[A-Za-zÀ-ɏ¿¡])/g, '$1|')
+      .split(/\s*(?:\||\r?\n|;|•)\s*/)
+      .forEach((p) => {
+        let v = p.trim().replace(/^["']+|["']+$/g, '').replace(/^[-*\d.)\s]+/, '');
+        if (v.length > 60) v = v.slice(0, 60);
+        if (v.length > 2 && !out.includes(v)) out.push(v);
+      });
+  }
+  return out.slice(0, 3);
+}
 function extractFollowups(text) {
   if (!text || typeof text !== 'string') return { text: text || '', followups: [] };
   if (text.indexOf('<followups>') === -1) {
@@ -62,11 +86,7 @@ function extractFollowups(text) {
   }
   const m = FOLLOWUPS_RE.exec(text);
   if (m) {
-    const parts = m[1].split('|')
-      .map(s => s.trim().replace(/^[-*\d.)\s]+/, ''))
-      .filter(Boolean)
-      .map(s => s.length > 60 ? s.slice(0, 60) : s)
-      .slice(0, 3);
+    const parts = splitFollowups(m[1]);
     const clean = text.replace(FOLLOWUPS_RE, '');
     // [bia-visao 2026-10-17] resposta de falha ("não consigo ver…") → sem sugestões sem sentido
     return { text: clean, followups: BIA_FAIL_RE.test(clean.slice(0, 400)) ? [] : parts };
@@ -1370,7 +1390,7 @@ export default function OneScreen() {
         // cached.
         const { text: responseText, followups: parsedFollowups } = extractFollowups(responseTextRaw);
         const followupsFromMeta = Array.isArray(result.data.suggested_followups)
-          ? result.data.suggested_followups.slice(0, 3)
+          ? splitFollowups(result.data.suggested_followups)
           : [];
         const finalFollowups = followupsFromMeta.length ? followupsFromMeta : parsedFollowups;
         if (finalFollowups.length > 0) setLastFollowups(finalFollowups);
@@ -1588,7 +1608,7 @@ export default function OneScreen() {
             // Suggested follow-ups arrive in the final meta event — surface
             // them as chips under the last AI reply.
             if (Array.isArray(meta.suggested_followups) && meta.suggested_followups.length > 0) {
-              setLastFollowups(meta.suggested_followups.slice(0, 3));
+              setLastFollowups(splitFollowups(meta.suggested_followups));
             }
           },
           onDone: () => {
@@ -2747,7 +2767,7 @@ export default function OneScreen() {
     if (!chatLayout || inputText.trim() || attachedImage) return [];
     if (!hasMessages) return initialLoading ? [] : buildSugCards();
     if (loading || !lastFollowups.length) return [];
-    return lastFollowups
+    return splitFollowups(lastFollowups)
       .map((x) => String(x || '').trim())
       .filter((x) => x.length > 2 && !/^(como posso|posso te|precisa de|quer que eu|em que posso|deseja)/i.test(x))
       .slice(0, 3)
