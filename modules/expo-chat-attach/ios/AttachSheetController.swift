@@ -23,6 +23,14 @@ final class AttachSheetController: UIViewController,
   /// [2026-10-20 attach-tgwin] frame do "+" (coords da janela): a folha nasce dele.
   var sourceRect: CGRect?
   private var dimLocked = false // dim desacoplado da geometria (entrada/saída tgwin)
+  /// [2026-10-21 attach-instant-tg] instante do toque no "+" (CACurrentMediaTime) e
+  /// marcos em ms desde ele: show (view na tela), anim (entrada começou),
+  /// fetch (duração do PHAsset.fetchAssets), assets (grade recarregada), n (balde).
+  var tapAt: CFTimeInterval = 0
+  var openTiming: [String: Int] = [:]
+  private func sinceTap() -> Int { return tapAt > 0 ? Int((CACurrentMediaTime() - tapAt) * 1000) : -1 }
+  private var fetchGen = 0
+  private static let fetchQueue = DispatchQueue(label: "br.com.chatyy.attach.fetch", qos: .userInteractive)
   /// [2026-10-20 attach-inwindow] remoção sem dismiss (folha na janela do painel).
   var customRemove: ((@escaping () -> Void) -> Void)?
   var onCaptionEditing: ((Bool) -> Void)?
@@ -250,6 +258,7 @@ final class AttachSheetController: UIViewController,
   // 0,2 s, conteúdo 0→1 em 0,2 s; véu 0→1 LINEAR em 0,3 s. Sem "+" conhecido:
   // sobe de baixo com mola 0,4 s.
   private func animateInTg() {
+    openTiming["anim"] = sinceTap()
     dimLocked = true
     dismissOffset = 0
     applyGeometry()
@@ -418,6 +427,7 @@ final class AttachSheetController: UIViewController,
     opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
     opts.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d", PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
     if let c = coll {
+      fetchGen &+= 1 // [2026-10-21 attach-instant-tg] fetch de Recentes em voo não sobrescreve o álbum
       fetchResult = PHAsset.fetchAssets(in: c, options: opts)
     } else {
       loadAssets()
@@ -747,6 +757,7 @@ final class AttachSheetController: UIViewController,
     permView.isHidden = false
     // Sem fotos, a grade ainda mostra o tile da câmera (topo).
     collectionView.isHidden = !config.allowCamera
+    fetchGen &+= 1 // [2026-10-21 attach-instant-tg] descarta fetch em voo
     fetchResult = nil
     collectionView.reloadData()
   }
@@ -756,8 +767,39 @@ final class AttachSheetController: UIViewController,
     opts.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
     opts.predicate = NSPredicate(format: "mediaType == %d OR mediaType == %d", PHAssetMediaType.image.rawValue, PHAssetMediaType.video.rawValue)
     opts.includeAssetSourceTypes = [.typeUserLibrary, .typeCloudShared, .typeiTunesSynced]
-    fetchResult = PHAsset.fetchAssets(with: opts)
-    collectionView.reloadData()
+    fetchGen &+= 1
+    if config.syncFetch {
+      let t0 = CACurrentMediaTime()
+      fetchResult = PHAsset.fetchAssets(with: opts)
+      collectionView.reloadData()
+      noteFetched(t0)
+      return
+    }
+    // [2026-10-21 attach-instant-tg] Telegram: o fetch (ordenado + filtro; dezenas
+    // de ms em bibliotecas grandes, e o .count força a avaliação) sai do main —
+    // a folha entra no 1º quadro só com o tile da câmera e a grade enche logo
+    // depois (o conteúdo ainda está no fade 0→1 da entrada). Gerações: um
+    // refresh de permissão/mudança no meio descarta o resultado velho.
+    let gen = fetchGen
+    let t0 = CACurrentMediaTime()
+    AttachSheetController.fetchQueue.async { [weak self] in
+      let r = PHAsset.fetchAssets(with: opts)
+      _ = r.count
+      DispatchQueue.main.async {
+        guard let self = self, gen == self.fetchGen, !self.finished else { return }
+        self.fetchResult = r
+        self.collectionView.reloadData()
+        self.noteFetched(t0)
+      }
+    }
+  }
+
+  private func noteFetched(_ t0: CFTimeInterval) {
+    guard openTiming["assets"] == nil else { return }
+    openTiming["fetch"] = Int((CACurrentMediaTime() - t0) * 1000)
+    openTiming["assets"] = sinceTap()
+    let n = fetchResult?.count ?? 0
+    openTiming["n"] = n < 100 ? 0 : (n < 1000 ? 1 : (n < 10000 ? 2 : 3))
   }
 
   func photoLibraryDidChange(_ changeInstance: PHChange) {

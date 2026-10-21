@@ -67,8 +67,15 @@ public class ChatyyAttachModule: Module {
     //     ~(duração do keyboardWillHide − 0,05 s) depois do "+" nascendo do
     //     botão; evento onArmedShown {id} quando entra (o chat passa a ignorar
     //     o teclado); fechar = mola + véu linear, sem refocar.
+    // 12 = [2026-10-21 attach-instant-tg] tgWindow: a folha entra NO MESMO
+    //     TOQUE (sem esperar a descida do teclado — ela sobe por trás do
+    //     teclado descendo, como o Telegram); onArmedShown continua só depois
+    //     da descida (+ immediate/showMs/waitMs); onArmedResult leva timing
+    //     {show, anim, fetch, assets, n} (ms desde o toque); grade da galeria
+    //     buscada fora do main (miniaturas entram depois). Opções:
+    //     tgWaitKeyboard=true = espera antiga; syncFetch=true = fetch no main.
     Function("apiVersion") { () -> Int in
-      return 11
+      return 12
     }
 
     OnCreate {
@@ -261,13 +268,17 @@ extension ChatyyAttachModule {
     guard let presenter = appContext?.utilities?.currentViewController() else { return }
     let id = armedId
     let cfg = AttachConfig(opts)
+    let tapAt = CACurrentMediaTime() // [2026-10-21 attach-instant-tg] medição toque → folha
     let vc = AttachSheetController(config: cfg)
+    vc.tapAt = tapAt
     var done = false
-    vc.onFinish = { [weak self] result in
+    vc.onFinish = { [weak self, weak vc] result in
       if done { return }
       done = true
-      if self?.sheet === vc { self?.sheet = nil }
-      self?.sendEvent("onArmedResult", ["id": id, "result": result])
+      if let v = vc, self?.sheet === v { self?.sheet = nil }
+      var body: [String: Any] = ["id": id, "result": result]
+      if let t = vc?.openTiming, !t.isEmpty { body["timing"] = t }
+      self?.sendEvent("onArmedResult", body)
     }
     sheet = vc
     token["handled"] = true
@@ -280,6 +291,14 @@ extension ChatyyAttachModule {
       let had = (token["hadKeyboard"] as? Bool) ?? false
       let kd = AttachKeyboardTracker.shared.lastHideDuration
       let delay: TimeInterval = had ? max(0.15, (kd > 0 ? kd : 0.25) - 0.05) : 0
+      // [2026-10-21 attach-instant-tg] Founder: "clica no + e tem um delay".
+      // RAIZ: com o teclado aberto a folha só ENTRAVA depois da descida dele
+      // (max(0,15 s, duração − 0,05) ≈ 0,2-0,3 s de conversa parada) + 0,05 s
+      // de conteúdo invisível. Sem present não há troca de input views: a folha
+      // entra JÁ (subview do app, sobe por trás do teclado que desce — Telegram
+      // AttachmentController). Só o aviso onArmedShown (chat passa a ignorar o
+      // teclado) segue esperando a descida, p/ o lift não pular.
+      let waitKb = cfg.tgWaitKeyboard
       let host = AttachInKeyboardWindowHost()
       vc.customRemove = { done in host.tearDown(slide: false, done) }
       let show = { [weak self, weak vc, weak win] in
@@ -288,7 +307,14 @@ extension ChatyyAttachModule {
         if let win = win, !win.isHidden, let parent = AttachInKeyboardWindowHost.hostViewController(in: win),
            host.showAsChild(vc, of: parent) {
           NotificationCenter.default.post(name: Notification.Name("ChatyyScreenProtectRescan"), object: nil)
-          self.sendEvent("onArmedShown", ["id": id])
+          let showMs = Int((CACurrentMediaTime() - tapAt) * 1000)
+          vc.openTiming["show"] = showMs
+          let notify = { [weak self, weak vc] in
+            // folha já fechou antes do fim da descida → nada de ignorar o teclado
+            guard let self = self, let vc = vc, self.sheet === vc else { return }
+            self.sendEvent("onArmedShown", ["id": id, "immediate": !waitKb, "showMs": showMs, "waitMs": Int(delay * 1000)])
+          }
+          if !waitKb && delay > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: notify) } else { notify() }
           return
         }
         // fallback: present da api 10 (nunca fica preso sem folha)
@@ -301,7 +327,7 @@ extension ChatyyAttachModule {
         pres.present(vc, animated: false, completion: nil)
         self.sendEvent("onArmedShown", ["id": id])
       }
-      if delay > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: show) } else { show() }
+      if waitKb && delay > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: show) } else { show() }
       return
     }
     NotificationCenter.default.post(name: AttachSheetController.willPresentNote, object: nil, userInfo: ["overKeyboard": false, "kind": "sheet"])
@@ -604,6 +630,10 @@ struct AttachConfig {
   // [2026-10-20 attach-tgwin] api 11: folha na janela do app (sem present),
   // nasce do "+" depois de o teclado descer (modelo exato do Telegram).
   let tgWindow: Bool
+  // [2026-10-21 attach-instant-tg] api 12: true = espera antiga (folha só no fim da descida do teclado).
+  let tgWaitKeyboard: Bool
+  // [2026-10-21 attach-instant-tg] api 12: true = PHAsset.fetchAssets no main (antigo).
+  let syncFetch: Bool
 
   init(_ o: [String: Any]) {
     var l: [String: String] = [:]
@@ -639,6 +669,8 @@ struct AttachConfig {
     galleryMode = (o["galleryMode"] as? Bool) ?? false
     tgHeader = ((o["tgHeader"] as? Bool) ?? false) && !galleryMode
     tgWindow = (o["tgWindow"] as? Bool) ?? false
+    tgWaitKeyboard = (o["tgWaitKeyboard"] as? Bool) ?? false
+    syncFetch = (o["syncFetch"] as? Bool) ?? false
   }
 
   func t(_ key: String, _ fallback: String) -> String {

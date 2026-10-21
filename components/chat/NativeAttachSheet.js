@@ -164,6 +164,29 @@ export async function openNativeCamera(t, opts = {}) {
   }
 }
 
+// [2026-10-21 attach-instant-tg] 1 beacon por abertura da folha armada:
+// "attach_open tgwin js=<toque JS→onArmedShown> imm=0|1 wait=<espera do
+// teclado> show=… anim=… fetch=… assets=… n=<balde da biblioteca>" (ms).
+function reportArmMetric(mm, timing) {
+  if (!mm) return;
+  try { if (globalThis.__chatyy_attach_metric === false) return; } catch {}
+  const parts = [];
+  const sh = mm.shown;
+  if (sh) {
+    parts.push(`js=${Math.max(0, Math.round(sh.js))}`, `imm=${sh.imm}`);
+    if (sh.waitMs != null) parts.push(`wait=${Number(sh.waitMs) || 0}`);
+  } else {
+    parts.push('js=-');
+  }
+  const tm = timing && typeof timing === 'object' ? timing : null;
+  if (tm) ['show', 'anim', 'fetch', 'assets', 'n'].forEach((k) => { if (tm[k] != null) parts.push(`${k}=${Number(tm[k])}`); });
+  let api = 0;
+  try { api = Number(getNA().apiVersion()) || 0; } catch {}
+  parts.push(`api=${api}`);
+  // eslint-disable-next-line global-require
+  require('../../services/nativeTelemetry').nativeBeacon('attach_open', 'tgwin', parts.join(' '));
+}
+
 export default function NativeAttachSheet({
   visible, onClose, onPick, onSendMedia, onSendDirect, onFail, colors, items, t, instantRef,
 }) {
@@ -174,6 +197,11 @@ export default function NativeAttachSheet({
   const hdDefaultRef = useRef(false); // [2026-10-20 attach-armed]
   const handleResultRef = useRef(null);
   const armIdRef = useRef('arm_' + Math.random().toString(36).slice(2));
+  // [2026-10-21 attach-instant-tg] medição em produção do "+" → folha (beacon
+  // attach_open, teto 12/sessão): js = toque chegou no JS → onArmedShown
+  // (api 11 = espera da descida do teclado antes de a folha entrar); api 12
+  // manda show/anim/fetch/assets em ms desde o toque nativo.
+  const armMetricRef = useRef(null);
 
   // Sessão de câmera pré-configurada: abrir a câmera/tile depois é "quente".
   useEffect(() => {
@@ -299,7 +327,13 @@ export default function NativeAttachSheet({
   // armada no toque do "+"; o resultado chega por onArmedResult.
   openNowRef.current = (opts) => {
     if (openRef.current) return true;
-    if (opts && opts.alreadyOpen) { openRef.current = true; return true; }
+    if (opts && opts.alreadyOpen) {
+      openRef.current = true;
+      // teclado fechado: onArmedShown chega ANTES do onAttach (mesmo toque) → já existe
+      const cur0 = armMetricRef.current;
+      if (!cur0 || Date.now() - cur0.at > 2000) armMetricRef.current = { at: Date.now(), shown: null };
+      return true;
+    }
     const m = getNA();
     if (!m) return false;
     openRef.current = true;
@@ -338,7 +372,17 @@ export default function NativeAttachSheet({
     // globalThis.__chatyy_attach_tgwin = false (= present da api 10).
     let tgw = false;
     try { tgw = m.apiVersion() >= 11 && globalThis.__chatyy_attach_tgwin !== false; } catch { tgw = false; }
-    try { m.armSheet(id, { ...buildOptions(null), ...(tgw ? { tgWindow: true } : null) }); } catch {}
+    // [2026-10-21 attach-instant-tg] attach api >= 12: a folha entra no MESMO
+    // toque (sem esperar o teclado descer). Kill switches OTA:
+    // globalThis.__chatyy_attach_tgwin_wait = true (= espera antiga do 752) ·
+    // globalThis.__chatyy_attach_sync_fetch = true (= fetch da galeria no main).
+    let tgExtra = null;
+    if (tgw) {
+      tgExtra = { tgWindow: true };
+      try { if (globalThis.__chatyy_attach_tgwin_wait === true) tgExtra.tgWaitKeyboard = true; } catch {}
+      try { if (globalThis.__chatyy_attach_sync_fetch === true) tgExtra.syncFetch = true; } catch {}
+    }
+    try { m.armSheet(id, { ...buildOptions(null), ...tgExtra }); } catch {}
     return () => { try { m.armSheet(id, null); } catch {} };
   }, [armKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -358,10 +402,17 @@ export default function NativeAttachSheet({
       } else {
         release();
       }
+      try { reportArmMetric(armMetricRef.current, e.timing); } catch {}
+      armMetricRef.current = null;
       try { handleResultRef.current && handleResultRef.current(e.result || null); } catch {}
     });
     const sub3 = typeof m.addArmedShownListener === 'function' ? m.addArmedShownListener((e) => {
       if (!e || e.id !== armIdRef.current) return;
+      try {
+        let mm = armMetricRef.current;
+        if (!mm || Date.now() - mm.at > 2000) { mm = { at: Date.now(), shown: null }; armMetricRef.current = mm; }
+        if (!mm.shown) mm.shown = { js: Date.now() - mm.at, imm: e.immediate === true ? 1 : 0, showMs: e.showMs, waitMs: e.waitMs };
+      } catch {}
       try { require('../../utils/threadKeyboard').threadKbIgnoreKeyboard(true); } catch {}
     }) : null;
     return () => { try { sub && sub.remove && sub.remove(); } catch {} try { sub3 && sub3.remove && sub3.remove(); } catch {} };

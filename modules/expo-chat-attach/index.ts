@@ -191,8 +191,10 @@ export function armSheet(id: string, options: AttachOptions | null): void {
   try { m.armSheet(id, options || null)?.catch?.(() => {}); } catch {}
 }
 
-/** [apiVersion 11] Folha armada ENTROU na tela ({ id }) — tgWindow. */
-export function addArmedShownListener(fn: (e: { id: string }) => void): { remove: () => void } | null {
+/** [apiVersion 11] Folha armada ENTROU na tela ({ id }) — tgWindow.
+ *  [apiVersion 12] a folha entra no toque; este aviso chega no fim da descida do
+ *  teclado com immediate/showMs (toque → folha na tela)/waitMs (descida). */
+export function addArmedShownListener(fn: (e: { id: string; immediate?: boolean; showMs?: number; waitMs?: number }) => void): { remove: () => void } | null {
   const m = mod() as any;
   if (!m || typeof m.addListener !== 'function') return null;
   try { return m.addListener('onArmedShown', fn); } catch { return null; }
