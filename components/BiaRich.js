@@ -284,8 +284,11 @@ function parseBlocks(src) {
 
 // Um bloco = um componente memo: durante o stream só o ÚLTIMO bloco re-renderiza
 // (os anteriores têm a mesma assinatura → pulam o render).
-const MdBlock = memo(function MdBlock({ b, color, isDark, t, live }) {
+const MdBlock = memo(function MdBlock({ b, color, isDark, t, live, dense }) {
   const k = b.key;
+  // [2026-10-21 bia-conversa] dense = dentro de bolha de conversa (16/22, menos ar)
+  const P_ = dense ? DENSE_P : rs.p;
+  const LI_ = dense ? DENSE_LI : rs.liText;
   switch (b.type) {
     case 'code': return <BiaCodeBlock code={b.code} lang={b.lang} isDark={isDark} t={t} />;
     case 'br': return <View style={{ height: 6 }} />;
@@ -298,7 +301,7 @@ const MdBlock = memo(function MdBlock({ b, color, isDark, t, live }) {
     );
     case 'quote': return (
       <View style={[rs.quote, { borderLeftColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }]}>
-        <Text style={[rs.p, { color: isDark ? '#C7C7CC' : '#3A3A3C' }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
+        <Text style={[P_, { color: isDark ? '#C7C7CC' : '#3A3A3C' }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
       </View>
     );
     case 'task': return (
@@ -306,31 +309,31 @@ const MdBlock = memo(function MdBlock({ b, color, isDark, t, live }) {
         <View style={[rs.checkbox, { borderColor: color }, b.done && { backgroundColor: color }]}>
           {b.done ? <IconCheck size={10} color={isDark ? '#000' : '#fff'} /> : null}
         </View>
-        <Text style={[rs.liText, { color }, b.done && { textDecorationLine: 'line-through', opacity: 0.6 }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
+        <Text style={[LI_, { color }, b.done && { textDecorationLine: 'line-through', opacity: 0.6 }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
       </View>
     );
     case 'li': return (
       <View style={[rs.li, { marginLeft: b.indent * 16 }]}>
-        <View style={[rs.dot, { backgroundColor: color }]} />
-        <Text style={[rs.liText, { color }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
+        <View style={[rs.dot, { backgroundColor: color }, dense ? { marginTop: 8.5 } : null]} />
+        <Text style={[LI_, { color }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
       </View>
     );
     case 'ol': return (
       <View style={[rs.li, { marginLeft: b.indent * 16 }]}>
-        <Text style={[rs.num, { color }]}>{b.num}.</Text>
-        <Text style={[rs.liText, { color }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
+        <Text style={[rs.num, { color }, dense ? { lineHeight: 22 } : null]}>{b.num}.</Text>
+        <Text style={[LI_, { color }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>
       </View>
     );
-    default: return <Text style={[rs.p, { color }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>;
+    default: return <Text style={[P_, { color }]} selectable>{inlineLive(b.text, color, isDark, k, live)}</Text>;
   }
-}, (a, b) => a.b.sig === b.b.sig && a.b.type === b.b.type && a.color === b.color && a.isDark === b.isDark && a.live === b.live);
+}, (a, b) => a.b.sig === b.b.sig && a.b.type === b.b.type && a.color === b.color && a.isDark === b.isDark && a.live === b.live && a.dense === b.dense);
 
 const TEXT_TYPES = { h: 1, quote: 1, task: 1, li: 1, ol: 1, p: 1 };
 
 /**
  * Markdown da Bia. `streaming` → últimas palavras com fade + cursor no fim.
  */
-export function BiaMarkdown({ text, color, isDark, streaming, t }) {
+export function BiaMarkdown({ text, color, isDark, streaming, t, dense }) {
   if (!text && !streaming) return null;
   const src = cleanMath(String(text || '')).replace(/\r/g, '');
   const blocks = parseBlocks(src);
@@ -341,9 +344,9 @@ export function BiaMarkdown({ text, color, isDark, streaming, t }) {
   for (let j = blocks.length - 1; j >= 0; j--) { if (blocks[j].type !== 'br') { lastText = j; break; } }
   const liveIdx = streaming && lastText >= 0 && TEXT_TYPES[blocks[lastText].type] ? lastText : -1;
   return (
-    <View style={rs.mdWrap}>
-      {blocks.map((b, j) => <MdBlock key={b.key} b={b} color={color} isDark={isDark} t={t} live={j === liveIdx} />)}
-      {streaming && liveIdx === -1 ? <Text style={rs.p}><BlinkCaret color={color} /></Text> : null}
+    <View style={[rs.mdWrap, dense ? { gap: 2 } : null]}>
+      {blocks.map((b, j) => <MdBlock key={b.key} b={b} color={color} isDark={isDark} t={t} live={j === liveIdx} dense={!!dense} />)}
+      {streaming && liveIdx === -1 ? <Text style={dense ? DENSE_P : rs.p}><BlinkCaret color={color} /></Text> : null}
     </View>
   );
 }
@@ -533,3 +536,7 @@ const rs = StyleSheet.create({
   cardFoot: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth },
   cardFootText: { fontSize: 13.5, fontWeight: '600' },
 });
+// [2026-10-21 bia-conversa] texto de bolha (BiaMarkdown dense)
+const DENSE_P = [rs.p, { fontSize: 16, lineHeight: 22, letterSpacing: -0.15 }];
+const DENSE_LI = [rs.liText, { fontSize: 16, lineHeight: 22, letterSpacing: -0.15 }];
+

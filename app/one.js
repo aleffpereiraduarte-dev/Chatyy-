@@ -30,6 +30,16 @@ import {
   BiaHistoryDrawer, BiaVoiceScreen, BiaAttachSheet, GlyphWave,
 } from '../components/bia/BiaUI';
 import { createStreamLevelMeter, dbToLevel } from '../components/bia/biaAudioLevel';
+// [2026-10-21 bia-conversa] Bia como CONVERSA (layout do chat). Kill: globalThis.__chatyy_bia_chat_layout = false
+import {
+  biaChatLayoutOn, BiaChatHeader, BiaChatWallpaper, BiaDatePill, BiaSystemNotice, BiaChatRow,
+  BiaTypingBubble, BiaChatComposer, BiaChipsStrip, biaMsgTs, biaDayKey, biaDayLabel,
+} from '../components/bia/BiaChatLayout';
+import { biaToolLabel } from '../components/BiaRich';
+import { biaTtsRate, biaAutoRead } from '../services/biaPrefs'; // [2026-10-21 bia-ajustes] velocidade + mãos livres
+import { useBiaDaily } from '../services/biaDaily';
+import { safeAlert } from '../services/alerts';
+import { IconEye } from '../components/Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
 
 // Strip the trailing `<followups>q1|q2|q3</followups>` marker the server-side
@@ -166,7 +176,7 @@ function speakFallback(text, lang, onDone) {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = lang;
-    utterance.rate = 1.0;
+    utterance.rate = (() => { try { return biaTtsRate(); } catch { return 1; } })();
     utterance.pitch = 1.0;
     utterance.onend = () => { if (onDone) onDone(); };
     window.speechSynthesis.speak(utterance);
@@ -178,7 +188,7 @@ function speakFallback(text, lang, onDone) {
     ExpoSpeech.stop();
     ExpoSpeech.speak(text, {
       language: lang,
-      rate: 1.0,
+      rate: (() => { try { return biaTtsRate(); } catch { return 1; } })(),
       pitch: 1.0,
       onDone: () => { if (onDone) onDone(); },
     });
@@ -210,6 +220,7 @@ async function speakElevenLabs(text, lang, onDone) {
       _currentTtsBlobUrl = url;
       audio.onended = () => { try { URL.revokeObjectURL(url); } catch {} if (_currentTtsBlobUrl === url) _currentTtsBlobUrl = null; _currentAudio = null; if (onDone) onDone(); };
       audio.onerror = () => { try { URL.revokeObjectURL(url); } catch {} if (_currentTtsBlobUrl === url) _currentTtsBlobUrl = null; _currentAudio = null; if (onDone) onDone(); };
+      try { const r = biaTtsRate(); if (r !== 1) audio.playbackRate = r; } catch {} // [2026-10-21 bia-ajustes] velocidade da fala
       audio.play();
       return true;
     } else {
@@ -239,6 +250,7 @@ async function speakElevenLabs(text, lang, onDone) {
             }
           }, 300);
           player.play();
+          try { const r = biaTtsRate(); if (r !== 1) player.setPlaybackRate?.(r); } catch {} // [2026-10-21 bia-ajustes] velocidade da fala
           return true;
         }
       } catch (e) {
@@ -691,7 +703,7 @@ export default function OneScreen() {
   const [conversations, setConversations] = useState([]);
   const [isListening, setIsListening] = useState(false);
   const [speakingId, setSpeakingId] = useState(null);
-  const [autoRead, setAutoRead] = useState(false);
+  const [autoRead, setAutoRead] = useState(() => biaAutoRead()); // [2026-10-21 bia-ajustes] "Mãos livres" nos Ajustes da Bia
   const [voiceMode, setVoiceMode] = useState(false); // Siri-like voice conversation mode
   const [voiceState, setVoiceState] = useState('listening'); // 'listening' | 'thinking' | 'speaking'
   const [voiceTranscript, setVoiceTranscript] = useState('');
@@ -931,7 +943,7 @@ export default function OneScreen() {
           const msgs = hRes?.data?.messages || (Array.isArray(hRes?.data) ? hRes.data : []);
           if (msgs.length > 0) {
             const mapped = msgs.map((m, i) => ({
-              id: `h-${i}`, role: m.role, content: m.content, serverId: m.id || 0,
+              id: `h-${i}`, role: m.role, content: m.content, serverId: m.id || 0, ts: m.created_at || null,
               actions: (() => { try { return m.tool_calls ? (JSON.parse(m.tool_calls || '[]') || []) : []; } catch { return []; } })(),
               userName: firstName,
             }));
@@ -1050,7 +1062,7 @@ export default function OneScreen() {
       const res = await api.oneHistory(conv.id);
       const msgs = res?.data?.messages || (Array.isArray(res?.data) ? res.data : []);
       setMessages(msgs.map((m, i) => ({
-        id: `h-${i}`, role: m.role, content: m.content, serverId: m.id || 0,
+        id: `h-${i}`, role: m.role, content: m.content, serverId: m.id || 0, ts: m.created_at || null,
         actions: (() => { try { return m.tool_calls ? (JSON.parse(m.tool_calls || '[]') || []) : []; } catch { return []; } })(),
         userName: firstName,
       })));
@@ -2376,6 +2388,7 @@ export default function OneScreen() {
     setVoiceMode(false);
     setVoiceState('listening');
     setVoiceTranscript('');
+    setAutoRead(biaAutoRead()); // [2026-10-21 bia-ajustes] volta ao "Mãos livres" dos Ajustes
     if (voiceRecTimerRef.current) { try { clearTimeout(voiceRecTimerRef.current); } catch {} voiceRecTimerRef.current = null; }
     if (voiceStartTimerRef.current) { try { clearTimeout(voiceStartTimerRef.current); } catch {} voiceStartTimerRef.current = null; }
     if (audioRecordingRef.current) {
@@ -2619,10 +2632,11 @@ export default function OneScreen() {
   }, [loading, hasMessages]);
 
   // ─── Tela inicial: orb + saudação grande + grade de sugestões (cascata) ───
-  const renderEmpty = () => {
-    // [2026-10-16 bia-repagina] sugestões pela hora do dia (mesma ideia do
-    // biaSuggestion do painel Apps): manhã = agenda/e-mails; tarde = e-mails/
-    // responder; noite = agenda de amanhã/lembretes. Foto/câmera foram p/ o "+".
+  // [2026-10-16 bia-repagina] sugestões pela hora do dia (mesma ideia do
+  // biaSuggestion do painel Apps): manhã = agenda/e-mails; tarde = e-mails/
+  // responder; noite = agenda de amanhã/lembretes. Foto/câmera foram p/ o "+".
+  // [2026-10-21 bia-conversa] função própria: grade (tela antiga) e chips (conversa).
+  const buildSugCards = () => {
     const SUG = {
       today: { key: 'today', label: t('one.sugAgendaTitle'), sub: t('one.sugAgendaSub'), msg: t('one.whatsToday'), icon: IconCalendar },
       tomorrow: { key: 'tomorrow', label: t('one.tomorrowAgenda'), sub: t('one.sugTomorrowSub'), msg: t('one.sugTomorrowMsg'), icon: IconCalendar },
@@ -2637,8 +2651,18 @@ export default function OneScreen() {
     const order = tod === 'morning' ? ['today', 'mail', 'reply', 'write', 'remind', 'ideas']
       : tod === 'afternoon' ? ['mail', 'reply', 'today', 'write', 'ideas', 'remind']
       : ['tomorrow', 'reply', 'mail', 'remind', 'ideas', 'web'];
-    const sugCards = order.map(k => SUG[k]);
-    const nm = firstName ? firstName.charAt(0).toUpperCase() + firstName.slice(1) : '';
+    return order.map(k => SUG[k]);
+  };
+  const pickSuggestion = (it) => {
+    haptic('light');
+    if (it.action === 'photo') pickImage();
+    else if (it.prefill) setInputText(it.prefill);
+    else sendMessage(it.msg);
+  };
+  const greetName = firstName ? firstName.charAt(0).toUpperCase() + firstName.slice(1) : '';
+  const renderEmpty = () => {
+    const sugCards = buildSugCards();
+    const nm = greetName;
     const greet = nm ? `${getGreeting(t)}, ${nm}` : getGreeting(t);
     return (
       <ScrollView
@@ -2661,19 +2685,114 @@ export default function OneScreen() {
             items={sugCards}
             isDark={isDark}
             baseDelay={230}
-            onPick={(it) => {
-              haptic('light');
-              if (it.action === 'photo') pickImage();
-              else if (it.prefill) setInputText(it.prefill);
-              else sendMessage(it.msg);
-            }}
+            onPick={pickSuggestion}
           />
         </View>
       </ScrollView>
     );
   };
 
-  const canvasBg = P.bg; // escuro = preto real; claro = branco limpo
+  // ─── [2026-10-21 bia-conversa] Bia como conversa (layout do chat) ───
+  const [chatLayout] = useState(() => biaChatLayoutOn());
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
+  const daily = useBiaDaily(locale || 'pt-BR'); // frase do dia (respeita o ajuste "Frase do dia no início")
+  // pílula de data quando o dia muda entre mensagens (a 1ª fica no topo, junto do aviso)
+  const dayBreaks = useMemo(() => {
+    const out = {};
+    if (!chatLayout) return out;
+    let prev = '';
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      const ms = biaMsgTs(m);
+      const k = biaDayKey(ms);
+      if (k && prev && k !== prev) out[m.id] = biaDayLabel(ms, t, locale);
+      if (k) prev = k;
+    }
+    return out;
+  }, [chatLayout, messages, t, locale]);
+  const firstDayLabel = (() => {
+    const first = messages.find(m => Number.isFinite(biaMsgTs(m)));
+    return biaDayLabel(first ? biaMsgTs(first) : Date.now(), t, locale);
+  })();
+  const liveAi = loading ? messages.find(m => m._streaming || m._toolPending) : null;
+  const chatSubtitle = loading
+    ? (liveAi && liveAi._toolPending && liveAi._toolName ? biaToolLabel(liveAi._toolName, t) : t('chat.typing'))
+    : t('biaChat.subtitle');
+  const openBiaSettingsHub = useCallback(() => { try { router.push('/settings-section?section=bia'); } catch {} }, [router]);
+  const onBiaLearnMore = useCallback(() => {
+    safeAlert(t('biaChat.learnMoreTitle'), t('biaChat.learnMoreBody'), [
+      { text: t('common.ok') || 'OK', style: 'cancel' },
+      { text: t('biaChat.openSettings'), onPress: openBiaSettingsHub },
+    ]);
+  }, [t, openBiaSettingsHub]);
+  const renderChatMessage = useCallback(({ item }) => (
+    <BiaChatRow
+      item={item}
+      text={item.role === 'user' ? '' : extractFollowups(item.content || '').text}
+      dayLabel={dayBreaks[item.id] || null}
+      isDark={isDark} t={t} locale={locale}
+      isLastAI={item.id === lastAIId}
+      speaking={speakingId === item.id}
+      onCopy={copyMessage}
+      onSpeak={speakMessage}
+      onRegenerate={regenerateLast}
+      onShare={shareMessage}
+      onFeedback={onFeedback}
+      onLongPressAI={onLongPressAI}
+      onOpenCard={openBiaCard}
+    />
+  ), [dayBreaks, isDark, t, locale, lastAIId, speakingId, copyMessage, speakMessage, regenerateLast, shareMessage, onFeedback, onLongPressAI, openBiaCard]);
+  // chips acima do compositor: conversa vazia = as 6 sugestões; depois = próximas perguntas da Bia
+  const chatChips = (() => {
+    if (!chatLayout || inputText.trim() || attachedImage) return [];
+    if (!hasMessages) return initialLoading ? [] : buildSugCards();
+    if (loading || !lastFollowups.length) return [];
+    return lastFollowups
+      .map((x) => String(x || '').trim())
+      .filter((x) => x.length > 2 && !/^(como posso|posso te|precisa de|quer que eu|em que posso|deseja)/i.test(x))
+      .slice(0, 3)
+      .map((x, i) => ({ key: `fu${i}`, label: x, msg: x, followup: true }));
+  })();
+  const pickChatChip = (it) => {
+    if (it.followup) { haptic('light'); setLastFollowups([]); sendMessage(it.msg); return; }
+    pickSuggestion(it);
+  };
+  const helloItem = {
+    id: 'bia-hello', role: 'assistant',
+    content: `${greetName ? `${getGreeting(t)}, ${greetName}!` : `${getGreeting(t)}!`}${daily && daily.line ? ` ${daily.line}` : ''}\n\n${t('one.emptyTitle')}`,
+  };
+  const renderChatThread = () => (
+    <FlatList
+      ref={flatListRef}
+      data={messages}
+      keyExtractor={item => String(item.id)}
+      renderItem={renderChatMessage}
+      onContentSizeChange={() => { if (hasMessages) scrollBiaToEnd(); }}
+      onLayout={() => { if (hasMessages && !didFirstScrollRef.current) scrollBiaToEnd(true); }}
+      showsVerticalScrollIndicator={false}
+      style={{ flex: 1 }}
+      contentContainerStyle={{
+        paddingTop: 2,
+        paddingBottom: composerH + 10,
+        ...(isWide ? { maxWidth: CONTENT_MAX + 120, alignSelf: 'center', width: '100%' } : null),
+      }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      automaticallyAdjustKeyboardInsets={true}
+      ListHeaderComponent={(
+        <View>
+          <BiaDatePill label={firstDayLabel} isDark={isDark} />
+          <BiaSystemNotice isDark={isDark} t={t} onLearnMore={onBiaLearnMore} />
+          {!hasMessages && !initialLoading ? (
+            <BiaChatRow item={helloItem} text={helloItem.content} isDark={isDark} t={t} locale={locale} />
+          ) : null}
+        </View>
+      )}
+      ListFooterComponent={loading && !messages.some(m => m._streaming || m._toolPending) ? <BiaTypingBubble isDark={isDark} t={t} /> : null}
+    />
+  );
+
+  const canvasBg = chatLayout ? (isDark ? '#121214' : '#F7F7F5') : P.bg; // escuro = preto real; claro = branco limpo
   const stopGenerating = () => {
     try { aiAbortRef.current?.abort?.(); } catch {}
     try { stopListening?.(); } catch {}
@@ -2690,31 +2809,46 @@ export default function OneScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}
     >
-      <View style={[st.headerClean, { paddingTop: insets.top + 4, backgroundColor: canvasBg }]}>
-        <HeaderIconButton onPress={() => router.back()} style={st.headerCleanBtn} accessibilityLabel={t('common.back')}>
-          <IconArrowLeft size={22} color={P.fg} />
-        </HeaderIconButton>
-        <HeaderIconButton
-          onPress={() => { loadConversations(false); setHistoryOpen(true); }}
-          style={st.headerCleanBtn}
-          accessibilityLabel={t('one.history')}
-        >
-          <IconMenu size={20} color={P.fg} />
-        </HeaderIconButton>
-        <View style={st.headerCleanCenter}>
-          {hasMessages ? <BiaOrb size={20} lite isDark={isDark} mode={loading ? 'thinking' : 'idle'} animated={loading} /> : null}
-          <Text style={[st.headerCleanTitle, { color: P.fg }]} accessibilityRole="header">Bia</Text>
+      {chatLayout ? (
+        <BiaChatHeader
+          isDark={isDark}
+          t={t}
+          topInset={insets.top}
+          subtitle={chatSubtitle}
+          busy={loading}
+          onBack={() => router.back()}
+          onVoice={enterVoiceMode}
+          onMenu={() => { haptic('light'); setChatMenuOpen(true); }}
+          onInfo={openBiaSettingsHub}
+        />
+      ) : (
+        <View style={[st.headerClean, { paddingTop: insets.top + 4, backgroundColor: canvasBg }]}>
+          <HeaderIconButton onPress={() => router.back()} style={st.headerCleanBtn} accessibilityLabel={t('common.back')}>
+            <IconArrowLeft size={22} color={P.fg} />
+          </HeaderIconButton>
+          <HeaderIconButton
+            onPress={() => { loadConversations(false); setHistoryOpen(true); }}
+            style={st.headerCleanBtn}
+            accessibilityLabel={t('one.history')}
+          >
+            <IconMenu size={20} color={P.fg} />
+          </HeaderIconButton>
+          <View style={st.headerCleanCenter}>
+            {hasMessages ? <BiaOrb size={20} lite isDark={isDark} mode={loading ? 'thinking' : 'idle'} animated={loading} /> : null}
+            <Text style={[st.headerCleanTitle, { color: P.fg }]} accessibilityRole="header">Bia</Text>
+          </View>
+          <HeaderIconButton onPress={() => router.push('/bia-settings')} style={st.headerCleanBtn} accessibilityLabel={t('bia.title')}>
+            <IconSliders size={19} color={P.fg} />
+          </HeaderIconButton>
+          <HeaderIconButton onPress={newChat} style={st.headerCleanBtn} accessibilityLabel={t('one.newChat')}>
+            <IconEdit size={20} color={P.fg} />
+          </HeaderIconButton>
         </View>
-        <HeaderIconButton onPress={() => router.push('/bia-settings')} style={st.headerCleanBtn} accessibilityLabel={t('bia.title')}>
-          <IconSliders size={19} color={P.fg} />
-        </HeaderIconButton>
-        <HeaderIconButton onPress={newChat} style={st.headerCleanBtn} accessibilityLabel={t('one.newChat')}>
-          <IconEdit size={20} color={P.fg} />
-        </HeaderIconButton>
-      </View>
+      )}
 
       <View style={[st.chatArea, { backgroundColor: canvasBg }]}>
-        {initialLoading && !hasMessages ? (
+        {chatLayout ? <BiaChatWallpaper isDark={isDark} /> : null}
+        {chatLayout ? renderChatThread() : initialLoading && !hasMessages ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: composerH }}>
             <BiaOrb size={64} isDark={isDark} mode="thinking" />
           </View>
@@ -2795,26 +2929,52 @@ export default function OneScreen() {
           renderEmpty()
         )}
 
-        <BiaComposer
-          isDark={isDark}
-          t={t}
-          value={inputText}
-          onChangeText={setInputText}
-          onSend={() => sendMessage()}
-          onStop={stopGenerating}
-          onVoice={enterVoiceMode}
-          onMic={toggleListening}
-          onAttach={() => { haptic('light'); setAttachOpen(true); }}
-          listening={isListening}
-          loading={loading}
-          attachedImage={attachedImage}
-          onRemoveAttachment={() => setAttachedImage(null)}
-          onFocus={() => setInputFocused(true)}
-          onBlur={() => setInputFocused(false)}
-          bottomInset={insets.bottom}
-          onHeight={(h) => setComposerH(prev => (Math.abs(prev - h) > 1 ? h : prev))}
-          maxWidth={isWide ? CONTENT_MAX : undefined}
-        />
+        {chatLayout ? (
+          <BiaChatComposer
+            isDark={isDark}
+            t={t}
+            value={inputText}
+            onChangeText={setInputText}
+            onSend={() => sendMessage()}
+            onStop={stopGenerating}
+            onMic={toggleListening}
+            onAttach={() => { haptic('light'); setAttachOpen(true); }}
+            onCamera={Platform.OS === 'web' ? pickImage : takePhoto}
+            listening={isListening}
+            loading={loading}
+            attachedImage={attachedImage}
+            onRemoveAttachment={() => setAttachedImage(null)}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
+            bottomInset={insets.bottom}
+            onHeight={(h) => setComposerH(prev => (Math.abs(prev - h) > 1 ? h : prev))}
+            maxWidth={isWide ? CONTENT_MAX + 120 : undefined}
+            accessory={chatChips.length ? (
+              <BiaChipsStrip items={chatChips} isDark={isDark} onPick={pickChatChip} onLongPick={(it) => setInputText(it.prefill || it.msg || it.label)} />
+            ) : null}
+          />
+        ) : (
+          <BiaComposer
+            isDark={isDark}
+            t={t}
+            value={inputText}
+            onChangeText={setInputText}
+            onSend={() => sendMessage()}
+            onStop={stopGenerating}
+            onVoice={enterVoiceMode}
+            onMic={toggleListening}
+            onAttach={() => { haptic('light'); setAttachOpen(true); }}
+            listening={isListening}
+            loading={loading}
+            attachedImage={attachedImage}
+            onRemoveAttachment={() => setAttachedImage(null)}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
+            bottomInset={insets.bottom}
+            onHeight={(h) => setComposerH(prev => (Math.abs(prev - h) > 1 ? h : prev))}
+            maxWidth={isWide ? CONTENT_MAX : undefined}
+          />
+        )}
       </View>
 
       {/* Modo voz em tela cheia: orb grande reagindo ao volume + legenda ao vivo */}
@@ -2917,9 +3077,26 @@ export default function OneScreen() {
           Platform.OS !== 'web' ? { key: 'cam', label: t('one.attachCamera'), icon: IconCamera, onPress: takePhoto } : null,
           { key: 'photos', label: Platform.OS === 'web' ? t('one.attachPhotosFiles') : t('one.attachPhotos'), icon: IconImage, onPress: Platform.OS === 'web' ? pickImage : pickFromLibrary },
           { key: 'voice', label: t('one.voiceConversation'), icon: GlyphWaveIcon, onPress: enterVoiceMode },
-          { key: 'settings', label: t('one.biaSettings'), icon: IconSliders, onPress: () => router.push('/bia-settings') },
+          { key: 'settings', label: t('one.biaSettings'), icon: IconSliders, onPress: chatLayout ? openBiaSettingsHub : () => router.push('/bia-settings') },
         ]}
       />
+
+      {/* [2026-10-21 bia-conversa] menu do cabeçalho de conversa */}
+      {chatLayout ? (
+        <BiaAttachSheet
+          visible={chatMenuOpen}
+          onClose={() => setChatMenuOpen(false)}
+          isDark={isDark}
+          t={t}
+          insets={insets}
+          items={[
+            { key: 'new', label: t('one.newChat'), icon: IconEdit, onPress: newChat },
+            { key: 'history', label: t('one.history'), icon: IconMenu, onPress: () => { loadConversations(false); setHistoryOpen(true); } },
+            { key: 'memory', label: t('biaChat.memory'), icon: IconEye, onPress: () => router.push('/one-memory') },
+            { key: 'settings', label: t('one.biaSettings'), icon: IconSliders, onPress: openBiaSettingsHub },
+          ]}
+        />
+      ) : null}
 
       {/* Histórico: gaveta lateral com busca + agrupamento por data */}
       <BiaHistoryDrawer

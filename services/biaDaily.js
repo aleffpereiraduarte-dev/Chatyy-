@@ -8,11 +8,14 @@ import { useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 import { apiCall, getActiveAccountEmail } from './api';
 import { getJSON, setJSON } from './mmkv';
+import { biaDailyUserOn } from './biaPrefs';
 
 const KEY_PFX = 'bia_daily_v1_';
 
 export function biaDailyEnabled() {
-  try { return globalThis.__chatyy_bia_daily !== false; } catch { return true; }
+  try { if (globalThis.__chatyy_bia_daily === false) return false; } catch {}
+  // [2026-10-21 bia-ajustes] Ajustes da Bia → "Frase do dia no início" (local, padrão ligado)
+  return biaDailyUserOn();
 }
 
 function _acct() {
