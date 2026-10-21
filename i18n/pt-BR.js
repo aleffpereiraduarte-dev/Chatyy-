@@ -10661,6 +10661,7 @@ export default {
   'status.reportSent': 'Denúncia enviada',
   'status.shareAction': 'Compartilhar',
   'status.shareMsg': 'Olha o status de',
+  'status.shareMsgFull': 'Olha o status de {name} no Chatyy!',
   'status.typeCamera': 'Câmera',
   'status.unmute': 'Ativar som',
   'status.videoError': 'Não foi possível carregar este vídeo.',

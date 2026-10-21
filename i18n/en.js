@@ -10568,6 +10568,7 @@ export default {
   'status.reportSent': 'Report sent',
   'status.shareAction': 'Share',
   'status.shareMsg': 'Check out the status from',
+  'status.shareMsgFull': 'Check out {name}’s status on Chatyy!',
   'status.typeCamera': 'Camera',
   'status.unmute': 'Unmute',
   'status.videoError': 'Could not load this video.',

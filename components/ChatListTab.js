@@ -3920,7 +3920,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
             }}
             onReply={async (story, text) => {
               try {
-                await api.statusReplyDM?.(story?.id, text);
+                return await api.statusReplyDM?.(story?.id, text); // [2026-10-21 fix] viewer avisa se o servidor recusar
               } catch {
                 // Offline / 5xx — queue for replay so the DM reply doesn't
                 // disappear. Server creates / reuses the direct convo idempotently.

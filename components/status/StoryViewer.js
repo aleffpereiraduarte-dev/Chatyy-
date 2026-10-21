@@ -478,7 +478,15 @@ const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
       try {
         const dur = player.duration;
         if (Number.isFinite(dur) && dur > 0 && !maxTimer) {
-          maxTimer = setTimeout(fire, dur * 1000 + 600);
+          // [2026-10-21 fix] pausa (segurar/responder) não conta: se ainda falta vídeo, rearma em vez de cortar
+          const chk = () => {
+            try {
+              const rem = Number(player.duration) - Number(player.currentTime);
+              if (!endedRef.current && Number.isFinite(rem) && rem > 0.4) { maxTimer = setTimeout(chk, rem * 1000 + 600); return; }
+            } catch {}
+            fire();
+          };
+          maxTimer = setTimeout(chk, dur * 1000 + 600);
         }
       } catch {}
     };
@@ -1129,7 +1137,7 @@ function StoryViewerJS({
     if (!visible) return undefined;
     const sub = AppState.addEventListener('change', (next) => {
       if (next === 'active') {
-        if (!replyFocused) setPaused(false);
+        if (!replyFocused && !reactPickerOpenRef.current) setPaused(false); // [2026-10-21 fix] seletor de reações aberto segura a pausa
         return;
       }
       setPaused(true);
@@ -1953,8 +1961,13 @@ function StoryViewerJS({
           Animated.timing(savedToastAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
         ]).start(() => setSavedToast(false));
         try { if (_Haptics) _Haptics.notificationAsync(_Haptics.NotificationFeedbackType.Success); } catch {}
+      } else {
+        // [2026-10-21 fix] falhou salvar na galeria → avisa (antes nada acontecia)
+        try { Alert.alert(t?.('common.error') || 'Erro', t?.('common.errorGeneric') || 'Não rolou. Tente de novo.'); } catch {}
       }
-    } catch {}
+    } catch {
+      try { Alert.alert(t?.('common.error') || 'Erro', t?.('common.errorGeneric') || 'Não rolou. Tente de novo.'); } catch {}
+    }
     finally { setSaving(false); }
   }, [saving, t, savedToastAnim]);
 
@@ -3140,7 +3153,7 @@ function StoryViewerJS({
                 borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
                 shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
               }}>
-                {(_rxOn ? [STORY_LIKE, ...storyQuickReactions()] : ['❤️','🔥','😂','😮','😢','👏','👍']).map(emoji => {
+                {(_rxOn ? [STORY_LIKE, ...storyQuickReactions().filter(e => e !== STORY_LIKE)] : ['❤️','🔥','😂','😮','😢','👏','👍']).map(emoji => {
                   const pulsing = emojiPulse === emoji;
                   const isHeart = emoji === '❤️';
                   return (
@@ -3296,7 +3309,12 @@ function StoryViewerJS({
                       setReplying(true);
                       try {
                         try { require('../../services/haptics').selection(); /* [2026-10-07 native-polish] */ } catch {}
-                        await onReply?.(cur, replyText.trim());
+                        const _res = await onReply?.(cur, replyText.trim());
+                        if (_res === false || (_res && _res.success === false)) { // [2026-10-21 fix] recusou → avisa e mantém o texto
+                          try { Alert.alert(t?.('common.error') || 'Erro', t?.('status.replyFailed') || 'Não foi possível enviar a resposta. Tente de novo.'); } catch {}
+                          setReplying(false);
+                          return;
+                        }
                         setReplyText('');
                         setReplySent(true);
                         setTimeout(() => setReplySent(false), 1400);
@@ -3312,7 +3330,12 @@ function StoryViewerJS({
                         setReplying(true);
                         try {
                           try { require('../../services/haptics').selection(); /* [2026-10-07 native-polish] */ } catch {}
-                          await onReply?.(cur, replyText.trim());
+                          const _res = await onReply?.(cur, replyText.trim());
+                          if (_res === false || (_res && _res.success === false)) { // [2026-10-21 fix] recusou → avisa e mantém o texto
+                            try { Alert.alert(t?.('common.error') || 'Erro', t?.('status.replyFailed') || 'Não foi possível enviar a resposta. Tente de novo.'); } catch {}
+                            setReplying(false);
+                            return;
+                          }
                           setReplyText('');
                           setReplySent(true);
                           setTimeout(() => setReplySent(false), 1400);

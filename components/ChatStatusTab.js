@@ -419,7 +419,7 @@ function timeAgo(dateStr, t) {
 }
 
 const TEXT_BG_COLORS = [
-  '#111111', '#111111', '#111111', '#1A73E8', '#6B5CE7',
+  '#111111', '#2D3436', '#54656F', '#1A73E8', '#6B5CE7', // [2026-10-21 fix] 3× #111111 = keys duplicadas
   '#E84393', '#D63031', '#E17055', '#FDCB6E', '#00B894',
 ];
 
@@ -1451,7 +1451,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
 
     try {
       const statusType = item.type || 'text';
-      const statusLabel = `\u27A1\uFE0F ${t?.('status.forwardedStatus') || 'Status encaminhado'}`;
+      const statusLabel = `${t?.('status.forwardedStatus') || 'Status encaminhado'}`; // [2026-10-21] sem emoji
 
       // [deep-20260813] This handler still assumed the LEGACY 'URL\ncaption'
       // packing inside item.content — but current statuses carry media in
@@ -2565,10 +2565,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   // reply lands on the WRONG status/contact.
   const replyFocusedRef = useRef(false);
   const replyInputRef = useRef(null); // [2026-10-13] swipe-up em status alheio foca o Responder
+  // [2026-10-21 fix] folha/menu/encaminhar/reações abertos também seguram a pausa ao voltar do 2º plano
+  const overlayOpenRef = useRef(false);
+  useEffect(() => { overlayOpenRef.current = !!(viewersModal || ownMenuOpen || forwardModalVisible || reactTrayOpen); }, [viewersModal, ownMenuOpen, forwardModalVisible, reactTrayOpen]);
   useEffect(() => {
     if (!viewerVisible) return undefined;
     const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active' && replyFocusedRef.current) return;
+      if (next === 'active' && (replyFocusedRef.current || overlayOpenRef.current)) return;
       setIsPaused(next !== 'active');
     });
     return () => { try { sub?.remove?.(); } catch {} };
@@ -3236,7 +3239,12 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
 
   const deleteMyStatus = useCallback(async (statusId) => {
     try {
-      await api.statusDelete(statusId);
+      const _dr = await api.statusDelete(statusId);
+      // [2026-10-21 fix] servidor recusou → avisa e mantém (antes sumia e voltava no próximo refetch)
+      if (_dr && _dr.success === false && !_dr.queued && !_dr._deferred) {
+        try { Alert.alert(t?.('common.error') || 'Erro', _dr.message || t?.('common.errorGeneric') || 'Não rolou. Tente de novo.'); } catch {}
+        return;
+      }
       // Wave 4 finalize: hookRemoveStatus drops the row from mine + groups
       // + others, invalidates the fingerprint, and (next refetch) re-persists
       // MMKV/disk. The mirror useEffect feeds setMyStatuses on the next tick,
@@ -3256,8 +3264,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
           setViewerIndex(i => Math.min(i, next.length - 1));
         }
       }
-    } catch {}
-  }, [hookRemoveStatus, viewerVisible, viewerStatuses]);
+    } catch {
+      try { Alert.alert(t?.('common.error') || 'Erro', t?.('common.errorGeneric') || 'Não rolou. Tente de novo.'); } catch {}
+    }
+  }, [hookRemoveStatus, viewerVisible, viewerStatuses, t]);
 
   nativeStoryCbRef.current = {
     markViewed: (id) => { try { hookMarkViewed?.(id); } catch {} },
@@ -3311,14 +3321,14 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       if (res?.success && res.data) {
         setAnalyticsData(res.data);
       } else {
-        setAnalyticsError(res?.message || 'Não foi possível carregar estatísticas');
+        setAnalyticsError(res?.message || t?.('common.errorLoading') || 'Não foi possível carregar.');
       }
     } catch (e) {
-      setAnalyticsError(e?.message || 'Erro de rede');
+      setAnalyticsError(t?.('common.errorLoading') || 'Não foi possível carregar.'); // [2026-10-21] e.message cru não vai p/ a tela
     } finally {
       setAnalyticsLoading(false);
     }
-  }, []);
+  }, [t]);
 
   // [2026-10-15 native-story v2] Ações do menu do viewer NATIVO → mesmos handlers do JS.
   nativeStoryCbRef.current.forward = (item, ownerName) => {
@@ -3831,18 +3841,22 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     }
     if (action === 'report') {
       try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Warning); } catch {}
+      let _rok = false; // [2026-10-21 fix] "Denúncia enviada" só quando foi mesmo
       try {
-        if (typeof api.statusReport === 'function') await api.statusReport(targetEmail);
-        else await api.apiCall?.('status_report', { email: targetEmail }, 'POST');
+        const _rr = typeof api.statusReport === 'function' ? await api.statusReport(targetEmail) : await api.apiCall?.('status_report', { email: targetEmail }, 'POST');
+        _rok = !(_rr && _rr.success === false);
       } catch {}
-      try { Alert.alert?.(t?.('status.reportSent') || 'Denúncia enviada', t?.('status.reportBody') || 'Obrigado. Vamos revisar este conteúdo.'); } catch {}
+      try {
+        if (_rok) Alert.alert?.(t?.('status.reportSent') || 'Denúncia enviada', t?.('status.reportBody') || 'Obrigado. Vamos revisar este conteúdo.');
+        else Alert.alert?.(t?.('common.error') || 'Erro', t?.('common.errorGeneric') || 'Não rolou. Tente de novo.');
+      } catch {}
       return;
     }
     if (action === 'share') {
       try { Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle.Light); } catch {}
       try {
         const Share = require('react-native').Share;
-        await Share?.share?.({ message: `${t?.('status.shareMsg') || 'Olha o status de'} ${targetName} no Chatyy!` });
+        await Share?.share?.({ message: (t?.('status.shareMsgFull', 'Olha o status de {name} no Chatyy!') || '').replace('{name}', targetName || '') });
       } catch {}
       return;
     }
@@ -4324,14 +4338,15 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   const targetEmail = previewGroup.ownerEmail;
                   setPreviewGroup(null);
                   try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Warning); } catch {}
+                  let _rok = false; // [2026-10-21 fix] "Denúncia enviada" só quando foi mesmo
                   try {
-                    if (typeof api.statusReport === 'function') {
-                      await api.statusReport(targetEmail);
-                    } else {
-                      await api.apiCall?.('status_report', { email: targetEmail }, 'POST');
-                    }
+                    const _rr = typeof api.statusReport === 'function' ? await api.statusReport(targetEmail) : await api.apiCall?.('status_report', { email: targetEmail }, 'POST');
+                    _rok = !(_rr && _rr.success === false);
                   } catch {}
-                  try { Alert.alert?.(t?.('status.reportSent') || 'Denúncia enviada', t?.('status.reportBody') || 'Obrigado. Vamos revisar este conteúdo.'); } catch {}
+                  try {
+                    if (_rok) Alert.alert?.(t?.('status.reportSent') || 'Denúncia enviada', t?.('status.reportBody') || 'Obrigado. Vamos revisar este conteúdo.');
+                    else Alert.alert?.(t?.('common.error') || 'Erro', t?.('common.errorGeneric') || 'Não rolou. Tente de novo.');
+                  } catch {}
                 }}
                 style={({ pressed }) => ({
                   paddingHorizontal: 16, paddingVertical: 11,
@@ -4355,7 +4370,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                   try {
                     const Share = require('react-native').Share;
                     await Share?.share?.({
-                      message: `${t?.('status.shareMsg') || 'Olha o status de'} ${targetName} no Chatyy!`,
+                      message: (t?.('status.shareMsgFull', 'Olha o status de {name} no Chatyy!') || '').replace('{name}', targetName || ''),
                     });
                   } catch {}
                 }}
@@ -5051,6 +5066,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                       const id = currentViewerItem.id;
                       const doRepost = async () => {
                         const out = await repostMyStatus(id);
+                        if (!out) { try { Alert.alert(t?.('common.error') || 'Erro', t?.('status.repostFailed') || 'Não foi possível repostar.'); } catch {} return; } // [2026-10-21 fix]
                         if (out?.status_id) closeViewer();
                       };
                       if (Platform.OS === 'web') {
@@ -5171,13 +5187,13 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                 disabled={!newHighlightName.trim() || highlightSaving}
                 style={{
                   paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12,
-                  backgroundColor: '#111111',
+                  backgroundColor: isDark ? '#F2F2EF' : '#111111', // [2026-10-21] #111 sumia no escuro
                   opacity: !newHighlightName.trim() || highlightSaving ? 0.5 : 1,
                 }}
               >
                 {highlightSaving
-                  ? <ActivityIndicator size="small" color="#fff" />
-                  : <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{t?.('status.newHighlight') || 'Novo'}</Text>}
+                  ? <ActivityIndicator size="small" color={isDark ? '#111' : '#fff'} />
+                  : <Text style={{ color: isDark ? '#111' : '#fff', fontSize: 14, fontWeight: '700' }}>{t?.('status.newHighlight') || 'Novo'}</Text>}
               </TouchableOpacity>
             </View>
           </DragPanel>
