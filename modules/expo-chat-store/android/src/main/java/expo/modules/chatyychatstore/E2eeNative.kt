@@ -36,12 +36,15 @@ import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
  *
  * GATES (CONTRATO §9): só liga com (1) o núcleo linkado no binário (classe
  * `expo.modules.chatyycrypto.ChatyyCrypto` existe — modo NÚCLEO do WP-03) e (2) a flag nativa
- * `e2ee5_native` gravada pelo `status()` para o uid da conta, e (3) essa conta é a ativa (último
- * `status()`, a mesma cujo núcleo o JS abriu — não trocamos o núcleo "atual" do JS). Binário sem
- * núcleo / flag desligada = tudo [Seal.Plain]/[Dec.Off] = comportamento de hoje, byte a byte.
+ * `e2ee5_native` gravada pelo `status()` daquela conta (mapa conta→uid do WP-03, aceitando os
+ * aliases @onemundo.com.br/@chatyy.com.br), e (3) o store do uid já existe (o nativo nunca cria
+ * aparelho). Vale para QUALQUER conta logada: `ChatyyCrypto.core(ctx, uid, APP, makeCurrent=false)`
+ * (WP-03 8606f73a) não troca a conta "atual" do JS. Binário sem núcleo / flag desligada = tudo
+ * [Seal.Plain]/[Dec.Off] = comportamento de hoje, byte a byte.
  *
- * Reflexão (sem dependência Gradle nova, compila sem o núcleo): `ChatyyCrypto.invoke(ctx, op,
- * argsJson)` é `suspend` → chamado com uma Continuation própria e espera com prazo. O R8 mantém
+ * Reflexão (sem dependência Gradle nova, compila sem o núcleo): `core(...)` e os métodos do
+ * CryptoCore (UniFFI) são `suspend` → chamados com uma Continuation própria e espera com prazo.
+ * O R8 mantém `expo.modules.chatyycrypto.**` e `com.chatyy.crypto.core.**` (consumer-rules do WP-03).
  * `expo.modules.chatyycrypto.**` (consumer-rules do WP-03).
  *
  * NUNCA loga conteúdo, envelope, payload, bearer ou chave: só ids, códigos e tamanhos.
@@ -98,6 +101,15 @@ object E2eeNative {
     val authCompanion: Any?, val resolveM: Method?,
     /** opcionais (WP-03 ≥ 21/10 tarde): flag e2ee5_push_decrypt e "store já existe" (o nativo nunca cria aparelho). */
     val pushDecryptM: Method?, val secrets: Any?, val existsM: Method?,
+    /** [WP-03 8606f73a] núcleo POR uid sem trocar a conta atual do JS (todas as contas logadas). */
+    val u: UidOps,
+  )
+
+  /** API do núcleo por uid: ChatyyCrypto.core(ctx, uid, APP, makeCurrent=false) + métodos do CryptoCore (UniFFI). */
+  private class UidOps(
+    val coreM: Method, val syncM: Method, val syncJsonM: Method, val roleApp: Any,
+    val encM: Method, val decM: Method, val listM: Method, val membersM: Method, val decInput: java.lang.reflect.Constructor<*>,
+    val getEnv: Method, val getSid: Method, val getPayload: Method, val getTrust: Method, val getCurve: Method,
   )
 
   @Volatile private var reflTried = false
@@ -132,7 +144,32 @@ object E2eeNative {
           sec = sc.getField("INSTANCE").get(null)
           ex = sc.getMethod("exists", Context::class.java, String::class.java)
         } catch (_: Throwable) {}
-        Refl(crypto, inv, desc, addL, lc, flags, nat, last, ufa, comp, res, pd, sec, ex)
+        val ctxC = Context::class.java; val sC = String::class.java; val lC = List::class.java; val kC = Continuation::class.java
+        val roleC = Class.forName("com.chatyy.crypto.core.ProcessRole")
+        val coreC = Class.forName("com.chatyy.crypto.core.CryptoCore")
+        val diC = Class.forName("com.chatyy.crypto.core.DecryptInput")
+        val srC = Class.forName("com.chatyy.crypto.core.SyncResult")
+        val di = diC.constructors.firstOrNull { c ->
+          val t = c.parameterTypes
+          t.size >= 6 && (0 until 5).all { t[it] == sC } && t[5] == java.lang.Long.TYPE
+        } ?: throw NoSuchMethodException("DecryptInput")
+        val uo = UidOps(
+          cc.getMethod("core", ctxC, sC, roleC, java.lang.Boolean.TYPE, kC),
+          cc.getMethod("sync", ctxC, sC, sC, kC),
+          cc.getMethod("syncJson", srC, java.lang.Boolean.TYPE),
+          roleC.getField("APP").get(null),
+          coreC.getMethod("encrypt", sC, lC, sC, kC),
+          coreC.getMethod("decrypt", diC, kC),
+          coreC.getMethod("listDevices", sC, kC),
+          coreC.getMethod("onMembersChanged", sC, lC, lC, kC),
+          di,
+          Class.forName("com.chatyy.crypto.core.EncryptResult").getMethod("getEnvelopeJson"),
+          Class.forName("com.chatyy.crypto.core.EncryptResult").getMethod("getSessionId"),
+          Class.forName("com.chatyy.crypto.core.Decrypted").getMethod("getPayloadJson"),
+          Class.forName("com.chatyy.crypto.core.Decrypted").getMethod("getTrust"),
+          Class.forName("com.chatyy.crypto.core.DeviceSummary").getMethod("getCurve25519"),
+        )
+        Refl(crypto, inv, desc, addL, lc, flags, nat, last, ufa, comp, res, pd, sec, ex, uo)
       } catch (_: Throwable) {
         null // binário sem o núcleo (stub do WP-03 não tem ChatyyCrypto) → tudo desligado
       }
@@ -146,7 +183,7 @@ object E2eeNative {
 
   /** Diagnóstico/teste: o que a reflexão achou (sem segredos). */
   internal fun reflDetail(): String = refl()?.let {
-    "invoke=1 describe=${if (it.describe != null) 1 else 0} listener=${if (it.addListener != null) 1 else 0} resolve=${if (it.resolveM != null) 1 else 0}"
+    "invoke=1 uid_ops=1 describe=${if (it.describe != null) 1 else 0} listener=${if (it.addListener != null) 1 else 0} resolve=${if (it.resolveM != null) 1 else 0}"
   } ?: "none"
 
   /** Chama uma função `suspend` por reflexão e espera o resultado (≤ timeoutMs). */
@@ -172,24 +209,56 @@ object E2eeNative {
     return ok.get()
   }
 
-  /** `ChatyyCrypto.invoke(op, args)` → o `v` do resultado. Erro → [E5Error] com o `.code` do §6.11. */
-  private fun core(ctx: Context, op: String, args: JSONObject, timeoutMs: Long): Any? {
+  /** Erro do núcleo/host → [E5Error] com o `.code` do §6.11 (describe do WP-03). */
+  private fun <T> wrap(fn: (Refl) -> T): T {
     val r = refl() ?: throw E5Error("unsupported")
-    val out = try {
-      callSuspend(r.invoke, r.crypto, arrayOf(ctx.applicationContext ?: ctx, op, args.toString()), timeoutMs) as? String
-    } catch (e: E5Error) {
-      throw e
-    } catch (t: Throwable) {
+    return try { fn(r) } catch (e: E5Error) { throw e } catch (t: Throwable) {
       val d = r.describe?.let { dm -> try { dm.invoke(r.crypto, t) as? Pair<*, *> } catch (_: Throwable) { null } }
-      val code = d?.first as? String ?: "internal"
-      throw E5Error(code, d?.second as? JSONObject ?: JSONObject())
-    } ?: throw E5Error("internal")
-    return try { JSONObject(out).opt("v") } catch (_: Throwable) { throw E5Error("internal") }
+      throw E5Error(d?.first as? String ?: "internal", d?.second as? JSONObject ?: JSONObject())
+    }
   }
 
-  private fun ensureOpen(ctx: Context, uid: String) {
-    core(ctx, "open", JSONObject().put("uid", uid), 8_000L)
+  /** CryptoCore do uid (reusa ou abre; NÃO vira a conta atual do JS). */
+  private fun coreFor(ctx: Context, uid: String): Any = wrap { r ->
     registerListener()
+    callSuspend(r.u.coreM, r.crypto, arrayOf(ctx.applicationContext ?: ctx, uid, r.u.roleApp, false), 8_000L) ?: throw E5Error("not_open")
+  }
+
+  private fun opEncrypt(ctx: Context, uid: String, conv: String, members: List<String>, payload: String, timeoutMs: Long): Pair<String, String> {
+    val c = coreFor(ctx, uid)
+    return wrap { r ->
+      val e = callSuspend(r.u.encM, c, arrayOf(conv, members, payload), timeoutMs) ?: throw E5Error("internal")
+      Pair(r.u.getEnv.invoke(e) as String, r.u.getSid.invoke(e) as? String ?: "")
+    }
+  }
+
+  /** → (payloadJson, trust). */
+  private fun opDecrypt(ctx: Context, uid: String, conv: String, env: String, senderUid: String, mid: String, cmid: String, ts: Long, timeoutMs: Long): Pair<String, String> {
+    val c = coreFor(ctx, uid)
+    return wrap { r ->
+      val a = arrayOfNulls<Any?>(r.u.decInput.parameterTypes.size)
+      a[0] = conv; a[1] = env; a[2] = senderUid; a[3] = mid; a[4] = cmid; a[5] = ts // ULong = long no JVM; marcador = null
+      val input = r.u.decInput.newInstance(*a)
+      val d = callSuspend(r.u.decM, c, arrayOf(input), timeoutMs) ?: throw E5Error("internal")
+      Pair(r.u.getPayload.invoke(d) as String, (r.u.getTrust.invoke(d) as? Enum<*>)?.name?.lowercase() ?: "")
+    }
+  }
+
+  private fun opCurves(ctx: Context, uid: String, other: String): List<String> {
+    val c = coreFor(ctx, uid)
+    return wrap { r -> ((callSuspend(r.u.listM, c, arrayOf(other), 5_000L) as? List<*>) ?: emptyList<Any>()).mapNotNull { d -> d?.let { r.u.getCurve.invoke(it) as? String } } }
+  }
+
+  private fun opMembers(ctx: Context, uid: String, conv: String, members: List<String>, removed: List<String>) {
+    val c = coreFor(ctx, uid)
+    wrap { r -> callSuspend(r.u.membersM, c, arrayOf(conv, members, removed), 8_000L) }
+  }
+
+  /** ChatyyCrypto.sync(ctx, uid, "native") → JSON (§6.11) com os chatyy.*. */
+  private fun opSync(ctx: Context, uid: String): JSONObject? = wrap { r ->
+    registerListener()
+    val sr = callSuspend(r.u.syncM, r.crypto, arrayOf(ctx.applicationContext ?: ctx, uid, "native"), 15_000L) ?: return@wrap null
+    r.u.syncJsonM.invoke(r.crypto, sr, true) as? JSONObject
   }
 
   // ─── gate por conta ──────────────────────────────────────────────────────
@@ -221,10 +290,10 @@ object E2eeNative {
       val u = (r.uidForAccountM.invoke(r.flags, app, acct) as? String)
         ?: (r.uidForAccountM.invoke(r.flags, app, c) as? String)
         ?: (r.uidForAccountM.invoke(r.flags, app, aliasEmail(c)) as? String)
-      val last = r.lastUidM.invoke(r.flags, app) as? String
+      // qualquer conta logada com status() próprio (WP-03 core(makeCurrent=false) não mexe na conta do JS);
       // o nativo NUNCA cria o aparelho/store (quem cria é o open() do JS): sem store = desligado
       val exists = r.existsM?.let { m -> (m.invoke(r.secrets, app, u ?: "") as? Boolean) == true } ?: true
-      if (u != null && u == last && exists && (r.nativeM.invoke(r.flags, app, u) as? Boolean) == true) u else null
+      if (u != null && exists && (r.nativeM.invoke(r.flags, app, u) as? Boolean) == true) u else null
     } catch (_: Throwable) { null }
     gateCache[acct] = GateHit(uid, now)
     return uid
@@ -334,8 +403,7 @@ object E2eeNative {
     if (st.mode == 1 && prev != null && prev.members.isNotEmpty()) {
       val removed = prev.members.filter { it !in mem }
       if (removed.isNotEmpty()) try {
-        ensureOpen(ctx, uid)
-        core(ctx, "onMembersChanged", JSONObject().put("convId", conv).put("memberUids", JSONArray(mem)).put("removedUids", JSONArray(removed)), 8000)
+        opMembers(ctx, uid, conv, mem, removed)
       } catch (e: E5Error) { Log.i(TAG, "members_changed conv=$conv err=${e.code}") }
     }
     return st
@@ -377,13 +445,10 @@ object E2eeNative {
     if (s.mode != 1) return Seal.Plain
     if (s.members.isEmpty()) return Seal.Fail("no_members")
     return try {
-      ensureOpen(ctx, uid)
-      val r = core(ctx, "encrypt", JSONObject().put("convId", conv).put("memberUids", JSONArray(s.members)).put("payload", payload.toString()), timeoutMs) as? JSONObject
-        ?: return Seal.Fail("internal")
-      val env = r.optString("envelopeJson")
+      val (env, sid) = opEncrypt(ctx, uid, conv, s.members, payload.toString(), timeoutMs)
       if (!env.startsWith(ENV5_PREFIX)) return Seal.Fail("bad_envelope")
       val body = payload.optString("body").ifEmpty { payload.optString("caption") }
-      Seal.Env(env, hasLink(body), r.optString("sessionId"))
+      Seal.Env(env, hasLink(body), sid)
     } catch (e: E5Error) {
       Log.i(TAG, "encrypt conv=$conv err=${e.code}")
       Seal.Fail(e.code)
@@ -438,6 +503,7 @@ object E2eeNative {
 
   /** uid do remetente: campo explícito, eu mesmo, cache e-mail→uid, 1:1 (o outro membro) ou sender_key dos aparelhos. */
   private fun senderUid(ctx: Context, account: String, myUid: String, conv: String, msg: JSONObject, envelope: String, bearer: String?, base: String?, net: Boolean): String? {
+    // [WP-07] linhas/frames E2EE trazem `sender_uid` (fonte preferida; o resto é reserva)
     for (k in arrayOf("sender_uid", "e2e_sender_uid")) {
       val v = msg.opt(k)?.toString().orEmpty()
       if (v.isNotEmpty() && v != "null" && v.all { it in '0'..'9' } && v[0] != '0') return v
@@ -454,13 +520,13 @@ object E2eeNative {
     val sk = try { JSONObject(envelope).optJSONObject("c")?.optString("sender_key").orEmpty() } catch (_: Throwable) { "" }
     if (sk.isEmpty()) return null
     for (u in others.take(64)) {
-      val devs = try { core(ctx, "listDevices", JSONObject().put("uid", u), 5000) as? JSONArray } catch (_: E5Error) { null } ?: continue
-      for (i in 0 until devs.length()) if (devs.optJSONObject(i)?.optString("curve25519") == sk) return u
+      val curves = try { opCurves(ctx, myUid, u) } catch (_: E5Error) { continue }
+      if (sk in curves) return u
     }
     return null
   }
 
-  @Volatile private var lastSyncAt = 0L
+  private val lastSyncAt = ConcurrentHashMap<String, Long>() // por uid
   private val syncLock = Any()
 
   /** `sync()` do núcleo (no máx. 1 a cada 3 s por processo). Guarda os `chatyy.*` p/ o JS (fila e2e_events). */
@@ -468,11 +534,10 @@ object E2eeNative {
     val uid = uidFor(ctx, account) ?: return false
     synchronized(syncLock) {
       val now = System.currentTimeMillis()
-      if (now - lastSyncAt < SYNC_MIN_GAP_MS) return true
-      lastSyncAt = now
+      if (now - (lastSyncAt[uid] ?: 0L) < SYNC_MIN_GAP_MS) return true
+      lastSyncAt[uid] = now
       return try {
-        ensureOpen(ctx, uid)
-        val r = core(ctx, "sync", JSONObject(), 15_000L) as? JSONObject
+        val r = opSync(ctx, uid)
         val ev = r?.optJSONArray("chatyyEvents")
         // o JS pode estar morto: os chatyy.* (chave de ligação, decrypt_report…) não podem sumir
         if (ev != null && ev.length() > 0) store(ctx).e2eEventsPut(account, ev)
@@ -501,22 +566,19 @@ object E2eeNative {
     }
     val uid = uidFor(ctx, account) ?: return Dec.Off
     return try {
-      ensureOpen(ctx, uid)
       val su = senderUid(ctx, account, uid, conv, msg, content, bearer, base, allowNet)
         ?: return Dec.Utd("sender_unknown", true)
       val ts = StoreIngest.ms(msg.opt("created_at")).let { if (it > 0) it else System.currentTimeMillis() }
-      val args = JSONObject().put("convId", conv).put("envelopeJson", content).put("senderUid", su)
-        .put("serverMid", if (mid > 0) mid.toString() else "0").put("cmid", cmid).put("tsMs", ts)
-      val r = try {
-        core(ctx, "decrypt", args, timeoutMs) as? JSONObject
+      val smid = if (mid > 0) mid.toString() else "0"
+      val (pj, trust) = try {
+        opDecrypt(ctx, uid, conv, content, su, smid, cmid, ts, timeoutMs)
       } catch (e: E5Error) {
         val retry = e.code == "utd" && e.details.optBoolean("retryable", false)
         if (!(retry && allowNet && syncNow(ctx, account, "utd"))) throw e
-        core(ctx, "decrypt", args, timeoutMs) as? JSONObject
-      } ?: return Dec.Utd("internal", true)
-      val pj = r.optString("payloadJson")
+        opDecrypt(ctx, uid, conv, content, su, smid, cmid, ts, timeoutMs)
+      }
       val po = try { JSONObject(pj) } catch (_: Throwable) { return Dec.Utd("bad_envelope", false) }
-      if (mid > 0) store(ctx).e2ePlainPut(account, conv, mid, cmid, pj, r.optString("trust"))
+      if (mid > 0) store(ctx).e2ePlainPut(account, conv, mid, cmid, pj, trust)
       val se = canonEmail(msg.optString("sender_email"))
       if (se.isNotEmpty() && su != uid) store(ctx).e2eUidSet(account, se, su)
       Dec.Ok(pj, previewOf(po), po.optString("t"))

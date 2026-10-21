@@ -45,6 +45,18 @@ class ChatyyStoreDB private constructor(ctx: Context) {
 
     fun normAccount(s: String): String = s.trim().lowercase()
 
+    /**
+     * [e2ee5 WP-08b] Mesma conta com os dois domínios (apitest@onemundo.com.br ≡ apitest@chatyy.com.br,
+     * CONTRATO §1.1): forma canônica = @chatyy.com.br. Usada p/ escolher o arquivo e as chaves de cache.
+     */
+    fun canonAccount(s: String): String {
+      val n = normAccount(s)
+      return if (n.endsWith("@onemundo.com.br")) n.removeSuffix("@onemundo.com.br") + "@chatyy.com.br" else n
+    }
+
+    fun aliasAccount(canon: String): String? =
+      if (canon.endsWith("@chatyy.com.br")) canon.removeSuffix("@chatyy.com.br") + "@onemundo.com.br" else null
+
     fun accountHash(email: String): String {
       val n = normAccount(email)
       if (n.isEmpty()) return ""
@@ -97,8 +109,25 @@ class ChatyyStoreDB private constructor(ctx: Context) {
     for (suf in arrayOf("", "-wal", "-shm", "-journal")) { try { File(f.path + suf).delete() } catch (_: Throwable) {} }
   }
 
+  // [e2ee5 WP-08b] conta canônica → hash do arquivo, fixo no processo. Arquivo legado com o alias
+  // @onemundo.com.br continua valendo se já existe (não perde fila/outbox); senão o canônico.
+  private val fileHashes = HashMap<String, String>()
+
+  private fun fileHash(account: String): String {
+    val c = canonAccount(account)
+    if (c.isEmpty()) return ""
+    synchronized(fileHashes) {
+      fileHashes[c]?.let { return it }
+      val hc = accountHash(c)
+      val ha = aliasAccount(c)?.let { accountHash(it) }
+      val h = if (ha != null && File(dir, "$ha.db").exists()) ha else hc
+      fileHashes[c] = h
+      return h
+    }
+  }
+
   private fun open(account: String): SQLiteDatabase? {
-    val h = accountHash(account)
+    val h = fileHash(account)
     if (h.isEmpty()) return null
     dbs[h]?.let { if (it.isOpen) return it }
     if (!dir.exists() && !dir.mkdirs()) return null
@@ -161,10 +190,11 @@ class ChatyyStoreDB private constructor(ctx: Context) {
   }
 
   private fun drop(account: String) {
-    val h = accountHash(account)
+    val h = fileHash(account)
     if (h.isEmpty()) return
     dbs.remove(h)?.let { try { it.close() } catch (_: Throwable) {} }
     removeFiles(fileFor(h))
+    synchronized(fileHashes) { fileHashes.remove(canonAccount(account)) }
   }
 
   // ─── fotos por conversa ──────────────────────────────────────────────────
@@ -323,7 +353,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
 
   private fun optStr(o: JSONObject, k: String): String? = if (!o.has(k) || o.isNull(k)) null else o.opt(k)?.toString()
 
-  private fun cacheKey(account: String, conv: String) = accountHash(account) + "|" + conv
+  private fun cacheKey(account: String, conv: String) = accountHash(canonAccount(account)) + "|" + conv
 
   private fun putCached(account: String, conv: String, rev: String, snap: Snapshot) {
     synchronized(memCache) {
@@ -1210,7 +1240,8 @@ class ChatyyStoreDB private constructor(ctx: Context) {
   }
 
   // ─── limpeza (logout / troca de conta) ───────────────────────────────────
-  fun wipeAccount(account: String) { onEx(5000L, Unit) { drop(account) }; clearCache() }
+  // [e2ee5 WP-08b] 2× = o arquivo legado (@onemundo) e o canônico (@chatyy), se os dois existirem
+  fun wipeAccount(account: String) { onEx(5000L, Unit) { drop(account); drop(account) }; clearCache() }
 
   fun wipeAll() {
     onEx(5000L, Unit) {
