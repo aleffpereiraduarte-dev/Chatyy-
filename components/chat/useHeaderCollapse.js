@@ -9,6 +9,7 @@
 // Kill: globalThis.__chatyy_header_collapse = false.
 import { useCallback, useRef } from 'react';
 import { Platform, StyleSheet } from 'react-native';
+import { THEME_V2 as _THEME_V2, grafite as _grafite } from '../../constants/theme';
 
 let RA = null;
 try { RA = require('react-native-reanimated'); } catch {}
@@ -108,7 +109,7 @@ export function HeaderCollapseBackdrop({ hc, isDark }) {
   if (!hc || !hc.on || !hc.AnimatedView) return null;
   const AV = hc.AnimatedView;
   const B = _blurComp();
-  const tint = isDark ? 'rgba(11,11,11,0.72)' : 'rgba(255,255,255,0.72)';
+  const tint = _THEME_V2 ? _grafite(isDark).glass : (isDark ? 'rgba(11,11,11,0.72)' : 'rgba(255,255,255,0.72)'); // [2026-10-21 polish-conv] vidro do Grafite
   return (
     <AV pointerEvents="none" style={[StyleSheet.absoluteFill, hc.blurStyle]}>
       {B ? (

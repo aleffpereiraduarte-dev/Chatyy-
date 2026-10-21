@@ -868,7 +868,7 @@ function buildCallCard(m, row, ctx, C, own) {
       text(title, { fs: 15, fw: 600, c: ink, ml: 1 }),
       sub ? text(sub, { fs: 13, c: subC, ml: 1, m: [1, 0, 0, 0] }) : null,
     ], { fl: 1 }),
-    vstack([text(btnLbl, { fs: 14, fw: 600, c: own ? '#FFFFFF' : (C.otherInk || col.text), ml: 1 })], { p: [7, 14, 7, 14], r: 16, bg: own ? 'rgba(255,255,255,0.16)' : (C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)'), a: `call_back:${isVideo ? 'v' : 'a'}` }),
+    vstack([text(btnLbl, { fs: 14, fw: 600, c: own ? (C.ownText || '#FFFFFF') : (C.otherInk || col.text), ml: 1 })], { p: [7, 14, 7, 14], r: 16, bg: own ? inkAlpha(C.ownText || '#FFFFFF', 0.16) : (C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)'), a: `call_back:${isVideo ? 'v' : 'a'}` }),
   ], { g: 12, al: 'c', w: -1 })], { w })];
   row.cw = w; row.pad = PAD; row.mp = 'below';
 }
@@ -1043,7 +1043,7 @@ function buildStatusReply(m, row, ctx, C, own) {
     : (own ? _tr(C, 'status.replyToOwner', 'Você respondeu ao status') : _tr(C, 'status.replyFromOwner', 'Respondeu ao seu status'));
   const isImage = st.type === 'image'; const isVideo = st.type === 'video';
   const fb = isImage ? _tr(C, 'status.typePhoto', 'Foto') : isVideo ? _tr(C, 'status.typeVideo', 'Vídeo') : '';
-  const accent = own ? 'rgba(255,255,255,0.85)' : C.otherInk;
+  const accent = own ? inkAlpha(C.ownText || '#FFFFFF', 0.85) : C.otherInk; // [2026-10-21 polish-conv] tinta da bolha (balão claro na cor do destaque)
   const created = st.created_at ? Date.parse(st.created_at) : (m.created_at ? Date.parse(m.created_at) : Date.now());
   const expired = !isNaN(created) && (Date.now() - created) > 24 * 60 * 60 * 1000;
   const mediaUrl = (expired && b64) ? b64 : ((st.thumb ? _mediaAbs(st.thumb) : '') || (st.media_url ? _mediaAbs(st.media_url) : '') || b64);
@@ -1061,12 +1061,12 @@ function buildStatusReply(m, row, ctx, C, own) {
       expired ? expTag() : null,
     ], { w: 44, h: 56, r: 6 });
   }
-  const sub = own ? 'rgba(255,255,255,0.85)' : col.textSecondary;
+  const sub = own ? inkAlpha(C.ownText || '#FFFFFF', 0.85) : col.textSecondary;
   const info = [text(label, { fs: 11, fw: 700, c: accent, m: [0, 0, 2, 0], ls: 0.2 })];
   if (snippet) info.push(text(snippet, { fs: 12.5, c: sub, ml: 2 }));
   else if (fb) {
     info.push(hstack([
-      isImage ? icon(IconImage, { s: 13, c: own ? 'rgba(255,255,255,0.8)' : col.textSecondary }) : isVideo ? icon(IconVideo, { s: 13, c: own ? 'rgba(255,255,255,0.8)' : col.textSecondary }) : null,
+      isImage ? icon(IconImage, { s: 13, c: own ? inkAlpha(C.ownText || '#FFFFFF', 0.8) : col.textSecondary }) : isVideo ? icon(IconVideo, { s: 13, c: own ? inkAlpha(C.ownText || '#FFFFFF', 0.8) : col.textSecondary }) : null,
       text(fb, { fs: 12.5, c: sub }),
     ], { g: 5, al: 'c' }));
   }
