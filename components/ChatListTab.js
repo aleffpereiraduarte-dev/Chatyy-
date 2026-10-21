@@ -242,7 +242,18 @@ const _ROW_COMPACT = { minHeight: 72, paddingVertical: 9 };
 const _AVW_COMPACT = { marginRight: 12 };
 function _rowAvatar() { return listMetrics().avatar; }
 function _sepInset() { return listMetrics().sepInset; }
-function _rowDensity() { return listMetrics().compact ? _ROW_COMPACT : null; }
+// [2026-10-21 lista-viva ajustes] só com vivo: respiro −2 de cada lado (72→68 /
+// 74→70) e, no cartão das fixadas, mais −6 (~10%) — linha + respiro do cartão
+// ocupam o mesmo que uma linha normal (igual ao nativo).
+const _ROW_VIVO_C = { minHeight: 68, paddingVertical: 7 };
+const _ROW_VIVO_R = { minHeight: 70, paddingVertical: 8 };
+const _ROW_VIVO_CARD_C = { minHeight: 62, paddingVertical: 5 };
+const _ROW_VIVO_CARD_R = { minHeight: 64, paddingVertical: 5 };
+function _rowDensity(vivo, inCard) {
+  const c = listMetrics().compact;
+  if (vivo) return inCard ? (c ? _ROW_VIVO_CARD_C : _ROW_VIVO_CARD_R) : (c ? _ROW_VIVO_C : _ROW_VIVO_R);
+  return c ? _ROW_COMPACT : null;
+}
 function _avatarWrapDensity() { return listMetrics().compact ? _AVW_COMPACT : null; }
 const SWIPE_THRESHOLD = 40; // lowered from 60 for better responsiveness
 
@@ -1916,7 +1927,7 @@ const ConversationRow = React.memo(function ConversationRow({
           } : {})}
           style={[
             s.row,
-            _rowDensity(),
+            _rowDensity(_vv, inCard),
             inCard && _ROW_IN_CARD,
             {
               backgroundColor: isSelected ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)') : rowBg,

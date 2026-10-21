@@ -642,7 +642,11 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
       return
     }
     val w = MeasureSpec.getSize(widthMeasureSpec)
-    val h = if (compact) rowHeightCompact else rowHeight
+    // [2026-10-21 lista-viva ajustes] só com vivo: respiro −2 dp de cada lado
+    // (76→72 / compacta 72→68); no cartão das fixadas mais −6 (~10%) para a
+    // linha + respiro do cartão ocupar o mesmo que uma linha normal.
+    val h = (if (compact) rowHeightCompact else rowHeight) -
+      (if (!vivo) 0 else if (cardColor != null) px(10f) else px(4f))
     val edge = px(if (cardColor != null) 10f else 16f)
     var x = edge
     if (selectionMode) {

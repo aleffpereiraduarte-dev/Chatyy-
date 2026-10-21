@@ -126,7 +126,7 @@ final class CLConversationCell: UICollectionViewListCell {
 
   // MARK: - Altura
 
-  static func height(for traits: UITraitCollection, compact: Bool = false, tg: Bool = false) -> CGFloat {
+  static func height(for traits: UITraitCollection, compact: Bool = false, tg: Bool = false, vivo: Bool = false, inCard: Bool = false) -> CGFloat {
     let name = CLFonts.scaled(17, .semibold, cap: 1.35, traits: traits)
     let prev = CLFonts.scaled(15, .regular, cap: 1.3, traits: traits)
     if tg {
@@ -134,12 +134,19 @@ final class CLConversationCell: UICollectionViewListCell {
       return max(78, ceil(block + 18))
     }
     let content = ceil(name.lineHeight) + 3 + ceil(prev.lineHeight) + 2
+    if vivo {
+      // [2026-10-21 lista-viva ajustes] respiro vertical −2 pt de cada lado
+      // (76→72 / compacta 72→68); dentro do cartão das fixadas mais −6
+      // (~10%) para a linha + respiro do cartão ocupar o mesmo que uma normal.
+      let cut: CGFloat = inCard ? 10 : 4
+      return compact ? max(72 - cut, ceil(content + 18 - cut)) : max(76 - cut, ceil(content + 22 - cut))
+    }
     return compact ? max(72, ceil(content + 18)) : max(76, ceil(content + 22))
   }
 
   override func preferredLayoutAttributesFitting(_ layoutAttributes: UICollectionViewLayoutAttributes) -> UICollectionViewLayoutAttributes {
     let attrs = super.preferredLayoutAttributesFitting(layoutAttributes)
-    attrs.frame.size.height = CLConversationCell.height(for: traitCollection, compact: compact, tg: tg)
+    attrs.frame.size.height = CLConversationCell.height(for: traitCollection, compact: compact, tg: tg, vivo: vivo, inCard: cardColor != nil)
     return attrs
   }
 
@@ -309,7 +316,7 @@ final class CLConversationCell: UICollectionViewListCell {
     pinOnTop = vivo && !tg && !pinIcon.isHidden
     if !pinIcon.isHidden {
       if pinOnTop {
-        pinIcon.image = CLSymbols.image("pin.fill", pointSize: 10, weight: .regular, color: theme.sub)
+        pinIcon.image = CLSymbols.image("pin.fill", pointSize: 12, weight: .regular, color: theme.sub)
       } else {
         pinIcon.image = tg
           ? CLSymbols.image("pin.fill", pointSize: 12, weight: .regular, color: theme.faint)

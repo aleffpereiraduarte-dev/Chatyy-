@@ -59,7 +59,8 @@ export const HC = Object.freeze({
 // largura ≤ bubbleW → dois balões vizinhos nunca se cruzam.
 // [2026-10-21 lista-viva] mockup: balão de altura FIXA (32) e no máx. 84 de largura
 // — menor que o passo do slot (74 + 14) → nunca cobre o vizinho, todos iguais.
-const VIVO_BUBBLE = Object.freeze({ w: 84, h: 32 });
+// [2026-10-21 ajustes] largura FIXA (não máx.) → todos os balões iguais, centrados no anel.
+const VIVO_BUBBLE = Object.freeze({ w: 84, h: 32, padX: 7 });
 function _bubbleW() { return listVivoOn() ? VIVO_BUBBLE.w : HC.bubbleW; }
 function _bubbleMargin(width) { return Math.max(0, Math.ceil((_bubbleW() - width - HC.gap) / 2)); }
 
@@ -70,6 +71,69 @@ export function shortNote(s, max = 40) {
   const cut = str.slice(0, max);
   const sp = cut.lastIndexOf(' ');
   return (sp > max * 0.6 ? cut.slice(0, sp) : cut).replace(/[\s.,;:!?·-]+$/, '') + '…';
+}
+
+// [2026-10-21 lista-viva ajustes] balão de largura FIXA (todos iguais) com no
+// máx. 2 linhas de quebra EQUILIBRADA: mede o texto por largura estimada de
+// glifo (SF/Roboto 11 pt peso 500) e escolhe o corte entre palavras que deixa
+// as duas linhas parecidas (sem palavra solta na 2ª). Se não cabe em 2 linhas,
+// a 1ª enche e a 2ª termina em "…". O encolher da fonte (0,85) segura erro de
+// estimativa.
+const _NARROW = new Set(Array.from(" il|!.,:;'`ijtfrI()[]"));
+const _WIDE = new Set(Array.from('mwMW@%&'));
+function _glyphW(str, fs) {
+  let w = 0;
+  for (const ch of str) {
+    if (_NARROW.has(ch)) w += 0.3;
+    else if (_WIDE.has(ch)) w += 0.85;
+    else if (ch >= 'A' && ch <= 'Z') w += 0.66;
+    else if (ch.charCodeAt(0) > 0x2000) w += 1; // emoji/símbolos
+    else w += 0.54;
+  }
+  return w * fs;
+}
+function _ellipsize(str, maxW, fs) {
+  if (_glyphW(str, fs) <= maxW) return str;
+  const words = str.split(' ');
+  while (words.length > 1) {
+    words.pop();
+    const c = words.join(' ').replace(/[\s.,;:!?·-]+$/, '') + '…';
+    if (_glyphW(c, fs) <= maxW) return c;
+  }
+  let c = words[0] || '';
+  while (c.length > 1 && _glyphW(c + '…', fs) > maxW) c = c.slice(0, -1);
+  return c + '…';
+}
+export function balanceNote(text, maxW, fs = 11) {
+  const str = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!str || _glyphW(str, fs) <= maxW) return str;
+  const words = str.split(' ');
+  if (words.length < 2) return str; // palavra única longa: o Text quebra/encolhe
+  const total = _glyphW(str, fs);
+  let best = -1;
+  if (total <= maxW * 2 - fs * 0.6) {
+    // cabe em 2: corte que minimiza a diferença, 1ª linha cabendo
+    let bestD = Infinity;
+    for (let k = 1; k < words.length; k++) {
+      const w1 = _glyphW(words.slice(0, k).join(' '), fs);
+      const w2 = _glyphW(words.slice(k).join(' '), fs);
+      if (w1 > maxW || w2 > maxW) continue;
+      // 2ª linha com 1 palavra só quando não há outro jeito
+      const lone = (words.length >= 3 && k === words.length - 1) ? maxW : 0;
+      const d = Math.abs(w1 - w2) + lone;
+      if (d < bestD) { bestD = d; best = k; }
+    }
+  }
+  if (best < 0) {
+    // não cabe: 1ª linha enche ao máximo, 2ª leva o resto com reticências
+    best = 1;
+    for (let k = 1; k < words.length; k++) {
+      if (_glyphW(words.slice(0, k).join(' '), fs) <= maxW) best = k; else break;
+    }
+  }
+  const l1 = words.slice(0, best).join(' ');
+  const l2 = _ellipsize(words.slice(best).join(' '), maxW, fs);
+  return l1 + '\n' + l2;
 }
 
 function _haptic(kind = 'light') {
@@ -106,9 +170,15 @@ export const ThoughtBubble = memo(function ThoughtBubble({ text, isDark, full = 
   return (
     <Animated.View pointerEvents="none" style={{ alignItems: 'center', opacity: op, transform: [{ translateY: ty }] }}>
       <View style={[hs.bubble, full ? hs.bubbleFull : null, vivo && hs.bubbleVivo, { backgroundColor: bg, borderColor: edge }, shadow]}>
-        <Text maxFontSizeMultiplier={vivo ? 1 : 1.15} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={full ? 0.62 : 0.8} ellipsizeMode="tail" style={[hs.bubbleText, vivo && hs.bubbleTextVivo, { color: ink }]}>
-          {full ? String(text || '').replace(/\s+/g, ' ').trim() : shortNote(text)}
-        </Text>
+        {vivo ? (
+          <Text maxFontSizeMultiplier={1} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.85} ellipsizeMode="tail" style={[hs.bubbleText, hs.bubbleTextVivo, { color: ink }]}>
+            {balanceNote(text, VIVO_BUBBLE.w - 2 * VIVO_BUBBLE.padX, 11)}
+          </Text>
+        ) : (
+          <Text maxFontSizeMultiplier={1.15} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={full ? 0.62 : 0.8} ellipsizeMode="tail" style={[hs.bubbleText, { color: ink }]}>
+            {full ? String(text || '').replace(/\s+/g, ' ').trim() : shortNote(text)}
+          </Text>
+        )}
       </View>
       <View style={[hs.tail1, { backgroundColor: bg }]} />
       <View style={[hs.tail2, { backgroundColor: bg }]} />
@@ -332,7 +402,7 @@ const hs = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   bubbleFull: { maxWidth: HC.bubbleW, paddingHorizontal: 8 },
-  bubbleVivo: { maxWidth: VIVO_BUBBLE.w, height: VIVO_BUBBLE.h, paddingHorizontal: 8, paddingVertical: 0, justifyContent: 'center' },
+  bubbleVivo: { width: VIVO_BUBBLE.w, maxWidth: VIVO_BUBBLE.w, minWidth: VIVO_BUBBLE.w, height: VIVO_BUBBLE.h, paddingHorizontal: VIVO_BUBBLE.padX, paddingVertical: 0, justifyContent: 'center', alignItems: 'center' },
   bubbleTextVivo: { fontSize: 11, lineHeight: 13.5 },
   bubbleText: { fontSize: 11.5, lineHeight: 14, textAlign: 'center', fontWeight: '500', letterSpacing: -0.1 },
   tail1: { position: 'absolute', bottom: -5, left: '50%', marginLeft: -7, width: 8, height: 8, borderRadius: 4 },

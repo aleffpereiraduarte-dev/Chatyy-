@@ -1822,7 +1822,7 @@ function ChatHub() {
             delayLongPress={350}
             activeOpacity={0.6}
             hitSlop={6}
-            style={[styles.headerIconBtn, { marginRight: 4, marginLeft: _vivoHdr(isDark) ? 0 : -6 }, _vivoHdr(isDark)]}
+            style={[styles.headerIconBtn, { marginRight: 4, marginLeft: _vivoHdr(isDark) ? 0 : -6, overflow: 'visible' }, _vivoHdr(isDark)]}
             accessibilityRole="button"
             accessibilityLabel={(t('chat.tabApps') || 'Apps') + (TABS_V2 && emailBadge > 0 ? ', ' + (t('apps.emailUnread', { count: emailBadge > 99 ? '99+' : String(emailBadge) }) || '') : '')}
             accessibilityHint={TABS_V2 ? (t('apps.longPressEmail') || undefined) : undefined}
@@ -1831,8 +1831,8 @@ function ChatHub() {
             <IconAppsTab size={22} color={colors.text} active={showAppsDrawer} />
             {/* [tabs-v2 2026-10-20] selo de e-mails não lidos (o mesmo número da antiga aba Email) */}
             {TABS_V2 && emailBadge > 0 ? (
-              <View pointerEvents="none" style={[styles.appsMailBadge, { backgroundColor: isDark ? '#FFFFFF' : '#0B0B0C', borderColor: isDark ? SHELL_DARK : '#FFFFFF' }]}>
-                <Text style={{ color: isDark ? '#000000' : '#FFFFFF', fontSize: 10.5, fontWeight: '700', letterSpacing: -0.2 }} numberOfLines={1}>{emailBadge > 99 ? '99+' : String(emailBadge)}</Text>
+              <View pointerEvents="none" style={[styles.appsMailBadge, { backgroundColor: isDark ? '#FFFFFF' : '#0B0B0C', borderColor: isDark ? SHELL_DARK : SHELL_LIGHT }]}>
+                <Text maxFontSizeMultiplier={1} style={[styles.appsMailBadgeText, { color: isDark ? '#000000' : '#FFFFFF' }]} numberOfLines={1}>{emailBadge > 99 ? '99+' : String(emailBadge)}</Text>
               </View>
             ) : null}
           </TouchableOpacity>
@@ -2517,7 +2517,10 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { transition: 'background-color 0.2s ease, transform 0.15s cubic-bezier(0.34,1.56,0.64,1)', cursor: 'pointer' } : {}),
   },
   // [tabs-v2 2026-10-20] selo de e-mails não lidos no ícone de Apps do topo
-  appsMailBadge: { position: 'absolute', top: -3, right: -9, minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  // [2026-10-21 lista-viva ajustes] selo estilo iOS: ancorado no canto superior direito do
+  // círculo (−4, −4), altura 18, padding 5, borda 2 na cor do fundo; o botão não corta (overflow visível).
+  appsMailBadge: { position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5, borderWidth: 2, alignItems: 'center', justifyContent: 'center', zIndex: 3, elevation: 3 },
+  appsMailBadgeText: { fontSize: 10.5, lineHeight: 13, fontWeight: '700', letterSpacing: -0.2, textAlign: 'center', includeFontPadding: false },
   headerAccentBtn: {
     backgroundColor: 'rgba(255,255,255,0.1)',
   },
