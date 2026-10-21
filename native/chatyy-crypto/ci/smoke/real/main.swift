@@ -15,7 +15,8 @@ precondition(envelopeVersion(content: "{\"e2e\":5,\"c\":{}}") == 5, "envelopeVer
 let dev = try newDeviceId(platformPrefix: "P")
 let plain = Data("foto 🔒".utf8)
 let enc = try encryptBytes(plain: plain)
-precondition(try decryptBytes(data: enc.data, infoJson: enc.infoJson) == plain, "mídia")
+let back = try decryptBytes(data: enc.data, infoJson: enc.infoJson)
+precondition(back == plain, "mídia")
 let dir = NSTemporaryDirectory() + "chatyy-smoke-\(ProcessInfo.processInfo.processIdentifier)"
 let core = try await CryptoCore.open(
     opts: OpenOptions(storeDir: dir, storePassphrase: String(repeating: "k", count: 32), uid: "1",

@@ -8,15 +8,15 @@ name: E2EE core (chatyy-crypto v5 + legado v4)
 #   package  junta tudo, tamanhos no resumo, SHA256SUMS; release=true publica os assets que os
 #            builds do app baixam (ci/prebuilt.lock). O APP não depende disto até o input
 #            chatyy_crypto=true (ios/android-build-local.yml), que recusa submit.
-# core=prova = núcleo TEMPORÁRIO (ci/prova-core) até o WP-01 exportar a API; depois core=real
-# (ou a variável do repo CHATYY_CRYPTO_CORE=real).
+# core=real (padrão desde 21/10, API do WP-01 publicada); core=prova = núcleo TEMPORÁRIO (ci/prova-core)
+# para isolar problema de esteira (ou a variável do repo CHATYY_CRYPTO_CORE).
 # v4=true roda também os jobs antigos do E2EE v4 (native/e2ee), sem mudança.
 
 on:
   workflow_dispatch:
     inputs:
       core:
-        description: 'Núcleo (auto = variável do repo ou prova; real = native/chatyy-crypto)'
+        description: 'Núcleo (auto = variável do repo ou real; prova = temporário)'
         required: false
         default: 'auto'
         type: choice
@@ -50,7 +50,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: never
-  CHATYY_CRYPTO_CORE: ${{ (inputs.core && inputs.core != 'auto') && inputs.core || vars.CHATYY_CRYPTO_CORE || 'prova' }}
+  CHATYY_CRYPTO_CORE: ${{ (inputs.core && inputs.core != 'auto') && inputs.core || vars.CHATYY_CRYPTO_CORE || 'real' }}
   CHATYY_RUST_TOOLCHAIN: '1.95.0'
 
 jobs:

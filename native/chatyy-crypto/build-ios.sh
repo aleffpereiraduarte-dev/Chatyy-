@@ -27,6 +27,8 @@ TARGETS=(aarch64-apple-ios aarch64-apple-ios-sim)
 [ "$X86" = 1 ] && TARGETS+=(x86_64-apple-ios)
 cc_toolchain "${TARGETS[@]}"
 export IPHONEOS_DEPLOYMENT_TARGET="$CC_IOS_MIN"
+# SDKROOT do runner (macOS) faria o cc-rs compilar o SQLite com o sysroot errado p/ iOS.
+unset SDKROOT
 cc_log "xcode: $(xcodebuild -version | head -1) target=$CARGO_TARGET_DIR"
 
 export RUSTFLAGS="$CC_REMAP"
