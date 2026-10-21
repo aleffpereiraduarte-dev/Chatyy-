@@ -14,8 +14,8 @@ import { useBiaDaily, biaGreetingKey } from '../../services/biaDaily'; // [bia-f
 
 function suggestion(t) {
   const h = new Date().getHours();
-  if (h < 12) return { hello: t('one.goodMorning'), tip: t('one.todaySummary') };
-  if (h < 18) return { hello: t('one.goodAfternoon'), tip: t('one.unreadEmails') };
+  if (h >= 5 && h < 12) return { hello: t('one.goodMorning'), tip: t('one.todaySummary') };
+  if (h >= 12 && h < 18) return { hello: t('one.goodAfternoon'), tip: t('one.unreadEmails') };
   return { hello: t('one.goodEvening'), tip: t('one.tomorrowAgenda') };
 }
 
@@ -67,7 +67,8 @@ function _cardStyle(isDark) {
 }
 
 function BiaHomeCard({ isDark, t, router, P, avatarSize = 54, compact = false, nameStyle, previewStyle }) {
-  const sug = useMemo(() => suggestion(t), [t]);
+  const _hr = new Date().getHours(); // [2026-10-21 fix] saudação acompanha a hora (antes ficava "Bom dia" à tarde) e usa a mesma faixa do biaGreetingKey
+  const sug = useMemo(() => suggestion(t), [t, _hr]); // eslint-disable-line react-hooks/exhaustive-deps
   // [bia-frase 2026-10-19] "Bom dia, Aleff" + frase de 12 h (servidor bia_daily_line, cache MMKV).
   // Sem resposta ainda / kill switch globalThis.__chatyy_bia_daily = false → subtítulo antigo.
   const _lc = useLanguageOptional();

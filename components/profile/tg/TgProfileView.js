@@ -282,11 +282,26 @@ export default function TgProfileView(props) {
     else if (r.like_count != null && r.liked != null) data.patchPost(p.id, { liked_by_me: r.liked, like_count: r.like_count });
   }, [data]);
   const postUrl = (p) => `https://chatyy.com.br/feed/${encodeURIComponent(String(p.id))}`;
-  const onShare = useCallback((p) => { try { Share.share(Platform.OS === 'ios' ? { url: postUrl(p) } : { message: postUrl(p) }); } catch {} }, []);
+  const onShare = useCallback((p) => { try { Promise.resolve(Share.share(Platform.OS === 'ios' ? { url: postUrl(p) } : { message: postUrl(p) })).catch(() => {}); } catch {} }, []);
+  // [2026-10-21 fix] estado inicial = o do servidor (antes tudo vinha "não salvo" e o toggle tirava dos salvos);
+  // falha desfaz; resposta do servidor manda.
+  const _savedOf = (p, b) => (b[p.id] != null ? !!b[p.id] : !!(p.raw && (p.raw.saved_by_me ?? p.raw.user_bookmarked ?? p.raw.saved ?? p.raw.bookmarked)));
   const onBookmark = useCallback((p) => {
-    setBookmarks((b) => ({ ...b, [p.id]: !b[p.id] }));
-    try { require('../../../services/api').feedBookmark(p.id); } catch {}
-  }, []);
+    let want = true;
+    setBookmarks((b) => { want = !_savedOf(p, b); return { ...b, [p.id]: want }; });
+    (async () => {
+      let r = null;
+      try { r = await require('../../../services/api').feedBookmark(p.id); } catch { r = null; }
+      if (!r || r.success === false) {
+        setBookmarks((b) => ({ ...b, [p.id]: !want }));
+        try { require('../../ui/Toast').showToast({ message: t('mural.err.generic', 'Algo deu errado. Tente de novo.'), kind: 'error' }); } catch {}
+        return;
+      }
+      const d = r.data || {};
+      const got = d.bookmarked ?? d.saved;
+      if (got != null) setBookmarks((b) => ({ ...b, [p.id]: !!got }));
+    })();
+  }, [t]);
   const onMore = useCallback((p) => {
     const copy = { label: tr('copyLink'), onPress: () => { try { require('expo-clipboard').setStringAsync(postUrl(p)); } catch {} } };
     if (isSelf) {
@@ -295,7 +310,7 @@ export default function TgProfileView(props) {
           copy,
           { label: tr('deletePost'), destructive: true, onPress: () => _alert(tr('deletePost'), '', [
             { text: tr('cancel'), style: 'cancel' },
-            { text: tr('deletePost'), style: 'destructive', onPress: async () => { data.removePost(p.id); const ok = await deletePost(p.id); if (!ok) data.reloadPosts(); } },
+            { text: tr('deletePost'), style: 'destructive', onPress: async () => { data.removePost(p.id); const ok = await deletePost(p.id); if (!ok) { data.reloadPosts(); try { require('../../ui/Toast').showToast({ message: t('mural.err.delete', 'Não foi possível apagar'), kind: 'error' }); } catch {} } } },
           ]) },
         ],
         cancelLabel: tr('cancel'),
@@ -568,7 +583,7 @@ export default function TgProfileView(props) {
       case 'g': return <GridRow row={item.row} width={width} th={th} lang={lang} onPress={openPost} />;
       case 'c': return (
         <PostCard post={item.post} th={th} lang={lang} author={meAuthor} shadow={shadow}
-          onOpen={openPost} onLike={onLike} onComments={onComments} onShare={onShare} onMore={onMore} onBookmark={onBookmark} bookmarked={!!bookmarks[item.post.id]} />
+          onOpen={openPost} onLike={onLike} onComments={onComments} onShare={onShare} onMore={onMore} onBookmark={onBookmark} bookmarked={_savedOf(item.post, bookmarks)} />
       );
       case 'm': return <MediaRow row={item.row} width={width} th={th} onPress={(x) => (x.post ? openPost(x.post) : openMediaItem(x.it, data.shared.media.items))} />;
       case 'mg': return <Text style={[s.mgroup, { color: th.muted }]}>{item.label}</Text>;

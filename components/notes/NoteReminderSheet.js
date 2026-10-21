@@ -124,11 +124,15 @@ export default function NoteReminderSheet({ visible, onClose, note, reminder, en
   const remove = useCallback(async () => {
     if (!note?.id) { onClose && onClose(); return; }
     setBusy(true);
-    try { await clearNoteReminder(note.id); } catch {}
+    setError(null);
+    try { await clearNoteReminder(note.id); } catch (e) {
+      // [2026-10-21 fix] falhou → mostra o erro e mantém a folha (antes dizia removido e o lembrete seguia agendado)
+      setError(errorText(t, e?.code)); setBusy(false); return;
+    }
     setBusy(false);
     try { onSaved && onSaved(null); } catch {}
     onClose && onClose();
-  }, [note, onClose, onSaved]);
+  }, [note, onClose, onSaved, t]);
 
   const openCustom = useCallback(() => {
     setError(null);
