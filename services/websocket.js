@@ -251,6 +251,32 @@ const REGIONAL_WS_URLS = {
 const REGIONAL_WS_BLOCK_MS = 15 * 60 * 1000;
 let _regionalWsBlockedUntil = 0;
 let _regionalWsFailPending = false;
+// [client-lb 2026-10-21] Com o LB do cliente ligado o bloqueio é POR REGIÃO (a região que falhou
+// fica fora p/ WS e HTTP — api.lbReportWsFailure — e o app segue na próxima região, não no US).
+const _regionalWsBlockedBy = {};
+let _wsApiMod = null;
+function _wsApi() { if (!_wsApiMod) { try { _wsApiMod = require('./api'); } catch {} } return _wsApiMod; }
+function _wsLbOn() { try { return !!_wsApi()?.isClientLbActive?.(); } catch { return false; } }
+function _regionOfWsUrl(url) {
+  try { const m = /^wss:\/\/api-([a-z0-9]+)\.chatyy\.com\.br\/ws$/.exec(String(url || '')); return m ? (m[1] === 'br2' ? 'br' : m[1]) : null; } catch { return null; }
+}
+function _regionalBlocked(region) {
+  if (_wsLbOn()) return (_regionalWsBlockedBy[region] || 0) > Date.now();
+  return Date.now() < _regionalWsBlockedUntil;
+}
+function _blockRegionalWs(url) {
+  if (_wsLbOn()) {
+    let reg = _regionOfWsUrl(url);
+    if (!reg) { try { const r = _wsApi()?.getEdgeInfo?.()?.region; if (r && r !== 'us') reg = r; } catch {} }
+    if (reg) {
+      _regionalWsBlockedBy[reg] = Date.now() + REGIONAL_WS_BLOCK_MS;
+      try { _wsApi()?.lbReportWsFailure?.(reg); } catch {}
+      return;
+    }
+  }
+  _regionalWsBlockedUntil = Date.now() + REGIONAL_WS_BLOCK_MS;
+}
+let _lastRegionalWsUrl = null;
 // [2026-10-09 native-transport] Os sockets NATIVOS (ChatCoreSocket, CallSignalWs,
 // RelayWake — iOS/Android) usam a MESMA entrada regional: o JS repassa a região
 // escolhida ("us"|"br"|"eu") via ChatyyChatCore.setWsRegion; o nativo persiste
@@ -276,8 +302,10 @@ function _pickWsUrl() {
     const info = require('./api').getEdgeInfo?.();
     _syncNativeWsRegion((!g.__chatyyRegionalWsOff && info && REGIONAL_WS_URLS[info.region]) ? info.region : 'us');
     if (g.__chatyyRegionalWsOff) return US_WS_URL;
-    if (_regionalWsFailPending || Date.now() < _regionalWsBlockedUntil) return US_WS_URL;
-    const url = info && REGIONAL_WS_URLS[info.region];
+    if (_regionalWsFailPending || (info && _regionalBlocked(info.region))) return US_WS_URL;
+    // [client-lb 2026-10-21] regiões novas (mia/mex/mad/scl…) → WS da lista do servidor.
+    const url = info && (REGIONAL_WS_URLS[info.region] || _wsApi()?.getRegionWsUrl?.(info.region));
+    if (url && url !== US_WS_URL) _lastRegionalWsUrl = url;
     return url || US_WS_URL;
   } catch {
     return US_WS_URL;
@@ -652,7 +680,7 @@ class MailWebSocket {
         break;
       case 'authed':
         if (ev.regionalBlocked) {
-          _regionalWsBlockedUntil = Date.now() + REGIONAL_WS_BLOCK_MS;
+          _blockRegionalWs(_lastRegionalWsUrl);
           try { this._logGhost?.('regional_ws_fallback', { native: true }); } catch {}
         }
         if (typeof ev.reconnectMs === 'number') this._lastNativeReconnectMs = ev.reconnectMs;
@@ -2438,7 +2466,7 @@ class MailWebSocket {
           this._wsAttempt.authed = true;
           if (!this._wsAttempt.regional && _regionalWsFailPending) {
             // Regional falhou e o US autenticou em seguida → problema do edge.
-            _regionalWsBlockedUntil = Date.now() + REGIONAL_WS_BLOCK_MS;
+            _blockRegionalWs(_lastRegionalWsUrl);
             try { this._logGhost?.('regional_ws_fallback', {}); } catch {}
           }
         }

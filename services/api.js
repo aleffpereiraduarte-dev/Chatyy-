@@ -97,9 +97,32 @@ function _edgePoolSlot() {
     return _edgePoolSlotVal;
   } catch { return 0; }
 }
+// ─── [client-lb 2026-10-21] Balanceamento no cliente (services/clientLb.js) ───
+// Regiões que só existem na lista do servidor (ex.: mia/mex/mad/scl quando ativadas) viram
+// servidores "extras" aqui; com o LB desligado (__chatyy_client_lb=false, lista "lb":false
+// ou web) só EDGE_SERVERS vale = comportamento antigo.
+function _lb() { try { return require('./clientLb'); } catch { return null; } }
+function _lbOn() { try { const L = _lb(); return !!(L && L.isClientLbOn()); } catch { return false; } }
+let _lbExtraServers = [];
+let _lbSt = null; // estado do LB (ver _lbS) — declarado cedo: _restoreCachedServer roda no load do módulo
+function _allServers() { return (_lbExtraServers.length && _lbOn()) ? EDGE_SERVERS.concat(_lbExtraServers) : EDGE_SERVERS; }
+function _lbSyncExtras() {
+  try {
+    const L = _lb(); if (!L) return;
+    const known = new Set(EDGE_SERVERS.map(s => s.region));
+    const out = [];
+    for (const r of L.getList().regions) {
+      if (known.has(r.id)) continue;
+      r.hosts.forEach((h, i) => {
+        out.push({ url: h.url, region: r.id, base: h.url, ...(h.o !== r.id ? { origin: h.o } : {}), ...(i > 0 ? { alt: true } : {}), lb: true });
+      });
+    }
+    _lbExtraServers = out;
+  } catch {}
+}
 // Origens utilizáveis da região, na ordem de preferência desta instalação.
 function _regionOrigins(region) {
-  const all = EDGE_SERVERS.filter(s => s.region === region && !_edgeOriginOff(_originOf(s)));
+  const all = _allServers().filter(s => s.region === region && !_edgeOriginOff(_originOf(s)));
   if (all.length < 2) return all;
   const i = _edgePoolSlot() % all.length;
   return [all[i], ...all.filter((_, j) => j !== i)];
@@ -270,15 +293,17 @@ function _edgeIsDown(region) {
 }
 function _edgeServerOfUrl(u) {
   if (typeof u !== 'string') return null;
-  return EDGE_SERVERS.find(e => e.region !== 'us' && u.startsWith(e.url + '/')) || null;
+  return _allServers().find(e => e.region !== 'us' && u.startsWith(e.url + '/')) || null;
 }
 function _markEdgeDown(srv, why) {
   const origin = _originOf(srv);
   if (!origin || origin === 'us') return;
   _edgeDownUntil[origin] = Date.now() + _EDGE_DOWN_MS;
   const onIt = !_bestServer || _originOf(_bestServer) === origin || API_URL.startsWith(srv.url + '/');
-  const next = _serverForRegion(srv.region, origin) || EDGE_SERVERS.find(s => s.region === 'us');
+  // [client-lb 2026-10-21] irmã da região → próxima região do ranking medido → US (última).
+  const next = _serverForRegion(srv.region, origin) || (_lbOn() ? _lbNextServer(srv.region) : null) || EDGE_SERVERS.find(s => s.region === 'us');
   if (next && onIt) {
+    if (_lbOn() && next.region !== srv.region) _lbNoteFailover(srv.region, next, why);
     // ts "envelhecido" → o tick de 5 min re-proba logo após o prazo (não fica 30 min preso fora).
     _bestServer = { ...next, latency: null, ts: Date.now() - EDGE_CHOICE_TTL_MS + _EDGE_DOWN_MS, net: _edgeNetKey(), src: 'edge-down' };
     _applySelectedServer(next);
@@ -341,6 +366,8 @@ function _edgeNetKey() {
 
 function _persistBestServer() {
   if (!_bestServer) return;
+  // [client-lb 2026-10-21] região que o legado não conhece (mia/mex/…) não vai p/ o cache legado.
+  if (!VALID_REGIONS.includes(_bestServer.region)) return;
   try {
     const mm = _edgeMmkv();
     mm && mm.setString('edge_best_server', JSON.stringify({
@@ -352,9 +379,12 @@ function _persistBestServer() {
 
 // Restore last known best server from MMKV (instant, <1ms)
 function _restoreCachedServer() {
+  // [client-lb 2026-10-21] escolha do LB (última boa) primeiro; inválida → legado abaixo.
+  let _lbRestored = false;
+  try { _lbRestored = _lbOn() && _lbRestore(); } catch {}
   try {
     const mmkv = require('./mmkv');
-    const cached = mmkv.getString('edge_best_server');
+    const cached = _lbRestored ? null : mmkv.getString('edge_best_server');
     if (cached) {
       const parsed = JSON.parse(cached);
       // Invalidate cache if edge list / selection logic changed.
@@ -458,7 +488,12 @@ export function _pickEdgeRegion(results, baseRegion) {
   return pick;
 }
 
-async function detectFastestServer(opts) {
+// [client-lb 2026-10-21] LB no cliente ligado → _lbDetect; desligado → detecção antiga (v15).
+function detectFastestServer(opts) {
+  if (_lbOn()) return _lbDetect(opts);
+  return _legacyDetectFastestServer(opts);
+}
+async function _legacyDetectFastestServer(opts) {
   if (_detecting) return;
   // [2026-10-08 web-receipts-i18n] web com edge bloqueado (CORS) → fica no US.
   if (_webEdgeBlocked && Platform.OS === 'web') return;
@@ -510,8 +545,275 @@ async function detectFastestServer(opts) {
   } catch {} finally { _detecting = false; }
 }
 
+// ─── [client-lb 2026-10-21] Orquestração do balanceamento no cliente ───
+// Regras (decisão pura em services/clientLb.js `decide`):
+//  • mede /health (aquecido: 1 warm-up descartado + 2 amostras na conexão quente → mínimo)
+//    só das candidatas: 2 pela geo (near do servidor = país CF; senão fuso) + atual + última
+//    boa + US (≤4; economia ≤3 e 1 amostra);
+//  • só em 1º plano; boot (se a última medição tem >5 min), troca de rede, e no máx. a cada
+//    cfg.min_gap_s (15 min) — economia: sem remedição periódica;
+//  • troca voluntária só >25 % E >30 ms melhor em 2 medições seguidas (2ª rodada 20 s depois),
+//    no máx. 2 por sessão (rede) e 30 min entre elas; failover é imediato;
+//  • região inativa/fora (lista do servidor) nunca é escolhida; US = última opção;
+//  • WS segue a MESMA região (websocket.js usa getEdgeInfo().region + getRegionWsUrl).
+const _LB_CONFIRM_MS = 20 * 1000;
+const _LB_BOOT_REMEASURE_MS = 5 * 60 * 1000;
+const _LB_NET_REMEASURE_MS = 60 * 1000;
+const _LB_WARM_MS = 8000;
+const _LB_PROBE_MS = 2500;
+function _lbS() {
+  if (_lbSt) return _lbSt;
+  let p = null;
+  try { p = _lb()?.loadState(); } catch {}
+  _lbSt = {
+    results: (p && p.results && typeof p.results === 'object') ? p.results : {},
+    measuredAt: Number(p && p.measuredAt) || 0,
+    measuredNet: (p && p.measuredNet) || null,
+    lastGood: (p && typeof p.lastGood === 'string') ? p.lastGood : null,
+    region: (p && typeof p.region === 'string') ? p.region : null,
+    origin: (p && typeof p.origin === 'string') ? p.origin : null,
+    pending: null, session: null, confirmTimer: null, verifyAt: 0, switches: 0,
+  };
+  return _lbSt;
+}
+function _lbPersist() {
+  const st = _lbS();
+  try {
+    _lb()?.saveState({
+      region: _bestServer ? _bestServer.region : st.region, origin: _bestServer ? _originOf(_bestServer) : st.origin,
+      results: st.results, measuredAt: st.measuredAt, measuredNet: st.measuredNet, lastGood: st.lastGood, v: 1,
+    });
+  } catch {}
+}
+// Origem da lista com health=down (vigia do US) → não usar.
+function _lbHostOk(s) {
+  try {
+    const L = _lb(); if (!L) return true;
+    if (s.region === 'us') return true;
+    const r = L.regionById(s.region);
+    if (!r || !L.isUsable(r)) return false;
+    const h = r.hosts.find(x => x.url === s.url);
+    return !h || h.health !== 'down';
+  } catch { return true; }
+}
+function _lbServerFor(region, exceptOrigin) {
+  if (region === 'us') return EDGE_SERVERS.find(s => s.region === 'us');
+  return _regionOrigins(region).find(s => _originOf(s) !== exceptOrigin && !_originIsDown(_originOf(s)) && _lbHostOk(s)) || null;
+}
+// Próxima região do ranking (medidas por RTT; depois as demais utilizáveis; US por último).
+function _lbNextServer(exceptRegion) {
+  try {
+    const L = _lb(); if (!L) return null;
+    const rank = L.rankRegions(_lbS().results);
+    for (const id of rank) {
+      if (id === exceptRegion) continue;
+      const s = _lbServerFor(id);
+      if (s) return s;
+    }
+  } catch {}
+  return null;
+}
+function _lbNoteFailover(fromRegion, next, why) {
+  try {
+    const st = _lbS();
+    st.pending = null;
+    _lb()?.beacon('failover', { reg: next.region, org: _originOf(next), prev: fromRegion, why: String(why || '').slice(0, 40), rtt: st.results, net: _edgeNetKey() || '' });
+  } catch {}
+}
+function _lbRestore() {
+  _lbSyncExtras();
+  const st = _lbS();
+  if (!st.region) return false;
+  const L = _lb();
+  if (!L || !L.isUsable(L.regionById(st.region))) return false;
+  const srv = (st.origin && _regionOrigins(st.region).find(s => _originOf(s) === st.origin && _lbHostOk(s))) || _lbServerFor(st.region);
+  if (!srv) return false;
+  _bestServer = { ...srv, latency: (st.results && st.results[st.region]) || null, ts: st.measuredAt || 0, net: st.measuredNet || null, src: 'lb-cache' };
+  _applySelectedServer(srv);
+  return true;
+}
+const _lbNow = () => {
+  try { if (typeof performance !== 'undefined' && performance && typeof performance.now === 'function') return performance.now(); } catch {}
+  return Date.now();
+};
+async function _lbTimed(url, ms) {
+  const t0 = _lbNow();
+  try {
+    const res = await _fetchWithTimeout(url + '/health', ms);
+    if (!res || res.status >= 500) return null;
+    return _lbNow() - t0;
+  } catch { return null; }
+}
+const _lbActive = () => { try { const s = require('react-native').AppState.currentState; return !s || s === 'active'; } catch { return true; } };
+// Exportada p/ teste/diagnóstico. → { [region]: rttMs | null }
+export async function _lbMeasure(regions, samples) {
+  const urls = {};
+  // 1) warm-up em paralelo (DNS+TCP+TLS; descartado). Região com 2 origens: a da instalação, senão a irmã.
+  await Promise.all(regions.map(async (id) => {
+    const srvs = id === 'us' ? [EDGE_SERVERS[0]] : _regionOrigins(id).filter(s => !_originIsDown(_originOf(s)) && _lbHostOk(s));
+    for (const s of srvs.slice(0, 2)) {
+      if ((await _lbTimed(s.url, _LB_WARM_MS)) != null) { urls[id] = s.url; return; }
+    }
+  }));
+  // 2) amostras intercaladas, UMA por vez (ninguém compete), conexão quente → mínimo.
+  const out = {};
+  regions.forEach((id) => { out[id] = null; });
+  const live = regions.filter(id => urls[id]);
+  for (let i = 0; i < samples; i++) {
+    if (!_lbActive()) break;
+    const order = i % 2 ? [...live].reverse() : live;
+    for (const id of order) {
+      const dt = await _lbTimed(urls[id], _LB_PROBE_MS);
+      if (dt != null && dt > 0 && (out[id] == null || dt < out[id])) out[id] = Math.max(1, Math.round(dt));
+    }
+  }
+  return out;
+}
+async function _lbDetect(opts) {
+  const L = _lb();
+  if (!L) return _legacyDetectFastestServer(opts);
+  if (_detecting) return;
+  _detecting = true;
+  let legacy = false;
+  try {
+    const why = (opts && opts.why) || (opts && opts.force ? 'net' : 'tick');
+    try {
+      const mm = _edgeMmkv();
+      if (mm && typeof mm.waitForCacheReady === 'function' && !(typeof mm.isCacheReady === 'function' && mm.isCacheReady())) {
+        await Promise.race([mm.waitForCacheReady(), new Promise(r => setTimeout(r, 2500))]);
+      }
+    } catch {}
+    const st = _lbS();
+    const net = _edgeNetKey();
+    if (!st.session || (net && st.session.net && st.session.net !== net)) st.session = { net, voluntary: 0, lastSwitchAt: 0, picked: false };
+    else if (net && !st.session.net) st.session.net = net;
+    await L.refreshList({ force: why === 'net' && L.listAgeMs() > _LB_NET_REMEASURE_MS, altBase: _bestServer && _bestServer.region !== 'us' ? _bestServer.base : null });
+    if (!L.isClientLbOn()) { legacy = true; return; }
+    _lbSyncExtras();
+    const list = L.getList();
+    const cfg = list.cfg || {};
+    const eco = L.isEconomy();
+    // Instalação sem escolha ainda: aplica a dica do servidor (país CF) JÁ; a medição corrige.
+    if (!_bestServer && Array.isArray(list.near) && list.near[0] && list.near[0] !== 'us' && L.isUsable(L.regionById(list.near[0], list))) {
+      const hs = _lbServerFor(list.near[0]);
+      if (hs) { _bestServer = { ...hs, latency: null, ts: 0, net, src: 'hint' }; _applySelectedServer(hs); }
+    }
+    const cur = _bestServer ? _bestServer.region : null;
+    const curSrv = cur ? (cur === 'us' ? EDGE_SERVERS[0] : (_bestServer && _lbHostOk(_bestServer) && !_originIsDown(_originOf(_bestServer)) ? _bestServer : _lbServerFor(cur))) : null;
+    const curUsable = !!(cur && curSrv && L.isUsable(L.regionById(cur, list)));
+    const age = Date.now() - (st.measuredAt || 0);
+    const sameNet = !net || !st.measuredNet || st.measuredNet === net;
+    let need;
+    if (!st.measuredAt || !sameNet || !curUsable) need = true;
+    else if (why === 'confirm') need = !!st.pending;
+    else if (why === 'boot') need = age > _LB_BOOT_REMEASURE_MS;
+    else if (why === 'net') need = age > _LB_NET_REMEASURE_MS;
+    else need = !eco && age >= (cfg.min_gap_s || 900) * 1000;
+    if (need && !_lbActive()) need = false; // 2º plano: rádio/timers congelados → não mede
+    if (!need) {
+      if (!curUsable) {
+        // Região atual ficou inativa/fora na lista → próxima já (sem esperar medir).
+        const nx = _lbNextServer(cur) || EDGE_SERVERS[0];
+        if (!_bestServer || _bestServer.url !== nx.url) {
+          if (cur) _lbNoteFailover(cur, nx, 'list_unusable');
+          _bestServer = { ...nx, latency: null, ts: Date.now(), net, src: 'lb-failover' };
+          _applySelectedServer(nx);
+          _lbPersist();
+        }
+      } else if (cur && curSrv && _bestServer.url !== curSrv.url) {
+        _bestServer = { ...curSrv, latency: _bestServer.latency, ts: _bestServer.ts, net, src: _bestServer.src };
+        _applySelectedServer(curSrv);
+      }
+      return;
+    }
+    const near = Array.isArray(list.near) && list.near.length ? list.near : null;
+    const cands = L.pickCandidates({ list, near, tz: L.deviceTz(), current: curUsable ? cur : null, lastGood: st.lastGood, max: eco ? 3 : 4 });
+    const results = await _lbMeasure(cands, eco ? 1 : 2);
+    const anyOk = Object.keys(results).some(k => typeof results[k] === 'number');
+    if (!anyOk) return; // offline / rede péssima: mantém e tenta no próximo gatilho
+    st.results = { ...results };
+    st.measuredAt = Date.now();
+    st.measuredNet = net;
+    // 1ª escolha da instalação (só dica/legado ainda) = melhor medida direto.
+    const decCur = (!st.session.picked && (!_bestServer || _bestServer.src === 'hint' || !_bestServer.src)) ? null : (curUsable ? cur : (cur || null));
+    const guess = (near || L.tzGuess(L.deviceTz())).find(id => L.isUsable(L.regionById(id, list))) || 'us';
+    const d = L.decide({ results, current: decCur, pending: st.pending, session: st.session, cfg, list, base: guess });
+    st.pending = d.pending;
+    if (d.pending && !st.confirmTimer) {
+      st.confirmTimer = setTimeout(() => { st.confirmTimer = null; detectFastestServer({ why: 'confirm' }); }, _LB_CONFIRM_MS);
+    }
+    const pickSrv = (d.pick === cur && curSrv) ? curSrv : (_lbServerFor(d.pick) || EDGE_SERVERS[0]);
+    const prev = cur;
+    const changed = !_bestServer || _bestServer.url !== pickSrv.url;
+    _bestServer = { ...pickSrv, latency: typeof results[pickSrv.region] === 'number' ? results[pickSrv.region] : null, ts: Date.now(), net, src: 'lb' };
+    if (changed) _applySelectedServer(pickSrv);
+    if (d.kind === 'switch') { st.session.voluntary++; st.session.lastSwitchAt = Date.now(); st.switches++; }
+    if (typeof results[pickSrv.region] === 'number') st.lastGood = pickSrv.region;
+    _persistBestServer();
+    _lbPersist();
+    const bdata = { reg: pickSrv.region, org: _originOf(pickSrv), prev: prev || '', src: why, why: d.why, rtt: results, net: net || '', n: Object.keys(results).length, sw: st.switches };
+    if (!st.session.picked) { st.session.picked = true; L.beacon('pick', bdata); }
+    else if (d.kind === 'switch' || d.kind === 'failover') L.beacon(d.kind, bdata);
+    if (__DEV__) console.log('[API] LB ' + d.kind + ' ' + pickSrv.region + ' (' + d.why + ', ' + why + ') ' + cands.map(r => r + '=' + (results[r] ?? '-')).join(' '));
+  } catch {} finally {
+    _detecting = false;
+    if (legacy) _legacyDetectFastestServer(opts);
+  }
+}
+// Timeout numa leitura no edge: confere o /health da origem e da próxima; só troca se a
+// origem não responde E a próxima sim (rede do usuário ruim ≠ edge fora). 1×/30 s.
+function _lbVerifyAfterTimeout(srv) {
+  try {
+    const st = _lbS();
+    if (Date.now() - st.verifyAt < 30000) return;
+    st.verifyAt = Date.now();
+    const nx = _serverForRegion(srv.region, _originOf(srv)) || _lbNextServer(srv.region);
+    if (!nx) return;
+    Promise.all([_lbTimed(srv.url, 3000), _lbTimed(nx.url, 3000)]).then(([a, b]) => {
+      if (a == null && b != null) _markEdgeDown(srv, 'timeout+health');
+    }).catch(() => {});
+  } catch {}
+}
+// WS regional falhou antes do auth e o US autenticou (websocket.js): a região fica fora 5 min
+// p/ HTTP também (WS e HTTP na mesma região) → próxima do ranking.
+export function lbReportWsFailure(region) {
+  try {
+    if (!_lbOn() || !region || region === 'us') return;
+    for (const s of _regionOrigins(region)) _edgeDownUntil[_originOf(s)] = Date.now() + _EDGE_DOWN_MS;
+    if (_bestServer && _bestServer.region === region) {
+      const nx = _lbNextServer(region) || EDGE_SERVERS[0];
+      _lbNoteFailover(region, nx, 'ws_preauth');
+      _bestServer = { ...nx, latency: null, ts: Date.now() - EDGE_CHOICE_TTL_MS + _EDGE_DOWN_MS, net: _edgeNetKey(), src: 'lb-failover' };
+      _applySelectedServer(nx);
+      _lbPersist();
+    }
+  } catch {}
+}
+// URL do WS da região (lista do servidor) p/ regiões que o websocket.js não conhece de fábrica.
+export function getRegionWsUrl(region) {
+  try {
+    if (!_lbOn()) return null;
+    const r = _lb()?.regionById(region);
+    return r && _lb().isUsable(r) && r.ws ? r.ws : null;
+  } catch { return null; }
+}
+export function isClientLbActive() { return _lbOn(); }
+// Diagnóstico (tela de debug / QA).
+export function getClientLbInfo() {
+  try {
+    const st = _lbS();
+    const L = _lb();
+    return {
+      on: _lbOn(), region: _bestServer ? _bestServer.region : null, origin: _bestServer ? _originOf(_bestServer) : null,
+      src: _bestServer ? _bestServer.src : null, results: st.results, measuredAt: st.measuredAt, pending: st.pending,
+      session: st.session ? { ...st.session } : null, lastGood: st.lastGood, list: L ? L.getList().src : null,
+      usable: L ? L.usableRegions().map(r => r.id) : [],
+    };
+  } catch { return null; }
+}
+
 // Detect immediately (don't wait 2s) — sai cedo se a escolha persistida for recente.
-detectFastestServer();
+detectFastestServer({ why: 'boot' });
 
 // Reavalia na troca de rede (wifi ↔ celular, volta do offline), com debounce.
 let _edgeNetTimer = null;
@@ -1732,7 +2034,11 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
       }
       return r;
     }
-    if (!_edgeFailed(r, readable)) return r;
+    if (!_edgeFailed(r, readable)) {
+      // [client-lb 2026-10-21] timeout numa leitura: confere o /health em 2º plano (sem refazer).
+      if (r && r.aborted && readable && _lbOn()) _lbVerifyAfterTimeout(srv);
+      return r;
+    }
     const why = st ? 'HTTP ' + st : 'transporte';
     const sib = _serverForRegion(srv.region, _originOf(srv));
     if (sib) {
@@ -1743,6 +2049,19 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
       }
       if (_edgeFailed(rs, readable)) _markEdgeDown(sib, 'irmã: ' + (rs.status ? 'HTTP ' + rs.status : 'transporte'));
       else return r; // irmã devolveu outra coisa (ex.: 500 do PHP) → não insiste no US
+    }
+    // [client-lb 2026-10-21] próxima região do ranking medido antes do US (última opção).
+    if (_lbOn()) {
+      const nx = _lbNextServer(srv.region);
+      if (nx && nx.region !== 'us') {
+        const rn = await _rawApiCallOnce(action, params, method, nx.url);
+        if (rn && rn.status > 0 && rn.status < 500) {
+          _markEdgeDown(srv, why);
+          return rn;
+        }
+        if (_edgeFailed(rn, readable)) _markEdgeDown(nx, 'próxima: ' + (rn.status ? 'HTTP ' + rn.status : 'transporte'));
+        else if (rn && rn.status >= 500) return r;
+      }
     }
     // [failover 2026-10-19] US sabidamente fora (edge em modo limitado devolve 503 nas
     // escritas): não paga mais um prazo inteiro tentando o US.
