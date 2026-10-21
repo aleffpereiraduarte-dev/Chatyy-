@@ -1302,6 +1302,8 @@ function _caption(m) {
   const c = typeof m.content === 'string' ? m.content.trim() : '';
   if (!c) return '';
   if (c === (m.file_name || '')) return '';
+  // [2026-10-21 legenda-nome-arquivo] nome de arquivo com espaços ("Screenshot … at 11.43.17.jpg") não é legenda.
+  if (c.length <= 1200 && c.indexOf('\n') < 0 && /^(?:[^\n]{1,255}?\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp|m4a|mp3|ogg|wav|opus|oga|aac|flac)\s*)+$/i.test(c)) return '';
   if (/^https?:\/\//i.test(c) || /^\/?data\//i.test(c) || c.startsWith('{')) return '';
   return c;
 }

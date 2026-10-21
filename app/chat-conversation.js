@@ -3243,6 +3243,18 @@ function _searchMarkInk(isOwn, ownTextColor, colors) {
   if (isOwn) return (/^#[0-9a-f]{6}$/i.test(String(ownTextColor || '')) && _isDarkHex(ownTextColor)) ? '#FFFFFF' : '#111111';
   return isOwn ? '#111111' : ((colors && colors.background) || '#ffffff');
 }
+// [2026-10-21 legenda-nome-arquivo] "Screenshot 2026-10-21 at 11.43.17.jpg" (nome COM espaços, padrão
+// Mac/iPhone) passava como legenda. Nome de arquivo = 1 linha terminando em extensão de mídia (ou
+// vários nomes assim colados, legenda de álbum antiga).
+const _FN_ONE = /^[^\n]{1,255}?\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp|m4a|mp3|ogg|wav|opus|oga|aac|flac)$/i;
+const _FN_MANY = /^(?:[^\n]{1,255}?\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp|m4a|mp3|ogg|wav|opus|oga|aac|flac)\s*)+$/i;
+function _isFilenameCaption(c, fileName) {
+  const t = String(c || '').trim();
+  if (!t) return false;
+  if (fileName && t === String(fileName).trim()) return true;
+  if (t.length > 1200 || t.indexOf('\n') >= 0) return false;
+  return _FN_ONE.test(t) || _FN_MANY.test(t);
+}
 function _escapeRegExp(str) { return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 const SearchHighlightText = React.memo(function SearchHighlightText({ text, term, style, markBg, markInk }) {
   const str = typeof text === 'string' ? text : '';
@@ -29640,7 +29652,7 @@ function ChatConversationInnerBody() {
           created_at: last.created_at, // sort by the last send
           content: items
             .map(it => it.content)
-            .filter(c => c && !/^[^\s]+\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp|m4a|mp3|ogg|wav|opus|oga|aac|flac)$/i.test(String(c).trim()))
+            .filter((c, k) => c && !_isFilenameCaption(c, items[k] && items[k].file_name))
             .join(' ')
             .slice(0, 500),
           reactions: [],
@@ -31832,9 +31844,7 @@ function ChatConversationInnerBody() {
       const _albumCaption = (() => {
         const c = String(item.content || '').trim();
         if (!c) return '';
-        const onlyFilenames = c.split(/\s+/).every(tok =>
-          /^[^\s]+\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp|m4a|mp3|ogg|wav|opus|oga|aac|flac)$/i.test(tok)
-        );
+        const onlyFilenames = _isFilenameCaption(c);
         return onlyFilenames ? '' : item.content;
       })();
       return (
@@ -32330,7 +32340,7 @@ function ChatConversationInnerBody() {
               }
             } catch {}
           }
-          const _looksLikeFilename = typeof msg.content === 'string' && /^[^\s]+\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp|m4a|mp3|ogg|wav|opus|oga|aac|flac)$/i.test(msg.content.trim());
+          const _looksLikeFilename = typeof msg.content === 'string' && _isFilenameCaption(msg.content, msg.file_name);
           const hasCaption = msg.content && msg.content !== msg.file_name && !_looksLikeFilename;
           return (
             <TouchableOpacity

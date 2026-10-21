@@ -37,6 +37,12 @@ export function nativeAttachUsable() {
   } catch { return false; }
 }
 
+// [2026-10-21 attach-cam] Quadro de câmera AO VIVO na grade do "+" e pré-aquecimento da sessão ao abrir a
+// conversa ligavam/desligavam a câmera (bolinha verde piscando) e travavam a folha (print do founder 21/10).
+// Desligados por padrão; a câmera segue no ícone do composer e no botão Câmera. Religar:
+// globalThis.__chatyy_attach_cam_tile = true (quadro) / __chatyy_cam_prewarm = true (pré-aquecer).
+function _camTileOn() { try { return globalThis.__chatyy_attach_cam_tile === true; } catch { return false; } }
+function _camPrewarmOn() { try { return globalThis.__chatyy_cam_prewarm === true; } catch { return false; } }
 export function nativeCameraUsable() {
   try {
     if (globalThis.__chatyy_native_attach === false || globalThis.__chatyy_native_camera === false) return false;
@@ -255,7 +261,7 @@ export default function NativeAttachSheet({
   // Sessão de câmera pré-configurada: abrir a câmera/tile depois é "quente".
   useEffect(() => {
     const m = getNA();
-    if (!m) return undefined;
+    if (!m || !_camPrewarmOn()) return undefined;
     const id = setTimeout(() => { try { m.prewarmCamera(); } catch {} }, 1500);
     return () => {
       clearTimeout(id);
@@ -282,13 +288,14 @@ export default function NativeAttachSheet({
     let _tg = !(opts && opts.gallery);
     try { if (globalThis.__chatyy_attach_tg === false) _tg = false; } catch {}
     if (_tg) {
-      const order = ['gallery', 'file', 'location', 'contact', 'poll', 'meetup', 'playlist', 'games'];
+      const _ct = _camTileOn(); // [2026-10-21 attach-cam] sem o quadro ao vivo → botão Câmera volta à faixa
+      const order = _ct ? ['gallery', 'file', 'location', 'contact', 'poll', 'meetup', 'playlist', 'games'] : ['gallery', 'camera', 'file', 'location', 'contact', 'poll', 'meetup', 'playlist', 'games'];
       const rename = { meetup: tt(p.t, 'chatConv.event', 'Evento') };
       const by = {};
       actions.forEach((a) => { by[a.key] = a; });
       const out = [];
       order.forEach((k) => { if (by[k]) out.push({ key: k, label: rename[k] || by[k].label }); });
-      actions.forEach((a) => { if (!order.includes(a.key) && a.key !== 'gif' && a.key !== 'camera') out.push(a); });
+      actions.forEach((a) => { if (!order.includes(a.key) && a.key !== 'gif' && (a.key !== 'camera' || !_ct)) out.push(a); });
       actions = out;
     }
     // [assistir-junto 2026-10-20] chaves sem ícone no binário → apelido que ele já desenha (ver watchTogether.attachAliasKey)
@@ -304,7 +311,7 @@ export default function NativeAttachSheet({
       maxSelect: 30,
       // [2026-10-19 media-quality] chip HD começa no nível salvo (Wi-Fi/dados)
       hdDefault: _hdDefault,
-      allowCamera: true,
+      allowCamera: _camTileOn(),
       ...(opts && opts.overKeyboard ? { overKeyboard: true } : null),
       // [2026-10-20 attach-freeze] "Fotos" do painel = SÓ a galeria: sem
       // barra de ações e sem tile de câmera (vale no 744 por OTA);
