@@ -91,6 +91,50 @@ async function _health(m) {
   return h;
 }
 
+// [toque 2026-10-21] Notificações NEGADAS (Android 13+) ou canal "incoming_calls"
+// bloqueado/rebaixado: o FCM de alta prioridade chega, mas a notificação da
+// ligação (e a tela cheia dela) não aparece — o celular não toca. Medido
+// 21/10: 4 de 16 Android ativos com notif_perm=denied. Só 'denied' (o pedido
+// inicial é do fluxo normal de push; 'undetermined' não é tocado aqui).
+const CALL_CHANNEL_ID = 'incoming_calls';
+const IMPORTANCE_DEFAULT = 5; // expo AndroidImportance (NONE=2, MIN=3, LOW=4, DEFAULT=5, HIGH=6)
+async function _notifState() {
+  let N = null;
+  try { N = require('expo-notifications'); } catch { return null; }
+  const out = { denied: false, canAskAgain: false, channelLow: false };
+  try {
+    const p = await N.getPermissionsAsync();
+    out.denied = !!p && p.granted !== true && p.status === 'denied';
+    out.canAskAgain = !!p && p.canAskAgain === true;
+  } catch {}
+  if (!out.denied && typeof N.getNotificationChannelAsync === 'function') {
+    try {
+      const ch = await N.getNotificationChannelAsync(CALL_CHANNEL_ID);
+      const imp = Number(ch?.importance) || 0;
+      out.channelLow = imp > 1 && imp < IMPORTANCE_DEFAULT;
+    } catch {}
+  }
+  return out;
+}
+
+async function _openNotifSettings() {
+  try {
+    const { Linking } = require('react-native');
+    let pkg = '';
+    try { pkg = require('expo-application').applicationId || ''; } catch {}
+    if (!pkg) pkg = 'com.onemundo.mail'; // app.json android.package
+    if (pkg && typeof Linking.sendIntent === 'function') {
+      try {
+        await Linking.sendIntent('android.settings.APP_NOTIFICATION_SETTINGS', [
+          { key: 'android.provider.extra.APP_PACKAGE', value: pkg },
+        ]);
+        return;
+      } catch {}
+    }
+    await Linking.openSettings();
+  } catch {}
+}
+
 function _batteryNeeded(h) {
   if (!h || typeof h !== 'object') return false;
   if (h.ignoringBatteryOptimizations === true) return false;
@@ -115,6 +159,45 @@ export async function maybePromptAndroidCallReadiness(t) {
     const h = await _health(m);
     if (!h) return false;
     const sdk = Number(h.sdk) || Number(Platform.Version) || 0;
+
+    // [toque 2026-10-21] Sem notificação não há tela de chamada — vem antes da tela cheia.
+    let ns = null;
+    try { if (globalThis.__chatyy_android_readiness_notif !== false) ns = await _notifState(); } catch {}
+    // [toque 2026-10-21] 1 foto por sessão (só flags) → mede no servidor quantos
+    // Android estão sem tela cheia / bateria restrita / notificação negada
+    // (/var/mail/_native_diag, prefixo call_ready).
+    try {
+      const b = (v) => (v === true ? 1 : v === false ? 0 : '-');
+      require('./nativeTelemetry').nativeBeacon('call_ready', 'android',
+        `sdk=${sdk} fsi=${b(h.canUseFullScreenIntent)} ign_batt=${b(h.ignoringBatteryOptimizations)} restricted=${b(h.backgroundRestricted)}`
+        + ` bucket=${Number(h.standbyBucket) || '-'} degraded=${Number(h.degradedAt) > 0 ? 1 : 0} notif_denied=${b(ns?.denied)} ch_low=${b(ns?.channelLow)}`);
+    } catch {}
+    if (ns && (ns.denied || ns.channelLow)) {
+      const st = await _canAsk('notif');
+      if (st) {
+        _askedThisSession = true;
+        await _mark('notif', st);
+        return _alert(
+          _tr(t, 'androidReady.notifTitle', 'Ligações não estão tocando'),
+          ns.denied
+            ? _tr(t, 'androidReady.notifBody', 'As notificações do Chatyy estão desativadas, então quando alguém liga o seu celular não toca. Ative as notificações para receber ligações e mensagens, como no WhatsApp.')
+            : _tr(t, 'androidReady.notifChannelBody', 'As notificações de ligação do Chatyy estão silenciadas, então o celular não toca quando alguém liga. Em "Chamadas recebidas", ative som e pop-up.'),
+          ns.denied && ns.canAskAgain ? _tr(t, 'androidReady.allow', 'Permitir') : _tr(t, 'androidReady.openSettings', 'Abrir configurações'),
+          _tr(t, 'androidReady.later', 'Agora não'),
+          () => {
+            if (ns.denied && ns.canAskAgain) {
+              try {
+                require('expo-notifications').requestPermissionsAsync()
+                  .then((r) => { if (r?.granted !== true && r?.canAskAgain === false) _openNotifSettings(); })
+                  .catch(() => _openNotifSettings());
+                return;
+              } catch {}
+            }
+            _openNotifSettings();
+          },
+        );
+      }
+    }
 
     if (sdk >= 34 && h.canUseFullScreenIntent === false && typeof m.requestFullScreenIntentPermission === 'function') {
       const st = await _canAsk('fsi');
