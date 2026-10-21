@@ -2096,6 +2096,18 @@ export default {
   'privacy.migrateAccount': 'Migrar conta',
   'privacy.migrateLabel': 'Migrar conta para novo telefone',
   'privacy.migrateDesc': 'Use o QR de pareamento pra transferir sessões e chaves de criptografia.',
+  // [2026-10-21 adv-privacy-ui]
+  'advPrivScreen.lead': 'Uma camada extra de proteção em todas as suas conversas — para você e para quem conversa com você.',
+  'advPrivScreen.onHint': 'Suas conversas estão protegidas.',
+  'advPrivScreen.offHint': 'Ative para proteger todas as suas conversas.',
+  'advPrivScreen.includedHint': 'Incluído na privacidade avançada.',
+  'advPrivScreen.howTitle': 'Como funciona',
+  'advPrivScreen.how1Title': 'Sem prints nem gravações',
+  'advPrivScreen.how1Body': 'Capturas e gravações de tela das conversas ficam bloqueadas para todos — e a conversa é avisada se alguém tentar.',
+  'advPrivScreen.how2Title': 'As mídias ficam na conversa',
+  'advPrivScreen.how2Body': 'Ninguém exporta a conversa, encaminha ou salva fotos e vídeos dela na galeria.',
+  'advPrivScreen.how3Title': 'A Bia não lê',
+  'advPrivScreen.how3Body': 'Com a proteção ligada, a Bia não acessa as mensagens dessas conversas.',
 
   'chat.reportSpam': 'Reportar como spam',
   'chat.reportSpamConfirm': 'O remetente será marcado e poderá ter sua busca por número desativada se houver mais relatos.',
