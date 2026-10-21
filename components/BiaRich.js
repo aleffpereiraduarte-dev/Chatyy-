@@ -335,7 +335,12 @@ const TEXT_TYPES = { h: 1, quote: 1, task: 1, li: 1, ol: 1, p: 1 };
  */
 export function BiaMarkdown({ text, color, isDark, streaming, t, dense }) {
   if (!text && !streaming) return null;
-  const src = cleanMath(String(text || '')).replace(/\r/g, '');
+  // [2026-10-21 bia-rolagem] o modelo às vezes manda lixo de espaços invisíveis (nbsp/zwsp) e várias
+  // linhas vazias seguidas → bolha com um vão enorme no meio. Colapsa antes de montar os blocos.
+  const src = cleanMath(String(text || '')).replace(/\r/g, '')
+    .replace(/[\u200b\u200c\u200d\u2060\ufeff]+/g, '')
+    .replace(/[\u00a0 \t]{2,}$/gm, '')
+    .replace(/\n{3,}/g, '\n\n');
   const blocks = parseBlocks(src);
   // durante o stream, uma linha "| a | b" ainda sem o separador é o começo de uma
   // tabela — não mostra o texto cru com pipes (a tabela entra pronta logo depois)

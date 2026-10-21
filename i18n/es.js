@@ -82,7 +82,7 @@ export default {
   "biaSet.onRequest": "Al pedirlo",
   "biaSet.dailyHeader": "Frase del día",
   "biaSet.dailySwitch": "Frase del día al inicio",
-  "biaSet.dailyFooter": "Una frase corta de Bia junto con el saludo, arriba de tus conversaciones y al abrir Bia. Cambia cada 12 horas.",
+  "biaSet.dailyFooter": "Una frase corta de Bia junto con el saludo, en la tarjeta de Bia, arriba de tus conversaciones. Cambia cada 12 horas.",
   "biaSet.historyHeader": "Historial",
   "biaSet.historyFooter": "Borra el historial de conversaciones con Bia en todos tus dispositivos. La memoria de Bia no cambia.",
   "biaSet.clearHistory": "Borrar conversaciones con Bia",

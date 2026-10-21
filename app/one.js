@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Pressable,
   KeyboardAvoidingView, Platform, Dimensions,
-  ScrollView, Modal, Linking, Image, Alert, Share, TextInput,
+  ScrollView, Modal, Linking, Image, Alert, Share, TextInput, Keyboard,
 } from 'react-native';
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [bia-fase0 2026-10-18] sheet do sistema p/ "o que estava errado?"
 import { HeaderIconButton } from '../components/nativeHeader';
@@ -37,7 +37,6 @@ import {
 } from '../components/bia/BiaChatLayout';
 import { biaToolLabel } from '../components/BiaRich';
 import { biaTtsRate, biaAutoRead } from '../services/biaPrefs'; // [2026-10-21 bia-ajustes] velocidade + mãos livres
-import { useBiaDaily } from '../services/biaDaily';
 import { safeAlert } from '../services/alerts';
 import { IconEye } from '../components/Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
@@ -73,6 +72,18 @@ function splitFollowups(raw) {
       });
   }
   return out.slice(0, 3);
+}
+// [2026-10-21 bia-rolagem] "ir ao fim" pelo ScrollView de baixo: o scrollToEnd do FlatList usa o
+// tamanho que ELE mediu (sem o respiro do compositor/chips recém-mudado) e parava ~1 compositor
+// antes do fim — a última mensagem ficava atrás dos chips. O ScrollView usa o tamanho real.
+function listToEnd(ref, animated) {
+  const l = ref && ref.current;
+  if (!l) return;
+  try {
+    const sr = l.getScrollResponder && l.getScrollResponder();
+    if (sr && typeof sr.scrollToEnd === 'function') { sr.scrollToEnd({ animated }); return; }
+  } catch {}
+  try { l.scrollToEnd({ animated }); } catch {}
 }
 function extractFollowups(text) {
   if (!text || typeof text !== 'string') return { text: text || '', followups: [] };
@@ -746,7 +757,7 @@ export default function OneScreen() {
   const didFirstScrollRef = useRef(false);
   const scrollBiaToEnd = (force = false) => {
     const animated = didFirstScrollRef.current && !force;
-    try { flatListRef.current?.scrollToEnd({ animated }); } catch {}
+    listToEnd(flatListRef, animated);
     didFirstScrollRef.current = true;
   };
   const recognitionRef = useRef(null);
@@ -2647,7 +2658,7 @@ export default function OneScreen() {
     const was = prevLoadingRef.current;
     prevLoadingRef.current = loading;
     if (!was || loading || !hasMessages) return undefined;
-    const id = setTimeout(() => { try { flatListRef.current?.scrollToEnd({ animated: true }); } catch {} }, 420);
+    const id = setTimeout(() => { listToEnd(flatListRef, true); }, 420);
     return () => clearTimeout(id);
   }, [loading, hasMessages]);
 
@@ -2715,7 +2726,14 @@ export default function OneScreen() {
   // ─── [2026-10-21 bia-conversa] Bia como conversa (layout do chat) ───
   const [chatLayout] = useState(() => biaChatLayoutOn());
   const [chatMenuOpen, setChatMenuOpen] = useState(false);
-  const daily = useBiaDaily(locale || 'pt-BR'); // frase do dia (respeita o ajuste "Frase do dia no início")
+  // teclado aberto → compositor sem o respiro da barra de início (como na conversa)
+  const [chatKbShown, setChatKbShown] = useState(false);
+  useEffect(() => {
+    if (!chatLayout || Platform.OS === 'web') return undefined;
+    const sh = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => setChatKbShown(true));
+    const hd = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => setChatKbShown(false));
+    return () => { try { sh.remove(); hd.remove(); } catch {} };
+  }, [chatLayout]);
   // pílula de data quando o dia muda entre mensagens (a 1ª fica no topo, junto do aviso)
   const dayBreaks = useMemo(() => {
     const out = {};
@@ -2779,7 +2797,41 @@ export default function OneScreen() {
   };
   const helloItem = {
     id: 'bia-hello', role: 'assistant',
-    content: `${greetName ? `${getGreeting(t)}, ${greetName}!` : `${getGreeting(t)}!`}${daily && daily.line ? ` ${daily.line}` : ''}\n\n${t('one.emptyTitle')}`,
+    // [2026-10-21 founder] boas-vindas curtas: só saudação + "Como posso ajudar?" (sem a frase do dia)
+    content: `${greetName ? `${getGreeting(t)}, ${greetName}!` : `${getGreeting(t)}!`} ${t('one.emptyTitle')}`,
+  };
+  // [2026-10-21 bia-rolagem] founder: "se dou scroll para cima, as mensagens sobem demais".
+  //  • onContentSizeChange levava SEMPRE ao fim — e a lista (não invertida, alturas variáveis)
+  //    muda de tamanho enquanto mede linhas ao rolar p/ cima → puxava de volta/pulava. Agora só
+  //    acompanha o fim se o usuário já estava perto dele (ou acabou de enviar);
+  //  • teclado compensado 2× (KeyboardAvoidingView + automaticallyAdjustKeyboardInsets) e insets
+  //    automáticos do iOS → sobrava um vão enorme no fim. Só o KAV compensa; insets automáticos off.
+  const nearEndRef = useRef(true);
+  const chatLenRef = useRef(0);
+  // compositor mudou de altura (chips de próximas perguntas entram/saem, anexo, várias linhas):
+  // o respiro da lista muda junto → se estava no fim, continua no fim (web não avisava o novo tamanho)
+  useEffect(() => {
+    if (!chatLayout || !hasMessages || !nearEndRef.current) return undefined;
+    const id = setTimeout(() => { listToEnd(flatListRef, true); }, 60);
+    return () => clearTimeout(id);
+  }, [chatLayout, composerH, hasMessages]);
+  const onChatScroll = (e) => {
+    const n = e && e.nativeEvent;
+    if (!n) return;
+    const dist = n.contentSize.height - (n.contentOffset.y + n.layoutMeasurement.height);
+    nearEndRef.current = dist < 140;
+  };
+  const onChatContentSize = () => {
+    const len = messages.length;
+    // conversa nova/trocada (zerou ou encolheu) → volta a acompanhar o fim
+    if (len < chatLenRef.current || chatLenRef.current === 0) nearEndRef.current = true;
+    if (!len) { chatLenRef.current = 0; return; }
+    const grew = len > chatLenRef.current;
+    const lastIsUser = grew && messages[len - 1] && messages[len - 1].role === 'user';
+    chatLenRef.current = len;
+    if (!didFirstScrollRef.current) { scrollBiaToEnd(true); return; }
+    if (lastIsUser) nearEndRef.current = true;
+    if (nearEndRef.current) { listToEnd(flatListRef, grew); }
   };
   const renderChatThread = () => (
     <FlatList
@@ -2787,8 +2839,14 @@ export default function OneScreen() {
       data={messages}
       keyExtractor={item => String(item.id)}
       renderItem={renderChatMessage}
-      onContentSizeChange={() => { if (hasMessages) scrollBiaToEnd(); }}
+      onContentSizeChange={onChatContentSize}
+      onScroll={onChatScroll}
+      scrollEventThrottle={64}
       onLayout={() => { if (hasMessages && !didFirstScrollRef.current) scrollBiaToEnd(true); }}
+      initialNumToRender={Math.min(Math.max(messages.length, 12), 60)}
+      windowSize={31}
+      contentInsetAdjustmentBehavior="never"
+      automaticallyAdjustContentInsets={false}
       showsVerticalScrollIndicator={false}
       style={{ flex: 1 }}
       contentContainerStyle={{
@@ -2798,7 +2856,7 @@ export default function OneScreen() {
       }}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="interactive"
-      automaticallyAdjustKeyboardInsets={true}
+      automaticallyAdjustKeyboardInsets={false}
       ListHeaderComponent={(
         <View>
           <BiaDatePill label={firstDayLabel} isDark={isDark} />
@@ -2966,7 +3024,7 @@ export default function OneScreen() {
             onRemoveAttachment={() => setAttachedImage(null)}
             onFocus={() => setInputFocused(true)}
             onBlur={() => setInputFocused(false)}
-            bottomInset={insets.bottom}
+            bottomInset={chatKbShown ? 0 : insets.bottom}
             onHeight={(h) => setComposerH(prev => (Math.abs(prev - h) > 1 ? h : prev))}
             maxWidth={isWide ? CONTENT_MAX + 120 : undefined}
             accessory={chatChips.length ? (

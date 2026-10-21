@@ -82,7 +82,7 @@ export default {
   "biaSet.onRequest": "When asked",
   "biaSet.dailyHeader": "Daily line",
   "biaSet.dailySwitch": "Daily line on the home screen",
-  "biaSet.dailyFooter": "A short line from Bia with your greeting, at the top of your chats and when you open Bia. Changes every 12 hours.",
+  "biaSet.dailyFooter": "A short line from Bia with your greeting, on Bia's card at the top of your chats. Changes every 12 hours.",
   "biaSet.historyHeader": "History",
   "biaSet.historyFooter": "Deletes your chat history with Bia on all your devices. Bia's memory doesn't change.",
   "biaSet.clearHistory": "Delete chats with Bia",

@@ -258,6 +258,8 @@ export function BiaTypingBubble({ isDark, t }) {
 // ─── linha (bolha) ───────────────────────────────────────────────────────────
 const WA_OPTIN_URL = 'https://wa.me/12093093434?text=Oi!%20Quero%20receber%20lembretes%20do%20Chatyy.';
 
+function PlainEnter({ style, children }) { return <View style={style}>{children}</View>; }
+
 export const BiaChatRow = memo(function BiaChatRow({
   item, text, dayLabel, isDark, t, locale, isLastAI, speaking,
   onCopy, onSpeak, onRegenerate, onShare, onFeedback, onLongPressAI, onOpenCard,
@@ -266,13 +268,17 @@ export const BiaChatRow = memo(function BiaChatRow({
   const isUser = item.role === 'user';
   const time = biaTimeLabel(biaMsgTs(item));
   const [revealed, setRevealed] = useState(false);
+  // [2026-10-21 bia-rolagem] só mensagem NOVA entra deslizando; ao rolar p/ cima a lista remonta
+  // linhas antigas (virtualização) e a animação fazia o texto "pular".
+  const [fresh] = useState(() => { const ts = biaMsgTs(item); return !Number.isFinite(ts) || Date.now() - ts < 6000; });
+  const Enter = fresh ? BiaFadeIn : PlainEnter;
   const pill = dayLabel ? <BiaDatePill label={dayLabel} isDark={isDark} /> : null;
 
   if (isUser) {
     return (
       <View>
         {pill}
-        <BiaFadeIn dy={8} duration={260} style={[ms.row, ms.rowOwn]}>
+        <Enter dy={8} duration={260} style={[ms.row, ms.rowOwn]}>
           <View style={[ms.bubble, ms.bubbleOwn, { backgroundColor: c.own }, bubbleOwnStyle(isDark), item.imageUri ? ms.bubbleMedia : null]}>
             {item.imageUri ? (
               <Image source={{ uri: item.imageUri }} style={ms.media} resizeMode="cover" accessibilityIgnoresInvertColors />
@@ -290,7 +296,7 @@ export const BiaChatRow = memo(function BiaChatRow({
               </View>
             ) : null}
           </View>
-        </BiaFadeIn>
+        </Enter>
       </View>
     );
   }
@@ -312,7 +318,7 @@ export const BiaChatRow = memo(function BiaChatRow({
   return (
     <View>
       {pill}
-      <BiaFadeIn dy={6} duration={260} style={[ms.row, ms.rowOther, ms.rowAi]}>
+      <Enter dy={6} duration={260} style={[ms.row, ms.rowOther, ms.rowAi]}>
         <Pressable
           delayLongPress={320}
           onPress={() => { if (content && !streaming && onCopy) setRevealed(r => !r); }}
@@ -357,7 +363,7 @@ export const BiaChatRow = memo(function BiaChatRow({
             />
           </View>
         ) : null}
-      </BiaFadeIn>
+      </Enter>
     </View>
   );
 });
