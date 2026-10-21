@@ -1,0 +1,10 @@
+{
+  "c": {
+    "algorithm": "m.megolm.v1.aes-sha2",
+    "ciphertext": "AwgAEpABMLKEcDUtG+78ZHVFugimkh6t7iZ/5AQAdewLVZkDuqtsIOCIbuZ6Eg86AavHRvP/0ug24rEkN8ackOpXqrAn6eIxUB4ghRjdcYFaphlnCWMBo9SNtU6DZlU8qEFuZGRaAuUJSQFJK7VxzR0NASrLocm0Evqr4h9M1vkS1t3Nl1u5MdrzrMGSfBx0XTJGRdP8UVeH9dLX7utRNSrpSJV8dZGJITm5rULmhomcfgxpMQuspeqBlgQYOv4YXrC3NpEw4OsXvLC87en+9uPrCUL0BDsg69Ou85wI",
+    "device_id": "PEOUXZ2VK5FT4",
+    "sender_key": "mADkCmHG2eZ7B60ycMgpqxRTDAS0IMEWmUvQc6uS9Uk",
+    "session_id": "q6P2HEODKvsJ9v8quZqEUYdzouB8+xxQxLb3/AWbbRc"
+  },
+  "e2e": 5
+}

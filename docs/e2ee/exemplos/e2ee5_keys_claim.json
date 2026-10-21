@@ -1,0 +1,27 @@
+{
+  "action": "e2ee5_keys_claim",
+  "request": {
+    "one_time_keys": {
+      "@u42:chatyy": {
+        "P5BS46Q3TB27C": "signed_curve25519"
+      }
+    }
+  },
+  "response_data": {
+    "failures": {},
+    "one_time_keys": {
+      "@u42:chatyy": {
+        "P5BS46Q3TB27C": {
+          "signed_curve25519:AAAAAAAAADE": {
+            "key": "i5frwNuF/5tHEa2Cbak4emzlSnaiNOQRbS0yRgD3MSs",
+            "signatures": {
+              "@u42:chatyy": {
+                "ed25519:P5BS46Q3TB27C": "lv4mQUwwrvmsGLHIOFYi8xsI22PuT0mwQmgE8H6m+GH+vsNZxCl76nf8qHzKU1S8y522B9QqTI+u3Bjc49e7CA"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

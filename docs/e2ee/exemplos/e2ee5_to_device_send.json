@@ -1,0 +1,23 @@
+{
+  "action": "e2ee5_to_device_send",
+  "request": {
+    "event_type": "m.room.encrypted",
+    "messages": {
+      "@u42:chatyy": {
+        "P5BS46Q3TB27C": {
+          "algorithm": "m.olm.v1.curve25519-aes-sha2",
+          "ciphertext": {
+            "dp3CgybK0uQlZcmVb10WOUZwHu+4Vw7jGBmE3eTQ+A8": {
+              "body": "Awogi5frwNuF/5tHEa2Cbak4emzlSnaiNOQRbS0yRgD3MSsSIDCZX84YaQrPT1JJloTYIzAu69VIQBArdqJ1oe0RIpgHGiCYAOQKYcbZ5nsHrTJwyCmrFFMMBLQgwRaZS9Bzq5L1SSKwCgMKINbM88zivVTF4fBx6XbRM/z7bCj2LtjCU8IhroXu3OEfEAAigArbM7kAom8HqukV0JCy7RW0UDiNJvHbeq11wYX3jStCKr5MGOiJbQPb14v/THBR6h70w0AuHKGhc8rKy+xhdQ7soIc4in+2QIASsUDJC2us935YlXeVxRFHrJ/vmDR8tdnAq43F6ILxxY5tNhRpqAietlA7OP07xGi5kWy0MwxKPE/ICqFAzNQSXVNMu+MjSZPgtiqhyLQsqyTBlmZuW9Sx/J6GhqHNjdkpokXNJ7h9UO1oV1z3nL7dvJv8Hx/xLABj8YlyGVsbWP6zvKNw+OuzrZZnL6M1tKT+XWGFmgvbQ1hGmIj5UZucyHWCdJwp/4uE4xi9HB5Le93e74zNYYEjLh3P5FKtR1YRfFKXKAdUNrYzSXzHITo1FGOeZLQKcd4xGUhSpBJAniUYUgsEho3VHTNgWsPh+gwywgLQ0XjAj0JESHcIRrGYy7ltQ4qh8JdzmYSI3Y37sF9I04NLHBgqaHJpdGaLnXduyDSjAhvqqPmsjDq8O9TWUxEQCV1Oai/AA+KefhzxnQLgRNZgPbtgmXbv2zyboqL1QrFBgnK2aRs/n9dhobzKbdyLXI8J1MLDN2Z6161lcnlOnf/tfJ0TCFDfcBgVVsIgxeDnGceJIv5nB2UuQCPm0/tPUkXhD9PDIuS1IPK0hquMmGY5UciTqSdxdPPISrrXKeyL8YLH7HgO+XUR+hm37Zsl2VbFYdblzEnmZ0yGBU0NSikFHenE/8bEHBsHgrX3gofsB/NXQSVwcEWPSnKgwkTpfXJ8+Bxf72OcSflFQ9z6BO35HqCy9E/OCCIkOSxSYAic1FYs3Q+W6ZZlQzurYkXFm5j/4YTV8x8hLGj5NgQPxiD73EQ4CZTBf2hGSNuTxinqcJQs81iU2pnf6E8exdbClxr+LVJ6+/c0ezP9PR1WFehdXyiIvYLY0h2Gy+ciZpWGAe0TRXPNjoAhnLV5UlNPbo9ithZPuBm5fIiLJZr/OcCUZEGyiAZTpiMV5jyLEWUei9a2tAwEmixgMMBip+vfR2anmabG/Lrky1jJIJDiO/RBgl5LUWa2XnZTS7p7Y4Y/493CJnsm4p7z0rTkGzPFKeHikAATUU/arodcvJ658+I3ZGBsiN/DNdp5nBCVlp0DxKYI/x4v/McD3SN4lMYXvZ9vhYKWIO6uFnhsuXe3A7UA6tfiFjlxYkHg4KtLPOfjOAZAR5BXdynoWklaUl3gRCelIsjBU2c0NTHFs2VNB6Ano4YDymPmNa9xUuvzAg9L9OfNSALcYDr9Tf61aULC77xqthwHBlyOLMOVlbX3iyMMSWXR8GGj9JFHy5u1b0GSYSbPlX8LKAM4o/Pv+QBupGidMxrPowzbNIN0uY8JCDQrU0WWsA/PTU2+Zze/Ya3LnFthpQ1eQrGXrp2KobHvnEkO+7Tk5SK7APAAPjnOQA8T/wYoxRJ/WT3/ThY/Yd50XF9kv4R0jU2IqbIokGjQwxorHHOItkfOpecAjhmrLIaz6BSCcJ0zf7TP+8ER75A9/fB124sf0lGhh5sd6MGAPWmSUo3PxzTB1ynHWy3xUx4FIIkoRmwSzciXKMCDyqrKUbnoq515mc94INKrygWfVaHXH4DXwnNBeQEzJ0JUA9IoL3YVIbslHW0EOqYoq0MA2PiNlgmiMO1yn5XJdz75Gyl+h9f9QLVh2/3SjqdZ2Vr8ObO929O1oJGHJa9r6vZh1xJSpd7tr44crPu+",
+              "type": 0
+            }
+          },
+          "org.matrix.msgid": "01M5EWJT1WGM4YJAJ99X5784B8",
+          "sender_key": "mADkCmHG2eZ7B60ycMgpqxRTDAS0IMEWmUvQc6uS9Uk"
+        }
+      }
+    },
+    "txn_id": "fda8f79536274d9fa2820c3ca0d21a7b"
+  },
+  "response_data": {}
+}

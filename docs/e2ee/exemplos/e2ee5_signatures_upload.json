@@ -1,0 +1,27 @@
+{
+  "action": "e2ee5_signatures_upload",
+  "request": {
+    "@u7:chatyy": {
+      "PEOUXZ2VK5FT4": {
+        "algorithms": [
+          "m.olm.v1.curve25519-aes-sha2",
+          "m.megolm.v1.aes-sha2"
+        ],
+        "device_id": "PEOUXZ2VK5FT4",
+        "keys": {
+          "curve25519:PEOUXZ2VK5FT4": "mADkCmHG2eZ7B60ycMgpqxRTDAS0IMEWmUvQc6uS9Uk",
+          "ed25519:PEOUXZ2VK5FT4": "Qovyjm2xLbMfRJCIg222oUpG0oPaC74engmS+TovMes"
+        },
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:XRrwhMcgQyscygjoU/2LNRIylOzJ9Wbi+EbuGFc35n8": "LM2dnxerKHtd1TLKchqvyFHbQkdchh2xavuWT5NlTxRAvkvYhJm/xSLRX3aZTS+rG/NErGL1xwvHHOYKxxbYDQ"
+          }
+        },
+        "user_id": "@u7:chatyy"
+      }
+    }
+  },
+  "response_data": {
+    "failures": {}
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "action": "e2ee5_backup_keys_put",
+  "request": {
+    "rooms": {
+      "!c971:chatyy": {
+        "sessions": {
+          "q6P2HEODKvsJ9v8quZqEUYdzouB8+xxQxLb3/AWbbRc": {
+            "first_message_index": 0,
+            "forwarded_count": 0,
+            "is_verified": false,
+            "session_data": {
+              "ciphertext": "n/+KP7VXFrg+VWVwIWjbud9Kcli7NEaIFWJSii+evVk+UOfAYL2pMbC9tRgubTS8Hvjf7YIIS6Z2LXaZ+eRF6dDSRH40mRDZFwbS2N2v3v8+Go0ZHEn+aHIl9xV+vheb9KM0NrVUGLIFH7nhhBGBri7Bg+d3UgFEjD7gWPrBLVI++3Mo2HpLs7ynup15S3L/VQ2QXGyOuyVbry9zq+mMBdRACGBSlmvbB+5nCRKNcayu0LGPTZcejEcxqv+M6HM3nbnr0NkNqgS51CLw/yPu7DplDKrQo5/YzLmrNkOP4N4vMkmisZ2GS0Wkdnh1zUpC4EcKnpbLJB63MPZcQkCz2vdmzScTTW3FleM4Lskc1bL7C3lNlCEWIhOeCFGGlezD1qSuLb+JnidBnHWzi4eA9U5CFph6Qmpe0D1hxkDGxzGuTK/yRnVA+WIcvFnmcCBLqhpCjQ55QwhqTu96sBoL0+3NWbkEobgS479hLzr2AdFRkVpNAG0JKbxpnAMmeTie34EBu85E6qwgRhAKvirt8edEiulHV2zzo2EH3I/pTDIdqfh9pQsiNcIDbS+eHnusL79X63XCDtXgNsjw7IcBXMuboD5I1tsjiTOAoVnUUfQr9bObnyBap5t+n+XQ0N8s",
+              "ephemeral": "+AyA70mlG23FISK5mDjbFqy1g50c4B+0GDYyU8PbxCg",
+              "mac": "hXQPndA9DN4"
+            }
+          }
+        }
+      }
+    },
+    "version": "1"
+  },
+  "response_data": {
+    "count": 1,
+    "etag": "1"
+  }
+}

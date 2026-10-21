@@ -1,0 +1,430 @@
+{
+  "action": "e2ee5_keys_upload",
+  "request": {
+    "device_keys": {
+      "algorithms": [
+        "m.olm.v1.curve25519-aes-sha2",
+        "m.megolm.v1.aes-sha2"
+      ],
+      "device_id": "PEOUXZ2VK5FT4",
+      "keys": {
+        "curve25519:PEOUXZ2VK5FT4": "mADkCmHG2eZ7B60ycMgpqxRTDAS0IMEWmUvQc6uS9Uk",
+        "ed25519:PEOUXZ2VK5FT4": "Qovyjm2xLbMfRJCIg222oUpG0oPaC74engmS+TovMes"
+      },
+      "signatures": {
+        "@u7:chatyy": {
+          "ed25519:PEOUXZ2VK5FT4": "gqyT9eGsjb9eYCI69Q5rITRQ1dUOSoN1e4Nh43D143G9XyMjLKX/fOWTb+H4Nc7i00rdf2fZzaGPvsCI0DeQAQ"
+        }
+      },
+      "user_id": "@u7:chatyy"
+    },
+    "fallback_keys": {},
+    "one_time_keys": {
+      "signed_curve25519:AAAAAAAAAA0": {
+        "key": "U1TB/b/YgAs7MjPz58REjVRq9EzO0C4EG2XUcQicckE",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "8s7Bbxv6JrQ6r33P//avFDE1NMuwnk9Xwx8k+TH/21+LJmo/2tP7i2C6ruFnXQB73YdE/mOLsJZW+cs4cf7+CA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAA4": {
+        "key": "qi8caxX6+WOD64WAjQZuvTfhmYqZ11RoadM1NNn2rzg",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "7RM6YIeXQ2HtSc2d+aGrcTAm1UiEmdcTUGAXkfyZLbzbW/JFYGNSIKkYYmEbsCjdKgNk3Ho7QrebSTXef9JkCw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAA8": {
+        "key": "bHbo2f88l7HrihJKDg375t6EG5s0JEp+Vbz2v08VuyY",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "DzWly9VnfL21x9adbYAbGMkAW8rA1QO8NGHu88ORz69W+me0bc5NVx3v3WJAX+PbynSoUw6S2kbXvNOKhZNFAg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAA": {
+        "key": "MP/oXtPcg6AgYk5Yr3jgwrPRgHMGSwR5iC3avkA0sw0",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "Yxm02rK/hQGVBA7+J521QedIOQzUyvPQFRDkTzffu5KWoIqq436UsG5nFEOs2hFXDZauOgCBEIqmKDlWPwJnBg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAE": {
+        "key": "+4Af/y4r+dnPdfESrjb3svhpOy4j1zWDjnl+vfZKmFI",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "KaimgHjnELafB4FUE2ne/0XUs7IWrwIKVJ1yiDe6eUobXW5axbjWMePb5pIKM5uBlT8rXZLtYKHsDpST2/VxDg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAI": {
+        "key": "LjnqypQt9Jc/pbIAWXG5HBePFHPEpbuxMOceK5HIGTM",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "cUi3vTbUvw0WZ3uT1PPWJ3HRt5Sxzmlana0D88jMSSpP6zKgXTtZFlJTSfs9ws9qPO9XtH9/Mz9oIgShVQz5BA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAM": {
+        "key": "3bc4Tq1gMaadqFosno5+z/qIVDgKkil+xIpiL0Muvyo",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "AqxQKMgL82B6xI7ajWsw9tTw6m4nrya6FPLgKXbIscq2aJ4vH27sQjin7x2r70dc/SsVpEX1yP1oajW2dz9kAA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAQ": {
+        "key": "AbJxpRvhzBBVs0fyrGh0mOCs1obfagV107cAbQzVYjY",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "t0GrUXGGdc2b323Ck9ti+/TDaH5qJ3VZoNPZqjB/S5SKncc7NGkyiHvAp69mBXFQXnah9hWpQL9Hl7jIJr/jCA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAU": {
+        "key": "sEMjaBLmrQGdoc228cLMWTtoj62LvKIuWVkfMDS0Bm0",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "688B0lVUCRBDKUsTmrFNpdacsdzBUG2yf6mpXYfWAC3vjqAAqxxXchlvbGjGkl3982CZOlTYK+S4bvZkCYLOBg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAY": {
+        "key": "yXJ4qVaE4vJHPBOYFnlxLTpfo5pDjgolhPsK8wgfWxU",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "pxHXBrcQlk0bEKz1+Uge965IiLr7YmZh2LcRrrglgDsn/l1GcuTzxn6S2mO5fTIZp/PsftTmvcIbU7TMcT0bAA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAc": {
+        "key": "yLBKfQC/b5GgqRtpTToy55U7qzr/QgjrjyzRm129nDQ",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "DMWrWVv5av4VkuBxY3B1BPvp1+acS4TJvo2tvmYlLsUrZk/vjanbD/0cd6lLGNzSwqn5imj5PY0o5JrHu1wgCw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAg": {
+        "key": "vijhZMfDEPmf82l6BiuBJmigHpn9r8PnXZ2SunA07hY",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "nXM7KXz18Iw2cmh83VvT69Vnu38QZYgusaLt+NxE05zMVFSsA6+w/f+vDyU9/g43RpBSTtNN9mXSQop4xXqcDw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAk": {
+        "key": "e5uGLwuFj5arloEQGQhHcULlzolkGp4flp5xRNNLSwg",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "L0WyVkdrszwRRrq8QYGos4cyO06AiohEpGoCkWQRS+IE1o/Ea/awUBu0VEDqyHrllZnXeV532kVoBycXijm0CA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAo": {
+        "key": "gwj9N2HlaQTFm4IWJAbSTfNgydTM3cSDzw/1FRhxWVA",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "PGnUTg0pOUHIWGqypY8ghnERH+8dJ5iZh+8L6K1M1miesVB/TUXcMzw/xW6GZQ/UU+aedH1+z8eIx6TipsZ4Aw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAs": {
+        "key": "VGj5qhOtJD38fBxJYmdyFhSJ1xrjw88TCSJIEKHcTHc",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "R5IwdxMNm2Cfh3SFBPIKzkSnkG7bhKEgC31m3KIbMiKWr0uCiJUaCaLeCts/sd90z0NwE7wCh/p6QXbED6fDDw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAAw": {
+        "key": "42Uy6PKbb/ZGl2ht65/LgSsF2U5+yWxc3Wgjg6FYvww",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "67v5qxUJTABEbkz/KNBimo5u2l37yM54Xa+mPzsWO3chnaS0J4KG7x/r6QCI47RjEBG3pAP0O9iuuOaBNmV4DA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAB0": {
+        "key": "258e3ms3yuevC1z3qkYhWoQ4IBuPBI5KLQ0T9I5b6iE",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "WDCYZd5ZRSr/KlkCZienLmtzA7gQ77KnVV6gRHYL+RgMEMvasN8Ir2f1LMN1kUaAe5waFAmLR5fKQgDUqlqfAA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAB4": {
+        "key": "X4jmQO7+fQsrGcOo3T9a+igJVMxHZK9eoSHw0N3RnVY",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "uS8Ti9H1ELV+SsRnAoYxb2kmgDk8DfIedvVh2okPib52I4naJtOzjklxPHUFoWLWS2OjD5wiYkR95KcNbVa4AA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAB8": {
+        "key": "emUvBRElc/4CDdhxAQuU14k9opcNi4AheZhlSfiBwHw",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "JK+GColpfh6KR2zwEINUx8WD8QKV+RRjUBDFXnPVHCDLBYeuzH1ilhmEj3JAVMgsxsIPocuMA2/3vsdBiOXwCg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABA": {
+        "key": "TZife6a79YsI+sBNhdK2llimhOC0APGKx9YDY+I4sjg",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "kYY27lntKDrsIVYDvRN4k4szoIEXH8VeUoefD2mF48gL7EyPwuiAuMvx74KvV0fc+vT1QGIzXYZcPZhsKKD1DQ"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABE": {
+        "key": "P/h/nEmyZRXkESBIoEfTKoyTPhsve9+vo6kxBFTcuSw",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "YIQj1o+g8GWc9tkoiqrIarrsG80XQqpg3IQTy0t6YafTMCfpwP6HGLEjNFQn3Is9tKnkJx32XzTOROAQ88jTCw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABI": {
+        "key": "1MemN9ACzWY50WofNnv/XnHSSES3RIcEJ42SEnhjF2Q",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "9f64KSguha2118BVgJfhL5sQeLZMV8foFsuumqc8ZD5o6DtPs+vX6mL7Tw8KvWJYXJ21SXNJFsatN1Ul6EGpBg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABM": {
+        "key": "z9IDUo51P3JymOJZxBo3t9bBu6cbxK+zm8PdTd7LnBM",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "brabXM6Xh5glwXXo2bRZutln4E2QgYhcTsBm7Lwe1FrpAGDO6q1iKjHblHj3cV78AhPG/Uwp4ox3eBLMErJxBg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABQ": {
+        "key": "mRPMu4AxpR7D36obVyUHTda4o1UccTQGF3CapJPD+ns",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "ISRfK6vRaMLBXVeChrNzfaIZznl7aQRBvA0PtaFNXsKpaHc2WfeCDon3bGELIbeKSz84Kid90vVAaZ0aOUzyAQ"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABU": {
+        "key": "ta4K7BzYFlKsE/jrnQ/6dA1s7W702K/ef1esMTeOZDg",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "KKv/D0I9W91FJ6bjJWmYGQ8JN3sOaIB4P30TSTuHrHR23jEgQdgJjvpBZ+FkRLB7bTrj0AFXr42b5Dz4QKiaAQ"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABY": {
+        "key": "OZXTzJN86SOUNVoaLOAqGN/53cf7iGC4suUaVyiPDW0",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "L3gQYQHH+ba0xTOPLAZ6ZC+3coAiKrgcBaQZHqATDR8Eu70g91jPfJhSi6Z6yir56pzG19go1WBG15unicn6Cg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABc": {
+        "key": "E5jnCR/wrIrXjMKd0CjHUPEHTcNOAqCpM2fhmkX9x2I",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "Y1Tmv3UkADH/p00tdiTkqBI4VV1xfbqf3Qm0MrglUNxmHwkmkB5dybHXd+oBMX6hg2QzP4144Gd1+0vLCCqABw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABg": {
+        "key": "ZX5z1aAgZ3N6Ip6j/ubxB4+P+KMcStSfEfKYldALMCU",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "k5w+4cJm33/MsbBhBLF884+XLL/y1iyCALpRzEN6QKcVwFMZVpT6e0kgfXWbXO3Q3JH7xhJ0meKFIMp4iRG3AQ"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABk": {
+        "key": "ffkZ+LLX2lHPAxX4EaTWuc3zGAVc/PNrg8PKoEbihAU",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "a/7XgL/JCXnC1ifJjwkM5ZX4c+st7M6ufYWdArGbt9sidT0EZZwadgghyB1nWom0HAuSR7FK+bicVG+GIfLlCA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABo": {
+        "key": "ncn42IakeceoMBBhGwDFScpmME4vRAIdzu8miU8rung",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "3r5of9jJz1Cpwy3yFXKsA/znFcQWPYyLx/qeTqfj/ucTAD5/6MRfAQWNdEgv60aH4SXit820cFRirQhbt9A9BQ"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABs": {
+        "key": "rBVhemumiaxvm1x7/NlX1NCeaM23nVduwUWHwTNy1Xs",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "kxK1McJN3MXUxanGjqUbTTfUUKRdj8742/5xnE7CfZXe/9auidSDUZK8O+c7w3ApaafCqCEs5iWUQSX3lDT8Dw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAABw": {
+        "key": "YxHRrjwctniC03LWTZh86YPib3lbWycWUZ6XFZ0qjSY",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "lBvI23rYIiV5gMDgjWPhoyYM/a1oqO4IhIn9OrRt85rEm77M+kOGgQyDTrByIq1rnzcJtKo3/6EtGIh7aDzfDQ"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAC0": {
+        "key": "n7LcHUKDivV74BEXLKUWGRRxVriSCbrjX31mpzTKV0Q",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "ZlBCok3cnZenDhEwmHLRkxIqFKvins50J8VI6gFm6POqDcxLMJ5RMVB9/QKlXKL4v6UJaWIQdzxP9An3INHxCQ"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAC4": {
+        "key": "hDWnq2YokfHwVVKVmmlx0RxbOSi2qlCJ+ASJmjcUMnA",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "f5goHnZFHUxpg3sgE1OaPaMbgsTCHVnQJijwRORbeehZSNOy/DxyubPj7pthaqLy94tYGUTzRbc/wwYs0kFsAg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAAC8": {
+        "key": "k24uMC9HpmpdRlZDvgnfbl89Bja0EGJRZl6kPXWqDx8",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "TankaahpcFK3M4LORFLYjY3UjBLtaBdYKxVMYnGK3FXCWuRdt5FkHSieSt+9p3/OnFBz4iys6i4MFPtRco4sCw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACA": {
+        "key": "82mXCjP+wL5Vhj/g7riZaX1fbYj4QIWiC6UTLwHyskI",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "KLVGjXEesdHhgz6wuXCZX4UWjlisAX4iycby0uVdMRPiCYT75tUJbScF9qh6nZHcOgNgyorC60c5tVol05RsBA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACE": {
+        "key": "dGlOQFZilltK0bnuwqJOS48iqHzbEwsMG1L79ar9NEc",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "S3kOXEcT6x87S2H+F2SL4XI+XXs4Db7WaRN1mkX2HBGPm6iw63RygX+C54mINX/ArLDmKcFMvdy5exNsOvQ/CQ"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACI": {
+        "key": "FhhMRNF0Jf9PIuiEJPvGQQ7VOmGJJIpPfhzTsUyiymo",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "/Zl/NK8o0ztCDTrPP+k7zTdyvgPexS0/KdpzUogOaUlh5JsPpnPLi+SkjOI3IFGOn3KVnbG/4DhwXp9gF+sSDw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACM": {
+        "key": "5lqaGc/SGMFJNg0QxVC4E76b64DaSXcy+MbbaE1wGB0",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "1bCezXVjqF6EY/GryLOTiCDpZVqLpNft6xS0hgp2kFwhNfJADiD2j66veEi7wiLy9V6R1P78F/rF56Z1jRuVDg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACQ": {
+        "key": "sw27qgitCbDi8Rd823V9EFwD4sFTn1RG+CU6edK5iA8",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "Udi+iF5t/r4T8sx2a00dDpa3W/ppMlJJaiaYR5idq/D0pqHjkTX5+FbNGKSJodUDfh9JUzaIvBjKi3k1LcEQDg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACU": {
+        "key": "N8TcU5hNNR3JJG2Zw48enY20vy0HbxM8RIR3KthCdkU",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "ecQv9LCg2cU3ipbtD9SgbWrgsXbG/IGePQ/Hfx4TfBdkIifGJrJCQ2n4wdlxLgxX2QjfLodRgse3ed0JythVCA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACY": {
+        "key": "d6h5/fKoB0jUlP9zxGlECTtHir7TjoW7p92BYEJUxWU",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "6ZYW56I9MOYpxALE0c9eDoER9NDBNbVtqtJTl/SngcXdlvA1YvPJk6ZpRlDyrYcCHzEAQysSnDBFS5IhrbsGCg"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACc": {
+        "key": "2oonyFqWw2Ho0rGLg6SIajVL1MPc2gBV5OB0aGb/eFM",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "Q8I4U//F9KC/w6UNenUV/bAR63McLpAP/ZCahnbZvBpl+ykuEuM9oFEdE0M7p+VezG9QxMq1+LS3qlvOXvlvAA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACg": {
+        "key": "drOyE0b8S3VCSQctvgR/eeUfBVFVsnyhGZeW/m60nhk",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "7tElGZTsASqgjCdDcCGKfADf61oU8J281EMQpvV1cGt8d5z226BeUViC1pnQEa2OJYtUvK0ArAuOvu1YQ8+fAw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACk": {
+        "key": "KWAA/Nz4YwQlkzd3ckSHf54XerpYSER+eWTIRq/cuw8",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "IXWHPmTefBfCcG+xXXu/7qwE4jCx8y7QZNfZOHzN0Yzzuw8oSqXSSfuw6FRAxPbjSms2grvXRpPJ70qHFB8CAw"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACo": {
+        "key": "Ou/QaE8U+MdzPuMYl/JauIxA5GKFiwRFul5KVLocdSU",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "cSf70ohaZR/vPLdOAhcF0ovzvfPjzw9+4l7GLqRE6wykrCLeQTq7kJoH0xrhUMjnEpCsBkKBhZaxnytnzp4/AQ"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACs": {
+        "key": "B/w2edyDZHou0KD/hj5eF56OAnT0msc6DPmJR+ym0Hw",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "scIR9T9GYJPdvj3izezWrzuvODQRvgoyMjh7mhPbzo1tsscuSJaVa6EeWQLE9MB4MNJJoHRxulb9fIsvPdShAA"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAACw": {
+        "key": "zCrUMg+zHrIbs3GSycl6GMoRsprbzuRGyhxVD4sunlA",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "ews94fajxud0awClPuJT7086/b5DFHpOIlgwMA/0DBViZTsXO30oFhirBoQUDU00dx+BBD2QelDOK+EtM9QwCQ"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAADA": {
+        "key": "/KZZ1BvMkdA6YHvLsrCoXjhcAXvlpVh6U0xfM8AgLTk",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "yECHI+/DN/dIM/xiZ1FoCBjV4A3psP9imvNxut1yBufFGo9kMCfZxB/+nYet99jMwZzTSjRHHgMo0M0Vy2hvBQ"
+          }
+        }
+      },
+      "signed_curve25519:AAAAAAAAADE": {
+        "key": "iM8CptmdQRJEdetqzKIYNkvI3TLxSXWtm43t1mxyFXM",
+        "signatures": {
+          "@u7:chatyy": {
+            "ed25519:PEOUXZ2VK5FT4": "4YTT8TEDcVsDgud+h9Oq68kBWKWXaWeYJfDACtsstJwDQrbaiPMuxlgE7j9joxOZ2KEcOOXn4jeapRqlCbIwCg"
+          }
+        }
+      }
+    }
+  },
+  "response_data": {
+    "one_time_key_counts": {
+      "signed_curve25519": 50
+    }
+  }
+}

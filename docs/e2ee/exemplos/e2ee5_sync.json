@@ -1,0 +1,22 @@
+{
+  "action": "e2ee5_sync",
+  "request": {
+    "dc_since": "",
+    "limit": 100,
+    "td_since": ""
+  },
+  "response_data": {
+    "dc_next": "1",
+    "device_lists": {
+      "changed": [],
+      "left": []
+    },
+    "more": false,
+    "one_time_key_counts": {
+      "signed_curve25519": 50
+    },
+    "td_next": "0",
+    "to_device": [],
+    "unused_fallback_key_types": []
+  }
+}

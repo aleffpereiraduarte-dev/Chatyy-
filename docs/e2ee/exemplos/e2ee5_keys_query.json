@@ -1,0 +1,35 @@
+{
+  "action": "e2ee5_keys_query",
+  "request": {
+    "device_keys": {
+      "@u7:chatyy": []
+    }
+  },
+  "response_data": {
+    "device_keys": {
+      "@u7:chatyy": {
+        "PEOUXZ2VK5FT4": {
+          "algorithms": [
+            "m.olm.v1.curve25519-aes-sha2",
+            "m.megolm.v1.aes-sha2"
+          ],
+          "device_id": "PEOUXZ2VK5FT4",
+          "keys": {
+            "curve25519:PEOUXZ2VK5FT4": "mADkCmHG2eZ7B60ycMgpqxRTDAS0IMEWmUvQc6uS9Uk",
+            "ed25519:PEOUXZ2VK5FT4": "Qovyjm2xLbMfRJCIg222oUpG0oPaC74engmS+TovMes"
+          },
+          "signatures": {
+            "@u7:chatyy": {
+              "ed25519:PEOUXZ2VK5FT4": "gqyT9eGsjb9eYCI69Q5rITRQ1dUOSoN1e4Nh43D143G9XyMjLKX/fOWTb+H4Nc7i00rdf2fZzaGPvsCI0DeQAQ"
+            }
+          },
+          "user_id": "@u7:chatyy"
+        }
+      }
+    },
+    "failures": {},
+    "master_keys": {},
+    "self_signing_keys": {},
+    "user_signing_keys": {}
+  }
+}

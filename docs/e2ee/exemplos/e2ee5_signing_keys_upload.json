@@ -1,0 +1,49 @@
+{
+  "action": "e2ee5_signing_keys_upload",
+  "request": {
+    "master_key": {
+      "keys": {
+        "ed25519:YLz+bu3j8d9CLaaLdRVhEd2t+Fk5umuIJSbbZZ+wrnc": "YLz+bu3j8d9CLaaLdRVhEd2t+Fk5umuIJSbbZZ+wrnc"
+      },
+      "signatures": {
+        "@u7:chatyy": {
+          "ed25519:PEOUXZ2VK5FT4": "B+rwFKa7rhJAvzd87+4cd3UphspBaY1gUsFHXxbgK56klMSvDXBmS7XFfOJEH3EhCX300MMehpSCF5ofyow7DQ",
+          "ed25519:YLz+bu3j8d9CLaaLdRVhEd2t+Fk5umuIJSbbZZ+wrnc": "DVqpsWtgFEtZ3WPrJ6J/hpE7xGNFFyuBakcuftImll7/7/ZnfGobJODl8sh7R+nVYNgcXzHslERVH1etSLwwAg"
+        }
+      },
+      "usage": [
+        "master"
+      ],
+      "user_id": "@u7:chatyy"
+    },
+    "self_signing_key": {
+      "keys": {
+        "ed25519:XRrwhMcgQyscygjoU/2LNRIylOzJ9Wbi+EbuGFc35n8": "XRrwhMcgQyscygjoU/2LNRIylOzJ9Wbi+EbuGFc35n8"
+      },
+      "signatures": {
+        "@u7:chatyy": {
+          "ed25519:YLz+bu3j8d9CLaaLdRVhEd2t+Fk5umuIJSbbZZ+wrnc": "/cKpu3IgKTeiezFxZuRAeDqh2I9Xm+0ALnddEEQ5Ur+xrYj9bGgMSvzCqr1559guN4JUKKd/kd0YKikOKu8ZDA"
+        }
+      },
+      "usage": [
+        "self_signing"
+      ],
+      "user_id": "@u7:chatyy"
+    },
+    "user_signing_key": {
+      "keys": {
+        "ed25519:2gVp+KLhWqV19tiYDayojvgIcrOS7TP1e9BXkKozomw": "2gVp+KLhWqV19tiYDayojvgIcrOS7TP1e9BXkKozomw"
+      },
+      "signatures": {
+        "@u7:chatyy": {
+          "ed25519:YLz+bu3j8d9CLaaLdRVhEd2t+Fk5umuIJSbbZZ+wrnc": "jf6QtpXM72Nm+adD+DX3xdP3FD+5t+qYkedUV7ujq/9l0YNSFXRTr1A6hxg4dUDVNlHQLBbKPiBMGwUtOb1KAg"
+        }
+      },
+      "usage": [
+        "user_signing"
+      ],
+      "user_id": "@u7:chatyy"
+    }
+  },
+  "response_data": {}
+}

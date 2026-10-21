@@ -1,0 +1,18 @@
+{
+  "action": "e2ee5_backup_version_create",
+  "request": {
+    "algorithm": "m.megolm_backup.v1.curve25519-aes-sha2",
+    "auth_data": {
+      "public_key": "3VU68J/4lsUpG6U3f44s/CJ5+dYO8G5wOVabshnlrmI",
+      "signatures": {
+        "@u42:chatyy": {
+          "ed25519:GXSVSJ3w73lyunGQjdfW6nLlFqatr8dWxNDowi3wi6g": "+22eecrPqfN3jVZAe/Df2VxZ8YpN0Z1brlHxtmdU3FTQyjOmt9lWPYiUjTZXqmLf7iyh74GVAEa+axcTgGbMAA",
+          "ed25519:P5BS46Q3TB27C": "AnOSpi9UUWEp4e2wEuRJh8vInfxSSYuH0TqbkJ3Mi/ETInhA8D3oS1s3dYMCfn5VRvG9ZEYjJbYS+1yofc3sDQ"
+        }
+      }
+    }
+  },
+  "response_data": {
+    "version": "1"
+  }
+}
