@@ -197,7 +197,7 @@ import AttachSheetNative, { ATTACH_SHEET_NATIVE } from '../components/chat/Attac
 import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 native-ui-build] group info toggles
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { BorderRadius, FontSize, Spacing, Shadow, ChatBubble, RECONNECT_BANNER_GRACE_MS, THEME_V2 as _THEME_V2, grafite as _grafite, bubbleOwnStyle as _bubbleOwnStyle, bubbleRecvStyle as _bubbleRecvStyle } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, ChatBubble, RECONNECT_BANNER_GRACE_MS, THEME_V2 as _THEME_V2, grafite as _grafite, bubbleOwnStyle as _bubbleOwnStyle, bubbleRecvStyle as _bubbleRecvStyle, ownBubblePalette as _ownBubblePalette, chatOwnBubbleStyle as _chatOwnBubbleStyle } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, isNativeTabletSplit } from '../utils/responsive';
 import { SCAN_DOCUMENT_ENABLED, DIAMONDS_ENABLED } from '../constants/featureFlags';
 // [2026-10-13 diamantes] presente no chat 1:1 (diamond_gift_send context 'chat';
@@ -3239,6 +3239,8 @@ const FormattedText = React.memo(function FormattedText({ text, style, colors })
 // bolha): legível em enviada/recebida, claro/escuro, sem cor de acento. Só é
 // usado enquanto a barra de busca está aberta e a linha está nos resultados.
 function _searchMarkInk(isOwn, ownTextColor, colors) {
+  // [2026-10-21 bolha-clara] tinta escura (bolha clara) → marca escura com letra branca.
+  if (isOwn) return (/^#[0-9a-f]{6}$/i.test(String(ownTextColor || '')) && _isDarkHex(ownTextColor)) ? '#FFFFFF' : '#111111';
   return isOwn ? '#111111' : ((colors && colors.background) || '#ffffff');
 }
 function _escapeRegExp(str) { return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -5659,6 +5661,9 @@ const audioStyles = StyleSheet.create({
 // marks the voicemail as listened on play start.
 // ============================================================
 function VoicemailBubble({ voicemail, messageId, isOwn, colors, t, ownTextColor, styles, transcription: transcriptionProp }) {
+  // [2026-10-21 bolha-clara] tinta escura na bolha própria (bolha clara) → tons escuros.
+  const _vmLight = /^#[0-9a-f]{6}$/i.test(String(ownTextColor || '')) && _isDarkHex(ownTextColor);
+  const _vA = (a) => (_vmLight ? `rgba(24,24,27,${a >= 0.45 ? a : Math.round(a * 60) / 100})` : `rgba(255,255,255,${a})`);
   const [audioUrl, setAudioUrl] = useState(null);
   const [transcription, setTranscription] = useState(transcriptionProp || voicemail.transcription || null);
   const [loading, setLoading] = useState(false);
@@ -5720,7 +5725,7 @@ function VoicemailBubble({ voicemail, messageId, isOwn, colors, t, ownTextColor,
           <Text style={{ fontSize: 13, fontWeight: '700', color: isOwn ? ownTextColor : colors.text }}>
             {t?.('voicemail.title') || 'Mensagem de voz'}
           </Text>
-          <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.7)' : (colors.textTertiary || '#9ca3af') }}>
+          <Text style={{ fontSize: 11, color: isOwn ? _vA(0.7) : (colors.textTertiary || '#9ca3af') }}>
             {t?.('voicemail.afterMissedCall') || 'Após chamada perdida'} · {Math.floor(duration / 60)}:{(duration % 60).toString().padStart(2, '0')}
           </Text>
         </View>
@@ -5743,21 +5748,21 @@ function VoicemailBubble({ voicemail, messageId, isOwn, colors, t, ownTextColor,
           style={{
             flexDirection: 'row', alignItems: 'center', gap: 10,
             paddingHorizontal: 12, paddingVertical: 10,
-            backgroundColor: isOwn ? 'rgba(255,255,255,0.18)' : (colors.primary + '20'),
+            backgroundColor: isOwn ? _vA(0.18) : (colors.primary + '20'),
             borderRadius: 18,
           }}
           accessibilityLabel={t?.('voicemail.tapToPlay') || 'Tocar mensagem de voz'}
         >
           <View style={{
             width: 36, height: 36, borderRadius: 18,
-            backgroundColor: isOwn ? 'rgba(255,255,255,0.28)' : colors.primary,
+            backgroundColor: isOwn ? (_vmLight ? '#18181B' : _vA(0.28)) : colors.primary,
             alignItems: 'center', justifyContent: 'center',
           }}>
             {loading
               ? <ActivityIndicator size="small" color={isOwn ? '#fff' : '#fff'} />
               : <IconPlay size={16} color="#fff" />}
           </View>
-          <Text style={{ fontSize: 13, color: isOwn ? '#fff' : colors.text, flex: 1 }}>
+          <Text style={{ fontSize: 13, color: isOwn ? ownTextColor : colors.text, flex: 1 }}>
             {loading ? (t?.('voicemail.loading') || 'Carregando…') : (t?.('voicemail.tapToPlay') || 'Tocar mensagem')}
           </Text>
         </TouchableOpacity>
@@ -5771,7 +5776,7 @@ function VoicemailBubble({ voicemail, messageId, isOwn, colors, t, ownTextColor,
         <Text
           style={{
             fontSize: 12, fontStyle: 'italic',
-            color: isOwn ? 'rgba(255,255,255,0.85)' : (colors.textSecondary || colors.text),
+            color: isOwn ? _vA(0.85) : (colors.textSecondary || colors.text),
             marginTop: 8, lineHeight: 16,
           }}
           selectable
@@ -12293,13 +12298,16 @@ function ChatConversationInnerBody() {
   // o gradiente em si vem de bubbleOwnStyle no JS / build no nativo), recebida
   // branca (#1C1C1F no escuro), fundo #EDEDEA / #0E0E10.
   const _g2 = _THEME_V2 ? _grafite(isDark) : null;
-  let ownBubbleBg = _g2 ? _g2.ownMid : (isDark ? '#333336' : '#111111'); // [2026-10-15 native-wallpaper] let: tema pode derivar (após wallpaperColor)
+  // [2026-10-21 bolha-clara] própria clara sólida (#E4E4DF / #3A3A40); kill
+  // __chatyy_light_bubbles = false → grafite escuro em gradiente (antes).
+  const _ownP = _g2 ? _ownBubblePalette(isDark) : null;
+  let ownBubbleBg = _ownP ? _ownP.mid : (isDark ? '#333336' : '#111111'); // [2026-10-15 native-wallpaper] let: tema pode derivar (após wallpaperColor)
   const otherBubbleBg = _g2 ? _g2.recv : (isDark ? '#1C1C1E' : '#EEEEF0');
   const chatWallBg = _g2 ? _g2.wall : (isDark ? '#000000' : '#FFFFFF');
-  let ownTextColor = _g2 ? _g2.ownText : (isDark ? '#F5F5F7' : '#FFFFFF');
+  let ownTextColor = _ownP ? _ownP.text : (isDark ? '#F5F5F7' : '#FFFFFF');
   // [2026-10-19 tg-style] hora/✓ mais leves (Telegram); kill switch __chatyy_tg_bubbles = false
   const _tgB = tgBubblesOn();
-  let ownMetaColor = isDark ? (_tgB ? 'rgba(245,245,247,0.56)' : 'rgba(245,245,247,0.62)') : (_tgB ? 'rgba(255,255,255,0.58)' : 'rgba(255,255,255,0.62)');
+  let ownMetaColor = (_ownP && _ownP.light) ? _ownP.meta : (isDark ? (_tgB ? 'rgba(245,245,247,0.56)' : 'rgba(245,245,247,0.62)') : (_tgB ? 'rgba(255,255,255,0.58)' : 'rgba(255,255,255,0.62)'));
   const otherMetaColor = isDark ? (_tgB ? 'rgba(235,235,245,0.50)' : 'rgba(235,235,245,0.55)') : (_tgB ? 'rgba(60,60,67,0.64)' : 'rgba(60,60,67,0.74)');
   // Tinta de destaque dentro da bolha RECEBIDA (links/ícones/menções). Antes
   // era colors.primary (#111 nos DOIS temas) → sumia no escuro.
@@ -12307,7 +12315,7 @@ function ChatConversationInnerBody() {
   // AudioPlayer (componente de voz — intocado) deduz claro/escuro de
   // colors.background. A bolha própria agora é escura nos 2 temas → passa um
   // colors com fundo escuro SÓ pra ela, e os controles saem brancos.
-  const ownAudioColors = useMemo(() => ({ ...colors, background: '#000000' }), [colors]);
+  // [2026-10-21 bolha-clara] ownAudioColors agora é derivado da cor FINAL da bolha (abaixo, após o papel de parede/destaque).
 
   // Bubble shape (settings.js `bubble_shape`, default 'rounded'). Maps the
   // enum to a corner radius. The styles.bubble* defaults bake in radius 18,
@@ -15023,6 +15031,12 @@ function ChatConversationInnerBody() {
     // [2026-10-19 a11y-complete] Aumentar contraste → hora/✓ da bolha própria mais opacos.
     if (colors.highContrast) ownMetaColor = _boostAlpha(ownMetaColor, 0.9);
   }
+  // [2026-10-21 bolha-clara] bolha própria CLARA? (luminância do hex final) → tintas
+  // translúcidas do miolo (chips, divisórias, citação, ícones) viram tinta escura.
+  const _ownIsLight = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(ownBubbleBg || '')) ? !_isDarkHex(ownBubbleBg) : false;
+  const _ownA = (a) => (_ownIsLight ? `rgba(24,24,27,${a >= 0.45 ? a : Math.round(a * 60) / 100})` : `rgba(255,255,255,${a})`);
+  // AudioPlayer deduz a tinta da bolha própria de colors.chatBubbleOwn (luminância).
+  const ownAudioColors = useMemo(() => ({ ...colors, background: _ownIsLight ? '#FFFFFF' : '#000000', chatBubbleOwn: /^#[0-9a-f]{6}$/i.test(String(ownBubbleBg || '')) ? ownBubbleBg : (_ownIsLight ? '#E4E4DF' : '#111111') }), [colors, _ownIsLight, ownBubbleBg]);
   const [showWallpaperPicker, setShowWallpaperPicker] = _useStateT(false);
   const [showHeaderMenu, setShowHeaderMenu] = _useStateT(false);
   // [2026-10-10 contact-info] Menu ⋮ enxuto: atalhos rápidos + "Mais" (sub-lista).
@@ -27238,7 +27252,7 @@ function ChatConversationInnerBody() {
   };
   const _ciMoreRows = (go) => {
     const rows = [
-      { id: 'aiSummary', sid: 'more', icon: 'sparkles', title: _ciTr('chatSum.menuLabel', 'Resumir com a Bia'), onPress: () => go(runAiSummary) },
+      // [2026-10-21 e2ee-sem-ia] "Resumir com a Bia" REMOVIDO (conversas E2EE: a Bia não lê o conteúdo).
       { id: 'stats', sid: 'more', icon: 'chart', title: _ciTr('chatConv.stats', 'Estatísticas'), onPress: () => go(() => setShowStatsModal(true)) },
       { id: 'scheduled', sid: 'more', icon: 'calendar', title: _ciTr('chatConv.scheduledMessages', 'Mensagens agendadas'), onPress: () => go(() => { setShowScheduledMessages(true); loadScheduledMessages(); }) },
       { id: 'translate', sid: 'more', icon: 'globe', title: _ciTr('chatConv.autoTranslate', 'Auto-traduzir'), val: autoTranslateLocale ? String(autoTranslateLocale).toUpperCase() : _ciTr('common.off', 'Desativado'), onPress: () => go(() => setShowAutoTranslatePicker(true)) },
@@ -33353,16 +33367,16 @@ function ChatConversationInnerBody() {
                       paddingHorizontal: 10,
                       paddingVertical: 5,
                       borderRadius: 12,
-                      backgroundColor: isOwn ? 'rgba(255,255,255,0.18)' : (colors.primary + '14'),
+                      backgroundColor: isOwn ? _ownA(0.18) : (colors.primary + '14'),
                     }}
                   >
                     <Svg width={12} height={12} viewBox="0 0 24 24" style={{ marginRight: 5 }}>
                       {msg._txHidden
-                        ? <Path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z M12 9a3 3 0 100 6 3 3 0 000-6z" stroke={isOwn ? '#fff' : otherInk} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                        : <Path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24 M1 1l22 22" stroke={isOwn ? '#fff' : otherInk} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                        ? <Path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z M12 9a3 3 0 100 6 3 3 0 000-6z" stroke={isOwn ? ownTextColor : otherInk} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                        : <Path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24 M1 1l22 22" stroke={isOwn ? ownTextColor : otherInk} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
                       }
                     </Svg>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: isOwn ? '#fff' : otherInk }}>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: isOwn ? ownTextColor : otherInk }}>
                       {msg._txHidden
                         ? (t('chatConv.showTranscript') || 'Mostrar transcrição')
                         : (t('chatConv.hideTranscript') || 'Ocultar transcrição')}
@@ -33387,7 +33401,7 @@ function ChatConversationInnerBody() {
                 }
                 if (!tx.text) return null;
                 return (
-                  <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isOwn ? 'rgba(255,255,255,0.2)' : colors.border }}>
+                  <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isOwn ? _ownA(0.2) : colors.border }}>
                     <Text style={{ fontSize: 10, fontWeight: '600', color: isOwn ? ownMetaColor : otherMetaColor, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                       {t('chatConv.translated') || 'Traduzido'}
                       {tx.sourceLang && tx.targetLang
@@ -33406,22 +33420,22 @@ function ChatConversationInnerBody() {
                   disabled={isTranscribing}
                   activeOpacity={0.6}
                   // [2026-10-14 vis-audit] era texto sublinhado (cara de link) → chip discreto P&B c/ ícone de texto
-                  style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 5, marginTop: 6, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth, borderColor: isOwn ? 'rgba(255,255,255,0.35)' : (isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.16)') }}
+                  style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 5, marginTop: 6, paddingVertical: 3, paddingHorizontal: 8, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth, borderColor: isOwn ? _ownA(0.35) : (isDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.16)') }}
                   hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
                   accessibilityRole="button"
                   accessibilityLabel={t('chat.transcribe') || 'Transcrever'}
                 >
                   {isTranscribing ? (
                     <>
-                      <ActivityIndicator size={11} color={isOwn ? 'rgba(255,255,255,0.85)' : otherInk} />
-                      <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.85)' : otherInk, fontWeight: '500' }}>
+                      <ActivityIndicator size={11} color={isOwn ? _ownA(0.85) : otherInk} />
+                      <Text style={{ fontSize: 12, color: isOwn ? _ownA(0.85) : otherInk, fontWeight: '500' }}>
                         {t('chat.transcribing') || 'Transcrevendo...'}
                       </Text>
                     </>
                   ) : (
                     <>
-                      <IconFileText size={12} color={isOwn ? 'rgba(255,255,255,0.85)' : otherInk} />
-                      <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.85)' : otherInk, fontWeight: '500' }}>
+                      <IconFileText size={12} color={isOwn ? _ownA(0.85) : otherInk} />
+                      <Text style={{ fontSize: 12, color: isOwn ? _ownA(0.85) : otherInk, fontWeight: '500' }}>
                         {transcribeErr === 'unavailable'
                           ? (t('chat.transcribeUnavailable') || 'Transcrição indisponível')
                           : transcribeErr
@@ -33434,7 +33448,7 @@ function ChatConversationInnerBody() {
               ) : null}
               {audioUploading && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                  <ActivityIndicator size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} />
+                  <ActivityIndicator size={10} color={isOwn ? _ownA(0.5) : colors.textTertiary} />
                   <Text style={{ fontSize: 10, color: isOwn ? ownMetaColor : otherMetaColor }}>
                     {t('chat.uploading') || 'Enviando'} {audioProgress}%
                   </Text>
@@ -33685,8 +33699,8 @@ function ChatConversationInnerBody() {
           const _csP = _csMod.parseContactPayload(ct);
           const _openCard = () => { try { require('../components/chat/ContactCardSheet').openContactCard(ct); } catch {} };
           if (_csP.count > 1) {
-            const _cardBgM = isOwn ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.18)') : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)');
-            const _divM = isOwn ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.18)') : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
+            const _cardBgM = isOwn ? (_ownIsLight ? 'rgba(24,24,27,0.05)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.18)')) : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)');
+            const _divM = isOwn ? (_ownIsLight ? 'rgba(24,24,27,0.12)' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.18)')) : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
             const _accM = isOwn ? ownTextColor : otherInk;
             const _nT = (t('shareContact.nContacts') && t('shareContact.nContacts') !== 'shareContact.nContacts' ? t('shareContact.nContacts') : '{n} contatos').split('{n}').join(String(_csP.count));
             const _vaT = (t('shareContact.viewAll') && t('shareContact.viewAll') !== 'shareContact.viewAll') ? t('shareContact.viewAll') : 'Ver todos';
@@ -34107,15 +34121,15 @@ function ChatConversationInnerBody() {
               }}>
                 <View style={{
                   width: 38, height: 38, borderRadius: 19,
-                  backgroundColor: isMissed ? '#EF444420' : (isOwn ? 'rgba(255,255,255,0.18)' : colors.primary),
+                  backgroundColor: isMissed ? '#EF444420' : (isOwn ? _ownA(0.18) : colors.primary),
                   alignItems: 'center', justifyContent: 'center',
                 }}>
                   {isVideo
-                    ? <IconVideo size={18} color={isMissed ? '#EF4444' : '#fff'} />
-                    : <IconPhone size={18} color={isMissed ? '#EF4444' : '#fff'} />}
+                    ? <IconVideo size={18} color={isMissed ? '#EF4444' : (isOwn ? ownTextColor : '#fff')} />
+                    : <IconPhone size={18} color={isMissed ? '#EF4444' : (isOwn ? ownTextColor : '#fff')} />}
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '600', color: isOwn ? '#fff' : colors.text }}>
+                  <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '600', color: isOwn ? ownTextColor : colors.text }}>
                     {isVideo ? (t('call.videoCall') || 'Chamada de v\u00EDdeo') : (t('call.audioCall') || 'Chamada de voz')}
                   </Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
@@ -34124,7 +34138,7 @@ function ChatConversationInnerBody() {
                       let _sub = '';
                       try { _sub = require('../components/chat/nativeRowCards').callCardSubtitle(callData, isOwn, (k, fb) => { const v = t(k); return v && v !== k ? v : fb; }); } catch { _sub = isMissed ? (t('chatConv.missedCall') || 'Perdida') : durationStr; }
                       if (!_sub) return null;
-                      return <Text numberOfLines={1} style={{ fontSize: 12, color: (isMissed && !isOwn) ? '#EF4444' : (isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary) }}>{_sub}</Text>;
+                      return <Text numberOfLines={1} style={{ fontSize: 12, color: (isMissed && !isOwn) ? '#EF4444' : (isOwn ? _ownA(0.6) : colors.textTertiary) }}>{_sub}</Text>;
                     })()}
                   </View>
                 </View>
@@ -34138,10 +34152,10 @@ function ChatConversationInnerBody() {
                   delayLongPress={350}
                   style={{
                     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
-                    backgroundColor: isOwn ? 'rgba(255,255,255,0.2)' : (colors.primary + '18'),
+                    backgroundColor: isOwn ? _ownA(0.2) : (colors.primary + '18'),
                   }}
                 >
-                  <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '600', color: isOwn ? '#fff' : otherInk }}>
+                  <Text numberOfLines={1} style={{ fontSize: 13, fontWeight: '600', color: isOwn ? ownTextColor : otherInk }}>
                     {t('chatConv.callContact') || 'Ligar'}
                   </Text>
                 </TouchableOpacity>
@@ -34225,7 +34239,7 @@ function ChatConversationInnerBody() {
               : '';
           // Own bubble on LIGHT theme: white accent stripe vanished on light
           // lavender — use a visible purple stripe; keep white on dark.
-          const accent = isOwn ? 'rgba(255,255,255,0.85)' : otherInk;
+          const accent = isOwn ? _ownA(0.85) : otherInk;
           // Status TTL = 24h. WhatsApp pattern: when user taps an expired
           // snapshot, show "Status nao disponivel" toast in vez de navegar
           // pra um profile que vai falhar silenciosamente. Backend agora
@@ -34292,7 +34306,7 @@ function ChatConversationInnerBody() {
                   padding: 8,
                   borderLeftWidth: 3,
                   borderLeftColor: accent,
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
+                  backgroundColor: isOwn ? _ownA(0.12) : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
                   borderRadius: 10,
                   marginBottom: 6,
                 }}
@@ -34355,15 +34369,15 @@ function ChatConversationInnerBody() {
                     {label}
                   </Text>
                   {snippet ? (
-                    <Text numberOfLines={2} style={{ fontSize: 12.5, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textSecondary }}>
+                    <Text numberOfLines={2} style={{ fontSize: 12.5, color: isOwn ? _ownA(0.85) : colors.textSecondary }}>
                       {snippet}
                     </Text>
                   ) : fallbackTypeLabel ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                      {isImage ? <IconImage size={13} color={isOwn ? 'rgba(255,255,255,0.8)' : colors.textSecondary} />
-                        : isVideo ? <IconVideo size={13} color={isOwn ? 'rgba(255,255,255,0.8)' : colors.textSecondary} />
+                      {isImage ? <IconImage size={13} color={isOwn ? _ownA(0.8) : colors.textSecondary} />
+                        : isVideo ? <IconVideo size={13} color={isOwn ? _ownA(0.8) : colors.textSecondary} />
                         : null}
-                      <Text style={{ fontSize: 12.5, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textSecondary }}>
+                      <Text style={{ fontSize: 12.5, color: isOwn ? _ownA(0.85) : colors.textSecondary }}>
                         {fallbackTypeLabel}
                       </Text>
                     </View>
@@ -34380,7 +34394,7 @@ function ChatConversationInnerBody() {
         case 'location_request': { // [loc-pedido 2026-10-19] cartão Compartilhar/Recusar (desligado → texto legível)
           let LRC = null; try { if (require('../services/locationRequest').locReqEnabled()) LRC = require('../components/chat/LocationRequestCard').default; } catch {}
           if (!LRC) return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{msg.content}</Text>;
-          return <LRC msg={msg} isOwn={isOwn} currentEmail={currentEmail} colors={colors} isDark={isDark} t={t} peerName={conversationName}
+          return <LRC msg={msg} isOwn={isOwn} ownInk={ownTextColor} currentEmail={currentEmail} colors={colors} isDark={isDark} t={t} peerName={conversationName}
             onAction={(m, a) => { try { _locReqActionRef.current && _locReqActionRef.current(m, a); } catch {} }} />;
         }
         case 'watch_session': { // [assistir-junto 2026-10-20] convite ao vivo com Entrar
@@ -34390,7 +34404,7 @@ function ChatConversationInnerBody() {
             onOpen={() => router.push({ pathname: '/watch-room', params: { cid: String(conversationId), name: conversationName || '' } })} />;
         }
         case 'game': { // [jogos 2026-10-18] cartão do jogo (convite/andamento/resultado)
-          return <GameChatCard msg={msg} isOwn={isOwn} currentEmail={currentEmail} colors={colors} isDark={isDark} t={t}
+          return <GameChatCard msg={msg} isOwn={isOwn} ownInk={ownTextColor} currentEmail={currentEmail} colors={colors} isDark={isDark} t={t}
             onAction={(m, a) => { try { _gameCardActionRef.current && _gameCardActionRef.current(m, a); } catch {} }} />;
         }
         case 'meetup': {
@@ -34460,7 +34474,7 @@ function ChatConversationInnerBody() {
                 ) : null}
               </Pressable>
               {/* Body */}
-              <View style={{ backgroundColor: isOwn ? 'rgba(255,255,255,0.08)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'), padding: 10 }}>
+              <View style={{ backgroundColor: isOwn ? _ownA(0.08) : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'), padding: 10 }}>
                 {/* Date/time row */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <IconClock size={14} color={isPast ? '#6b7280' : '#111111'} />
@@ -34540,7 +34554,7 @@ function ChatConversationInnerBody() {
                           flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center', opacity: _mState.cancelled ? 0.4 : 1,
                           backgroundColor: btnColors[status],
                           borderWidth: active ? 0 : 1,
-                          borderColor: isOwn ? 'rgba(255,255,255,0.15)' : (colors.border + '60'),
+                          borderColor: isOwn ? _ownA(0.15) : (colors.border + '60'),
                         }}
                       >
                         <Text style={{ fontSize: 12, color: active ? '#fff' : (isOwn ? ownTextColor : colors.text), fontWeight: active ? '700' : '500' }}>{labels[status]}</Text>
@@ -34784,7 +34798,7 @@ function ChatConversationInnerBody() {
             rar:   { color: '#8B5CF6', label: 'RAR' },
             txt:   { color: '#6B7280', label: 'TXT' },
           };
-          const fileType = fileTypeMap[fileExt] || { color: isOwn ? 'rgba(255,255,255,0.7)' : colors.primary, label: (fileExt || 'FILE').toUpperCase().slice(0, 4) };
+          const fileType = fileTypeMap[fileExt] || { color: isOwn ? _ownA(0.7) : colors.primary, label: (fileExt || 'FILE').toUpperCase().slice(0, 4) };
           const isPDF = fileExt === 'pdf';
           // Office docs + CSVs can be imported into the Chatyy Docs editor
           // (CKEditor pra texto / jspreadsheet pra planilha). PDFs não dá
@@ -34950,7 +34964,7 @@ function ChatConversationInnerBody() {
                   style={{
                     paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center',
                     borderLeftWidth: StyleSheet.hairlineWidth,
-                    borderLeftColor: isOwn ? 'rgba(255,255,255,0.15)' : colors.border,
+                    borderLeftColor: isOwn ? _ownA(0.15) : colors.border,
                   }}
                   hitSlop={6}
                   accessibilityLabel={t('chat.editFile') || 'Editar no Chatyy'}
@@ -35375,7 +35389,7 @@ function ChatConversationInnerBody() {
                 <View style={{
                   width: 32, height: 32, borderRadius: 16,
                   // [2026-10-10 conv-polish] P&B (era azul na recebida) + textos via i18n (estavam fixos em PT).
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
+                  backgroundColor: isOwn ? _ownA(0.15) : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
                   alignItems: 'center', justifyContent: 'center',
                 }}>
                   {isVideo
@@ -35497,7 +35511,7 @@ function ChatConversationInnerBody() {
                       }}>{heading}</Text>
                       <View style={{
                         height: 1,
-                        backgroundColor: isOwn ? 'rgba(255,255,255,0.25)' : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)'),
+                        backgroundColor: isOwn ? _ownA(0.25) : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)'),
                         marginTop: 6,
                         marginBottom: rest ? 6 : 0,
                       }} />
@@ -35590,9 +35604,9 @@ function ChatConversationInnerBody() {
                   marginTop: msg._filtered && msg._hidden ? 4 : 0,
                 } : {
                   marginTop: 6, padding: 8, borderRadius: 10,
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.13)' : (isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'),
+                  backgroundColor: isOwn ? _ownA(0.13) : (isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'),
                   borderLeftWidth: 2,
-                  borderLeftColor: isOwn ? 'rgba(255,255,255,0.4)' : otherInk,
+                  borderLeftColor: isOwn ? _ownA(0.4) : otherInk,
                 }}>
                   {msgTranslation.loading ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -35826,7 +35840,7 @@ function ChatConversationInnerBody() {
               // sutil) pra descolar do fundo sem glow. Zero cor.
               // [2026-10-08 chat-beauty-bubbles] P&B: enviada = superfície
               // escura chapada (sem hairline/sombra — flat iMessage/Telegram).
-              ? [styles.bubbleOwn, { backgroundColor: _bubbleBg }, _g2 && _bubbleBg === _g2.ownMid && !_bubbleBare && !isDeleted && _bubbleOwnStyle(isDark) /* [2026-10-20 grafite] gradiente + reflexo */]
+              ? [styles.bubbleOwn, { backgroundColor: _bubbleBg }, _ownP && _bubbleBg === _ownP.mid && !_bubbleBare && !isDeleted && _chatOwnBubbleStyle(isDark) /* [2026-10-20 grafite] gradiente + reflexo */]
               // RECEBIDO = cinza claro / grafite. Menção = tom um pouco mais
               // forte do mesmo cinza (sem verde).
               : [styles.bubbleOther, { backgroundColor: _bubbleBg }, !isDark && !_bubbleBare && (_g2 ? _bubbleRecvStyle(false) : styles.bubbleOtherLift)],
@@ -35849,7 +35863,7 @@ function ChatConversationInnerBody() {
             msg._pending && { opacity: 0.7 },
             msg._failed && { opacity: 0.5 },
           ]}>
-          {_showTail && <BubbleTail own={isOwn} tg={_tgRow} color={(_g2 && isOwn && _bubbleBg === _g2.ownMid && !isDeleted) ? _g2.ownGradient[_tgRow ? 2 : 0] : _bubbleBg} />}
+          {_showTail && <BubbleTail own={isOwn} tg={_tgRow} color={(_ownP && _ownP.gradient && isOwn && _bubbleBg === _ownP.mid && !isDeleted) ? _ownP.gradient[_tgRow ? 2 : 0] : _bubbleBg} />}
           {/* Jump-to-message flash — animated green wash pulse (was a static
               amber border that snapped on/off). Overlay inside the bubble so
               it clips to the rounded corners; pointerEvents none. */}
@@ -36020,7 +36034,7 @@ function ChatConversationInnerBody() {
                   // Brand purple wash — sutil tint that contrasts against the
                   // bubble background on BOTH own and other bubbles.
                   backgroundColor: isOwn
-                    ? 'rgba(255,255,255,0.12)'
+                    ? _ownA(0.12)
                     : (isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)'),
                   borderLeftColor: replyAccent,
                 },
@@ -36721,7 +36735,7 @@ function ChatConversationInnerBody() {
     // [2026-10-20 grafite] pílula de data em vidro claro/grafite sobre os pontos
     ...(_g2 ? { pillBg: isDark ? 'rgba(35,35,39,0.78)' : 'rgba(255,255,255,0.78)', pillText: isDark ? 'rgba(242,242,239,0.82)' : 'rgba(24,24,27,0.70)' } : null),
     systemText: colors.textTertiary || (isDark ? '#8E8E93' : '#6B6B70'), accent: _g2 ? _g2.ink : (isDark ? '#F5F5F7' : '#111111'),
-    ownQuote: 'rgba(255,255,255,0.12)', otherQuote: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+    ownQuote: _ownIsLight ? 'rgba(24,24,27,0.06)' : 'rgba(255,255,255,0.12)', otherQuote: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
     unreadBg: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', unreadText: isDark ? '#D1D1D6' : '#3C3C43',
     reactBg: _g2 ? (isDark ? '#232327' : '#FFFFFF') : (isDark ? '#2C2C2E' : '#FFFFFF'), reactBorder: chatWallBg,
     selection: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)', highlight: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)',
@@ -36729,9 +36743,10 @@ function ChatConversationInnerBody() {
     // [tg-list] realce da busca na lista nativa (api 11): termo / resultado atual
     search: isDark ? 'rgba(255,214,10,0.30)' : 'rgba(255,204,0,0.38)', searchCur: isDark ? 'rgba(255,214,10,0.62)' : 'rgba(255,204,0,0.75)',
     // [2026-10-20 grafite] binário api 14: bolha própria em gradiente + reflexo; recebida com sombra.
-    ...((_g2 && ownBubbleBg === _g2.ownMid && nativeListApi() >= 14) ? { ownGradient: _g2.ownGradient, ownGradientStops: _g2.ownGradientStops, otherShadow: !isDark } : null),
+    // [2026-10-21 bolha-clara] própria clara → "gradiente" de 1 cor só (sólido) p/ o binário api 14 não pintar o grafite.
+    ...((_ownP && ownBubbleBg === _ownP.mid && nativeListApi() >= 14) ? (_ownP.gradient ? { ownGradient: _ownP.gradient, ownGradientStops: _ownP.stops, otherShadow: !isDark } : { ownGradient: [_ownP.mid, _ownP.mid], ownGradientStops: [0, 1], otherShadow: !isDark }) : null),
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [isDark, colors.textTertiary, ownBubbleBg, ownTextColor, ownMetaColor, otherBubbleBg, otherInk, otherMetaColor, chatWallBg, colors.tickRead, colors.highContrast, colors.onAccent, colors.accent]); // [2026-10-15 native-wallpaper] bolhas derivadas do tema · [2026-10-17 polish-chat] + recebida/fundo (trocar papel de parede no mesmo tema deixava borda da reação velha)
+  }), [isDark, colors.textTertiary, ownBubbleBg, ownTextColor, ownMetaColor, _ownIsLight, otherBubbleBg, otherInk, otherMetaColor, chatWallBg, colors.tickRead, colors.highContrast, colors.onAccent, colors.accent]); // [2026-10-15 native-wallpaper] bolhas derivadas do tema · [2026-10-17 polish-chat] + recebida/fundo (trocar papel de parede no mesmo tema deixava borda da reação velha)
   // [2026-10-15 native-store] foto da conversa no store NATIVO (services/nativeChatStore):
   // a lista nativa pinta a última janela sem esperar o 1º applyRows. n = chave mais
   // nova que o JS tem (foto mais velha que isso não é pintada). _nlStoreHas: cache JS
@@ -37688,24 +37703,7 @@ function ChatConversationInnerBody() {
             ) : null}
           </TouchableOpacity>
         ) : null}
-        {/* Chat 2026 — AI Summarize unread (>=5 incoming). Distinct from
-            the existing chatAi.summarize menu entry because this one is
-            front-and-center as a single tap on the header, and runs over
-            real unread context (not the open AI chooser sheet). */}
-        {(initialUnreadCountRef.current >= 5) && (
-          <TouchableOpacity
-            onPress={() => runAiSummary('unread')} // [2026-10-13 bia-summary] folha nova (alcance Não lidas)
-            style={[styles.headerBtn, { flexDirection: 'row', alignItems: 'center', gap: 4 }]}
-            accessibilityLabel={t('chatConv.summarize') || 'Summarize unread'}
-            accessibilityRole="button"
-            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
-          >
-            <BiaIcon size={15} color={colors.text} />
-            <Text style={{ color: colors.text, fontSize: 11, fontWeight: '700' }}>
-              {initialUnreadCountRef.current > 99 ? '99+' : String(initialUnreadCountRef.current)}
-            </Text>
-          </TouchableOpacity>
-        )}
+        {/* [2026-10-21 e2ee-sem-ia] pílula "Resumir não lidas" do cabeçalho REMOVIDA (E2EE). */}
         {/* [2026-10-17 header-wa] WhatsApp iOS: à direita só vídeo + voz (nome
             ganha espaço). Canal (sem chamadas) → busca no lugar das chamadas.
             [2026-10-18 header-no-more] ⋯ saiu: tudo dele vive em Dados do
@@ -38202,34 +38200,7 @@ function ChatConversationInnerBody() {
           row shows a "Xd restantes" countdown in the right gutter when the
           pin has a finite TTL. Permanent legacy pins (NULL pinned_until)
           omit the countdown entirely. */}
-      {/* [2026-10-13 bia-summary] Muitas não lidas (≥ 30): chip discreto
-          "30 não lidas · Resumir" → folha da Bia no alcance Não lidas. */}
-      {ConversationSummarySheet && !_advPriv.enabled && !summaryChipDismissed && !showSearchBar && (initialUnreadCountRef.current || 0) >= 30 ? (
-        <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 2 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', borderRadius: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
-            <TouchableOpacity
-              onPress={() => runAiSummary('unread')}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 6, height: 32, paddingLeft: 12, paddingRight: 6 }}
-              accessibilityRole="button"
-              accessibilityLabel={t('chatSum.menuLabel') || 'Resumir com a Bia'}
-            >
-              <BiaIcon size={13} color={colors.text} />
-              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
-                {(t('chatSum.unreadChip') || '{n} não lidas · Resumir').replace('{n}', initialUnreadCountRef.current > 999 ? '999+' : String(initialUnreadCountRef.current))}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setSummaryChipDismissed(true)}
-              hitSlop={8}
-              style={{ height: 32, paddingLeft: 4, paddingRight: 10, justifyContent: 'center' }}
-              accessibilityRole="button"
-              accessibilityLabel={t('chatSum.close') || 'Fechar'}
-            >
-              <IconX size={12} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : null}
+      {/* [2026-10-21 e2ee-sem-ia] chip "N não lidas · Resumir" REMOVIDO (E2EE). */}
       {/* [2026-10-09 wa-real #12] remetente desconhecido: não está na
           agenda, grupos em comum, país — some quando o usuário responde. */}
       {UnknownSenderCard && conversationType === 'direct' && !isSavedMode && !showSearchBar ? (
@@ -43460,10 +43431,7 @@ function ChatConversationInnerBody() {
 
                     <GroupSectionLabel colors={colors}>{t('common.more') || 'Mais'}</GroupSectionLabel>
                     <GroupCard colors={colors} isDark={isDark}>
-                      <GroupRow colors={colors} Icon={BiaIcon}
-                        title={t('chatSum.menuLabel') || 'Resumir com a Bia'} right="chevron"
-                        onPress={() => contactInfoGo(runAiSummary)} />
-                      <GroupDivider colors={colors} />
+                      {/* [2026-10-21 e2ee-sem-ia] "Resumir com a Bia" REMOVIDO (E2EE). */}
                       <GroupRow colors={colors} Icon={IconBarChart}
                         title={t('chatConv.stats') || 'Estatísticas'} right="chevron"
                         onPress={() => contactInfoGo(() => setShowStatsModal(true))} />
@@ -43701,7 +43669,7 @@ function ChatConversationInnerBody() {
                   // [2026-10-17 share-contact] "Enviar contato" (mesmo seletor do "+"); menu é <Modal> RN → abre depois que ele desce.
                   ...(conversationType !== 'channel' ? [{ Icon: IconUser, label: t('shareContact.menuSend') || 'Enviar contato', onPress: () => { closeMenu(); afterRNModal(() => handleShareContact(), true); }}] : []),
                   { Icon: IconForward, label: t('chatConv.exportChat') || 'Exportar conversa', onPress: () => { closeMenu(); (_advPriv.guard('export') || setShowExportModal(true)); }},
-                  { Icon: BiaIcon, label: t('chatSum.menuLabel') || 'Resumir com a Bia', onPress: () => { closeMenu(); runAiSummary(); }},
+                  // [2026-10-21 e2ee-sem-ia] "Resumir com a Bia" REMOVIDO do menu (E2EE).
                   // [2026-10-10 wa-import] Importar histórico do WhatsApp (cópia pessoal vinculada a este contato).
                   ...(waImported ? [] : [{ Icon: IconDownload, label: t('waImport.menuItem'), onPress: () => { closeMenu(); openWhatsAppImport(); }}]),
                   { Icon: IconTrash, danger: true, label: t('chatConv.clearChat') || 'Limpar conversa', onPress: () => { closeMenu(); confirmClearHistory(); }},
@@ -44958,10 +44926,7 @@ function ChatConversationInnerBody() {
 
             <GroupSectionLabel colors={colors}>{t('common.more') || 'Mais'}</GroupSectionLabel>
             <GroupCard colors={colors} isDark={isDark}>
-              <GroupRow colors={colors} Icon={BiaIcon}
-                title={t('chatSum.menuLabel') || 'Resumir com a Bia'} right="chevron"
-                onPress={() => groupInfoGo(runAiSummary)} />
-              <GroupDivider colors={colors} />
+              {/* [2026-10-21 e2ee-sem-ia] "Resumir com a Bia" REMOVIDO (E2EE). */}
               <GroupRow colors={colors} Icon={IconBarChart}
                 title={t('chatConv.stats') || 'Estatísticas'} right="chevron"
                 onPress={() => groupInfoGo(() => setShowStatsModal(true))} />
@@ -45936,7 +45901,8 @@ function ChatConversationInnerBody() {
       {/* [2026-10-13 bia-summary] "Resumir com a Bia" — folha extraída p/
           components/chat/ConversationSummarySheet.js (cabeçalho fixo de fundo
           sólido; antes o texto rolava por baixo do título semitransparente). */}
-      {ConversationSummarySheet && aiSummary.visible ? (
+      {/* [2026-10-21 e2ee-sem-ia] sem pontos de entrada; guarda extra p/ chamadas antigas. */}
+      {ConversationSummarySheet && aiSummary.visible && globalThis.__chatyy_conv_ai_summary === true ? (
         <ConversationSummarySheet
           visible
           onClose={() => setAiSummary(s => ({ ...s, visible: false }))}
@@ -46077,7 +46043,7 @@ function ChatConversationInnerBody() {
                   { key: 'translate', icon: IconGlobe, label: t('chatAi.translate') || 'Translate last message', desc: t('chatAi.translateDesc') || 'Translate the last received message' },
                   { key: 'suggest', icon: BiaIcon, label: t('chatAi.suggest') || 'Suggest reply', desc: t('chatAi.suggestDesc') || 'AI suggests a contextual reply' },
                   { key: 'fix', icon: IconPenTool, label: t('chatAi.fix') || 'Fix text', desc: t('chatAi.fixDesc') || 'Fix grammar and spelling' },
-                ].map((opt) => (
+                ].filter((opt) => opt.key === 'fix' /* [2026-10-21 e2ee-sem-ia] resumir/traduzir última/sugerir leem a conversa → fora */).map((opt) => (
                   <TouchableOpacity
                     key={opt.key}
                     onPress={async () => {

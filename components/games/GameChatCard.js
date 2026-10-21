@@ -31,7 +31,15 @@ export function _actLabel(t, a, g, me, inlineOn) {
   return gameActionLabel(t, a, g, me);
 }
 
-function GameChatCard({ msg, isOwn, currentEmail, colors, isDark, t, onAction }) {
+// [2026-10-21 bolha-clara] tinta escura (bolha própria clara) → cartão pinta como recebida clara.
+function _inkIsDark(hex) {
+  const h = String(hex || '').replace('#', '');
+  if (!/^[0-9a-f]{6}$/i.test(h)) return false;
+  const n = parseInt(h, 16);
+  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) < 128;
+}
+function GameChatCard({ msg, isOwn: isOwnMsg, ownInk, currentEmail, colors, isDark, t, onAction }) {
+  const isOwn = !!isOwnMsg && !_inkIsDark(ownInk); // só p/ cores
   const g = parseGameContent(msg && msg.content);
   // [jogos 2026-10-19 inline] Velha/Forca/Quiz jogáveis no cartão; Damas/Cartas = miniatura (toque abre a folha)
   const inlineOn = gamesInlineOn();

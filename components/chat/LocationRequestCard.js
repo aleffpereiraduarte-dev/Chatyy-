@@ -31,7 +31,15 @@ function MapStage({ done }) {
   );
 }
 
-function LocationRequestCard({ msg, isOwn, currentEmail, colors, isDark, t, peerName, onAction }) {
+// [2026-10-21 bolha-clara] tinta escura (bolha própria clara) → cartão pinta como recebida clara.
+function _inkIsDark(hex) {
+  const h = String(hex || '').replace('#', '');
+  if (!/^[0-9a-f]{6}$/i.test(h)) return false;
+  const n = parseInt(h, 16);
+  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) < 128;
+}
+function LocationRequestCard({ msg, isOwn: isOwnMsg, ownInk, currentEmail, colors, isDark, t, peerName, onAction }) {
+  const isOwn = !!isOwnMsg && !_inkIsDark(ownInk); // só p/ cores
   const st = L.locReqState(msg, currentEmail);
   const T = L.locReqTexts(t, st, peerName, msg && msg.sender_name);
   const ink = isOwn ? '#FFFFFF' : (colors.text || '#111111');

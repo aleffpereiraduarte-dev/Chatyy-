@@ -68,7 +68,7 @@ function GiftBubble({ content, isOwn, t, textColor, subColor, animate = false, o
   const ty = float.interpolate({ inputRange: [0, 1], outputRange: [3, -4] });
   const tw = (a) => twinkle.interpolate({ inputRange: [0, a, Math.min(1, a + 0.18), 1], outputRange: [0.15, 1, 0.15, 0.15] });
   const tws = (a) => twinkle.interpolate({ inputRange: [0, a, Math.min(1, a + 0.18), 1], outputRange: [0.6, 1.15, 0.6, 0.6] });
-  const chipBg = isOwn ? 'rgba(255,255,255,0.14)' : 'rgba(127,127,127,0.14)';
+  const chipBg = isOwn ? (/^#[0-9a-f]{6}$/i.test(String(textColor || '')) && (() => { const n = parseInt(String(textColor).slice(1), 16); return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) < 128; })() ? 'rgba(24,24,27,0.08)' : 'rgba(255,255,255,0.14)') : 'rgba(127,127,127,0.14)'; // [2026-10-21 bolha-clara]
   const amount = humanizeCount(diamonds);
   const a11y = `${parts.before}${diamonds} ${tr(t, 'gifts.diamondsWord', 'diamantes')}${parts.after}. ${label}${qty > 1 ? ' x' + qty : ''}${note ? '. ' + note : ''}`;
 

@@ -1313,6 +1313,45 @@ export function bubbleOwnStyle(isDark) {
   _bubbleOwnCache[k] = s;
   return s;
 }
+// ── [2026-10-21 bolha-clara] Bolha PRÓPRIA clara (pedido do founder) ─────────
+// "O preto da bolha está muito forte" → claro: recebida #FFFFFF, própria cinza
+// claro #E4E4DF (tinta #18181B, hora #6E6E73), SEM gradiente; escuro: própria
+// #3A3A40 (tinta #F2F2EF). ✓✓ lido segue detailColor. Balões na cor do destaque
+// não mudam (quem chama decide). Kill: globalThis.__chatyy_light_bubbles = false
+// → bolha grafite escura em gradiente de antes. Lido a cada chamada.
+Grafite.light.ownLight = { mid: '#E4E4DF', text: '#18181B', meta: '#6E6E73' };
+Grafite.dark.ownLight = { mid: '#3A3A40', text: '#F2F2EF', meta: 'rgba(242,242,239,0.58)' };
+/** true = bolha própria clara (tema Grafite + kill switch não desligado). */
+export function lightBubblesOn() {
+  try { if (globalThis.__chatyy_light_bubbles === false) return false; } catch {}
+  return THEME_V2;
+}
+/**
+ * Paleta da bolha PRÓPRIA no Grafite: { mid, text, meta, gradient|null, stops|null, light }.
+ * light = bolha clara (sólida); senão = grafite escuro em gradiente (antes).
+ */
+export function ownBubblePalette(isDark) {
+  const g = grafite(isDark);
+  if (lightBubblesOn()) {
+    const o = g.ownLight;
+    return { mid: o.mid, text: o.text, meta: o.meta, gradient: null, stops: null, light: true };
+  }
+  return { mid: g.ownMid, text: g.ownText, meta: g.ownMeta, gradient: g.ownGradient, stops: g.ownGradientStops, light: false };
+}
+const _chatOwnCache = { l: null, d: null };
+/**
+ * Estilo da bolha própria NA CONVERSA: clara = sólida + sombra suave; kill =
+ * bubbleOwnStyle (gradiente). bubbleOwnStyle segue intacto p/ o botão primário.
+ */
+export function chatOwnBubbleStyle(isDark) {
+  if (!THEME_V2) return _EMPTY_STYLE;
+  if (!lightBubblesOn()) return bubbleOwnStyle(isDark);
+  const k = isDark ? 'd' : 'l';
+  if (!_chatOwnCache[k]) {
+    _chatOwnCache[k] = { backgroundColor: grafite(isDark).ownLight.mid, boxShadow: isDark ? 'inset 0px 1px 0px rgba(255,255,255,0.05)' : '0px 1px 1px rgba(0,0,0,0.04), 0px 4px 14px rgba(0,0,0,0.05)' };
+  }
+  return _chatOwnCache[k];
+}
 // Bolha recebida: branca com sombra leve (escuro: reflexo interno).
 const _bubbleRecvCache = { l: null, d: null };
 export function bubbleRecvStyle(isDark) {
@@ -1391,6 +1430,16 @@ if (THEME_V2) {
     authInputFocusBorder: D.ink, authLabelFloatColor: D.ink, authFooterLink: D.ink, authStepDoneBg: D.ink, authStepConnectorDone: D.ink, authLeftPanelAccent: D.ink,
     surface2: D.surface2, line: D.line, glass: D.glass, cardShadowColor: '#000000', themeV2: true,
   });
+  // [2026-10-21 bolha-clara] tokens da bolha própria seguem o kill switch na leitura.
+  try {
+    const _noSet = () => {};
+    const _defOwn = (obj, dark) => {
+      Object.defineProperty(obj, 'chatBubbleOwn', { enumerable: true, configurable: true, set: _noSet, get: () => ownBubblePalette(dark).mid });
+      Object.defineProperty(obj, 'chatBubbleOwnText', { enumerable: true, configurable: true, set: _noSet, get: () => ownBubblePalette(dark).text });
+      Object.defineProperty(obj, 'chatBubbleOwnBorder', { enumerable: true, configurable: true, set: _noSet, get: () => (lightBubblesOn() ? (dark ? 'rgba(255,255,255,0.05)' : 'rgba(24,24,27,0.05)') : (dark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.08)')) });
+    };
+    _defOwn(Colors, false); _defOwn(DarkColors, true);
+  } catch {}
   // ── raios / tipografia / sombras ──
   Object.assign(BorderRadius, { card: Grafite.radius.card, sheet: Grafite.radius.sheet, chip: 999, tile: Grafite.radius.tile, bubble: Grafite.radius.bubble });
   Object.assign(Radius, { card: Grafite.radius.card, sheet: Grafite.radius.sheet, tile: Grafite.radius.tile, bubble: Grafite.radius.bubble });

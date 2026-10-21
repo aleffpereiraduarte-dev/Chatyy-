@@ -552,8 +552,8 @@ function buildContact(m, row, ctx, C, own) {
   const col = P.col; const isDark = P.dark;
   const flag = ''; // [2026-10-21 polish-conv] sem bandeira emoji (regra: nada de emoji na UI; o DDI já está no número). _flag mantido p/ referência.
   const pretty = _prettyPhone(ct.phone);
-  const cardBg = own ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.18)') : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)');
-  const dividerColor = own ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.18)') : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
+  const cardBg = own ? inkAlpha(C.ownText || '#FFFFFF', 0.06) /* [2026-10-21 bolha-clara] tinta da bolha */ : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)');
+  const dividerColor = own ? inkAlpha(C.ownText || '#FFFFFF', 0.14) : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
   const accent = own ? C.ownText : C.otherInk;
   const info = [text(ct.name, { fs: 16, fw: 700, c: own ? C.ownText : col.text, lh: 20, ml: 2 })];
   if (pretty) {
@@ -601,8 +601,8 @@ function buildContactMulti(ct, row, C, own) {
   const P = _palette(own, C);
   const isDark = P.dark;
   const col = P.col;
-  const cardBg = own ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.18)') : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)');
-  const dividerColor = own ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.18)') : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
+  const cardBg = own ? inkAlpha(C.ownText || '#FFFFFF', 0.06) /* [2026-10-21 bolha-clara] tinta da bolha */ : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)');
+  const dividerColor = own ? inkAlpha(C.ownText || '#FFFFFF', 0.14) : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
   const accent = own ? C.ownText : C.otherInk;
   const list = ct.parsed.list.slice(0, 3);
   const AV = 40; const STEP = 24;
@@ -1004,7 +1004,7 @@ function buildGift(m, row, ctx, C, own) {
   const big = /^(large|legendary)$/.test(String(j.tier || meta.tier || ''));
   const glyph = _giftGlyph(ic, big ? 84 : 76);
   const cost = gc ? gc.humanizeCount(diamonds) : String(diamonds);
-  const chipBg = own ? 'rgba(255,255,255,0.14)' : 'rgba(127,127,127,0.14)';
+  const chipBg = own ? inkAlpha(C.ownText || '#FFFFFF', 0.14) : 'rgba(127,127,127,0.14)';
   const dia = fx ? iconPaths(fx.diamondMonoPaths(textColor), { s: 12 }) : icon(IconDiamond, { s: 12, c: '#60a5fa' });
   // Palco = GiftBubble JS (estático): halo + anel fino, arte grande no centro,
   // 3 brilhos (sparkle) fixos, selo ×N. Fallback sem arte: caixa de presente.

@@ -28,7 +28,7 @@ import { emailToDisplayName, BASE_URL } from '../services/api';
 import { cacheConversations, getCachedConversations, prewarmConversationsCache, prefetchConversation } from '../services/chatCache';
 import { prefetchAvatarsForList } from '../services/avatarCache';
 import { userScopedKey } from '../services/cache';
-import { RECONNECT_BANNER_GRACE_MS, Typography, THEME_V2 as _V2, Grafite as _GF } from '../constants/theme';
+import { RECONNECT_BANNER_GRACE_MS, Typography, THEME_V2 as _V2, Grafite as _GF, ownBubblePalette as _ownBubblePalette } from '../constants/theme';
 import { isTablet as RESP_IS_TABLET, CONTENT_MAX_WIDTH } from '../utils/responsive';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
@@ -11348,9 +11348,13 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
   const _pg = _V2 ? (isDark ? _GF.dark : _GF.light) : null;
   const cardBg = _pg ? _pg.wall : (isDark ? '#000000' : '#efeae2');
   const headerBg = isDark ? '#1c1c1e' : '#111111';
-  const ownBubble = _pg ? _pg.ownMid : (isDark ? '#2c2c2e' : '#111111');
+  // [2026-10-21 bolha-clara] própria = paleta da conversa (clara; kill → grafite). micBg = botão escuro de antes.
+  const _opk = _pg ? _ownBubblePalette(isDark) : null;
+  const micBg = _pg ? _pg.ownMid : (isDark ? '#2c2c2e' : '#111111');
+  const ownBubble = _opk ? _opk.mid : micBg;
   const peerBubble = _pg ? _pg.recv : (isDark ? '#1c1c1e' : '#ffffff');
-  const ownText = '#ffffff';
+  const ownText = _opk ? _opk.text : '#ffffff';
+  const _ownPeekLight = !!(_opk && _opk.light && !isDark);
   const peerText = isDark ? '#F5F5F7' : '#0f172a';
   const meta = isDark ? 'rgba(255,255,255,0.55)' : '#6b7280';
   const peerEmail = conv?.other_email || conv?.contact_email || conv?.email || '';
@@ -11621,8 +11625,8 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
               const isOwn = (m.sender_email || '').toLowerCase() === (currentUserEmail || '').toLowerCase();
               const bubbleBg = isOwn ? ownBubble : peerBubble;
               const txtCol = isOwn ? ownText : peerText;
-              const subTxt = isOwn ? 'rgba(255,255,255,0.75)' : meta;
-              const replyAccent = isOwn ? 'rgba(255,255,255,0.7)' : '#111111';
+              const subTxt = isOwn ? (_ownPeekLight ? _opk.meta : 'rgba(255,255,255,0.75)') : meta;
+              const replyAccent = isOwn ? (_ownPeekLight ? 'rgba(24,24,27,0.7)' : 'rgba(255,255,255,0.7)') : '#111111';
               // Mirror the list-row formatter: strip markdown pairs, decode
               // JSON-encoded payloads (call_card / location / contact /
               // attachment), short-circuit known typed messages, and finally
@@ -11842,7 +11846,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
             </Text>
             <PaperclipIc color={meta} />
           </View>
-          <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: ownBubble, alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: micBg, alignItems: 'center', justifyContent: 'center' }}>
             <MicIc color="#fff" />
           </View>
         </View>

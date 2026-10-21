@@ -23,7 +23,7 @@ import ChatWallpaper from '../wallpaper/ChatWallpaper';
 import { buildValue, bubbleFor, resolve as resolveWallpaper, specFor } from '../wallpaper/wallpaperSpec';
 import { IconCheck, IconSend, IconPencil } from '../Icons';
 import { useGroupedColors } from './SettingsKit';
-import { THEME_V2, grafite, bubbleOwnStyle, bubbleRecvStyle, detailColor } from '../../constants/theme';
+import { THEME_V2, grafite, bubbleRecvStyle, detailColor, ownBubblePalette, chatOwnBubbleStyle } from '../../constants/theme';
 import SubtlePattern from '../wallpaper/SubtlePattern';
 import { feedback, isReduceMotionEnabled } from '../../constants/motion';
 import { ACCENT_PALETTE, resolveAccent, onAccentFor, normalizeAccent, luminance } from '../../context/ThemeContext';
@@ -55,10 +55,11 @@ function bubbleTokens(isDark, wallpaper, accentHex, accentBubbles) {
   if (G2) {
     const accOwn = !tint && accentHex && accentBubbles;
     const on = accOwn ? onAccentFor(accentHex) : null;
+    const OP = ownBubblePalette(isDark); // [2026-10-21 bolha-clara] = conversa (clara; kill → grafite)
     return {
-      ownBg: tint ? tint.bg : (accOwn ? accentHex : G2.ownMid),
-      ownText: tint ? tint.text : (accOwn ? on : G2.ownText),
-      ownMeta: tint ? tint.meta : (accOwn ? (on === '#111111' ? 'rgba(17,17,17,0.62)' : 'rgba(255,255,255,0.72)') : G2.ownMeta),
+      ownBg: tint ? tint.bg : (accOwn ? accentHex : OP.mid),
+      ownText: tint ? tint.text : (accOwn ? on : OP.text),
+      ownMeta: tint ? tint.meta : (accOwn ? (on === '#111111' ? 'rgba(17,17,17,0.62)' : 'rgba(255,255,255,0.72)') : OP.meta),
       ownGrad: !tint && !accOwn,
       otherBg: G2.recv, otherText: G2.recvText,
       otherMeta: isDark ? 'rgba(235,235,245,0.50)' : 'rgba(60,60,67,0.64)',
@@ -120,7 +121,7 @@ function PreviewBubble({ own, text, link, time, tk, fontPx, shape, last }) {
         ...(own ? { borderBottomRightRadius: corner } : { borderBottomLeftRadius: corner }),
         paddingLeft: 11, paddingRight: 8, paddingTop: 6, paddingBottom: 5,
         flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end',
-      }, tk.v2 ? (own ? (tk.ownGrad ? bubbleOwnStyle(tk.isDark) : null) : (tk.isDark ? null : bubbleRecvStyle(false))) : null]}>
+      }, tk.v2 ? (own ? (tk.ownGrad ? chatOwnBubbleStyle(tk.isDark) : null) : (tk.isDark ? null : bubbleRecvStyle(false))) : null]}>
         <Text style={{ color: own ? tk.ownText : tk.otherText, fontSize: fs, lineHeight: lh, flexShrink: 1 }}>
           {text}
           {link ? <Text style={{ color: tk.link, textDecorationLine: 'underline' }}>{' ' + link}</Text> : null}
