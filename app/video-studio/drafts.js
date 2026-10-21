@@ -19,7 +19,7 @@ function DraftThumb({ id, fallback }) {
   const [clip, setClip] = useState(null);
   useEffect(() => {
     let alive = true;
-    loadDraft(id).then((d) => { if (alive) setClip(d?.edl?.clips?.[0] || null); });
+    loadDraft(id).then((d) => { if (alive) setClip(d?.edl?.clips?.[0] || null); }).catch(() => {});
     return () => { alive = false; };
   }, [id]);
   const info = useSourceInfo(clip);

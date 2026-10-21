@@ -258,6 +258,9 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
   // Preview audio while trimming — plays the chosen ~clip window starting at the
   // handle so the user HEARS the trecho before committing. expo-audio (SDK 55).
   const trimPlayerRef = useRef(null);
+  // [2026-10-21 media-audit] Um player por faixa (antes: recriado a CADA passo do
+  // arrasto do trecho → dezenas de players/s, áudio picotando). O arrasto só faz
+  // seek, com debounce curto.
   useEffect(() => {
     if (trimPlayerRef.current) { try { trimPlayerRef.current.remove(); } catch {} trimPlayerRef.current = null; }
     const url = trimTrack?.previewUrl;
@@ -273,7 +276,7 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
         const player = _expoAudioSC.createAudioPlayer({ uri: url });
         player.loop = true;
         player.volume = 1.0;
-        const startSec = Math.max(0, trimStartMs) / 1000;
+        const startSec = Math.max(0, trimStartMsRef.current) / 1000;
         if (startSec > 0) { try { await player.seekTo(startSec); } catch {} }
         if (cancelled) { try { player.remove(); } catch {} return; }
         player.play();
@@ -281,8 +284,16 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
       } catch {}
     })();
     return () => { cancelled = true; if (trimPlayerRef.current) { try { trimPlayerRef.current.remove(); } catch {} trimPlayerRef.current = null; } };
-    // Re-seek on start change too (cheap — recreates the short preview clip).
-  }, [trimTrack, trimStartMs]);
+  }, [trimTrack]);
+  useEffect(() => {
+    if (!trimTrack) return undefined;
+    const h = setTimeout(() => {
+      const pl = trimPlayerRef.current;
+      if (!pl) return;
+      try { const r = pl.seekTo(Math.max(0, trimStartMs) / 1000); if (r && r.catch) r.catch(() => {}); } catch {}
+    }, 150);
+    return () => clearTimeout(h);
+  }, [trimStartMs, trimTrack]);
 
   const commitTrim = useCallback(() => {
     if (!trimTrack) return;
@@ -720,6 +731,25 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
   // finished clip so the carousel can show per-clip elapsed in the viewer.
   const segmentStartRef = useRef(0);
 
+  // [2026-10-21 media-audit] O componente continua montado com visible=false
+  // (só devolve null): fechar a câmera no meio do recorte da música deixava a
+  // prévia TOCANDO por trás do app, e a gravação de voz/estado "gravando" presos.
+  useEffect(() => {
+    if (visible) return;
+    if (trimPlayerRef.current) { try { trimPlayerRef.current.remove(); } catch {} trimPlayerRef.current = null; }
+    setTrimTrack(null);
+    setMusicPickerOpen(false);
+    holdRecordingRef.current = false;
+    setRecording(false);
+    setCounting(false); setCountDown(0);
+    const rec = voiceoverRecRef.current;
+    if (rec) {
+      voiceoverRecRef.current = null;
+      try { const r = rec.stopAndUnloadAsync ? rec.stopAndUnloadAsync() : rec.stop?.(); if (r && r.catch) r.catch(() => {}); } catch {}
+    }
+    setVoiceoverRecording(false);
+  }, [visible]);
+
   // Record one segment (max 20s) and push it onto the segments stack
   // instead of emitting onCapture immediately. Returns once recordAsync
   // resolves — caller should keep recording state coherent.
@@ -730,7 +760,7 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
   const recordSegment = useCallback(async () => {
     if (!cameraRef.current || recording) return;
     if (segments.length >= MAX_SEGMENTS) {
-      try { Linking.openURL('chatyy://noop'); } catch {} // no-op anchor
+      haptic('heavy'); // limite de trechos (antes abria chatyy://noop)
       return;
     }
     setRecording(true);
@@ -1128,8 +1158,11 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
         {/* Slow-mo speed pill — only shown for imported video. Cycles
             through IMPORT_SPEED_LIST so users can tap to flip between
             0.5x / 1x / 2x / 3x. ffmpeg-kit applies the speed via setpts
-            during handleConfirm. */}
-        {preview.type === 'video' && (
+            during handleConfirm.
+            [2026-10-21 media-audit] Sem ffmpeg (removido 05/2026) velocidade e voz
+            eram descartadas no envio (status saía sem voz e em 1x) → só aparece
+            quando houver motor de processamento. */}
+        {preview.type === 'video' && !!_getFFmpegKit() && (
           <View style={s.previewSpeedRow}>
             {IMPORT_SPEED_LIST.map((sp) => (
               <TouchableOpacity

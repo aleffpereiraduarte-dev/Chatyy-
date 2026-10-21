@@ -65,10 +65,11 @@ function hsl(h) {
   return '#' + to(r) + to(g) + to(b);
 }
 
-export default function PhotoDrawTool({ imageUri, width, height, onDone, onCancel, t }) {
+export default function PhotoDrawTool({ imageUri, width, height, onDone, onCancel, t, initialPaths = null }) {
   // Stroke collection — each entry: { id, d, color, width }. id lets the
   // eraser identify the path under a tap.
-  const [paths, setPaths] = useState([]);
+  // [2026-10-21 media-audit] reabrir o desenho mantém os traços anteriores (antes: tela limpa e Concluir apagava o desenho já feito).
+  const [paths, setPaths] = useState(() => (Array.isArray(initialPaths) ? initialPaths : []));
   const [currentPath, setCurrentPath] = useState('');
   const [color, setColor] = useState('#EF4444');
   const [strokeWidth, setStrokeWidth] = useState(6);
@@ -82,7 +83,7 @@ export default function PhotoDrawTool({ imageUri, width, height, onDone, onCance
   const [hue, setHue] = useState(280);
 
   const currentPathRef = useRef('');
-  const pathIdRef = useRef(1);
+  const pathIdRef = useRef(1 + (Array.isArray(initialPaths) ? initialPaths.reduce((m, p) => Math.max(m, Number(p?.id) || 0), 0) : 0));
 
   // Push current state to undo so we can come back to it. Drops the redo
   // stack since any new edit invalidates the redo branch.

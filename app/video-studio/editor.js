@@ -9,7 +9,7 @@
 // Linha do tempo: miniaturas, aparar, reordenar, dividir, apagar, velocidade.
 // O resultado FIEL vem do render do servidor (ffmpeg) a partir da mesma EDL.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Pressable, Modal, Platform, Alert, ActivityIndicator, BackHandler, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Pressable, Modal, Platform, Alert, ActivityIndicator, BackHandler, useWindowDimensions, AppState } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -113,7 +113,7 @@ export default function VideoStudioEditor() {
     (async () => {
       const id = String(params.draft || params.draftId || '');
       if (id) {
-        const d = await loadDraft(id);
+        const d = await loadDraft(id).catch(() => null); // [2026-10-21 media-audit] falha de leitura → tela de erro (antes: carregando p/ sempre)
         if (!alive) return;
         if (d?.edl) { setDraftId(id); setEdl(clampOverlays(ensureOverlayIds(d.edl))); return; }
       }
@@ -197,6 +197,18 @@ export default function VideoStudioEditor() {
   }, [sheet, textEdit, selection, voiceBusy]);
 
   useEffect(() => () => { if (draftRef.current) saveDraftNow(draftRef.current).catch(() => {}); }, []);
+
+  // [2026-10-21 media-audit] App em 2º plano: o SO pausa vídeo/música mas a prévia
+  // continuava "tocando" (ícone de pausa, relógio parado ao voltar). Pausa de verdade
+  // e grava o rascunho (o SO pode matar o app lá atrás).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => {
+      if (st === 'active') return;
+      pause();
+      if (draftRef.current) saveDraftNow(draftRef.current).catch(() => {});
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [pause]);
 
   // ─── Clips ──────────────────────────────────────────────────────────────
   const selClip = selection?.type === 'clip' ? selection.index : -1;

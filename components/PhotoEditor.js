@@ -10,6 +10,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconCheck, IconRefresh, IconMusic } from '../components/Icons';
 import Svg, { Rect, Line, Path, Circle, G } from 'react-native-svg';
 
+// [2026-10-21 media-audit] Achatar no nativo: antes o salvar do nativo só aplicava
+// giro/espelho/recorte — texto, figurinhas, desfoque, desenho, filtro e brilho
+// ficavam visíveis no editor e SUMIAM da foto salva (o desfoque de privacidade
+// salvava a foto sem desfoque). Agora uma vista oculta recompõe tudo sobre a
+// imagem já recortada e o view-shot gera o JPEG final.
+let _captureRefFn = null;
+if (Platform.OS !== 'web') {
+  try {
+    // eslint-disable-next-line global-require
+    const vs = require('../services/viewShot').viewShotModule();
+    _captureRefFn = vs ? (vs.captureRef || (typeof vs.default === 'function' ? vs.default : null)) : null;
+  } catch { _captureRefFn = null; }
+}
+
 // ── Icon helpers (small inline SVGs for editor tools) ──
 
 function IconCrop({ size = 22, color = '#fff' }) {
@@ -204,7 +218,7 @@ function DraggableOverlay({ responder, active, onDelete, style, children }) {
           }}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
         >
-          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700', lineHeight: 13 }}>×</Text>
+          <IconX size={11} color="#fff" />
         </TouchableOpacity>
       )}
     </View>
@@ -411,7 +425,8 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
     selectedFilter, filterIntensity, brightness,
     cropRect, selectedRatio,
     textItems, stickerItems, blurRegions,
-  }), [rotation, flipH, flipV, selectedFilter, filterIntensity, brightness, cropRect, selectedRatio, textItems, stickerItems, blurRegions]);
+    drawPaths, tagItems, // [2026-10-21 media-audit] desfazer também volta desenho e marcações
+  }), [rotation, flipH, flipV, selectedFilter, filterIntensity, brightness, cropRect, selectedRatio, textItems, stickerItems, blurRegions, drawPaths, tagItems]);
 
   const restoreSnapshot = useCallback((snap) => {
     if (!snap) return;
@@ -426,6 +441,8 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
     setTextItems(snap.textItems);
     setStickerItems(snap.stickerItems);
     setBlurRegions(snap.blurRegions);
+    if (Array.isArray(snap.drawPaths)) setDrawPaths(snap.drawPaths);
+    if (Array.isArray(snap.tagItems)) setTagItems(snap.tagItems);
   }, []);
 
   // Push the CURRENT state to the past stack and drop the future stack
@@ -694,6 +711,35 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
     return Object.keys(out).length > 0 ? out : null;
   }, [musicTrack, tagItems, drawPaths]);
 
+  const [bake, setBake] = useState(null); // { uri, cw, ch, cox, coy } enquanto achata no nativo
+  const bakeRef = useRef(null);
+  const bakeLoadRef = useRef(null);
+  const bakeNative = useCallback(async (resultUri) => {
+    if (!_captureRefFn) return null;
+    const dw = displayDims.w || 0;
+    const dh = displayDims.h || 0;
+    if (!(dw > 0 && dh > 0)) return null;
+    const cw = Math.max(1, cropRect.w * dw);
+    const ch = Math.max(1, cropRect.h * dh);
+    const loaded = new Promise((res) => { bakeLoadRef.current = res; });
+    setActiveOverlayId(null);
+    setBake({ uri: resultUri, cw, ch, cox: cropRect.x * dw, coy: cropRect.y * dh });
+    try {
+      await Promise.race([loaded, new Promise((r) => setTimeout(r, 4000))]);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      if (!bakeRef.current) return null;
+      const out = await _captureRefFn(bakeRef.current, { format: 'jpg', quality: 0.92, result: 'tmpfile' });
+      const u = out ? String(out) : '';
+      return u ? (u.startsWith('/') ? `file://${u}` : u) : null;
+    } catch (e) {
+      console.warn('[PhotoEditor] bake failed:', e?.message || e);
+      return null;
+    } finally {
+      bakeLoadRef.current = null;
+      setBake(null);
+    }
+  }, [displayDims, cropRect]);
+
   const handleSave = useCallback(async () => {
     if (!imageUri) return;
     setSaving(true);
@@ -725,9 +771,6 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
       // the rendered overlay layer and composite onto ImageManipulator output.
       // For now native saves transforms+filter only — overlays are visible
       // in-editor but skipped on save. Web canvas path is fully functional.
-      if (hasOverlays && __DEV__) {
-        console.warn('[PhotoEditor] overlays only baked on web for now; native flatten TODO.');
-      }
 
       const actions = [];
 
@@ -766,8 +809,15 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
         result = await ImageManipulator.manipulateAsync(imageUri, [], opts);
       }
 
+      let finalUri = result.uri;
+      const needsBake = hasOverlays || drawPaths.length > 0 || brightness !== 0
+        || (!!FILTERS.find(f => f.key === selectedFilter)?.overlay && filterIntensity > 0);
+      if (needsBake) {
+        const baked = await bakeNative(result.uri);
+        if (baked) finalUri = baked;
+      }
       const extras = _editorExtras();
-      onSave?.(extras ? { uri: result.uri, ...extras } : result.uri);
+      onSave?.(extras ? { uri: finalUri, ...extras } : finalUri);
     } catch (err) {
       console.warn('PhotoEditor save error:', err);
       const extras = _editorExtras();
@@ -775,7 +825,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
     } finally {
       setSaving(false);
     }
-  }, [imageUri, rotation, flipH, flipV, cropRect, imageSize, selectedFilter, onSave, textItems, stickerItems, blurRegions, _editorExtras]);
+  }, [imageUri, rotation, flipH, flipV, cropRect, imageSize, selectedFilter, filterIntensity, brightness, drawPaths, onSave, textItems, stickerItems, blurRegions, _editorExtras, bakeNative]);
 
   // Canvas-based save for web
   const saveWithCanvas = useCallback(async () => {
@@ -920,12 +970,31 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
         }
       }
 
+      // [2026-10-21 media-audit] desenho também sai na foto salva (web).
+      if (drawPaths.length && typeof Path2D !== 'undefined') {
+        const sx3 = displayDims.w > 0 ? srcW / displayDims.w : 1;
+        const sy3 = displayDims.h > 0 ? srcH / displayDims.h : 1;
+        ctx.save();
+        ctx.scale(sx3, sy3);
+        ctx.translate(-cropRect.x * displayDims.w, -cropRect.y * displayDims.h);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        for (const pth of drawPaths) {
+          try {
+            ctx.strokeStyle = pth.color || '#fff';
+            ctx.lineWidth = pth.width || 4;
+            ctx.stroke(new Path2D(pth.d));
+          } catch {}
+        }
+        ctx.restore();
+      }
+
       return canvas.toDataURL('image/jpeg', 0.92);
     } catch (err) {
       console.warn('Canvas save error:', err);
       return null;
     }
-  }, [imageUri, rotation, flipH, flipV, cropRect, brightness, selectedFilter, filterIntensity, textItems, stickerItems, blurRegions, displayDims]);
+  }, [imageUri, rotation, flipH, flipV, cropRect, brightness, selectedFilter, filterIntensity, textItems, stickerItems, blurRegions, displayDims, drawPaths]);
 
   // ── Filter overlay for current filter ──
   const currentFilter = useMemo(() => FILTERS.find(f => f.key === selectedFilter), [selectedFilter]);
@@ -1119,6 +1188,66 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
           </TouchableOpacity>
         </View>
 
+        {/* [2026-10-21 media-audit] Vista oculta p/ achatar no nativo (fora da tela). */}
+        {bake && (
+          <View
+            ref={bakeRef}
+            collapsable={false}
+            pointerEvents="none"
+            style={{ position: 'absolute', left: screenW + 40, top: 0, width: bake.cw, height: bake.ch, overflow: 'hidden', backgroundColor: '#000' }}
+          >
+            <Image
+              source={{ uri: bake.uri }}
+              style={{ width: bake.cw, height: bake.ch }}
+              resizeMode="stretch"
+              onLoad={() => { try { bakeLoadRef.current?.(); } catch {} }}
+              onError={() => { try { bakeLoadRef.current?.(); } catch {} }}
+            />
+            {blurRegions.map(b => (
+              <View key={b.id} style={{ position: 'absolute', left: b.x - bake.cox, top: b.y - bake.coy, width: b.w, height: b.h, overflow: 'hidden' }}>
+                <Image
+                  source={{ uri: bake.uri }}
+                  blurRadius={Math.round(18 + (b.intensity || 0.7) * 22)}
+                  style={{ position: 'absolute', left: -(b.x - bake.cox), top: -(b.y - bake.coy), width: bake.cw, height: bake.ch }}
+                  resizeMode="stretch"
+                />
+              </View>
+            ))}
+            {currentFilter?.overlay && (
+              <View style={{ position: 'absolute', left: 0, top: 0, width: bake.cw, height: bake.ch, backgroundColor: currentFilter.overlay, opacity: Math.max(0, Math.min(1, filterIntensity / 100)) }} />
+            )}
+            {brightness !== 0 && (
+              <View style={{ position: 'absolute', left: 0, top: 0, width: bake.cw, height: bake.ch, backgroundColor: brightness > 0 ? '#ffffff' : '#000000', opacity: Math.abs(brightness) / 200 }} />
+            )}
+            {drawPaths.length > 0 && (
+              <Svg style={{ position: 'absolute', left: 0, top: 0 }} width={bake.cw} height={bake.ch} viewBox={`${bake.cox} ${bake.coy} ${bake.cw} ${bake.ch}`}>
+                {drawPaths.map(p => (
+                  <Path key={p.id} d={p.d} stroke={p.color} strokeWidth={p.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                ))}
+              </Svg>
+            )}
+            {textItems.map(it => (
+              <View key={it.id} style={{ position: 'absolute', left: it.x - bake.cox, top: it.y - bake.coy, padding: 4 }}>
+                <Text style={{
+                  color: it.color || '#fff',
+                  fontSize: it.size || 28,
+                  fontWeight: '800',
+                  textShadowColor: 'rgba(0,0,0,0.6)',
+                  textShadowOffset: { width: 0, height: 1 },
+                  textShadowRadius: 4,
+                }}>{it.value}</Text>
+              </View>
+            ))}
+            {stickerItems.map(it => (
+              <View key={it.id} style={{ position: 'absolute', left: it.x - bake.cox, top: it.y - bake.coy, padding: 4 }}>
+                {it.img
+                  ? <Image source={{ uri: it.img }} style={{ width: (it.size || 56) * 1.6, height: (it.size || 56) * 1.6 }} resizeMode="contain" />
+                  : <Text style={{ fontSize: it.size || 56 }}>{it.emoji}</Text>}
+              </View>
+            ))}
+          </View>
+        )}
+
         {/* Image area */}
         <View style={s.imageArea}>
           {imageUri && imageLoaded ? (
@@ -1303,10 +1432,22 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                     // box (real pixelate happens at save time on web only).
                     ...(Platform.OS === 'web'
                       ? { backdropFilter: `blur(${(b.intensity || 0.7) * 12}px)`, WebkitBackdropFilter: `blur(${(b.intensity || 0.7) * 12}px)` }
-                      : { backgroundColor: 'rgba(255,255,255,0.45)' }
+                      : (rotation === 0 && !flipH && !flipV ? null : { backgroundColor: 'rgba(255,255,255,0.45)' })
                     ),
                   }}
-                />
+                >
+                  {/* [2026-10-21 media-audit] nativo: desfoque de verdade na prévia (antes caixa branca). */}
+                  {Platform.OS !== 'web' && rotation === 0 && !flipH && !flipV ? (
+                    <View pointerEvents="none" style={[StyleSheet.absoluteFill, { overflow: 'hidden', borderRadius: 4 }]}>
+                      <Image
+                        source={{ uri: imageUri }}
+                        blurRadius={Math.round(18 + (b.intensity || 0.7) * 22)}
+                        style={{ position: 'absolute', left: -b.x, top: -b.y, width: displayDims.w, height: displayDims.h }}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  ) : null}
+                </DraggableOverlay>
               ))}
               {textItems.map(it => (
                 <DraggableOverlay
@@ -1334,7 +1475,9 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                   onDelete={() => removeOverlay(it.id)}
                   style={{ left: it.x, top: it.y }}
                 >
-                  <Text style={{ fontSize: it.size || 56 }}>{it.emoji}</Text>
+                  {it.img
+                    ? <Image source={{ uri: it.img }} style={{ width: (it.size || 56) * 1.6, height: (it.size || 56) * 1.6 }} resizeMode="contain" />
+                    : <Text style={{ fontSize: it.size || 56 }}>{it.emoji}</Text>}
                 </DraggableOverlay>
               ))}
 
@@ -1902,13 +2045,16 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                 <StickerPicker
                   onSelect={(item) => {
                     // Accept both emoji strings and richer sticker objects.
-                    const emoji = typeof item === 'string' ? item : (item?.emoji || item?.id || '⭐');
+                    // [2026-10-21 media-audit] figurinha de imagem (url) virava o ID impresso como texto.
+                    const img = typeof item === 'object' && item ? (item.url || item.media_url || item.uri || item.image_url || '') : '';
+                    const isImg = /^(https?:|file:|content:|data:)/i.test(String(img));
+                    const emoji = typeof item === 'string' ? item : (item?.emoji || (isImg ? '' : '⭐'));
                     pushHistory();
                     setStickerItems(prev => [...prev, {
-                      id: Date.now(),
+                      id: genId(),
                       x: displayDims.w / 2 - 28,
                       y: displayDims.h / 2 - 28,
-                      emoji, size: 56,
+                      emoji, img: isImg ? String(img) : undefined, size: 56,
                     }]);
                     setShowStickerStore(false);
                   }}
@@ -1936,6 +2082,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
               width={displayDims.w}
               height={displayDims.h}
               t={t}
+              initialPaths={drawPaths}
               onCancel={() => setShowDrawTool(false)}
               onDone={(result) => {
                 if (result?.paths) {

@@ -116,7 +116,7 @@ export default function VideoStudioPublish() {
         if (p.allow_comments === false) setAllowComments(false);
         if (p.allow_duet === false) setAllowDuet(false);
       }
-    });
+    }).catch(() => { if (alive) setDraft(false); }); // [2026-10-21 media-audit] erro de leitura = tela de "não encontrado" (antes: spinner eterno)
     return () => { alive = false; };
   }, [draftId]);
 
@@ -202,8 +202,13 @@ export default function VideoStudioPublish() {
   const saveDraft = useCallback(async () => {
     if (!draft) return;
     const p = publishObj();
-    updateDraft(draftId, (e) => ({ ...e, meta: { ...(e.meta || {}), publish: p } }), { immediate: true });
-    await saveDraftNow(draftId);
+    try {
+      updateDraft(draftId, (e) => ({ ...e, meta: { ...(e.meta || {}), publish: p } }), { immediate: true });
+      await saveDraftNow(draftId);
+    } catch {
+      Alert.alert(t('studio.drafts.title'), t('studio.publish.failed'));
+      return;
+    }
     try { haptic.success(); } catch {}
     Alert.alert(t('studio.drafts.title'), t('studio.publish.draftSaved'));
     closeStudio();

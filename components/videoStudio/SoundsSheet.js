@@ -129,6 +129,12 @@ export default function SoundsSheet({ visible, onClose, t, edl, videoDur, onAppl
       const pl = A.createAudioPlayer({ uri: track.url_preview || track.url }, { updateInterval: 500 });
       playerRef.current = pl;
       try { pl.volume = 1; } catch {}
+      // [2026-10-21 media-audit] fim da prévia → ícone volta a "tocar" (antes ficava preso em pausa).
+      try {
+        pl.addListener?.('playbackStatusUpdate', (st) => {
+          if (st?.didJustFinish && playerRef.current === pl) setPlayingId((cur) => (cur === track.id ? null : cur));
+        });
+      } catch {}
       if (from > 0) pl.seekTo(from).catch?.(() => {});
       pl.play();
       setPlayingId(track.id);
