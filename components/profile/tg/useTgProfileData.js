@@ -12,8 +12,46 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DeviceEventEmitter } from 'react-native';
 
 const PAGE = 24;
+const FIRST_PAGE = 12; // [muralperf 2026-10-21] 1ª página pequena (4 linhas da grade = 1 tela) → chega antes; o resto vem rolando
 const SHARED_PAGE = 60;
 const _mem = new Map(); // email → { profile, note, posts:{items,cursor,hasMore,page,legacy}, counts, shared }
+
+// [muralperf 2026-10-21] cópia em DISCO (MMKV, leitura síncrona) por e-mail: abrir o perfil depois de fechar o app
+// pinta na hora (identidade + grade + contadores) e revalida por trás — antes só a cópia em memória da sessão.
+// Guarda os posts CRUS do servidor (≤ FIRST_PAGE, ~1 KB cada) e normaliza de novo ao ler. TTL 7 dias, chave por conta.
+const DISK_TTL = 7 * 86400000;
+const _diskKey = (k) => `tgprof_v1_${k}`;
+function _diskRead(k) {
+  if (!k) return null;
+  try {
+    const d = require('../../../services/cache').getCachedSync(_diskKey(k));
+    if (!d || typeof d !== 'object') return null;
+    const items = Array.isArray(d.postsRaw) ? d.postsRaw.map(normPost).filter(Boolean) : [];
+    return {
+      profile: d.profile || null, note: d.note || null, counts: d.counts || null, groups: Array.isArray(d.groups) ? d.groups : null,
+      posts: { items, cursor: d.cursor || null, hasMore: !!d.hasMore, page: 1, loading: false, loaded: items.length > 0 || !!d.postsLoaded, error: false, legacy: false, fromDisk: true },
+    };
+  } catch { return null; }
+}
+const _diskTimers = new Map();
+function _diskWrite(k, entry) {
+  if (!k || !entry) return;
+  clearTimeout(_diskTimers.get(k));
+  _diskTimers.set(k, setTimeout(() => {
+    _diskTimers.delete(k);
+    try {
+      const ps = entry.posts || null;
+      const postsRaw = ps && Array.isArray(ps.items) ? ps.items.filter((p) => p && !p.__pending).slice(0, FIRST_PAGE).map((p) => p.raw || p) : [];
+      require('../../../services/cache').setCache(_diskKey(k), {
+        // presença/stories mudam rápido → não vão para o disco (a cópia não mostra "online" velho)
+        profile: entry.profile ? { ...entry.profile, presence: null, stories: [] } : null,
+        note: entry.note || null, counts: entry.counts || null, groups: entry.groups || null,
+        postsRaw, cursor: ps && postsRaw.length >= FIRST_PAGE ? (ps.items[postsRaw.length - 1] && String(ps.items[postsRaw.length - 1].id)) || null : null,
+        hasMore: !!(ps && (ps.hasMore || ps.items.length > postsRaw.length)), postsLoaded: !!(ps && ps.loaded),
+      }, DISK_TTL).catch(() => {});
+    } catch {}
+  }, 400));
+}
 
 function _api() { try { return require('../../../services/api'); } catch { return null; } }
 async function _call(action, params) {
@@ -42,7 +80,15 @@ export function normPost(p) {
   if (p.__norm) return p;
   let media = [];
   if (Array.isArray(p.media)) {
-    media = p.media.filter((m) => m && m.url).map((m) => ({ url: absUrl(m.url), thumb: absUrl(m.thumb || m.url), type: m.type === 'video' || _isVidUrl(m.url) ? 'video' : 'image', w: m.w || 0, h: m.h || 0 }));
+    // [muralperf 2026-10-21] thumb = miniatura da GRADE (grid = recorte 3:4 480x640 ~20-40 KB; t320 se não houver);
+    // display = versão de tela do CARTÃO (≤1280, ~70-220 KB) em vez do original (0,4-1,4 MB); blurhash pinta na hora.
+    media = p.media.filter((m) => m && m.url).map((m) => ({
+      url: absUrl(m.url),
+      thumb: absUrl(m.grid || m.t320 || m.thumb || m.url),
+      display: absUrl(m.display || m.thumb || m.url),
+      blurhash: m.blurhash || null,
+      type: m.type === 'video' || _isVidUrl(m.url) ? 'video' : 'image', w: m.w || 0, h: m.h || 0,
+    }));
   } else {
     let mu = p.media_urls;
     if (typeof mu === 'string') { try { mu = JSON.parse(mu); } catch { mu = mu ? [mu] : []; } }
@@ -81,6 +127,23 @@ export function normPost(p) {
   };
 }
 
+// [muralperf 2026-10-21] baixa as miniaturas da grade (e a versão de tela das 3 primeiras, que abrem no toque)
+// para o cache do expo-image assim que a página chega — a grade pinta sem buraco ao rolar.
+function _prefetchThumbs(list) {
+  try {
+    const Img = require('expo-image').Image;
+    if (!Img || !Img.prefetch) return;
+    const urls = [];
+    list.forEach((p, i) => {
+      const m = p && p.media && p.media[0];
+      if (!m || !/^https?:/i.test(m.thumb || '')) return;
+      urls.push(m.thumb);
+      if (i < 3 && m.display && m.display !== m.thumb && /^https?:/i.test(m.display)) urls.push(m.display);
+    });
+    if (urls.length) Img.prefetch(Array.from(new Set(urls)).slice(0, 40), 'memory-disk').catch(() => {});
+  } catch {}
+}
+
 function _dedupe(base, add) {
   const seen = new Set(base.map((p) => String(p.id)));
   const out = base.slice();
@@ -97,7 +160,13 @@ const SHARED_KINDS = { media: 'media', links: 'link', docs: 'doc', voice: 'audio
  */
 export function useTgProfileData({ email, username, self = false, conversationId = null, enabled = true }) {
   const key0 = String(email || username || '').toLowerCase();
-  const mem0 = _mem.get(key0) || null;
+  const mem0 = useMemo(() => {
+    const m = _mem.get(key0);
+    if (m) return m;
+    const d = _diskRead(key0);
+    if (d) _mem.set(key0, d);
+    return d;
+  }, [key0]); // eslint-disable-line react-hooks/exhaustive-deps
   const [profile, setProfile] = useState(mem0 ? mem0.profile : null);
   const [profileErr, setProfileErr] = useState(false);
   const [note, setNote] = useState(mem0 ? mem0.note : null);
@@ -118,9 +187,13 @@ export function useTgProfileData({ email, username, self = false, conversationId
   const save = useCallback((patch) => {
     if (!memKey) return;
     const cur = _mem.get(memKey) || {};
-    _mem.set(memKey, { ...cur, ...patch });
+    const next = { ...cur, ...patch };
+    _mem.set(memKey, next);
+    if (key0 && key0 !== memKey) _mem.set(key0, next); // aberto por @usuário → a próxima abertura acha pela mesma chave
     if (_mem.size > 40) { const k = _mem.keys().next().value; _mem.delete(k); }
-  }, [memKey]);
+    _diskWrite(memKey, next);
+    if (key0 && key0 !== memKey) _diskWrite(key0, next);
+  }, [memKey, key0]);
 
   // ── profile_get ──
   const loadProfile = useCallback(async () => {
@@ -157,10 +230,11 @@ export function useTgProfileData({ email, username, self = false, conversationId
     const st = postsRef.current;
     if (more && (!st.hasMore || st.loading)) return;
     const my = ++reqRef.current;
-    setPosts((s) => ({ ...s, loading: true, error: false }));
+    // [muralperf 2026-10-21] revalidar com a grade já na tela (cópia) = calado: sem spinner no rodapé
+    setPosts((s) => ({ ...s, loading: more || !s.items.length, refreshing: !more && !!s.items.length, error: false }));
     let list = null; let next = null; let hasMore = false; let cnt = null; let legacy = st.legacy; let page = more ? (st.page || 1) + 1 : 1;
     if (!legacy) {
-      const params = { email: self ? '' : resolvedEmail, limit: PAGE };
+      const params = { email: self ? '' : resolvedEmail, limit: more ? PAGE : FIRST_PAGE };
       if (more && st.cursor) params.cursor = st.cursor;
       const r = await _call('profile_posts', params);
       if (r && r.success && r.data && Array.isArray(r.data.posts)) {
@@ -174,11 +248,12 @@ export function useTgProfileData({ email, username, self = false, conversationId
       if (r && r.success && r.data) { list = Array.isArray(r.data.posts) ? r.data.posts : []; hasMore = !!r.data.has_more; }
     }
     if (my !== reqRef.current) return;
-    if (!list) { setPosts((s) => ({ ...s, loading: false, error: true, loaded: true })); return; }
+    if (!list) { setPosts((s) => ({ ...s, loading: false, refreshing: false, error: !s.items.length, loaded: true })); return; }
     const norm = list.map(normPost).filter(Boolean);
+    _prefetchThumbs(norm);
     setPosts((s) => {
       const items = more ? _dedupe(s.items, norm) : norm;
-      const out = { items, cursor: next, hasMore, page, loading: false, loaded: true, error: false, legacy };
+      const out = { items, cursor: next, hasMore, page, loading: false, refreshing: false, loaded: true, error: false, legacy };
       if (!more) save({ posts: out });
       return out;
     });

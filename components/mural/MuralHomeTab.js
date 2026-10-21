@@ -37,7 +37,27 @@ const ReelsHomeTab = React.lazy(() => import('../ReelsHomeTab'));
 
 export const MURAL_SEGMENTS = ['foryou', 'following', 'reels'];
 const PAGE = 15;
+const FIRST_PAGE = 8; // [muralperf 2026-10-21] 1ª página pequena (≈2 telas) → resposta menor/mais rápida; o resto vem rolando
 const CACHE_KEY = (tab) => `mural_feed_v1_${tab}`;
+
+// [muralperf 2026-10-21] baixa para o cache do expo-image a versão de tela (cartão) dos próximos posts e a
+// miniatura dos demais assim que a página chega → rolar não mostra cartão cinza esperando a foto.
+function _prefetchMedia(posts, from = 0) {
+  try {
+    const Img = require('expo-image').Image;
+    if (!Img || !Img.prefetch) return;
+    const urls = [];
+    posts.slice(from, from + PAGE).forEach((p) => {
+      const ms = Array.isArray(p && p.media) ? p.media.slice(0, 3) : [];
+      ms.forEach((m) => {
+        if (!m || m.type === 'video') return;
+        const u = absUrl(m.display || m.thumb || m.url);
+        if (/^https?:/i.test(u)) urls.push(u);
+      });
+    });
+    if (urls.length) Img.prefetch(Array.from(new Set(urls)).slice(0, 30), 'memory-disk').catch(() => {});
+  } catch {}
+}
 
 function _api() { return require('../../services/api'); }
 
@@ -72,10 +92,12 @@ function useMuralFeed(tab, enabled, t) {
     const cur = stRef.current;
     if (mode === 'more' && (!cur.hasMore || !cur.cursor)) return;
     busy.current = true;
-    setSt((s) => ({ ...s, loading: mode !== 'refresh', refreshing: mode === 'refresh', error: false }));
+    // [muralperf 2026-10-21] 1ª carga com a cópia do disco na tela = revalida calado (sem spinner no rodapé)
+    const silent = mode === 'first' && cur.posts.length > 0;
+    setSt((s) => ({ ...s, loading: mode !== 'refresh' && !silent, refreshing: mode === 'refresh', error: false }));
     let r = null;
     try {
-      r = await _api().apiCall('mural_feed', { tab, limit: PAGE, tz: -new Date().getTimezoneOffset(), ...(mode === 'more' ? { cursor: cur.cursor } : null) }, 'POST');
+      r = await _api().apiCall('mural_feed', { tab, limit: mode === 'more' ? PAGE : FIRST_PAGE, tz: -new Date().getTimezoneOffset(), ...(mode === 'more' ? { cursor: cur.cursor } : null) }, 'POST');
     } catch { r = null; }
     busy.current = false;
     if (pendingRefresh.current) { pendingRefresh.current = false; setTimeout(() => { try { load('refresh'); } catch {} }, 0); }
@@ -87,6 +109,7 @@ function useMuralFeed(tab, enabled, t) {
       return;
     }
     _prime(d.posts);
+    _prefetchMedia(d.posts, mode === 'more' ? 0 : 2); // os 2 primeiros já estão sendo pintados
     setSt((s) => {
       const posts = mode === 'more' ? [...s.posts, ...d.posts.filter((p) => !s.posts.some((q) => String(q.id) === String(p.id)))] : d.posts;
       if (mode !== 'more') _writeCache(tab, posts);

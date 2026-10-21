@@ -58,7 +58,11 @@ const Slide = memo(function Slide({ item, width, height, active, onDouble, onZoo
       </View>
     )
     : (
-      <ExpoImage source={{ uri: item.url }} placeholder={item.blurhash ? { blurhash: item.blurhash } : (item.thumb && item.thumb !== item.url ? { uri: item.thumb } : undefined)}
+      // [muralperf 2026-10-21] placeholder = versão de tela que o cartão do feed já baixou (cache) → abre nítido na hora;
+      // sem ela, a miniatura; por último o blurhash. O original chega por cima.
+      <ExpoImage source={{ uri: item.url }}
+        placeholder={(item.display && item.display !== item.url) ? { uri: item.display } : (item.thumb && item.thumb !== item.url ? { uri: item.thumb } : (item.blurhash ? { blurhash: item.blurhash } : undefined))}
+        placeholderContentFit="cover"
         style={{ width, height, backgroundColor: '#1c1c1e' }} contentFit="cover" transition={120} recyclingKey={item.url} />
     );
   if (!GH_OK) {

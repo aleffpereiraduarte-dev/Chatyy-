@@ -42,7 +42,8 @@ function _parseMedia(raw) {
     if (typeof u === 'object') {
       const url = u.url || u.uri || u.src || u.cdn_url || '';
       if (!url) return;
-      out.push({ url, type: (u.type || u.media_type) === 'video' ? 'video' : 'image', thumb: u.thumb || u.thumbnail || u.poster || '', w: u.w || u.width || 0, h: u.h || u.height || 0, blurhash: u.blurhash || null });
+      // [muralperf 2026-10-21] t320 (grade) / display ≤1280 (cartão, placeholder do visualizador) vindos do servidor
+      out.push({ url, type: (u.type || u.media_type) === 'video' ? 'video' : 'image', thumb: u.thumb || u.thumbnail || u.poster || '', t320: u.t320 || '', grid: u.grid || '', display: u.display || '', w: u.w || u.width || 0, h: u.h || u.height || 0, blurhash: u.blurhash || null });
       return;
     }
     const isVid = /\.(mp4|mov|m4v|webm)(\?|$)/i.test(String(u)) || (i === 0 && raw.media_type === 'video' && urls.length === 1);

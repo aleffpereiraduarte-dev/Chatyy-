@@ -14,6 +14,9 @@ import { tgT, relTime } from './tgStrings';
 export const GRID_GAP = THEME_V2 ? 4 : 2;
 const GRID_PAD = THEME_V2 ? 8 : 0;
 const TILE_R = THEME_V2 ? Grafite.radius.tile : 0;
+// [muralperf 2026-10-21] cartão = versão de tela (display ≤1280) → miniatura → original; grade usa m.thumb (t320).
+const _cardUri = (m) => (m && (m.display || m.thumb || m.url)) || '';
+const _ph = (m) => (m && m.blurhash ? { blurhash: m.blurhash } : undefined);
 
 // Curtir com mola de 0,35 s (Reanimated, UI thread; respeita Reduzir Movimento
 // pelo padrão ReduceMotion.System do Reanimated). Tema antigo = ícone parado.
@@ -94,7 +97,7 @@ const Tile = memo(function Tile({ post, w, h, th, lang, onPress }) {
   const cap = String(p.text || '').trim();
   return (
     <Pressable onPress={() => onPress(p)} style={{ width: w, height: h, backgroundColor: th.chip, overflow: 'hidden', borderRadius: TILE_R }} accessibilityRole="button" accessibilityLabel={cap ? cap.slice(0, 80) : tgT(lang, 'tabPosts')}>
-      <FastImage source={{ uri: m0.thumb || m0.url }} style={StyleSheet.absoluteFill} resizeMode="cover" recyclingKey={`${p.id}`} />
+      <FastImage source={{ uri: m0.thumb || m0.url }} placeholder={m0.blurhash ? { blurhash: m0.blurhash } : undefined} transition={m0.blurhash ? 120 : 0} style={StyleSheet.absoluteFill} resizeMode="cover" recyclingKey={`${p.id}`} />
       <Shade from={cap ? 0.45 : 0.7} alpha={cap ? 0.6 : 0.28} />
       {(p.media.length > 1 || p.count > 1) ? <View style={st.multi} pointerEvents="none"><TgIcon name="stack" size={17} color="#fff" strokeWidth={2} /></View> : (m0.type === 'video' ? <View style={st.multi} pointerEvents="none"><TgIcon name="play" size={15} color="#fff" fill="#fff" strokeWidth={1} /></View> : null)}
       {cap ? <Text style={st.cap2} numberOfLines={2}>{cap}</Text> : null}
@@ -175,15 +178,15 @@ export const PostCard = memo(function PostCard({ post, th, lang, author, onOpen,
       {imgs.length ? (
         <Pressable onPress={() => onOpen(p)} style={[st.pimgs, imgs.length > 1 && { flexDirection: 'row' }]}>
           {imgs.length === 1 ? (
-            <FastImage source={{ uri: imgs[0].thumb || imgs[0].url }} style={{ width: '100%', aspectRatio: imgs[0].w && imgs[0].h ? Math.max(0.8, Math.min(1.6, imgs[0].w / imgs[0].h)) : 4 / 3.4, backgroundColor: th.chip }} resizeMode="cover" recyclingKey={`c${p.id}`} />
+            <FastImage source={{ uri: _cardUri(imgs[0]) }} placeholder={_ph(imgs[0])} transition={imgs[0].blurhash ? 120 : 0} style={{ width: '100%', aspectRatio: imgs[0].w && imgs[0].h ? Math.max(0.8, Math.min(1.6, imgs[0].w / imgs[0].h)) : 4 / 3.4, backgroundColor: th.chip }} resizeMode="cover" recyclingKey={`c${p.id}`} />
           ) : imgs.length === 2 ? (
-            imgs.map((m, i) => <FastImage key={i} source={{ uri: m.thumb || m.url }} style={{ flex: 1, aspectRatio: 3 / 4, marginLeft: i ? 2 : 0, backgroundColor: th.chip }} resizeMode="cover" />)
+            imgs.map((m, i) => <FastImage key={i} source={{ uri: _cardUri(m) }} placeholder={_ph(m)} style={{ flex: 1, aspectRatio: 3 / 4, marginLeft: i ? 2 : 0, backgroundColor: th.chip }} resizeMode="cover" />)
           ) : (
             <>
-              <FastImage source={{ uri: imgs[0].thumb || imgs[0].url }} style={{ flex: 2, height: 242, backgroundColor: th.chip }} resizeMode="cover" />
+              <FastImage source={{ uri: _cardUri(imgs[0]) }} placeholder={_ph(imgs[0])} style={{ flex: 2, height: 242, backgroundColor: th.chip }} resizeMode="cover" />
               <View style={{ flex: 1, marginLeft: 2 }}>
-                <FastImage source={{ uri: imgs[1].thumb || imgs[1].url }} style={{ height: 120, backgroundColor: th.chip }} resizeMode="cover" />
-                <FastImage source={{ uri: imgs[2].thumb || imgs[2].url }} style={{ height: 120, marginTop: 2, backgroundColor: th.chip }} resizeMode="cover" />
+                <FastImage source={{ uri: _cardUri(imgs[1]) }} placeholder={_ph(imgs[1])} style={{ height: 120, backgroundColor: th.chip }} resizeMode="cover" />
+                <FastImage source={{ uri: _cardUri(imgs[2]) }} placeholder={_ph(imgs[2])} style={{ height: 120, marginTop: 2, backgroundColor: th.chip }} resizeMode="cover" />
               </View>
             </>
           )}
