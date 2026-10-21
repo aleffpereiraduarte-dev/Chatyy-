@@ -150,6 +150,66 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 // the REAL rich-push implementation (download image -> UNNotificationAttachment,
 // WhatsApp-style), NOT a no-op. [2026-10-04] Keep this in sync with
 // ios/ChatyyNotificationService/NotificationService.swift.
+// [e2ee5 WP-10 2026-10-21] Prévia decifrada na NSE. NotificationServiceE2EE.swift é ANEXADO ao
+// NotificationService.swift (mesmo arquivo de saída → o gancho existe sem mexer no pbxproj; sem o
+// núcleo ele é um stub que devolve nil = comportamento de hoje). O núcleo em si (bindings UniFFI +
+// host Swift do WP-03 + staticlib) só entra no alvo com o gate de nseCryptoGate().
+function readE2EESwift() {
+  try {
+    const f = path.join(__dirname, 'notification-service', 'NotificationServiceE2EE.swift');
+    if (fs.existsSync(f)) return '\n\n' + fs.readFileSync(f, 'utf8');
+  } catch {}
+  return '';
+}
+
+const CRYPTO_MODULE_IOS = path.join(__dirname, '..', 'modules', 'expo-chatyy-crypto', 'ios');
+// Copiados para ios/ChatyyNotificationService/ e compilados NO alvo da NSE (o pod do WP-03 depende
+// do ExpoModulesCore, que a NSE não linka). Os dois do host não importam ExpoModulesCore.
+const CRYPTO_SWIFT = [
+  { name: 'ChatyyCryptoCore.swift', src: path.join(CRYPTO_MODULE_IOS, 'Generated', 'ChatyyCryptoCore.swift') },
+  { name: 'ChatyyCryptoSupport.swift', src: path.join(CRYPTO_MODULE_IOS, 'ChatyyCryptoSupport.swift') },
+  { name: 'ChatyyCryptoHost.swift', src: path.join(CRYPTO_MODULE_IOS, 'ChatyyCryptoHost.swift') },
+];
+const CRYPTO_PLACEHOLDER = '// [e2ee5 WP-10] núcleo fora deste build (nseCryptoGate OFF) — arquivo vazio de propósito.\n';
+
+/**
+ * Núcleo E2EE dentro da NSE. ON só quando: o núcleo vai no binário (mesmo gate do
+ * with-chatyy-crypto: xcframework + bindings no módulo, ou CHATYY_CRYPTO=1) E a NSE tem o App Group
+ * (sem App Group a NSE não acha o store → seria peso morto). CHATYY_NSE_CRYPTO=0 desliga sempre.
+ * Fatias (device/simulador) lidas do Info.plist do xcframework.
+ */
+function nseCryptoGate(projectRoot) {
+  const force = (process.env.CHATYY_NSE_CRYPTO || '').trim().toLowerCase();
+  if (force === '0' || force === 'false' || force === 'off') return { on: false, why: 'CHATYY_NSE_CRYPTO=0' };
+  let core;
+  try {
+    core = require('./with-chatyy-crypto')._test.coreGate('ios');
+  } catch (e) {
+    return { on: false, why: 'with-chatyy-crypto indisponível: ' + e.message };
+  }
+  if (!core.on) return { on: false, why: 'núcleo fora do binário (' + core.why + ')' };
+  const ag = nseAppGroupGate(projectRoot);
+  if (!ag.on) return { on: false, why: 'NSE sem App Group (' + ag.why + ')' };
+  const xcf = path.join(CRYPTO_MODULE_IOS, 'ChatyyCryptoCore.xcframework');
+  const slices = { device: null, sim: null };
+  try {
+    let plist;
+    try { plist = require('@expo/plist').default || require('@expo/plist'); } catch { plist = null; }
+    const raw = fs.readFileSync(path.join(xcf, 'Info.plist'), 'utf8');
+    const libs = plist ? (plist.parse(raw).AvailableLibraries || []) : [];
+    for (const l of libs) {
+      if (l.SupportedPlatform !== 'ios') continue;
+      const s = { id: l.LibraryIdentifier, headers: l.HeadersPath || 'Headers', lib: l.LibraryPath };
+      if (l.SupportedPlatformVariant === 'simulator') slices.sim = s; else slices.device = s;
+    }
+  } catch (e) {
+    return { on: false, why: 'Info.plist do xcframework ilegível: ' + e.message };
+  }
+  if (!slices.device || !/^lib(.+)\.a$/.test(slices.device.lib || '')) return { on: false, why: 'xcframework sem fatia ios-arm64 staticlib' };
+  for (const f of CRYPTO_SWIFT) if (!fs.existsSync(f.src)) return { on: false, why: 'falta ' + f.name };
+  return { on: true, why: core.why + ' + App Group', slices };
+}
+
 function readCanonicalSwift(projectRoot) {
   // [2026-10-07 recv-native] Source of truth is now the COMMITTED file
   // plugins/notification-service/NotificationService.swift (ios/ is gitignored,
@@ -159,7 +219,7 @@ function readCanonicalSwift(projectRoot) {
   // copy (local prebuilds) → embedded legacy fallback.
   try {
     const own = path.join(__dirname, 'notification-service', 'NotificationService.swift');
-    if (fs.existsSync(own)) return fs.readFileSync(own, 'utf8');
+    if (fs.existsSync(own)) return fs.readFileSync(own, 'utf8') + readE2EESwift();
   } catch {}
   // [2026-10-18 nse-drift] No more fallback to ios/ChatyyNotificationService/:
   // that copy is the OUTPUT of this mod (a previous prebuild), so reading it
@@ -319,6 +379,13 @@ function withNotificationServiceFiles(config) {
         // [2026-10-07 bgsync] App Group on the NSE only when its profile has it.
         [`${EXT_NAME}.entitlements`]: nseEntitlementsPlist(cfg.modRequest.projectRoot),
       };
+      // [e2ee5 WP-10] núcleo na NSE: cópia dos .swift (ou arquivo vazio com o gate OFF, para um
+      // pbxproj antigo que já os referencia continuar compilando).
+      const cg = nseCryptoGate(cfg.modRequest.projectRoot);
+      console.log(`[with-notification-service] NSE E2EE core ${cg.on ? 'ON' : 'OFF'} (${cg.why})`);
+      for (const f of CRYPTO_SWIFT) {
+        files[f.name] = cg.on ? fs.readFileSync(f.src, 'utf8') : CRYPTO_PLACEHOLDER;
+      }
       for (const [fileName, content] of Object.entries(files)) {
         fs.writeFileSync(path.join(destDir, fileName), content, 'utf8');
       }
@@ -639,12 +706,91 @@ function withNotificationServiceProviderStub(config) {
   ]);
 }
 
+const CRYPTO_MARK = 'CHATYY_CRYPTO_CORE';
+const CRYPTO_XCF_REL = '$(SRCROOT)/../modules/expo-chatyy-crypto/ios/ChatyyCryptoCore.xcframework';
+
+/** Liga/desliga as build settings do núcleo num buildSettings da NSE (só mexe no que é nosso). */
+function applyCryptoBuildSettings(b, gate) {
+  const unq = (v) => String(v == null ? '' : v).replace(/^"|"$/g, '');
+  const q = (s) => `"${s}"`;
+  // limpa o que ESTE mod escreveu antes (chaves por SDK apontando p/ o xcframework + tokens nossos)
+  for (const k of Object.keys(b)) {
+    if (/^"?(SWIFT_INCLUDE_PATHS|LIBRARY_SEARCH_PATHS|OTHER_SWIFT_FLAGS)\[sdk=/.test(k) && unq(b[k]).includes('ChatyyCryptoCore.xcframework')) delete b[k];
+  }
+  const strip = (k, re) => {
+    if (b[k] == null) return;
+    const v = unq(b[k]).replace(re, ' ').replace(/\s+/g, ' ').trim();
+    if (!v || v === '$(inherited)') delete b[k]; else b[k] = q(v);
+  };
+  strip('SWIFT_ACTIVE_COMPILATION_CONDITIONS', new RegExp('\\b' + CRYPTO_MARK + '\\b', 'g'));
+  strip('OTHER_LDFLAGS', /-lchatyy_crypto\b|-framework Security\b/g);
+  if (!gate.on) return;
+  const { device, sim } = gate.slices;
+  const lib = device.lib.replace(/^lib/, '').replace(/\.a$/, '');
+  const add = (k, tokens) => {
+    const cur = unq(b[k]) || '$(inherited)';
+    b[k] = q((cur.includes('$(inherited)') ? cur : '$(inherited) ' + cur) + ' ' + tokens);
+  };
+  add('SWIFT_ACTIVE_COMPILATION_CONDITIONS', CRYPTO_MARK);
+  add('OTHER_LDFLAGS', `-l${lib} -framework Security`);
+  const per = [['iphoneos*', device]];
+  if (sim) per.push(['iphonesimulator*', sim]);
+  for (const [sdk, s] of per) {
+    const hdr = `${CRYPTO_XCF_REL}/${s.id}/${s.headers}`;
+    b[q(`SWIFT_INCLUDE_PATHS[sdk=${sdk}]`)] = q(`$(inherited) ${hdr}`);
+    b[q(`LIBRARY_SEARCH_PATHS[sdk=${sdk}]`)] = q(`$(inherited) ${CRYPTO_XCF_REL}/${s.id}`);
+    b[q(`OTHER_SWIFT_FLAGS[sdk=${sdk}]`)] = q(`$(inherited) -Xcc -fmodule-map-file=${hdr}/module.modulemap`);
+  }
+}
+
+// [e2ee5 WP-10 2026-10-21] Núcleo chatyy-crypto no alvo da NSE (idempotente; roda também quando o
+// alvo já existia). Gate ON: os 3 .swift na fase Sources + CHATYY_CRYPTO_CORE + staticlib da fatia
+// certa (device/simulador) direto do xcframework do módulo, sem o pod (que puxaria o ExpoModulesCore).
+// Gate OFF: tira as flags (os .swift, se já referenciados, viram arquivos vazios — ver files mod).
+function withNotificationServiceCrypto(config) {
+  return withXcodeProject(config, (cfg) => {
+    const project = cfg.modResults;
+    const gate = nseCryptoGate(cfg.modRequest.projectRoot);
+    let targetUuid = null;
+    const targets = project.pbxNativeTargetSection() || {};
+    for (const key of Object.keys(targets)) {
+      const t = targets[key];
+      if (t && typeof t === 'object' && (t.name === EXT_NAME || t.name === `"${EXT_NAME}"`)) { targetUuid = key; break; }
+    }
+    if (!targetUuid) {
+      console.warn('[with-notification-service] E2EE: alvo da NSE não encontrado — núcleo fora da NSE');
+      return cfg;
+    }
+    if (gate.on) {
+      const groupKey = project.findPBXGroupKey({ name: EXT_NAME }) || project.findPBXGroupKey({ path: EXT_NAME });
+      for (const f of CRYPTO_SWIFT) {
+        if (project.hasFile(f.name) || project.hasFile(`${EXT_NAME}/${f.name}`)) continue;
+        try {
+          project.addSourceFile(f.name, { target: targetUuid }, groupKey);
+        } catch (e) {
+          console.warn(`[with-notification-service] E2EE: addSourceFile ${f.name} falhou: ${e.message}`);
+        }
+      }
+    }
+    const xc = project.pbxXCBuildConfigurationSection();
+    for (const key of Object.keys(xc)) {
+      const c = xc[key];
+      if (!c || !c.buildSettings || c.buildSettings.PRODUCT_NAME !== `"${EXT_NAME}"`) continue;
+      applyCryptoBuildSettings(c.buildSettings, gate);
+    }
+    console.log(`[with-notification-service] NSE E2EE build settings ${gate.on ? 'ON' : 'OFF'}`);
+    return cfg;
+  });
+}
+
 module.exports = function withNotificationService(config) {
   config = withNotificationServiceFiles(config);
   config = withMainAppGroup(config);
   config = withCommunicationNotifications(config);
   config = withNotificationServiceTarget(config);
+  config = withNotificationServiceCrypto(config);
   config = withNotificationServicePodTarget(config);
   config = withNotificationServiceProviderStub(config);
   return config;
 };
+module.exports._test = { nseCryptoGate, readE2EESwift, applyCryptoBuildSettings };

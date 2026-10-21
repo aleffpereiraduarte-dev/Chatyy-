@@ -22,6 +22,10 @@ import CryptoKit
 ///   5. [2026-10-11] App-icon badge kept right with the app killed (server
 ///      aps.badge + App Group counter — see applyBadge) and the message is
 ///      journaled into the App Group (journalMessage) for instant open.
+///   6. [e2ee5 WP-10 2026-10-21] E2EE push (e2e=5): decrypted on-device with the
+///      chatyy-crypto core (role Push) → real sender + preview, ≤ ChatyyNSEE2EE.deadline,
+///      else the server's generic "Nova mensagem". Code: NotificationServiceE2EE.swift
+///      (appended to this file by with-notification-service.js; stub without the core).
 ///
 /// Limits respected: ~30 s wall time (each download ≤ 8 s, everything in
 /// parallel, serviceExtensionTimeWillExpire delivers the best attempt) and the
@@ -116,6 +120,22 @@ class NotificationService: UNNotificationServiceExtension {
         var groupAvatarData: Data?
         let resultLock = NSLock()
 
+        // [e2ee5 WP-10 2026-10-21] Conversa E2EE (push com e2e=5): decifra no aparelho (núcleo
+        // chatyy-crypto, papel Push) em paralelo com avatar/mídia. Sem núcleo/flag/App Group/store,
+        // conversa trancada ou prévia oculta → candidateUid = nil e nada muda (fica "Nova mensagem").
+        // O texto decifrado só vai para o conteúdo da notificação (nunca journal/cache/Intent).
+        var e2eText: String?
+        var e2ePending = false
+        let e2eUid: String? = isChat ? ChatyyNSEE2EE.candidateUid(p, type: type) : nil
+        if let uid = e2eUid {
+            e2ePending = true
+            group.enter()
+            ChatyyNSEE2EE.preview(p, uid: uid) { txt in
+                resultLock.lock(); e2eText = txt; e2ePending = false; resultLock.unlock()
+                group.leave()
+            }
+        }
+
         if let u = mediaURL {
             group.enter()
             let t = Self.downloadAttachment(u) { att in
@@ -152,21 +172,39 @@ class NotificationService: UNNotificationServiceExtension {
             _ = ackGroup.wait(timeout: .now() + Self.ackGrace)
             self.deliverBest(best, p: p, isChat: isChat, locked: locked, conv: conv, isGroup: isGroup,
                              resultLock: resultLock,
-                             media: { mediaAttachment }, avatar: { avatarData }, groupAvatar: { groupAvatarData })
+                             media: { mediaAttachment }, avatar: { avatarData }, groupAvatar: { groupAvatarData },
+                             e2e: { e2eText })
         }
         // Avatar/mídia lentos (cache frio, rede ruim) não seguram o banner além do prazo.
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + Self.bannerDeadline) { finalize() }
+        // [e2ee5 WP-10] decifrando ainda → espera até o teto da E2EE (depois entrega o genérico).
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + Self.bannerDeadline) {
+            resultLock.lock(); let waitE2E = e2ePending; resultLock.unlock()
+            if !waitE2E { finalize() }
+        }
+        if e2eUid != nil {
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                deadline: .now() + max(Self.bannerDeadline, ChatyyNSEE2EE.deadline)) { finalize() }
+        }
         group.notify(queue: DispatchQueue.global(qos: .userInitiated)) { finalize() }
     }
 
     private func deliverBest(_ best: UNMutableNotificationContent, p: [String: Any], isChat: Bool, locked: Bool,
                              conv: String, isGroup: Bool, resultLock: NSLock,
                              media mediaGet: () -> UNNotificationAttachment?,
-                             avatar avatarGet: () -> Data?, groupAvatar groupAvatarGet: () -> Data?) {
+                             avatar avatarGet: () -> Data?, groupAvatar groupAvatarGet: () -> Data?,
+                             e2e e2eGet: () -> String?) {
         resultLock.lock()
-        let media = mediaGet(), avatar = avatarGet(), groupAvatar = groupAvatarGet()
+        let media = mediaGet(), avatar = avatarGet(), groupAvatar = groupAvatarGet(), e2e = e2eGet()
         resultLock.unlock()
         if let a = media { best.attachments = [a] }
+        var p = p
+        if let txt = e2e, !txt.isEmpty, !locked {
+            // [e2ee5 WP-10] prévia decifrada (só em memória): mesmo formato do push em claro.
+            let sn = Self.str(p, "sender_name") ?? ""
+            best.body = (isGroup && !sn.isEmpty) ? sn + ": " + txt : txt
+            p["msg_preview"] = txt
+            p["__e2e_plain"] = "1"
+        }
 
         guard isChat, !locked, !conv.isEmpty else {
             self.finish(best)
@@ -265,9 +303,12 @@ class NotificationService: UNNotificationServiceExtension {
             recipients = [meDirect]
         }
 
+        // [e2ee5 WP-10] texto decifrado NUNCA vai na doação (o iOS guarda as interações fora do
+        // App Group); o corpo da notificação vem do `base`, não do Intent.
+        let e2ePlain = Self.str(p, "__e2e_plain") == "1"
         let intent = INSendMessageIntent(recipients: recipients,
                                          outgoingMessageType: .outgoingMessageText,
-                                         content: (preview?.isEmpty == false) ? preview : best.body,
+                                         content: e2ePlain ? nil : ((preview?.isEmpty == false) ? preview : best.body),
                                          speakableGroupName: speakableGroup,
                                          conversationIdentifier: "chat_" + conv,
                                          serviceName: nil,
