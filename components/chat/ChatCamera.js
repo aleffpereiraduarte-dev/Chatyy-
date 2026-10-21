@@ -303,8 +303,24 @@ function CameraScreen({ VC, micOk, insets, onClose, onCapture, onOpenGallery, t 
     recRef.current.finishing = true;
     hapticTap('light');
     // stopRecording resolves; the file arrives via onRecordingFinished.
-    try { cameraRef.current?.stopRecording?.()?.catch?.(() => {}); } catch {}
-  }, []);
+    // [2026-10-21 polish-conv] Se o stop falhar ou o callback nunca chegar,
+    // o modal ficava preso em "gravando" (X desabilitado, timer rodando).
+    // Reset de segurança: falha imediata ou watchdog de 4 s.
+    const _startedAt = recRef.current.startedAt;
+    const _unstick = () => {
+      if (!recRef.current.active || recRef.current.startedAt !== _startedAt) return;
+      stopTimers();
+      recRef.current.active = false;
+      recRef.current.finishing = false;
+      setRecording(false);
+      try { ringAnim.stopAnimation(); pulse.stopAnimation(); pulse.setValue(1); } catch {}
+    };
+    try {
+      const p = cameraRef.current?.stopRecording?.();
+      if (p && typeof p.catch === 'function') p.catch(_unstick);
+    } catch { _unstick(); }
+    setTimeout(_unstick, 4000);
+  }, [stopTimers, ringAnim, pulse]);
   const stopRecordingRef = useRef(stopRecording);
   stopRecordingRef.current = stopRecording;
 

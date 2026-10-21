@@ -23,8 +23,9 @@ function tr(t, k, fb) {
   try { const v = t ? t(k) : ''; return v && v !== k ? v : fb; } catch { return fb; }
 }
 
+// [2026-10-21 polish-conv] separador de milhar no idioma do aparelho (era pt-BR fixo).
 function fmtNum(n) {
-  try { return Number(n || 0).toLocaleString('pt-BR'); } catch { return String(n || 0); }
+  try { return Number(n || 0).toLocaleString(); } catch { return String(n || 0); }
 }
 
 function fmtDate(iso) {
@@ -97,6 +98,7 @@ export default function ConvStatsBody({ conversationId, messages, myEmail, color
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setRemote(null); // [2026-10-21 polish-conv] nunca mostra os números da conversa anterior
     (async () => {
       try {
         const r = await chatConversationStats(conversationId);

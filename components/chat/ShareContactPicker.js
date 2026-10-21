@@ -396,7 +396,10 @@ export default function ShareContactPicker({ t, colors = {}, isDark, currentEmai
           <Text style={[st.section, { color: sub }]}>{section.title}</Text>
         )}
         ListFooterComponent={pbFooter}
-        ListEmptyComponent={(loadingChatyy || pbState === 'loading' || pbState === 'checking') ? null : (
+        ListEmptyComponent={(pbState === 'loading' || pbState === 'checking') ? null : loadingChatyy ? (
+          // [2026-10-21 polish-conv] carregando os contatos do Chatyy: spinner (era lista em branco até 8 s)
+          <ActivityIndicator color={ink} style={{ marginVertical: 32 }} />
+        ) : (
           <Text style={{ color: ter, textAlign: 'center', paddingVertical: 40, fontSize: 14 }}>{_tr(t, 'chatConv.noContactsFound', 'Nenhum contato encontrado')}</Text>
         )}
         contentContainerStyle={{ paddingBottom: 24 }}

@@ -107,12 +107,21 @@ const _parseViewedBy = (raw) => {
   return [];
 };
 
-function FullscreenVideoPlayer({ uri, onLoaded, onEnded, onError }) {
+// [2026-10-21 polish-conv] Hooks sempre na mesma ordem (React Compiler) e o
+// aviso de "expo-video ausente" vai num efeito — antes chamava onError
+// (setState do pai) DURANTE o render.
+function FullscreenVideoPlayer(props) {
   const mod = loadExpoVideo();
-  if (!mod || !mod.useVideoPlayer || !mod.VideoView) {
-    onError?.(new Error('expo-video unavailable'));
-    return null;
-  }
+  const ok = !!(mod && mod.useVideoPlayer && mod.VideoView);
+  const { onError } = props;
+  useEffect(() => {
+    if (!ok) { try { onError?.(new Error('expo-video unavailable')); } catch {} }
+  }, [ok]);
+  if (!ok) return null;
+  return <FullscreenVideoPlayerInner {...props} mod={mod} />;
+}
+
+function FullscreenVideoPlayerInner({ uri, onLoaded, onEnded, onError, mod }) {
   const { useVideoPlayer, VideoView } = mod;
   const loadedRef = useRef(false);
   const endedRef = useRef(false);
@@ -666,6 +675,14 @@ function ViewOnceAudioPlayer({ msg, fileUrl, colors, t, onConsumed }) {
     if (errored) {
       // Retry path: reset and let the user tap again.
       setErrored(false);
+      // [2026-10-21 polish-conv] libera o player antigo (listener vivo disparava depois).
+      try {
+        const old = soundRef.current;
+        old?._sub?.remove?.();
+        old?.pause?.();
+        if (typeof old?.remove === 'function') old.remove();
+        else if (old && 'src' in old) old.src = '';
+      } catch {}
       soundRef.current = null;
       return;
     }
@@ -828,7 +845,7 @@ function ViewOnceAudioPlayer({ msg, fileUrl, colors, t, onConsumed }) {
       accessibilityRole="button"
       accessibilityLabel={t?.('chatConv.viewOnceVoiceTapToHear') || 'Tocar para ouvir'}
     >
-      <View style={[s.tapIconCircle, { backgroundColor: 'rgba(17, 17, 17,0.14)' }]}>
+      <View style={[s.tapIconCircle, { backgroundColor: _rgbaOf(accent, 0.14) }]}>
         {playing
           ? <IconPause size={18} color={accent} />
           : errored

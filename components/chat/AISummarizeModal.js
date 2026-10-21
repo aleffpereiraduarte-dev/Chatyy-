@@ -63,7 +63,7 @@ export default function AISummarizeModal({
           setError(r?.message || (t?.('chatConv.summarizeError') || 'Could not summarize'));
         }
       } catch (e) {
-        if (!cancelled) setError(e?.message || 'error');
+        if (!cancelled) setError(t?.('chatConv.summarizeError') || 'Não foi possível resumir agora.'); // [2026-10-21 polish-conv] nunca e.message cru
       } finally {
         if (!cancelled) setLoading(false);
       }

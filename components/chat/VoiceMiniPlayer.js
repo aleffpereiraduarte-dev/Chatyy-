@@ -23,6 +23,7 @@ import { View, Text, Pressable, Animated, Easing, StyleSheet, Platform, PanRespo
 import { usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconPlay, IconPause, IconX } from '../Icons';
+import { grafite, themeV2On } from '../../constants/theme';
 import AvatarCircle from '../AvatarCircle';
 import { useLanguage } from '../../context/LanguageContext';
 import { useCallBarHeight } from '../CallStatusBar';
@@ -67,8 +68,10 @@ function LiveWave({ playing, color, reduce }) {
       Animated.timing(v, { toValue: 1, duration: 260 + i * 70, easing: Easing.inOut(Easing.quad), useNativeDriver: NATIVE_DRIVER }),
       Animated.timing(v, { toValue: 0.3, duration: 300 + i * 50, easing: Easing.inOut(Easing.quad), useNativeDriver: NATIVE_DRIVER }),
     ])));
-    loops.forEach((l, i) => setTimeout(() => { try { l.start(); } catch {} }, i * 90));
-    return () => loops.forEach((l) => { try { l.stop(); } catch {} });
+    // [2026-10-21 polish-conv] guarda os timeouts: pausar/tocar em <270 ms
+    // deixava um loop órfão animando com o áudio parado.
+    const ids = loops.map((l, i) => setTimeout(() => { try { l.start(); } catch {} }, i * 90));
+    return () => { ids.forEach(clearTimeout); loops.forEach((l) => { try { l.stop(); } catch {} }); };
   }, [playing, reduce, vals]);
   return (
     <View style={s.wave} pointerEvents="none" accessible={false}>
@@ -223,7 +226,12 @@ export default function VoiceMiniPlayer() {
   const timeTxt = `${fmt(sec)}${totalSec > 0 ? ` / ${fmt(totalSec)}` : ''}`;
 
   // P&B palette (true black dark / white light).
-  const pal = isDark
+  // [2026-10-21 polish-conv] Grafite: cinzas quentes (sem faixa branca/preta pura
+  // acima do cabeçalho #F2F2EF/#0E0E10).
+  const _g = themeV2On() ? grafite(isDark) : null;
+  const pal = _g
+    ? { top: _g.bg, strip: _g.surface, line: _g.line, text: _g.text, sub: _g.muted, btnBg: _g.ink, btnFg: _g.onInk, chip: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(24,24,27,0.06)', track: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(24,24,27,0.07)', fill: _g.ink }
+    : isDark
     ? { top: '#000000', strip: '#111113', line: '#262628', text: '#FFFFFF', sub: 'rgba(255,255,255,0.62)', btnBg: '#FFFFFF', btnFg: '#000000', chip: 'rgba(255,255,255,0.12)', track: 'rgba(255,255,255,0.10)', fill: '#FFFFFF' }
     : { top: '#FFFFFF', strip: '#F6F6F7', line: 'rgba(0,0,0,0.10)', text: '#0A0A0A', sub: 'rgba(0,0,0,0.55)', btnBg: '#0A0A0A', btnFg: '#FFFFFF', chip: 'rgba(0,0,0,0.07)', track: 'rgba(0,0,0,0.07)', fill: '#0A0A0A' };
 

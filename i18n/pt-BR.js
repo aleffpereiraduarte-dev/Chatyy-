@@ -15281,4 +15281,7 @@ export default {
   "chatConv.emojiRecent": "Recentes",
   "chatConv.emojiSkinTone": "Tom de pele",
   "chatConv.emojiPeople": "Pessoas e corpo",
+  "chatConv.blockedByName": "Você foi bloqueado por {name}",
+  "chatConv.blockedByContact": "Você foi bloqueado por este contato",
+  "chatConv.youBlockedUnblockToSend": "Você bloqueou este contato. Desbloqueie para enviar mensagens.",
 };

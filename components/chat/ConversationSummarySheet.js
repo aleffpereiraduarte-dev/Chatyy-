@@ -703,7 +703,7 @@ function ConversationSummarySheetInner({
       }
       if (my !== askReqRef.current) return;
       if (r && r.success && r.data && (r.data.answer || r.data.answer === '')) {
-        const refs = (Array.isArray(r.data.refs) ? r.data.refs : []).map(Number).filter((x) => Number.isFinite(x) && x > 0).slice(0, 4);
+        const refs = (Array.isArray(r.data.refs) ? r.data.refs : []).map(Number).filter((x, i, arr) => Number.isFinite(x) && x > 0 && arr.indexOf(x) === i).slice(0, 4); // [2026-10-21 polish-conv] sem ids repetidos (chave duplicada)
         setAsk({ q, loading: false, answer: cleanText(r.data.answer) || '—', refs, error: '' });
       } else {
         setAsk({ q, loading: false, answer: '', refs: [], error: (r && r.message) || tr(t, 'chatSum.errorTitle', 'Não foi possível resumir') });

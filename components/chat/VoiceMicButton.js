@@ -459,7 +459,7 @@ export default function VoiceMicButton({
     opacity: disabled ? 0.5 : 1,
     ...(Platform.OS === 'web' ? {
       cursor: disabled ? 'not-allowed' : 'pointer',
-      boxShadow: size >= 52 ? `0 6px 16px ${BRAND}55` : '0 1px 3px rgba(0,0,0,0.12)',
+      boxShadow: size >= 52 ? '0 6px 16px rgba(0,0,0,0.33)' : '0 1px 3px rgba(0,0,0,0.12)',
       transition: 'transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1)',
     } : {}),
     ...Platform.select({
@@ -483,7 +483,8 @@ export default function VoiceMicButton({
     width: chipW,
     paddingVertical: 8,
     borderRadius: chipW / 2,
-    backgroundColor: BRAND,
+    // [2026-10-21 polish-conv] mesma cor do botão (era #111 fixo = sumia no Grafite escuro).
+    backgroundColor: color || BRAND,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
@@ -512,8 +513,8 @@ export default function VoiceMicButton({
           importantForAccessibility="no-hide-descendants"
           accessibilityLabel={lockHintLabel || 'Slide up to lock'}
         >
-          <IconChevronUp size={12} color="#fff" />
-          <IconLock size={14} color="#fff" />
+          <IconChevronUp size={12} color={iconColor || '#fff'} />
+          <IconLock size={14} color={iconColor || '#fff'} />
         </Animated.View>
       )}
       <Animated.View style={{ transform: [{ scale: Animated.multiply(pressScale, holdScale) }] }}>

@@ -7327,7 +7327,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                     </View>
                     {s.cover
                       ? <ExpoImage source={{ uri: s.cover }} style={{ width: 44, height: 44, borderRadius: 8 }} cachePolicy="memory-disk" recyclingKey={s.cover} />
-                      : <View style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#111111' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={20} color="#111111" /></View>}
+                      : <View style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: colors.text + '14', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={20} color={colors.textSecondary} /></View>}
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>{s.title}</Text>
                       <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>{s.artist}</Text>
@@ -7386,10 +7386,10 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
               <View style={{ alignItems: 'center', paddingVertical: 28 }}>
                 <View style={{
                   width: 64, height: 64, borderRadius: 32,
-                  backgroundColor: '#111111' + '14',
+                  backgroundColor: colors.text + '0F',
                   alignItems: 'center', justifyContent: 'center', marginBottom: 12,
                 }}>
-                  <IconMusic size={30} color="#111111" />
+                  <IconMusic size={30} color={colors.textSecondary} />
                 </View>
                 <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: 32, lineHeight: 18 }}>
                   Digite o nome de uma música, artista ou álbum para adicionar à playlist.
@@ -7418,7 +7418,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                 >
                   {track.coverUrl
                     ? <ExpoImage source={{ uri: track.coverUrl }} style={{ width: 48, height: 48, borderRadius: 8 }} cachePolicy="memory-disk" recyclingKey={track.coverUrl} />
-                    : <View style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#111111' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={22} color="#111111" /></View>}
+                    : <View style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: colors.text + '14', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={22} color={colors.textSecondary} /></View>}
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>{track.title}</Text>
                     <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>
@@ -7427,13 +7427,13 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                   </View>
                   <View style={{
                     width: 36, height: 36, borderRadius: 18,
-                    backgroundColor: already ? colors.border : '#111111',
+                    backgroundColor: already ? colors.border : (colors.primary || '#111111'),
                     alignItems: 'center', justifyContent: 'center',
                     ...(Platform.OS === 'web' && !already ? { boxShadow: '0 2px 6px rgba(17, 17, 17,0.35)' } : {}),
                   }}>
                     {already
                       ? <IconCheck size={18} color={colors.textSecondary} strokeWidth={3} />
-                      : <Text style={{ color: '#fff', fontSize: 22, fontWeight: '300', marginTop: -2 }}>+</Text>}
+                      : <Text style={{ color: colors.onPrimary || '#fff', fontSize: 22, fontWeight: '300', marginTop: -2 }}>+</Text>}
                   </View>
                 </TouchableOpacity>
               );
@@ -34723,8 +34723,8 @@ function ChatConversationInnerBody() {
             csv:   { color: '#16A34A', label: 'CSV' },
             ppt:   { color: '#EA580C', label: 'PPT' },
             pptx:  { color: '#EA580C', label: 'PPT' },
-            zip:   { color: '#111111', label: 'ZIP' },
-            rar:   { color: '#111111', label: 'RAR' },
+            zip:   { color: '#8B5CF6', label: 'ZIP' }, // [2026-10-21 polish-conv] #111 sumia na bolha escura
+            rar:   { color: '#8B5CF6', label: 'RAR' },
             txt:   { color: '#6B7280', label: 'TXT' },
           };
           const fileType = fileTypeMap[fileExt] || { color: isOwn ? 'rgba(255,255,255,0.7)' : colors.primary, label: (fileExt || 'FILE').toUpperCase().slice(0, 4) };
@@ -40097,7 +40097,8 @@ function ChatConversationInnerBody() {
             button so the user can recover without leaving the thread. */}
         {blockedByPeer && conversationType === 'direct' && (
           <View style={{
-            backgroundColor: '#ffe5e5',
+            // [2026-10-21 polish-conv] tokens do tema (era #ffe5e5 fixo = faixa rosa no escuro) + i18n.
+            backgroundColor: isDark ? 'rgba(239,68,68,0.14)' : '#FDECEC',
             paddingVertical: 12,
             paddingHorizontal: 16,
             flexDirection: 'row',
@@ -40105,15 +40106,16 @@ function ChatConversationInnerBody() {
             justifyContent: 'center',
             gap: 8,
           }}>
-            <IconAlertTriangle size={18} color="#c0392b" />
-            <Text style={{ color: '#c0392b', fontWeight: '700', fontSize: 13, textAlign: 'center', flexShrink: 1 }}>
-              {`Você foi bloqueado por ${blockerName || 'este contato'}`}
+            <IconAlertTriangle size={18} color={isDark ? '#F87171' : '#B42318'} />
+            <Text style={{ color: isDark ? '#FCA5A5' : '#B42318', fontWeight: '700', fontSize: 13, textAlign: 'center', flexShrink: 1 }}>
+              {blockerName ? t('chatConv.blockedByName', { name: blockerName, defaultValue: `Você foi bloqueado por ${blockerName}` }) : t('chatConv.blockedByContact', 'Você foi bloqueado por este contato')}
             </Text>
           </View>
         )}
         {iBlockedPeer && !blockedByPeer && conversationType === 'direct' && (
           <View style={{
-            backgroundColor: '#f0f0f0',
+            // [2026-10-21 polish-conv] tokens do tema (era #f0f0f0/#333 fixos) + i18n.
+            backgroundColor: colors.surface2 || colors.surfaceVariant || colors.surface,
             paddingVertical: 12,
             paddingHorizontal: 16,
             flexDirection: 'row',
@@ -40121,9 +40123,9 @@ function ChatConversationInnerBody() {
             justifyContent: 'center',
             gap: 10,
           }}>
-            <IconShield size={18} color="#555" />
-            <Text style={{ color: '#333', fontWeight: '700', fontSize: 13, textAlign: 'center', flexShrink: 1 }}>
-              {`Você bloqueou ${blockerName || 'este contato'}. Desbloqueie pra mensagem.`}
+            <IconShield size={18} color={colors.textSecondary} />
+            <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13, textAlign: 'center', flexShrink: 1 }}>
+              {t('chatConv.youBlockedUnblockToSend', 'Você bloqueou este contato. Desbloqueie para enviar mensagens.')}
             </Text>
             <TouchableOpacity
               onPress={async () => {
@@ -40136,10 +40138,11 @@ function ChatConversationInnerBody() {
                   }
                 } catch {}
               }}
-              style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#111111' }}
+              style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: colors.primary || '#111111' }}
               accessibilityRole="button"
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{_mt('chat.unblockUser', 'Desbloquear')}</Text>
+              <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '700', fontSize: 12 }}>{_mt('chat.unblockUser', 'Desbloquear')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -43859,10 +43862,10 @@ function ChatConversationInnerBody() {
                     width: 22, height: 22, borderRadius: 11,
                     borderWidth: isSelected ? 0 : 1.5,
                     borderColor: colors.border,
-                    backgroundColor: isSelected ? '#111111' : 'transparent',
+                    backgroundColor: isSelected ? (colors.primary || '#111111') : 'transparent',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
-                    {isSelected && <IconCheck size={12} color="#fff" />}
+                    {isSelected && <IconCheck size={12} color={colors.onPrimary || '#fff'} />}
                   </View>
                 </TouchableOpacity>
               );
@@ -45967,9 +45970,9 @@ function ChatConversationInnerBody() {
                 <View style={{ flexDirection: 'row', gap: 10 }}>
                   <TouchableOpacity
                     onPress={() => { setInputText(aiResult); setShowAiModal(false); setAiResult(null); }}
-                    style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#111111', alignItems: 'center' }}
+                    style={{ flex: 1, paddingVertical: 12, borderRadius: 14, backgroundColor: colors.primary || '#111111', alignItems: 'center' }}
                   >
-                    <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{t('chatAi.useThis') || 'Use this text'}</Text>
+                    <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600', fontSize: 14 }}>{t('chatAi.useThis') || 'Use this text'}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={async () => { try { await Clipboard.setStringAsync(aiResult); } catch {} }}

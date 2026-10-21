@@ -260,6 +260,12 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       lockHintBounce.stopAnimation();
       idlePulse.stopAnimation();
+      // [2026-10-21 polish-conv] fechou/desmontou no meio da gravação → descarta
+      // (antes o recordAsync podia resolver com uri e ENVIAR sem o usuário querer).
+      if (recordingRef.current) {
+        cancelledRef.current = true;
+        try { cameraRef.current?.stopRecording?.(); } catch {}
+      }
     };
   }, [visible]);
 
@@ -267,16 +273,22 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
   // instantly even on iOS where the permission prompt is slow.
   useEffect(() => {
     if (!visible || !mod || nativeRef.current) return;
+    // [2026-10-21 polish-conv] try/catch + alive: pedido de permissão que
+    // rejeitava deixava o spinner eterno (e setState após desmontar).
+    let alive = true;
     (async () => {
-      if (permission && !permission.granted) {
-        const r = await requestPermission();
-        if (!r.granted) { setError('camera'); return; }
-      }
-      if (micPerm && !micPerm.granted) {
-        const r = await requestMicPerm();
-        if (!r.granted) { setError('mic'); return; }
-      }
+      try {
+        if (permission && !permission.granted) {
+          const r = await requestPermission();
+          if (!r?.granted) { if (alive) setError('camera'); return; }
+        }
+        if (micPerm && !micPerm.granted) {
+          const r = await requestMicPerm();
+          if (!r?.granted) { if (alive) setError('mic'); return; }
+        }
+      } catch { if (alive) setError('camera'); }
     })();
+    return () => { alive = false; };
   }, [visible, nativeFallback]);
 
   // [2026-10-12 rec-audit P1-15] Estado de gravação também em ref: o
@@ -519,7 +531,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
         style={s.backdrop}
       >
         {/* Top-right close. Always available so users can bail. */}
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={() => { cancelledRef.current = true; stopRecording(true); onClose?.(); }} style={s.closeBtn} hitSlop={12}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={() => { const wasRec = recordingRef.current; cancelledRef.current = true; stopRecording(true); if (!wasRec) onClose?.(); }} style={s.closeBtn} hitSlop={12}>
           <IconX size={24} color="#fff" />
         </TouchableOpacity>
 
@@ -574,7 +586,9 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
           cancelIntent && { color: '#FCA5A5' },
           inWarn && !cancelIntent && { color: '#FCA5A5' },
         ]}>
-          {error === 'camera'
+          {error === 'record'
+            ? _tt(t, 'videoNote.recordError', 'Não foi possível gravar o vídeo')
+            : error === 'camera'
             ? (t?.('videoNote.permissionCamera') || 'Camera permission required')
             : error === 'mic'
               ? (t?.('videoNote.permissionMic') || 'Microphone permission required')
@@ -584,7 +598,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
                     : locked
                       ? (inWarn
                           ? `${t?.('videoNote.stopIn') || 'Stop in'} ${remainingS}s`
-                          : `${t?.('videoNote.tapToSend')} • ${mm}:${ss}`)
+                          : `${_tt(t, 'videoNote.tapToSend', 'Toque para enviar')} • ${mm}:${ss}`)
                       : (inWarn
                           ? `${t?.('videoNote.stopIn') || 'Stop in'} ${remainingS}s`
                           : `${t?.('videoNote.slideHints') || 'Slide ↑ lock • ← cancel'} • ${mm}:${ss}`))
@@ -632,7 +646,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
             onPress={() => stopRecording(true)}
             style={[s.trashZone, { backgroundColor: 'rgba(255,255,255,0.18)' }]}
             hitSlop={10}
-            accessibilityLabel={t?.('common.cancel')}
+            accessibilityLabel={_tt(t, 'common.cancel', 'Cancelar')}
             accessibilityRole="button"
           >
             <IconTrash size={24} color="#fff" />
