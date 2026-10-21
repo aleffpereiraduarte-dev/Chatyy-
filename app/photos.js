@@ -2516,7 +2516,7 @@ function PhotosScreenInner() {
             await navigator.share({ title: photo.name, url });
           } else {
             await navigator.clipboard?.writeText(url);
-            safeAlert(t('photos.linkCopied'), '');
+            try { require('../components/ui/Toast').showToast({ message: t('photos.linkCopied'), kind: 'success' }); } catch { safeAlert(t('photos.linkCopied'), ''); } // [2026-10-21 toasts]
           }
         } else {
           await Share.share({ url, message: photo.name });

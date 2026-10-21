@@ -121,6 +121,26 @@ function _peekUrl(item) {
   return '';
 }
 
+// [2026-10-21 status-ids] Grupos SEM e-mail (canal/bot/legado) davam todos "st:" →
+// ids repetidos no patcher nativo (linhas trocadas/sumindo). Chave = e-mail; sem
+// e-mail usa o id do grupo/1º item; colisão restante ganha sufixo #n. O mapa
+// id → grupo (eventos nativos) é preenchido aqui mesmo, sempre com o mesmo id.
+function _uniqRowId(ctx, prefix, group, email) {
+  const em = String(email || '').toLowerCase();
+  let base;
+  if (em) base = `${prefix}:${em}`;
+  else {
+    const gid = group?.id ?? group?.conversation_id ?? group?.items?.[0]?.id;
+    base = `${prefix}:_nx:${gid != null && gid !== '' ? String(gid) : 'g'}`;
+  }
+  const used = ctx._usedIds || (ctx._usedIds = new Map());
+  const n = used.get(base) || 0;
+  used.set(base, n + 1);
+  const id = n ? `${base}#${n}` : base;
+  if (ctx.groupMap) ctx.groupMap.set(id, group);
+  return id;
+}
+
 function _rowFor(group, ctx, prefix, section) {
   const items = Array.isArray(group?.items) ? group.items : [];
   const latest = items[items.length - 1];
@@ -133,7 +153,7 @@ function _rowFor(group, ctx, prefix, section) {
   const cf = items.some(it => (it?.meta?.privacy || it?.privacy) === 'close_friends');
   const time = ctx.timeAgo ? (ctx.timeAgo(latest?.timestamp) || '') : '';
   const row = {
-    id: `${prefix}:${email.toLowerCase()}`,
+    id: _uniqRowId(ctx, prefix, group, email),
     kind: 'row',
     section,
     email,
@@ -221,7 +241,8 @@ function NativeStatusListInner(props) {
   const groupsRef = useRef(new Map());
 
   const built = useMemo(() => {
-    const ctx = { labels, timeAgo, notifySubs, loadingEmail: loadingEmail ? String(loadingEmail).toLowerCase() : null };
+    const map = new Map();
+    const ctx = { labels, timeAgo, notifySubs, loadingEmail: loadingEmail ? String(loadingEmail).toLowerCase() : null, groupMap: map };
     const rows = buildStatusRows({
       myGroup,
       recent: Array.isArray(recent) ? recent : [],
@@ -229,13 +250,7 @@ function NativeStatusListInner(props) {
       muted: Array.isArray(muted) ? muted : [],
       showMuted: !!showMuted,
     }, ctx);
-    const map = new Map();
-    const put = (prefix, g) => {
-      const em = String(g?.ownerEmail || g?.email || '').toLowerCase();
-      map.set(`${prefix}:${em}`, g);
-    };
-    if (myGroup) put('me', myGroup);
-    for (const g of [...(recent || []), ...(viewed || []), ...(muted || [])]) put('st', g);
+    // map (id → grupo) preenchido pelo _uniqRowId: só linhas desenhadas geram eventos.
     return { rows, map };
   }, [myGroup, recent, viewed, muted, showMuted, labels, timeAgo, notifySubs, loadingEmail]);
 

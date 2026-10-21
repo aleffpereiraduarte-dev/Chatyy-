@@ -481,6 +481,31 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     return Array.isArray(_preloadedFeedPosts) ? _preloadedFeedPosts : [];
   });
   const [posts, setPosts] = useState(() => _initialPosts);
+  // [2026-10-21 feed-flicker] Espelho da lista p/ LEITURAS fora de updaters (o loadPosts
+  // lia `prev.length` dentro de setPosts(prev => …) e chamava setFeedError lá dentro —
+  // o updater pode rodar depois/2× → caía na leitura do cache e repintava o feed antigo).
+  const postsRef = useRef(_initialPosts);
+  useEffect(() => { postsRef.current = posts; }, [posts]);
+  // [2026-10-21 feed-like-sync] curtida feita dentro do FeedPost → item da lista (e cache MMKV).
+  useEffect(() => {
+    let off = null;
+    try {
+      const S = require('../services/feedPostSync');
+      off = S.onFeedLike((ev) => {
+        setPosts(prev => {
+          let hit = false;
+          const next = prev.map(p => { const q = S.applyFeedLikeToPost(p, ev); if (q !== p) hit = true; return q; });
+          return hit ? next : prev;
+        });
+        // cache fora do updater (o updater fica puro): sem isto o remontar lia a curtida antiga do MMKV
+        try {
+          const cur = postsRef.current || [];
+          if (cur.some(p => String(p?.id) === ev.id)) _saveFeedToMMKV(cur.map(p => S.applyFeedLikeToPost(p, ev)));
+        } catch {}
+      });
+    } catch {}
+    return () => { try { off && off(); } catch {} };
+  }, []);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   // Skip the skeleton if we already painted from cache.
@@ -576,10 +601,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     // FAST PATH: if we already have posts on screen and this is a page-1 load,
     // skip the IndexedDB/async cache read entirely and go straight to silent
     // API delta sync — no flicker, no empty state.
-    let alreadyHasVisible = false;
-    if (pageNum === 1 && !isRefresh) {
-      setPosts(prev => { alreadyHasVisible = (prev?.length || 0) > 0; return prev; });
-    }
+    const alreadyHasVisible = pageNum === 1 && !isRefresh && (postsRef.current?.length || 0) > 0;
 
     // Only do the async cached read on a truly cold start.
     if (pageNum === 1 && !isRefresh && !alreadyHasVisible) {
@@ -641,19 +663,11 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         // [silent-fail-w3] Non-success on page 1 → flag error so the empty
         // state can show a retry pill instead of pretending the feed is empty.
         console.warn('[silent-fail-w3] feedList non-success', r?.message);
-        setPosts(prev => {
-          if ((prev?.length || 0) === 0) setFeedError(true);
-          return prev;
-        });
+        if ((postsRef.current?.length || 0) === 0) setFeedError(true);
       }
     } catch (e) {
       console.warn('[silent-fail-w3] feedList threw', e?.message || e);
-      if (pageNum === 1) {
-        setPosts(prev => {
-          if ((prev?.length || 0) === 0) setFeedError(true);
-          return prev;
-        });
-      }
+      if (pageNum === 1 && (postsRef.current?.length || 0) === 0) setFeedError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);

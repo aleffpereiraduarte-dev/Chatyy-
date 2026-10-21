@@ -243,7 +243,7 @@ export default function BotsScreen() {
     try {
       if (Platform.OS === 'web' && navigator?.clipboard) await navigator.clipboard.writeText(token);
       else { const Clipboard = require('expo-clipboard'); await Clipboard.setStringAsync(token); }
-      safeAlert(t?.('common.copied') || 'Copiado', '');
+      try { require('../components/ui/Toast').showToast({ message: t?.('common.copied') || 'Copiado', kind: 'success' }); } catch { safeAlert(t?.('common.copied') || 'Copiado', ''); } // [2026-10-21 toasts]
     } catch {}
   };
 

@@ -5069,14 +5069,21 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     });
     setConversations(_patchUnread);
     setArchivedConversations(_patchUnread);
-    for (const id of ids) {
-      try {
-        if (anyUnread) await api.chatReadAck?.(id);
-        else await api.chatMarkUnread?.(id);
-      } catch {}
-    }
-    loadConversations(false);
+    // [2026-10-21 bulk-read] Sai do modo seleção NA HORA (otimista já aplicado) — antes
+    // ficava preso enquanto ia um por um. Pedidos em paralelo com limite (4 por vez).
     exitSelectionMode();
+    const queue = ids.slice();
+    const worker = async () => {
+      while (queue.length) {
+        const id = queue.shift();
+        try {
+          if (anyUnread) await api.chatReadAck?.(id);
+          else await api.chatMarkUnread?.(id);
+        } catch {}
+      }
+    };
+    try { await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker)); } catch {}
+    loadConvRef.current?.(false);
   }, [selectedIds, conversations, archivedConversations, filter, exitSelectionMode]);
 
   const loadConversations = useCallback(async (showLoader) => {

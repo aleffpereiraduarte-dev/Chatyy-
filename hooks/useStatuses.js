@@ -387,6 +387,22 @@ function _broadcastViewed(statusId, stamp, origin) {
   _viewedListeners.forEach((fn) => { if (fn !== origin) { try { fn(statusId, stamp); } catch {} } });
 }
 
+// [2026-10-21 status-perfil] Visto fora de um useStatuses (StoryViewer do perfil):
+// repassa a TODAS as instâncias montadas + snapshot vivo, p/ a lista/aba de status
+// não seguir com o anel colorido até o próximo poll.
+export function broadcastStatusViewed(statusId) {
+  if (statusId == null) return;
+  const stamp = new Date().toISOString();
+  try { _broadcastViewed(statusId, stamp, null); } catch {}
+  try {
+    if (_liveStore) {
+      const mapItem = (it) => (it && it.id === statusId && !it.viewed) ? { ...it, viewed: true, viewed_at: stamp } : it;
+      const mapG = (arr) => Array.isArray(arr) ? arr.map(g => (g && Array.isArray(g.items)) ? { ...g, items: g.items.map(mapItem) } : g) : arr;
+      _liveStore = { ..._liveStore, others: mapG(_liveStore.others), groups: mapG(_liveStore.groups) };
+    }
+  } catch {}
+}
+
 // [2026-10-18 battery] Mesmo fetch compartilhado p/ o contador da aba (app/chat.js).
 export function getSharedStatusList(email, maxAgeMs) {
   return _sharedStatusList(email, maxAgeMs);

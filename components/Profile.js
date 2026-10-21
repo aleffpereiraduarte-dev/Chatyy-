@@ -3691,6 +3691,11 @@ export default function Profile({
       ownerEmail={identity?.email || ''}
       onClose={() => setStoryViewer({ open: false, startIdx: 0 })}
       isSelf={!!actions?.is_self}
+      // [2026-10-21 status-perfil] visto pelo perfil → store de anéis + instâncias do useStatuses
+      onMarkViewed={!actions?.is_self ? (id) => {
+        try { require('./status/statusRingStore').markRingOwnerViewed(identity?.email || '', id, (stories || []).map(s => s?.id)); } catch {}
+        try { require('../hooks/useStatuses').broadcastStatusViewed(id); } catch {}
+      } : undefined}
       t={t}
       onReply={async (story, text) => {
         // Reply = send a DM with quoted story context. Server accepts
@@ -4519,7 +4524,8 @@ export default function Profile({
       await Clipboard.setStringAsync(String(text));
       try { require('../services/haptics').HapticsCompat.selectionAsync?.(); } catch {}
       const v = t?.('nativeProfile.copied');
-      Alert.alert(v && v !== 'nativeProfile.copied' ? v : 'Copiado', String(text));
+      const _msg = v && v !== 'nativeProfile.copied' ? v : 'Copiado';
+      try { require('./ui/Toast').showToast({ message: _msg, kind: 'success' }); } catch { Alert.alert(_msg, String(text)); } // [2026-10-21 toasts]
     } catch {}
   };
   const _npLogout = () => {

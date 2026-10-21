@@ -1618,7 +1618,10 @@ export default function ChatNewScreen() {
   const handleShareQrImage = async () => {
     const shareText = `${t('chat.qrSharePrefix') || 'Fale comigo no Chatyy:'} ${profileLink}`;
     if (Platform.OS === 'web') {
-      try { await navigator.clipboard.writeText(shareText); safeAlert('', t('chat.inviteCopied')); }
+      try {
+        await navigator.clipboard.writeText(shareText);
+        try { require('../components/ui/Toast').showToast({ message: t('chat.inviteCopied'), kind: 'success' }); } catch { safeAlert('', t('chat.inviteCopied')); } // [2026-10-21 toasts]
+      }
       catch { safeAlert('Chatyy', shareText); }
       return;
     }

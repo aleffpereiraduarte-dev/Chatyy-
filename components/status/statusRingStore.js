@@ -58,6 +58,29 @@ export function markRingItemViewed(statusId) {
   if (changed) _listeners.forEach(fn => { try { fn(); } catch {} });
 }
 
+// [2026-10-21 status-perfil] Visto pelo PERFIL (StoryViewer próprio, ids do profile_get):
+// a entrada do anel pode ser "primed" (status_manifest, sem _ids) → markRingItemViewed
+// não a achava e o anel ficava colorido até o próximo status_list. Aqui o dono é
+// conhecido: adota os ids do perfil quando a entrada não tem e recalcula.
+export function markRingOwnerViewed(email, statusId, ownerIds) {
+  if (statusId != null) _seenIds.add(String(statusId));
+  const em = String(email || '').toLowerCase();
+  if (!em) { if (statusId != null) markRingItemViewed(statusId); return; }
+  const a = _alias(em);
+  const k = _rings.has(em) ? em : (a && _rings.has(a) ? a : null);
+  if (!k) { if (statusId != null) markRingItemViewed(statusId); return; }
+  const v = _rings.get(k);
+  const ids = (v._ids && v._ids.length) ? v._ids
+    : (Array.isArray(ownerIds) ? ownerIds.filter(x => x != null).map(String) : []);
+  if (!ids.length) return;
+  const viewed = ids.map((id, i) => _seenIds.has(id) || !!(v._ids && v._ids.length && v.viewed && v.viewed[i]));
+  const nv = { ...v, _ids: ids, count: ids.length, viewed, allViewed: viewed.every(Boolean) };
+  if (_key(nv) === _key(v)) return;
+  _rings.set(k, nv);
+  try { globalThis.__chatyyStatusRings = _rings; } catch {}
+  _listeners.forEach(fn => { try { fn(); } catch {} });
+}
+
 // apitest@onemundo.com.br e apitest@chatyy.com.br são a MESMA conta (o chat
 // reescreve o domínio legado) — perfil/linha podem trazer um, o status o outro.
 function _alias(em) {

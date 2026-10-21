@@ -20,6 +20,43 @@ import { isReduceMotionEnabled } from '../reducedMotion';
 import { Springs, Durations, Distances, Easings, Gestures, motionEnabled } from '../../constants/motion';
 import { useOverlayColors } from './Sheet';
 
+// [2026-10-21 toast-top] O toast ficava ATRÁS de qualquer <Modal>.
+//   iOS: FullWindowOverlay (react-native-screens 4.23, RNSFullWindowOverlay = UIWindow
+//        próprio acima de Modals). Só usa se o componente nativo estiver registrado no
+//        binário (hasViewManagerConfig); senão cai no View absoluto antigo.
+//   web: portal em document.body c/ z-index máximo (Modal do RN-web também é portal no body).
+//   Android: <Modal> é um Dialog (janela própria) — sem módulo nativo continua por baixo.
+// Kill: globalThis.__chatyy_toast_top = false.
+let _FWO; // undefined = não checado; null = indisponível
+function getFullWindowOverlay() {
+  if (_FWO !== undefined) return _FWO;
+  _FWO = null;
+  if (Platform.OS !== 'ios') return _FWO;
+  try {
+    const { UIManager } = require('react-native');
+    if (UIManager?.hasViewManagerConfig?.('RNSFullWindowOverlay')) {
+      const C = require('react-native-screens').FullWindowOverlay;
+      if (C) _FWO = C;
+    }
+  } catch { _FWO = null; }
+  return _FWO;
+}
+function toastTopEnabled() {
+  try { return globalThis.__chatyy_toast_top !== false; } catch { return true; }
+}
+function webPortal(node) {
+  try {
+    if (typeof document === 'undefined' || !document.body) return null;
+    const { createPortal } = require('react-dom');
+    return createPortal(
+      <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, height: 0, zIndex: 2147483000, pointerEvents: 'none' }}>
+        <div style={{ pointerEvents: 'auto' }}>{node}</div>
+      </div>,
+      document.body,
+    );
+  } catch { return null; }
+}
+
 const _listeners = new Set();
 let _seq = 0;
 
@@ -155,7 +192,7 @@ export function ToastHost({ bottomOffset = 64 }) {
   const wide = Platform.OS === 'web' && winW >= 768;
   const bottom = wide ? 24 : (insets.bottom || 0) + bottomOffset + (toast.bottomOffset || 0);
 
-  return (
+  const body = (
     <View
       pointerEvents="box-none"
       style={{ position: Platform.OS === 'web' ? 'fixed' : 'absolute', left: 0, right: 0, bottom, alignItems: 'center', zIndex: 10000, elevation: 30 }}
@@ -201,6 +238,17 @@ export function ToastHost({ bottomOffset = 64 }) {
       </Animated.View>
     </View>
   );
+
+  if (toastTopEnabled()) {
+    if (Platform.OS === 'web') {
+      const portal = webPortal(body);
+      if (portal) return portal;
+    } else {
+      const FWO = getFullWindowOverlay();
+      if (FWO) return <FWO>{body}</FWO>;
+    }
+  }
+  return body;
 }
 
 export default ToastHost;

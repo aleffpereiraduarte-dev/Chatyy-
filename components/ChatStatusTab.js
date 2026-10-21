@@ -996,6 +996,24 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
 // Último pedido de "novo status" já atendido (sobrevive a remount do lazy).
 let _consumedNewStatusNonce = 0;
 
+
+// [2026-10-21 status-mic] Microfone negado no status de voz. Android: o compositor de voz é
+// um <Modal> (Dialog) e o toast fica por baixo → Alert c/ "Abrir ajustes"; iOS/web: toast
+// (acima do Modal) c/ ação de ajustes.
+function _warnStatusMicDenied(t) {
+  const tr = (k, fb) => { try { const v = t?.(k); return v && v !== k ? v : fb; } catch { return fb; } };
+  const msg = tr('studio.voice.micDenied', 'Permita o microfone nos ajustes para gravar sua voz.');
+  const openLbl = tr('common.openSettings', 'Abrir ajustes');
+  const openSettings = () => { try { Linking.openSettings?.(); } catch {} };
+  try {
+    if (Platform.OS === 'android') {
+      Alert.alert('', msg, [{ text: tr('common.cancel', 'Cancelar'), style: 'cancel' }, { text: openLbl, onPress: openSettings }]);
+      return;
+    }
+    require('./ui/Toast').showToast({ message: msg, kind: 'error', action: Platform.OS === 'web' ? undefined : { label: openLbl, onPress: openSettings } });
+  } catch {}
+}
+
 function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStatusNonce, openStatusEmail, onOpenStatusConsumed, embedded = false, onViewerVisibleChange, largeTitle, onLargeTitleCollapsedChange }) {
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
   const _drag6359 = useDragToDismiss({ onDismiss: () => { const f = () => setExceptPickerVisible(false); f(); } });
@@ -1233,9 +1251,15 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       if (r?.success) {
         setNewHighlightName('');
         setHighlightSheet(null);
+        return;
       }
     } catch {} finally { setHighlightSaving(false); }
-  }, [newHighlightName, highlightSheet, highlightSaving]);
+    // [2026-10-21 status-highlight] Falhava em silêncio (sheet aberto, nada acontecia).
+    // Mantém o sheet aberto (nome digitado preservado) e avisa por toast (acima do Modal).
+    const failMsg = t?.('status.highlightAddFailed') || 'Não foi possível salvar no destaque. Tente novamente.';
+    try { require('./ui/Toast').showErrorToast({ message: failMsg }); }
+    catch { try { if (Platform.OS === 'web') window.alert(failMsg); else Alert.alert('', failMsg); } catch {} }
+  }, [newHighlightName, highlightSheet, highlightSaving, t]);
   const [viewersLoading, setViewersLoading] = useState(false);
 
   // Reaction state
@@ -1452,6 +1476,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     try {
       const statusType = item.type || 'text';
       const statusLabel = `${t?.('status.forwardedStatus') || 'Status encaminhado'}`; // [2026-10-21] sem emoji
+      let _fwdRes = null;
 
       // [deep-20260813] This handler still assumed the LEGACY 'URL\ncaption'
       // packing inside item.content — but current statuses carry media in
@@ -1471,25 +1496,39 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       if (statusType === 'image' && fwdHasMedia) {
         const fullUrl = resolveStatusMedia(fwdRaw);
         const msg = fwdCaption ? `${statusLabel}\n${fwdCaption}` : statusLabel;
-        await chatSend(conv.id, msg, 'image', null, null, fullUrl);
+        _fwdRes = await chatSend(conv.id, msg, 'image', null, null, fullUrl);
       } else if (statusType === 'video' && fwdHasMedia) {
         // [WA-parity 2026-05-31] Preserve the caption on video forward — the
         // image branch above already carries it, but video dropped everything
         // after the URL (sent only the label). WhatsApp forwards media + caption.
         const fullUrl = resolveStatusMedia(fwdRaw);
         const vmsg = fwdCaption ? `${statusLabel}\n${fwdCaption}` : statusLabel;
-        await chatSend(conv.id, vmsg, 'video', null, null, fullUrl);
+        _fwdRes = await chatSend(conv.id, vmsg, 'video', null, null, fullUrl);
       } else {
         const statusPreview = (item.content || '').substring(0, 200);
-        await chatSend(conv.id, `${statusLabel}\n\n"${statusPreview}"\n\n- ${fwdOwnerName}`, 'text');
+        _fwdRes = await chatSend(conv.id, `${statusLabel}\n\n"${statusPreview}"\n\n- ${fwdOwnerName}`, 'text');
+      }
+      // [2026-10-21 status-fwd] Falha (success:false sem _deferred = não foi nem p/ fila) NÃO abre
+      // a conversa: avisa e mantém o viewer. Enfileirado (_deferred) conta como enviado.
+      if (!_fwdRes || (_fwdRes.success === false && !_fwdRes._deferred)) {
+        throw new Error(String(_fwdRes?.message || _fwdRes?.error || 'forward_failed'));
       }
       // Navigate to the conversation
       require('../services/openConversation').openConversation(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(conv.name || conv.other_name || '')}`);
       closeViewerRef.current?.();
     } catch (err) {
       console.warn('[Status] Forward failed:', err);
+      try {
+        require('./ui/Toast').showErrorToast({
+          message: t?.('status.replyFailed') || 'Não foi possível enviar. Tente de novo.',
+          retryLabel: t?.('common.retry') || 'Tentar de novo',
+          onRetry: () => { nativeFwdRef.current = _nf; handleForwardToConversationRef.current?.(conv); },
+        });
+      } catch {}
     }
   }, [viewerStatuses, viewerIndex, viewerOwnerName, t, router]);
+  const handleForwardToConversationRef = useRef(null);
+  useEffect(() => { handleForwardToConversationRef.current = handleForwardToConversation; }, [handleForwardToConversation]);
 
   // Creator state
   const [cameraVisible, setCameraVisible] = useState(false);
@@ -2782,6 +2821,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
         // [2026-10-20 call-audio-guard] gravar durante ligação mataria o mic/AEC da chamada → aviso
         try { if (require('../services/callAudioGuard').blockIfCall('record')) return; } catch {}
         const expoAudio = require('expo-audio');
+        // [2026-10-21 status-mic] Sem pedir/checar permissão: negada = toque no mic não fazia nada.
+        let _perm = null;
+        try { _perm = await expoAudio.requestRecordingPermissionsAsync?.(); } catch {}
+        if (_perm && _perm.granted === false) { _warnStatusMicDenied(t); return; }
         try { await expoAudio.setAudioModeAsync?.({ allowsRecording: true, playsInSilentMode: true }); } catch {}
         const AudioMod = require('expo-audio/build/AudioModule').default;
         const { RecordingPresets } = require('expo-audio');
@@ -2798,8 +2841,10 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
       if (Platform.OS !== 'web') { try { require('../services/haptics').HapticsCompat.impactAsync(); } catch {} }
     } catch (e) {
       setVoiceRecording(false);
+      // web: getUserMedia recusado (NotAllowedError/SecurityError) → avisa em vez de silêncio
+      if (/NotAllowed|Permission|Security|denied/i.test(String(e?.name || '') + ' ' + String(e?.message || ''))) _warnStatusMicDenied(t);
     }
-  }, [voiceRecording, voiceUploading]);
+  }, [voiceRecording, voiceUploading, t]);
 
   const stopVoiceRecording = useCallback(async (cancel = false) => {
     if (!voiceRecording) return;

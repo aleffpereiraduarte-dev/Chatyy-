@@ -1747,8 +1747,8 @@ export default function NotesScreen() {
       } else {
         await Clipboard.setStringAsync(text);
       }
-      if (Platform.OS === 'web') { alert(t('notes.copied')); }
-      else { Alert.alert('', t('notes.copied')); }
+      try { require('../components/ui/Toast').showToast({ message: t('notes.copied'), kind: 'success' }); } // [2026-10-21 toasts]
+      catch { if (Platform.OS === 'web') { alert(t('notes.copied')); } else { Alert.alert('', t('notes.copied')); } }
     } catch (e) {
       console.warn('Copy failed:', e);
     }

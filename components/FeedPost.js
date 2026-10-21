@@ -837,8 +837,13 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     if (likeInFlightRef.current) return;
     likeInFlightRef.current = true;
     const wasLiked = liked;
+    const wasCount = likeCount;
+    // [2026-10-21 feed-like-sync] repassa à lista pai (ChatFeedTab) — senão rolar e voltar mostrava o valor antigo.
+    const _emit = (lk, ct) => { try { require('../services/feedPostSync').emitFeedLike(post.id, lk, ct); } catch {} };
+    const optCount = wasLiked ? Math.max(0, wasCount - 1) : wasCount + 1;
     setLiked(!wasLiked);
     setLikeCount(prev => wasLiked ? Math.max(0, prev - 1) : prev + 1);
+    _emit(!wasLiked, optCount);
     animateLikeButton();
     try {
       const r = await api.feedLike(post.id);
@@ -848,10 +853,14 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         // servers used `like_count`. Read both so the count actually syncs.
         const serverCount = r.data.likes_count ?? r.data.like_count;
         if (serverCount !== undefined) setLikeCount(Number(serverCount));
+        if (r.data.liked !== undefined || serverCount !== undefined) {
+          _emit(r.data.liked !== undefined ? !!r.data.liked : !wasLiked, serverCount !== undefined ? Number(serverCount) : optCount);
+        }
       } else if (r && r.success === false && !r.queued && !r._deferred && !r.offline) {
         // [2026-10-21 fix] servidor recusou → desfaz (antes o coração ficava vermelho)
         setLiked(wasLiked);
         setLikeCount(prev => wasLiked ? prev + 1 : Math.max(0, prev - 1));
+        _emit(wasLiked, wasCount);
       }
     } catch {
       // Network error — DON'T roll back the optimistic state. Instead,
@@ -867,11 +876,12 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         // UI doesn't lie to the user.
         setLiked(wasLiked);
         setLikeCount(prev => wasLiked ? prev + 1 : Math.max(0, prev - 1));
+        _emit(wasLiked, wasCount);
       }
     } finally {
       likeInFlightRef.current = false;
     }
-  }, [liked, post.id, animateLikeButton]);
+  }, [liked, likeCount, post.id, animateLikeButton]);
 
   const showHeartAnimation = useCallback(() => {
     heartScale.setValue(0);

@@ -1581,7 +1581,7 @@ function ParentalScreenInner() {
           await navigator.share({ title: `${t('parental.aiSummary')} — ${summaryChild?.child_name || ''}`, text: message });
         } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
           await navigator.clipboard.writeText(message);
-          Alert.alert('', t('parental.copiedToClipboard') || 'Resumo copiado.');
+          try { require('../components/ui/Toast').showToast({ message: t('parental.copiedToClipboard') || 'Resumo copiado.', kind: 'success' }); } catch { Alert.alert('', t('parental.copiedToClipboard') || 'Resumo copiado.'); } // [2026-10-21 toasts]
         }
       } else {
         await Share.share({ message });
