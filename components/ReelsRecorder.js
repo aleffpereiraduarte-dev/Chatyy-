@@ -42,6 +42,8 @@ import {
   Image,
   Modal,
   ActivityIndicator,
+  Alert,
+  BackHandler,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
@@ -357,7 +359,10 @@ export default function ReelsRecorder({
       if (res?.canceled) return;
       const asset = res.assets?.[0];
       if (!asset?.uri) return;
-      const dur = (asset.duration ?? 0) || 0;
+      // [2026-10-21 reels-audit] web devolve SEGUNDOS (nativo = ms) → clipe importado no web
+      // entrava com ~0 ms e a barra/limite de 60 s ficavam errados.
+      let dur = Number(asset.duration ?? 0) || 0;
+      if (Platform.OS === 'web') dur *= 1000;
       setClips((prev) => [
         ...prev,
         {
@@ -398,13 +403,50 @@ export default function ReelsRecorder({
   }, [clips, selectedSound, totalDurationMs, onComplete]);
 
   // ─── Close confirm — clips would be lost ───
+  // [2026-10-21 reels-audit] fechar com clipes gravados perguntava nada e jogava tudo fora
+  // (o TODO nunca virou modal). Agora: Salvar rascunho / Descartar / Cancelar (estilo Instagram).
+  const closingRef = useRef(false);
   const handleClose = useCallback(() => {
     haptic('light');
-    if (clips.length > 0) {
-      // TODO: ConfirmModal — discard or save draft. For skeleton we just close.
+    if (recording) { try { cameraRef.current?.stopRecording?.(); } catch {} return; }
+    if (clips.length === 0 || closingRef.current) { onClose?.(); return; }
+    const saveAndClose = async () => {
+      if (closingRef.current) return;
+      closingRef.current = true;
+      try {
+        const { saveReelDraft } = require('../services/reelDrafts');
+        await saveReelDraft({ clips, music: selectedSound, totalDurationMs });
+      } catch {}
+      onClose?.();
+    };
+    const title = t?.('reels.recorder.discardTitle', 'Descartar gravação?') || 'Descartar gravação?';
+    if (Platform.OS === 'web') {
+      // eslint-disable-next-line no-undef
+      const ok = typeof confirm === 'undefined' ? true : confirm(title);
+      if (ok) onClose?.();
+      return;
     }
-    onClose?.();
-  }, [clips.length, onClose]);
+    Alert.alert(
+      title,
+      t?.('reels.recorder.discardBody', 'Se sair agora, os clipes gravados serão perdidos.') || '',
+      [
+        { text: t?.('compose.saveDraft') || 'Salvar rascunho', onPress: () => { saveAndClose(); } },
+        { text: t?.('common.discard') || 'Descartar', style: 'destructive', onPress: () => onClose?.() },
+        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+      ],
+    );
+  }, [clips, recording, selectedSound, totalDurationMs, onClose, t]);
+
+  // Android: voltar do sistema passa pela mesma confirmação.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (clips.length === 0 && !recording) return false;
+      handleClose();
+      return true;
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [clips.length, recording, handleClose]);
 
   // ─── Layout: permission denied gate ───
   if (!camPerm) {

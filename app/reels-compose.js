@@ -28,6 +28,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   useWindowDimensions,
+  AppState,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -351,10 +352,11 @@ export default function ReelsComposeScreen() {
         try { p2.muted = true; } catch {}
         const n = 8;
         const times = Array.from({ length: n }, (_, i) => ((totalMs / 1000) * (i + 0.5)) / n);
+        let to = null;
         const r = await Promise.race([
           p2.generateThumbnailsAsync(times, { maxWidth: 160, maxHeight: 284 }),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000)),
-        ]);
+          new Promise((_, rej) => { to = setTimeout(() => rej(new Error('timeout')), 15000); }),
+        ]).finally(() => clearTimeout(to));
         if (alive && Array.isArray(r)) setFrames(r);
       } catch {}
       finally { try { p2?.release?.(); } catch {} }
@@ -413,10 +415,23 @@ export default function ReelsComposeScreen() {
       if (pend && Array.isArray(pend.clips) && pend.clips.length) {
         globalThis.__pendingReelDraft = null; // eslint-disable-line no-undef
         applyDraft(pend);
+      } else if (liveRef.current.clips.length && !liveRef.current.paused && liveRef.current.mode !== 'cover') {
+        // [2026-10-21 reels-audit] voltar de Rascunhos/Gravador: o blur pausou o player mas o
+        // estado seguia "tocando" → prévia congelada sem ícone de play. Retoma.
+        try { player.play(); } catch {}
       }
     } catch {}
     return () => { try { player.pause(); } catch {} };
   }, [applyDraft, player]));
+
+  // Mesmo para o app voltando do 2º plano (o sistema pausa o vídeo e não retoma).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => {
+      const L = liveRef.current;
+      if (st === 'active' && L.clips.length && !L.paused && L.mode !== 'cover') { try { player.play(); } catch {} }
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [player]);
 
   // ── Pick from gallery ──
   const pickGallery = useCallback(async () => {
@@ -569,6 +584,10 @@ export default function ReelsComposeScreen() {
       try { haptic.success(); } catch {}
       setToast(tt('reels.compose.draftSaved', 'Rascunho salvo'));
       if (closeAfter) setTimeout(() => { try { if (router.canGoBack?.()) router.back(); else router.replace('/reels-drafts'); } catch {} }, 450);
+    } catch {
+      // [2026-10-21 reels-audit] disco cheio / cópia falhou → antes: rejeição sem aviso.
+      try { haptic.error?.(); } catch {}
+      setToast(tt('reels.compose.draftFailed', 'Não foi possível salvar o rascunho'));
     } finally { setBusy(false); }
   }, [clips, music, totalMs, composeMeta, draftId, busy, router, tt]);
 

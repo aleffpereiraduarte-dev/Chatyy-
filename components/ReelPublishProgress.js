@@ -95,9 +95,9 @@ export default function ReelPublishProgress({ email, t, top = 0, bottom = null, 
             )}
             {(failed || done) && (
               <TouchableOpacity
-                onPress={() => (j.kind === 'studio'
+                onPress={() => Promise.resolve(j.kind === 'studio'
                   ? (done ? dismissStudioJob(j.id) : cancelStudioRender(j.id))
-                  : (done ? dismissReelJob(j.id) : cancelReelPublish(j.id)))}
+                  : (done ? dismissReelJob(j.id) : cancelReelPublish(j.id))).catch(() => {})}
                 hitSlop={8}
                 style={styles.close}
                 accessibilityRole="button"

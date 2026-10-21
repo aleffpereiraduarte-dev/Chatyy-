@@ -29,7 +29,8 @@ export default function ReelsSoundScreen() {
   const soundLabel = String(params?.label || '');
 
   const goBack = useCallback(() => {
-    try { router.back(); } catch {}
+    // [2026-10-21 reels-audit] aberto por link (sem histórico) → voltar não fazia nada.
+    try { if (router.canGoBack?.()) router.back(); else router.replace('/chat'); } catch {}
   }, [router]);
 
   return (

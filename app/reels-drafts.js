@@ -20,7 +20,6 @@ import {
   FlatList,
   Dimensions,
   ActivityIndicator,
-  Image,
   Alert,
   Platform,
 } from 'react-native';
@@ -30,6 +29,8 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconX, IconTrash, IconFilm } from '../components/Icons';
 import FadeSlideIn from '../components/FadeSlideIn';
 import { listReelDrafts, deleteReelDraft as _deleteDraft } from '../services/reelDrafts';
+import { Image as ExpoImage } from 'expo-image';
+import { useSourceInfo, thumbAt } from '../components/videoStudio/thumbs';
 
 import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -48,6 +49,16 @@ function fmtAgo(ts, t) {
   return `${d}d`;
 }
 
+// [2026-10-21 reels-audit] <Image> do RN não desenha arquivo de VÍDEO → a grade de rascunhos
+// era só quadrados pretos. Quadro real via expo-video (fila + cache de components/videoStudio/thumbs).
+function DraftThumb({ uri, coverMs }) {
+  const isImage = /\.(jpe?g|png|heic|heif|webp|gif)(\?|#|$)/i.test(String(uri || ''));
+  const info = useSourceInfo(uri ? { uri, kind: isImage ? 'image' : 'video' } : null);
+  const src = isImage ? { uri } : thumbAt(info, Math.max(0, (Number(coverMs) || 500) / 1000));
+  if (!src) return null;
+  return <ExpoImage source={src} style={StyleSheet.absoluteFill} contentFit="cover" recyclingKey={String(uri)} />;
+}
+
 function fmtDuration(ms) {
   const total = Math.max(0, Math.floor((ms || 0) / 1000));
   const m = Math.floor(total / 60);
@@ -64,7 +75,7 @@ export default function ReelsDraftsScreen() {
   const [drafts, setDrafts] = useState(null); // null = loading, [] = empty
 
   const load = useCallback(async () => {
-    setDrafts(await listReelDrafts());
+    try { setDrafts(await listReelDrafts()); } catch { setDrafts([]); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -92,8 +103,8 @@ export default function ReelsDraftsScreen() {
   }, [router, fromCompose]);
 
   const deleteDraft = useCallback(async (draftId) => {
-    try { setDrafts(await _deleteDraft(draftId)); } catch {}
-  }, []);
+    try { setDrafts(await _deleteDraft(draftId)); } catch { load(); }
+  }, [load]);
 
   const confirmDelete = useCallback((draft) => {
     if (Platform.OS === 'web') {
@@ -123,19 +134,13 @@ export default function ReelsDraftsScreen() {
         style={styles.tile}
         activeOpacity={0.8}
       >
-        {thumbUri ? (
-          // expo-image / Image attempts the first frame for native video URIs;
-          // when that fails (different platforms have different behavior) we
-          // just show a dark tile with the metadata overlay.
-          <Image source={{ uri: thumbUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-        ) : (
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1f1f1f' }]} />
-        )}
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1f1f1f' }]} />
+        {thumbUri ? <DraftThumb uri={thumbUri} coverMs={item.compose?.coverMs} /> : null}
         <View style={styles.tileOverlay}>
           <Text style={styles.tileDuration}>{fmtDuration(item.totalDurationMs)}</Text>
           <Text style={styles.tileAge}>{fmtAgo(item.savedAt, t)}</Text>
         </View>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.delete', 'Excluir')}
           onPress={() => confirmDelete(item)}
           style={styles.tileDelete}
           hitSlop={8}
@@ -152,7 +157,7 @@ export default function ReelsDraftsScreen() {
         <Text style={styles.title}>
           {t('reels.drafts') || 'Rascunhos'}
         </Text>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => router.back()} hitSlop={10} style={styles.closeBtn}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={() => { try { if (router.canGoBack?.()) router.back(); else router.replace('/chat'); } catch {} }} hitSlop={10} style={styles.closeBtn}>
           <IconX size={22} color="#fff" />
         </TouchableOpacity>
       </View>

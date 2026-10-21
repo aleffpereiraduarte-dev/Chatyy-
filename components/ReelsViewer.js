@@ -381,6 +381,15 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
 });
 
 const DOUBLE_TAP_DELAY = 300;
+// [2026-10-21 reels-audit] preferência de mudo lida 1× por sessão (ver ReelsViewer).
+let _reelsMutedMem = null;
+// Aviso curto ("Link copiado") — o ReelsViewer montado registra o desenhista.
+let _reelsToastFn = null;
+function _reelsToast(msg) {
+  if (!msg) return;
+  if (Platform.OS === 'android' && ToastAndroid?.show) { try { ToastAndroid.show(msg, ToastAndroid.SHORT); return; } catch {} }
+  try { _reelsToastFn?.(msg); } catch {}
+}
 const BASE_URL = 'https://chatyy.com.br';
 const isWeb = Platform.OS === 'web';
 // [2026-10-13 reels-visual] Linha do cabeçalho (abas/criar/interesses): logo abaixo da
@@ -562,12 +571,18 @@ function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
     }
   }, [visible, post]);
 
+  // [2026-10-21 reels-audit] abrir em outro reel mostrava a lista do anterior até a resposta
+  // chegar (e uma resposta atrasada podia sobrescrever a certa).
+  const likersForRef = useRef(null);
   const loadLikers = async () => {
     if (!post) return;
+    const pid = post.id;
+    if (likersForRef.current !== pid) { likersForRef.current = pid; setLikers([]); }
     setLoading(true);
     try {
-      const r = await api.feedLikers(post.id);
-      if (r.success && r.data) {
+      const r = await api.feedLikers(pid);
+      if (likersForRef.current !== pid) return;
+      if (r && r.success && r.data) {
         setLikers(Array.isArray(r.data.likers) ? r.data.likers : (Array.isArray(r.data) ? r.data : []));
       }
     } catch {} finally { setLoading(false); }
@@ -1921,9 +1936,11 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       lastTapRef.current = 0;
     } else {
       lastTapRef.current = now;
-      // Single tap with delay to differentiate
+      // Single tap with delay to differentiate. [2026-10-21 reels-audit] só o timer DESTE
+      // toque pausa (antes 2 toques simples a ~330 ms pausavam e despausavam).
       setTimeout(() => {
-        if (lastTapRef.current !== 0) {
+        if (lastTapRef.current === now) {
+          lastTapRef.current = 0;
           togglePause();
         }
       }, DOUBLE_TAP_DELAY + 50);
@@ -1992,8 +2009,9 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
         }
       }
       try { require('../services/haptics').HapticsCompat.notificationAsync('success'); } catch {}
+      _reelsToast(t?.('chat.linkCopied') || 'Link copiado');
     } catch {}
-  }, [reel.id]);
+  }, [reel.id, t]);
 
   const handleShareRepost = useCallback(() => {
     setShareSheetOpen(false);
@@ -2915,18 +2933,27 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // Mute lives here (not per-ReelItem) so it persists across swipes + sessions.
   // Bug: mute reset on every swipe because each ReelItem owned its own state.
   // Hydrated from AsyncStorage on mount; toggle persists the new value.
-  const [muted, setMuted] = useState(false);
+  // [2026-10-21 reels-audit] até ler a preferência, o 1º reel começa MUDO (antes começava com
+  // som e só depois emudecia → estouro de áudio p/ quem tinha deixado mudo). Memória do módulo
+  // = próximas aberturas na sessão já nascem certas.
+  const [muted, setMuted] = useState(() => (_reelsMutedMem == null ? false : _reelsMutedMem));
+  const [mutedReady, setMutedReady] = useState(_reelsMutedMem != null);
   useEffect(() => {
+    if (_reelsMutedMem != null) return;
     (async () => {
       try {
         const v = await AsyncStorage.getItem(REELS_MUTED_KEY);
+        _reelsMutedMem = v === '1';
         if (v === '1') setMuted(true);
       } catch {}
+      setMutedReady(true);
     })();
   }, []);
+  const mutedEff = mutedReady ? muted : true;
   const handleToggleMute = useCallback(() => {
     setMuted(m => {
       const next = !m;
+      _reelsMutedMem = next;
       AsyncStorage.setItem(REELS_MUTED_KEY, next ? '1' : '0').catch(() => {});
       return next;
     });
@@ -3474,19 +3501,15 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   const handleHidePost = useCallback(async (reel, signal = 'not_interested') => {
     if (!reel?.id) return;
     try { trackReelEvent(reel.id, 'not_interested'); } catch {} // [reels-v1] sinal negativo forte no perfil
-    // Best-effort server signal — ignore failures, the local hide is authoritative.
-    try { await api.feedHidePost?.(reel.id, signal); } catch {}
-    // Persist locally so the reel stays hidden across sessions.
-    try {
-      hiddenIdsRef.current.add(String(reel.id));
-      await AsyncStorage.setItem(
-        REELS_HIDDEN_KEY,
-        JSON.stringify([...hiddenIdsRef.current]),
-      );
-    } catch {}
-    // Optimistically drop the reel from the active list so it disappears now.
+    // [2026-10-21 reels-audit] some NA HORA: antes esperava a resposta do servidor (e o disco)
+    // antes de tirar o reel da lista → em rede lenta o vídeo seguia tocando segundos.
+    hiddenIdsRef.current.add(String(reel.id));
     setReels(prev => prev.filter(p => p.id !== reel.id));
     setFollowingReels(prev => prev.filter(p => p.id !== reel.id));
+    // Best-effort server signal — ignore failures, the local hide is authoritative.
+    try { Promise.resolve(api.feedHidePost?.(reel.id, signal)).catch(() => {}); } catch {}
+    // Persist locally so the reel stays hidden across sessions.
+    AsyncStorage.setItem(REELS_HIDDEN_KEY, JSON.stringify([...hiddenIdsRef.current])).catch(() => {});
     // Visible confirmation (toast) — auto-dismisses after ~2s.
     const msg = signal === 'reported'
       ? (t?.('feed.reportThanks') || 'Obrigado, vamos revisar.')
@@ -3498,6 +3521,19 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     if (hideToastTimerRef.current) clearTimeout(hideToastTimerRef.current);
     hideToastTimerRef.current = setTimeout(() => setHideToast(''), 2200);
   }, [t]);
+  // [2026-10-21 reels-audit] mesmo aviso p/ "Link copiado" (iOS/web) + timer limpo ao sair.
+  useEffect(() => {
+    const show = (msg) => {
+      setHideToast(msg);
+      if (hideToastTimerRef.current) clearTimeout(hideToastTimerRef.current);
+      hideToastTimerRef.current = setTimeout(() => setHideToast(''), 2000);
+    };
+    _reelsToastFn = show;
+    return () => {
+      if (_reelsToastFn === show) _reelsToastFn = null;
+      if (hideToastTimerRef.current) clearTimeout(hideToastTimerRef.current);
+    };
+  }, []);
 
   const overlayOpen = !!commentsReel || !!likersReel || !!pickerMode
     || !!nGiftReel || !!nShareReel || !!nMoreReel || nSpeedOpen; // [2026-10-15 native-reels] sheets do caminho nativo
@@ -3559,12 +3595,12 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         overlayOpen={overlayOpen}
         preload={isPreloadItem}
         screenFocused={playGate}
-        muted={muted}
+        muted={mutedEff}
         onToggleMute={handleToggleMute}
         onCreate={onCreate}
       />
     );
-  }, [currentIndex, colors, isDark, t, user, router, containerHeight, containerWidth, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate, muted, handleToggleMute, onCreate]);
+  }, [currentIndex, colors, isDark, t, user, router, containerHeight, containerWidth, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate, mutedEff, handleToggleMute, onCreate]);
 
   // ── [2026-10-15 native-reels] Feed NATIVO: itens, eventos e sheets ─────────
   // O nativo só emite eventos; a lógica (API, fila offline, sinais de
@@ -3883,6 +3919,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   }, []);
   const handleNativeMute = useCallback((v) => {
     setMuted(!!v);
+    _reelsMutedMem = !!v;
     AsyncStorage.setItem(REELS_MUTED_KEY, v ? '1' : '0').catch(() => {});
   }, []);
   const handleNativeError = useCallback((e) => {
@@ -3925,7 +3962,8 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       try { require('react-native').Clipboard.setString(url); } catch {}
     }
     try { require('../services/haptics').HapticsCompat.notificationAsync('success'); } catch {}
-  }, [nShareReel]);
+    _reelsToast(t?.('chat.linkCopied') || 'Link copiado');
+  }, [nShareReel, t]);
   const nShareRepost = useCallback(() => {
     const reel = nShareReel;
     setNShareReel(null);
@@ -4086,7 +4124,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
             items={nativeItems}
             resetKey={`${reelTab}|${soundIdProp || ''}`}
             startIndex={0}
-            muted={muted}
+            muted={mutedEff}
             paused={!playGate || overlayOpen}
             rate={nRate}
             captionsEnabled={nCaptions}
