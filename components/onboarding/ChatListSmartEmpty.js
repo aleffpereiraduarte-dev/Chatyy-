@@ -20,6 +20,8 @@ import FadeSlideIn from '../FadeSlideIn';
 import { useOnbCopy } from './copy';
 import ChatyyMascot from '../mascot/ChatyyMascot'; // [2026-10-16 mascote]
 import { shareInvite } from './invite';
+import BiaIcon from '../bia/BiaIcon';
+import { THEME_V2, grafite, cardShadow } from '../../constants/theme'; // [2026-10-21 grafite]
 
 // [2026-10-16 wave12-c] app/chat.js escuta e troca de aba (Comunidades/Canais).
 export const OPEN_HOME_TAB_EVENT = 'chatyy:openHomeTab';
@@ -140,12 +142,18 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
     );
   }
 
-  const fg = isDark ? '#ffffff' : '#111111';
-  const bg = isDark ? '#000000' : '#ffffff';
-  const sub = isDark ? 'rgba(255,255,255,0.6)' : 'rgba(17,17,17,0.58)';
-  const muted = isDark ? '#1c1c1e' : '#F1F2F4';
+  // [2026-10-21 grafite] Tinta/cartões do Grafite suave (cartão claro com
+  // sombra macia em vez de contorno; tinta #2A2A2E no lugar do preto puro).
+  const g = THEME_V2 ? grafite(isDark) : null;
+  const fg = g ? g.text : (isDark ? '#ffffff' : '#111111');
+  const ink = g ? g.ink : fg;
+  const onInk = g ? g.onInk : (isDark ? '#000000' : '#ffffff');
+  const sub = g ? g.text2 : (isDark ? 'rgba(255,255,255,0.6)' : 'rgba(17,17,17,0.58)');
+  const muted = g ? g.surface2 : (isDark ? '#1c1c1e' : '#F1F2F4');
   const hair = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17,17,17,0.1)';
+  const cardSt = g ? [{ backgroundColor: g.surface, borderWidth: 0 }, cardShadow(isDark)] : [{ borderColor: hair }];
   const list = Array.isArray(suggest) ? suggest.slice(0, 6) : [];
+  const openBia = () => { try { router.push('/one'); } catch {} };
 
   return (
     <FadeSlideIn distance={reduceMotion ? 0 : 10} duration={reduceMotion ? 0 : 320}>
@@ -159,26 +167,42 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
         <View style={st.ctaRow}>
           <Pressable
             onPress={() => router.push('/chat-new')}
-            style={({ pressed }) => [st.cta, { backgroundColor: fg, opacity: pressed ? 0.85 : 1 }]}
+            style={({ pressed }) => [st.cta, { backgroundColor: ink, opacity: pressed ? 0.85 : 1 }]}
             accessibilityRole="button"
           >
-            <IconPlus size={18} color={bg} />
-            <Text style={[st.ctaText, { color: bg }]}>{c('empty.newChat')}</Text>
+            <IconPlus size={18} color={onInk} />
+            <Text style={[st.ctaText, { color: onInk }]} maxFontSizeMultiplier={1.6}>{c('empty.newChat')}</Text>
           </Pressable>
           <Pressable
             onPress={() => shareInvite(c)}
-            style={({ pressed }) => [st.cta, { borderWidth: 1.5, borderColor: fg, opacity: pressed ? 0.7 : 1 }]}
+            style={({ pressed }) => [st.cta, { borderWidth: 1.5, borderColor: ink, opacity: pressed ? 0.7 : 1 }]}
             accessibilityRole="button"
           >
-            <IconShare size={18} color={fg} />
-            <Text style={[st.ctaText, { color: fg }]}>{c('empty.invite')}</Text>
+            <IconShare size={18} color={ink} />
+            <Text style={[st.ctaText, { color: ink }]} maxFontSizeMultiplier={1.6}>{c('empty.invite')}</Text>
           </Pressable>
         </View>
+
+        {/* [2026-10-21 primeira-experiencia] Conta nova sem ninguém ainda: a Bia
+            responde na hora — dá algo para fazer no 1º minuto. */}
+        <Pressable
+          onPress={openBia}
+          style={({ pressed }) => [st.card, ...cardSt, { opacity: pressed ? 0.7 : 1 }]}
+          accessibilityRole="button"
+          accessibilityLabel={`${c('empty.biaTitle')}. ${c('empty.biaSub')}`}
+        >
+          <BiaIcon size={40} color={isDark ? '#FFFFFF' : '#111111'} />
+          <View style={{ flex: 1 }}>
+            <Text style={[st.cardTitle, { color: fg }]}>{c('empty.biaTitle')}</Text>
+            <Text style={[st.cardSub, { color: sub }]}>{c('empty.biaSub')}</Text>
+          </View>
+          <Chevron color={sub} />
+        </Pressable>
 
         {suggest === 'nocache' ? (
           <Pressable
             onPress={() => router.push('/chat-new')}
-            style={({ pressed }) => [st.card, { borderColor: hair, opacity: pressed ? 0.7 : 1 }]}
+            style={({ pressed }) => [st.card, ...cardSt, { marginTop: 10, opacity: pressed ? 0.7 : 1 }]}
             accessibilityRole="button"
           >
             <View style={[st.cardIcon, { backgroundColor: muted }]}><IconUserPlus size={20} color={fg} /></View>
@@ -192,7 +216,7 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
 
         {list.length > 0 ? (
           <View style={{ marginTop: 22 }}>
-            <Text style={[st.section, { color: sub }]}>{c('empty.onChatyy')}</Text>
+            <Text style={[st.section, { color: sub }]} accessibilityRole="header">{c('empty.onChatyy')}</Text>
             {list.map((f) => (
               <Pressable
                 key={f.email}
@@ -209,7 +233,7 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
                 <View style={[st.pill, { backgroundColor: muted }]}>
                   {opening === String(f.email).toLowerCase()
                     ? <ActivityIndicator size="small" color={fg} />
-                    : <Text style={[st.pillText, { color: fg }]}>{c('empty.message')}</Text>}
+                    : <Text style={[st.pillText, { color: fg }]} numberOfLines={1} maxFontSizeMultiplier={1.4}>{c('empty.message')}</Text>}
                 </View>
               </Pressable>
             ))}
@@ -218,7 +242,7 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
 
         {/* [2026-10-16 wave12-c] Descobrir Comunidades/Canais — antes só na gaveta Apps. */}
         <View style={{ marginTop: 22 }}>
-          <Text style={[st.section, { color: sub }]}>{t('discoverHome.section') || 'Descobrir'}</Text>
+          <Text style={[st.section, { color: sub }]} accessibilityRole="header">{t('discoverHome.section') || 'Descobrir'}</Text>
           {[
             { k: 'communities', title: t('community.title') || 'Comunidades', subT: t('discoverHome.communitiesSub'), Icon: IconUsersSmall },
             { k: 'channels', title: t('channel.title') || 'Canais', subT: t('discoverHome.channelsSub'), Icon: IconMegaphone },
@@ -226,7 +250,7 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
             <Pressable
               key={k}
               onPress={() => { try { DeviceEventEmitter.emit(OPEN_HOME_TAB_EVENT, k); } catch {} }}
-              style={({ pressed }) => [st.card, { borderColor: hair, marginTop: 8, opacity: pressed ? 0.7 : 1 }]}
+              style={({ pressed }) => [st.card, ...cardSt, { marginTop: 8, opacity: pressed ? 0.7 : 1 }]}
               accessibilityRole="button"
               accessibilityLabel={title}
             >
@@ -242,7 +266,7 @@ export default function ChatListSmartEmpty({ router, t, filtered, currentEmail, 
 
         <Pressable
           onPress={openSaved}
-          style={({ pressed }) => [st.card, { borderColor: hair, marginTop: 22, opacity: pressed ? 0.7 : 1 }]}
+          style={({ pressed }) => [st.card, ...cardSt, { marginTop: 22, opacity: pressed ? 0.7 : 1 }]}
           accessibilityRole="button"
         >
           <View style={[st.cardIcon, { backgroundColor: muted }]}><IconBookmark size={20} color={fg} /></View>
@@ -262,16 +286,18 @@ const st = StyleSheet.create({
   hero: { alignItems: 'center' },
   title: { fontSize: 22, fontWeight: '800', letterSpacing: -0.4, marginTop: 14, textAlign: 'center' },
   sub: { fontSize: 15, lineHeight: 21, marginTop: 6, textAlign: 'center' },
-  ctaRow: { flexDirection: 'row', gap: 10, marginTop: 22 },
-  cta: { flex: 1, minHeight: 48, borderRadius: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  ctaText: { fontSize: 15.5, fontWeight: '700' },
+  // [2026-10-21 a11y] Dynamic Type: os 2 botões quebram p/ uma coluna em vez
+  // de cortar o texto (flexBasis 150 + wrap); texto pode ir a 2 linhas.
+  ctaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 22 },
+  cta: { flexGrow: 1, flexBasis: 150, minHeight: 48, borderRadius: 24, borderCurve: 'continuous', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10 },
+  ctaText: { fontSize: 15.5, fontWeight: '700', flexShrink: 1, textAlign: 'center' },
   section: { fontSize: 13, fontWeight: '700', letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 9 },
   rowName: { fontSize: 16, fontWeight: '600' },
   rowSub: { fontSize: 13, marginTop: 1 },
   pill: { minWidth: 92, minHeight: 34, paddingHorizontal: 14, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   pillText: { fontSize: 14, fontWeight: '700' },
-  card: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 16, borderWidth: 1, marginTop: 18 },
+  card: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: THEME_V2 ? 20 : 16, borderCurve: 'continuous', borderWidth: 1, marginTop: 18 },
   cardIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   cardTitle: { fontSize: 15, fontWeight: '700' },
   cardSub: { fontSize: 13, marginTop: 2, lineHeight: 18 },

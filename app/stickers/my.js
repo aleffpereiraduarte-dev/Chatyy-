@@ -176,7 +176,7 @@ export default function StickerMyPacksScreen() {
           await navigator.share({ title: pack.name, text: message, url });
         } else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
           await navigator.clipboard.writeText(url);
-          Alert.alert(t?.('chat.linkCopied') || 'Link copiado', url);
+          try { require('../../components/ui/Toast').showToast({ message: t?.('chat.linkCopied') || 'Link copiado', kind: 'success' }); } catch { Alert.alert(t?.('chat.linkCopied') || 'Link copiado', url); } // [2026-10-21 toasts]
         } else {
           Alert.alert(pack.name, url);
         }

@@ -42,6 +42,7 @@ const PT = {
   'fr.friends.none': 'Ninguém da sua agenda está aqui ainda. Que tal convidar?',
   'fr.friends.denied': 'Sem acesso aos contatos. Você pode ativar depois em Nova conversa.',
   'fr.friends.invite': 'Convidar amigos',
+  'fr.friends.openSettings': 'Permitir nos Ajustes',
   'fr.notif.title': 'Não perca nenhuma mensagem',
   'fr.notif.sub': 'Ative as notificações para receber mensagens e chamadas mesmo com o Chatyy fechado.',
   'fr.notif.cta': 'Ativar notificações',
@@ -66,6 +67,8 @@ const PT = {
   'empty.savedTitle': 'Mensagens salvas',
   'empty.savedSub': 'Anote ideias, links e arquivos só para você.',
   'empty.message': 'Conversar',
+  'empty.biaTitle': 'Fale com a Bia',
+  'empty.biaSub': 'Sua assistente responde na hora — peça uma ideia, um resumo ou uma tradução.',
 };
 
 const EN = {
@@ -102,6 +105,7 @@ const EN = {
   'fr.friends.none': 'None of your contacts are here yet. Invite them?',
   'fr.friends.denied': 'No access to contacts. You can enable it later in New chat.',
   'fr.friends.invite': 'Invite friends',
+  'fr.friends.openSettings': 'Allow in Settings',
   'fr.notif.title': 'Never miss a message',
   'fr.notif.sub': 'Turn on notifications to get messages and calls even when Chatyy is closed.',
   'fr.notif.cta': 'Turn on notifications',
@@ -125,6 +129,8 @@ const EN = {
   'empty.savedTitle': 'Saved messages',
   'empty.savedSub': 'Keep notes, links and files just for you.',
   'empty.message': 'Message',
+  'empty.biaTitle': 'Talk to Bia',
+  'empty.biaSub': 'Your assistant answers right away — ask for an idea, a summary or a translation.',
 };
 
 const ES = {
@@ -161,6 +167,7 @@ const ES = {
   'fr.friends.none': 'Nadie de tu agenda está aquí todavía. ¿Los invitas?',
   'fr.friends.denied': 'Sin acceso a contactos. Puedes activarlo luego en Nuevo chat.',
   'fr.friends.invite': 'Invitar amigos',
+  'fr.friends.openSettings': 'Permitir en Ajustes',
   'fr.notif.title': 'No te pierdas ningún mensaje',
   'fr.notif.sub': 'Activa las notificaciones para recibir mensajes y llamadas aunque Chatyy esté cerrado.',
   'fr.notif.cta': 'Activar notificaciones',
@@ -184,6 +191,8 @@ const ES = {
   'empty.savedTitle': 'Mensajes guardados',
   'empty.savedSub': 'Guarda ideas, enlaces y archivos solo para ti.',
   'empty.message': 'Mensaje',
+  'empty.biaTitle': 'Habla con Bia',
+  'empty.biaSub': 'Tu asistente responde al instante: pide una idea, un resumen o una traducción.',
 };
 
 const DICTS = { pt: PT, en: EN, es: ES };

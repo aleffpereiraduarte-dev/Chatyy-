@@ -2620,7 +2620,7 @@ function CalendarScreenInner() {
           if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator?.clipboard?.writeText) {
             try {
               await navigator.clipboard.writeText(icsUrl);
-              safeAlert(t('calendar.urlCopied'));
+              try { require('../components/ui/Toast').showToast({ message: t('calendar.urlCopied'), kind: 'success' }); } catch { safeAlert(t('calendar.urlCopied')); } // [2026-10-21 toasts]
             } catch {
               safeAlert(t('common.error') || 'Erro', icsUrl);
             }

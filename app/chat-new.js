@@ -1452,7 +1452,7 @@ export default function ChatNewScreen() {
     if (Platform.OS === 'web') {
       try {
         await navigator.clipboard.writeText(inviteMsg);
-        safeAlert('', t('chat.inviteCopied'));
+        try { require('../components/ui/Toast').showToast({ message: t('chat.inviteCopied'), kind: 'success' }); } catch { safeAlert('', t('chat.inviteCopied')); } // [2026-10-21 toasts]
       } catch {
         safeAlert('Chatyy', inviteMsg);
       }

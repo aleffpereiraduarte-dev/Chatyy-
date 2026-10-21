@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, Animated, AccessibilityInfo } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
-import { FontSize, Spacing, BorderRadius } from '../constants/theme';
+import { FontSize, Spacing, BorderRadius, THEME_V2, grafite } from '../constants/theme';
 import { IconWifiOff, IconRefresh } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
 import { setActiveInterval } from '../utils/activeInterval'; // [2026-10-10 perf-battery]
@@ -15,7 +15,7 @@ let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
 
 export default function OfflineNotice() {
-  const { colors } = useTheme();
+  const { colors, isDark: _themeDark } = useTheme();
   const { t } = useLanguage();
   const [isOffline, setIsOffline] = useState(false);
   const [queueCount, setQueueCount] = useState(0);
@@ -167,18 +167,35 @@ export default function OfflineNotice() {
     }).start();
   }, [isOffline]);
 
-  if (!isOffline || homeOwnsStatus) return null;
+  // [2026-10-21 a11y] Leitor de tela: avisa UMA vez quando a faixa aparece
+  // (a faixa sozinha é só visual; VoiceOver/TalkBack não a percebiam).
+  const _visible = isOffline && !homeOwnsStatus;
+  useEffect(() => {
+    if (!_visible) return;
+    try { AccessibilityInfo.announceForAccessibility?.(t('offline.noConnection')); } catch {}
+  }, [_visible]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!_visible) return null;
 
   // WhatsApp-style: slim, neutral-gray bar — NOT a loud yellow alert. The
   // user already knows they're offline (system status bar shows airplane /
   // wifi-off icon). Our job is a subtle reminder that pending actions are
   // queued. No retry button: auto-reconnect drains the outbox naturally.
-  const bg = isDarkMode(colors) ? 'rgba(202,210,217,0.10)' : '#f0f2f5';
-  const fg = isDarkMode(colors) ? 'rgba(202,210,217,0.92)' : '#3b4a54';
+  // [2026-10-21 grafite] Cinzas quentes do Grafite suave (era o cinza-azulado
+  // do WhatsApp, fora da paleta do resto do app).
+  const _dk = typeof _themeDark === 'boolean' ? _themeDark : isDarkMode(colors);
+  const _g = THEME_V2 ? grafite(_dk) : null;
+  const bg = _g ? _g.surface2 : (_dk ? 'rgba(202,210,217,0.10)' : '#f0f2f5');
+  const fg = _g ? _g.text2 : (_dk ? 'rgba(202,210,217,0.92)' : '#3b4a54');
   return (
-    <Animated.View style={[s.container, { backgroundColor: bg, transform: [{ translateY: slideAnim }] }]}>
+    <Animated.View
+      style={[s.container, { backgroundColor: bg, transform: [{ translateY: slideAnim }] }]}
+      accessible
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+    >
       <IconWifiOff size={13} color={fg} />
-      <Text style={[s.text, { color: fg }]} numberOfLines={1}>
+      <Text style={[s.text, { color: fg }]} numberOfLines={1} maxFontSizeMultiplier={1.5}>
         {t('offline.noConnection')}{queueCount > 0 ? ` · ${queueCount}` : ''}
       </Text>
     </Animated.View>

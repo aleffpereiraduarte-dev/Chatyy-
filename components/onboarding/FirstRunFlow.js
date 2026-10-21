@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal, View, Text, TextInput, Pressable, Image, StyleSheet, Platform, Animated,
-  Easing, ActivityIndicator, ScrollView, KeyboardAvoidingView, StatusBar, useWindowDimensions,
+  Easing, ActivityIndicator, ScrollView, KeyboardAvoidingView, StatusBar, useWindowDimensions, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
@@ -26,6 +26,7 @@ import { useOnbCopy } from './copy';
 import { FriendsArt, BellArt, ShieldGlyph, ThemeSwatch } from './illustrations';
 import { shareInvite } from './invite';
 import { saveFirstRunStep } from '../../services/firstRun';
+import { THEME_V2, grafite } from '../../constants/theme'; // [2026-10-21 grafite]
 
 export const ALL_STEPS = ['profile', 'friends', 'notifications', 'look'];
 
@@ -86,10 +87,12 @@ export default function FirstRunFlow({ visible, steps, initialStep, onDone, onOp
   const step = list[Math.min(idx, list.length - 1)];
   const isLast = idx >= list.length - 1;
 
-  const fg = isDark ? '#ffffff' : '#111111';
-  const bg = isDark ? '#000000' : '#ffffff';
-  const sub = isDark ? 'rgba(255,255,255,0.62)' : 'rgba(17,17,17,0.6)';
-  const muted = isDark ? '#1c1c1e' : '#F1F2F4';
+  // [2026-10-21 grafite] Fundo/tinta do Grafite suave (cinzas quentes).
+  const _g = THEME_V2 ? grafite(isDark) : null;
+  const fg = _g ? _g.ink : (isDark ? '#ffffff' : '#111111');
+  const bg = _g ? _g.bg : (isDark ? '#000000' : '#ffffff');
+  const sub = _g ? _g.text2 : (isDark ? 'rgba(255,255,255,0.62)' : 'rgba(17,17,17,0.6)');
+  const muted = _g ? _g.surface2 : (isDark ? '#1c1c1e' : '#F1F2F4');
   const hair = isDark ? 'rgba(255,255,255,0.14)' : 'rgba(17,17,17,0.12)';
 
   // Content transition per step (fade + small slide). Off under Reduce Motion.
@@ -133,11 +136,20 @@ export default function FirstRunFlow({ visible, steps, initialStep, onDone, onOp
   const pickPhoto = useCallback(async () => {
     try {
       const ImagePicker = require('expo-image-picker');
-      if (Platform.OS !== 'web') {
+      // [2026-10-21 permissões] O seletor do sistema (PHPicker no iOS, Photo
+      // Picker no Android) não precisa de acesso à galeria: abre direto, sem
+      // um pedido de permissão logo no 1º minuto do app. Só se o sistema
+      // recusar abrir é que pede a permissão e tenta de novo.
+      const opts = { mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.8 };
+      let res = null;
+      try {
+        res = await ImagePicker.launchImageLibraryAsync(opts);
+      } catch (e) {
+        if (Platform.OS === 'web') throw e;
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!perm?.granted) return;
+        res = await ImagePicker.launchImageLibraryAsync(opts);
       }
-      const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.8 });
       if (res && !res.canceled && res.assets?.[0]?.uri) { setPhoto({ uri: res.assets[0].uri }); setErr(''); _haptic(); }
     } catch {}
   }, []);
@@ -176,7 +188,7 @@ export default function FirstRunFlow({ visible, steps, initialStep, onDone, onOp
       // forceRefresh=true → shows the canonical store-compliant consent
       // (contactsConsent.*) and then the OS permission, same as chat-new.
       const r = await syncContacts(true, t);
-      if (r?.error === 'consent_denied' || r?.error === 'permission_denied') { setFriends({ state: 'denied', list: [] }); return; }
+      if (r?.error === 'consent_denied' || r?.error === 'permission_denied') { setFriends({ state: 'denied', list: [], perm: r?.error === 'permission_denied' }); return; }
       const me = email;
       const found = (r?.chatyContacts || []).filter((x) => x?.email && String(x.email).toLowerCase() !== me);
       setFriends({ state: 'done', list: found });
@@ -289,7 +301,16 @@ export default function FirstRunFlow({ visible, steps, initialStep, onDone, onOp
             ) : null}
           </View>
         ) : friends.state === 'denied' ? (
-          <Text style={[st.resultText, { color: sub, marginTop: 20 }]}>{c('fr.friends.denied')}</Text>
+          <View style={{ alignItems: 'center', marginTop: 20 }}>
+            <Text style={[st.resultText, { color: sub }]}>{c('fr.friends.denied')}</Text>
+            {/* [2026-10-21 permissões] Negado no sistema: o pedido não volta
+                mais sozinho — atalho direto p/ os Ajustes do app. */}
+            {friends.perm && Platform.OS !== 'web' ? (
+              <Pressable onPress={() => { try { Linking.openSettings(); } catch {} }} hitSlop={8} accessibilityRole="button" style={{ minHeight: 44, justifyContent: 'center' }}>
+                <Text style={[st.link, { color: fg, marginTop: 6 }]}>{c('fr.friends.openSettings')}</Text>
+              </Pressable>
+            ) : null}
+          </View>
         ) : (
           <View style={[st.privacy, { backgroundColor: muted }]}>
             <ShieldGlyph size={20} color={fg} />
@@ -301,7 +322,7 @@ export default function FirstRunFlow({ visible, steps, initialStep, onDone, onOp
     footer = friends.state === 'done' || friends.state === 'denied' ? (
       <>
         <Primary label={c('fr.continue')} onPress={next} />
-        <Secondary label={c('fr.friends.invite')} onPress={() => shareInvite(c)} />
+        <Secondary label={c('fr.friends.invite')} onPress={() => shareInvite(c, { inModal: true })} />
       </>
     ) : (
       <>
@@ -396,7 +417,7 @@ export default function FirstRunFlow({ visible, steps, initialStep, onDone, onOp
             </View>
             {!isLast ? (
               <Pressable onPress={next} hitSlop={10} style={[st.skip, Platform.OS === 'web' ? { outlineStyle: 'none' } : null]} accessibilityRole="button" accessibilityLabel={c('fr.skip')}>
-                <Text style={[st.skipText, { color: sub }]}>{c('fr.skip')}</Text>
+                <Text style={[st.skipText, { color: sub }]} maxFontSizeMultiplier={1.4}>{c('fr.skip')}</Text>
               </Pressable>
             ) : <View style={st.skip} />}
           </View>
@@ -416,7 +437,7 @@ const st = StyleSheet.create({
   root: { flex: 1 },
   rootWide: { backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 },
   card: { width: '100%', maxWidth: 460, maxHeight: 720, minHeight: 560, borderRadius: 24, overflow: 'hidden' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, height: 44 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, minHeight: 44 },
   dots: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   dot: { height: 6, borderRadius: 3 },
   skip: { minWidth: 56, minHeight: 40, alignItems: 'flex-end', justifyContent: 'center' },
@@ -437,7 +458,7 @@ const st = StyleSheet.create({
   friendsRow: { gap: 14, paddingHorizontal: 4, paddingTop: 16 },
   friend: { alignItems: 'center', width: 60 },
   friendName: { fontSize: 12, marginTop: 6, maxWidth: 60 },
-  themeRow: { flexDirection: 'row', gap: 12, marginTop: 26, justifyContent: 'center' },
+  themeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 26, justifyContent: 'center' }, // wrap: Dynamic Type grande
   themeCard: { alignItems: 'center', paddingVertical: 14, paddingHorizontal: 12, borderRadius: 16, minWidth: 92 },
   themeLabel: { fontSize: 13.5, marginTop: 10 },
   backupRow: { flexDirection: 'row', alignItems: 'center', gap: 12, alignSelf: 'stretch', marginTop: 26, padding: 14, borderRadius: 16, borderWidth: 1 },
@@ -446,8 +467,8 @@ const st = StyleSheet.create({
   backupSub: { fontSize: 13, marginTop: 2 },
   footer: { paddingHorizontal: 24, paddingTop: 8, alignSelf: 'center', width: '100%', maxWidth: 460 },
   // [2026-10-12 first-run polish] 50pt CTA — same height as login/signup.
-  primary: { minHeight: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
-  primaryText: { fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
+  primary: { minHeight: 50, borderRadius: 25, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, paddingVertical: 10 },
+  primaryText: { fontSize: 16, fontWeight: '700', letterSpacing: 0.2, textAlign: 'center' },
   secondary: { minHeight: 48, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
   secondaryText: { fontSize: 16, fontWeight: '600' },
 });

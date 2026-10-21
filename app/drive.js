@@ -2017,7 +2017,11 @@ function DriveScreenInner() {
             style={[styles.copyLinkBtn, { borderColor: colors.border }]}
             onPress={() => {
               const url = api.fileDownloadUrl(shareModal?.id);
+              // [2026-10-21] Nativo não copiava nada (só o web) e mesmo assim dizia
+              // "Link copiado" → copia de verdade. (Alerta, não toast: o toast
+              // global fica por baixo deste Modal.)
               if (Platform.OS === 'web' && navigator.clipboard) navigator.clipboard.writeText(url);
+              else { try { Promise.resolve(require('expo-clipboard').setStringAsync(String(url || ''))).catch(() => {}); } catch {} }
               safeAlert(t('drive.linkCopied'));
             }}
           >

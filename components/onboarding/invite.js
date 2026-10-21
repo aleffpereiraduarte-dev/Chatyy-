@@ -4,7 +4,7 @@
 import { Platform, Share } from 'react-native';
 import { INVITE_URL } from './copy';
 
-export async function shareInvite(c) {
+export async function shareInvite(c, opts) {
   const message = c('empty.inviteMsg', { url: INVITE_URL });
   if (Platform.OS === 'web') {
     try {
@@ -17,7 +17,11 @@ export async function shareInvite(c) {
     }
     try {
       await navigator.clipboard.writeText(message);
-      try { require('../../services/alerts').safeAlert('Chatyy', c('empty.inviteCopied')); } catch {}
+      // [2026-10-21 toasts] Confirmação curta = toast do app (era um alerta modal).
+      // (opts.inModal: o toast global fica por baixo de um <Modal> → alerta.)
+      const _alert = () => { try { require('../../services/alerts').safeAlert('Chatyy', c('empty.inviteCopied')); } catch {} };
+      if (opts && opts.inModal) _alert();
+      else { try { require('../ui/Toast').showToast({ message: c('empty.inviteCopied'), kind: 'success' }); } catch { _alert(); } }
       return true;
     } catch {
       try { require('../../services/alerts').safeAlert('Chatyy', message); } catch {}

@@ -136,7 +136,7 @@ export default function StickerPackScreen() {
     try {
       if (Platform.OS === 'web') {
         if (typeof navigator !== 'undefined' && navigator.share) await navigator.share({ title: pack.name, text: message, url });
-        else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) { await navigator.clipboard.writeText(url); Alert.alert(t('chat.linkCopied'), url); }
+        else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) { await navigator.clipboard.writeText(url); try { require('../../components/ui/Toast').showToast({ message: t('chat.linkCopied'), kind: 'success' }); } catch { Alert.alert(t('chat.linkCopied'), url); } }
       } else await Share.share({ message, url, title: pack.name });
     } catch {}
   }, [pack, t]);

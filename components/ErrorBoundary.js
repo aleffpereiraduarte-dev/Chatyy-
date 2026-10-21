@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Appearance } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Appearance, ScrollView, Platform } from 'react-native';
 import { IconAlertTriangle } from './Icons';
 import { Sentry } from '../services/sentry';
 import { reloadOnceForChunkError } from '../services/chunkReload';
@@ -31,6 +31,41 @@ function _staticT(key, fallback) {
   } catch {}
   return fallback;
 }
+// [2026-10-21 robustez] Textos novos do boundary (sem tocar no i18n
+// compartilhado): pt / en / es pelo idioma do aparelho; resto cai no pt.
+const _LOCAL = {
+  restart: { pt: 'Reiniciar o Chatyy', en: 'Restart Chatyy', es: 'Reiniciar Chatyy' },
+  stillFailing: {
+    pt: 'Ainda não deu certo. Reiniciar o Chatyy costuma resolver — suas conversas continuam salvas.',
+    en: 'Still not working. Restarting Chatyy usually fixes it — your chats stay saved.',
+    es: 'Todavía no funciona. Reiniciar Chatyy suele resolverlo: tus chats siguen guardados.',
+  },
+};
+function _localText(key) {
+  const m = _LOCAL[key];
+  if (!m) return '';
+  let short = 'pt';
+  try {
+    const s = String(_deviceLocale() || '').toLowerCase().split(/[-_]/)[0];
+    if (s === 'en' || s === 'es') short = s;
+  } catch {}
+  return m[short] || m.pt;
+}
+function _canRestart() {
+  if (Platform.OS === 'web') return typeof window !== 'undefined' && !!window.location;
+  try {
+    // Com ligação ativa o reload espera ela acabar (crashReporter) → não oferece.
+    if (require('../services/crashReporter').isCallActiveForReload?.()) return false;
+  } catch {}
+  return true;
+}
+function _restartApp() {
+  if (Platform.OS === 'web') { try { window.location.reload(); } catch {} return; }
+  try {
+    require('../services/crashReporter').reloadWithReason('boundary').catch(() => {});
+  } catch {}
+}
+
 function BoundaryText({ k, fb }) {
   let ctx = null;
   try { ctx = useLanguageOptional(); } catch {}
@@ -49,23 +84,26 @@ function getColors() {
   if (scheme === 'dark') {
     // [2026-10-16 polish-r2] Preto verdadeiro + botão invertido (era slate
     // #111827 com botão #111 — o "Tentar novamente" sumia no escuro).
+    // [2026-10-21 grafite] Paleta Grafite suave (cinzas quentes, tinta clara).
     return {
       dark: true,
-      bg: '#000000',
-      text: '#F5F5F7',
+      bg: '#0E0E10',
+      text: '#F2F2EF',
       sub: '#A1A1A6',
       error: '#f87171',
-      btnBg: '#FFFFFF',
-      btnText: '#000',
+      btnBg: '#ECECE8',
+      btnText: '#121214',
+      line: 'rgba(255,255,255,0.14)',
     };
   }
   return {
-    bg: '#FFFFFF',
-    text: '#111111',
+    bg: '#F2F2EF',
+    text: '#18181B',
     sub: '#5F5F66',
     error: '#dc2626',
-    btnBg: '#111111',
-    btnText: '#fff',
+    btnBg: '#2A2A2E',
+    btnText: '#F7F7F5',
+    line: 'rgba(24,24,27,0.14)',
   };
 }
 
@@ -85,15 +123,29 @@ class SafeMascot extends React.Component {
 }
 
 export default class ErrorBoundary extends React.Component {
-  state = { hasError: false, error: null, showDetails: false };
+  state = { hasError: false, error: null, showDetails: false, retries: 0 };
+  _retryAt = 0;
 
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
 
+  // [2026-10-21 robustez] "Tentar novamente" que volta a quebrar em seguida
+  // (mesmo erro de render) conta como nova tentativa; a partir da 2ª o
+  // boundary oferece "Reiniciar o Chatyy" (reload do JS), que é o que
+  // realmente tira o usuário do laço.
+  _retry = () => {
+    this._retryAt = Date.now();
+    try { this.props.onReset?.(); } catch {}
+    this.setState((prev) => ({ hasError: false, error: null, componentStack: '', showDetails: false, retries: (prev.retries || 0) + 1 }));
+  };
+
   componentDidCatch(error, errorInfo) {
     console.error('[ErrorBoundary]', error?.message, error?.stack, errorInfo?.componentStack);
     this.setState({ componentStack: errorInfo?.componentStack || '' });
+    // Quebrou de novo >10 s depois do último "Tentar novamente" = erro novo,
+    // não laço: zera a contagem.
+    try { if (this._retryAt && Date.now() - this._retryAt > 10000) this.setState({ retries: 0 }); } catch {}
     // Report to Sentry
     try { Sentry.captureException(error); } catch {}
     // [2026-10-06] Web: a lazy chunk that 404s after a deploy (old index.html
@@ -162,12 +214,17 @@ export default class ErrorBoundary extends React.Component {
       // diagnose. Previous "TEMPORARY" block surfaced raw error.message in
       // prod (Apple 2.1 risk + scares users) — that comment was unreverted
       // for months. Now strict: prod sees friendly text, dev sees details.
+      const stuck = (this.state.retries || 0) >= 1 && _canRestart();
       return (
-        <View style={[s.container, { backgroundColor: c.bg }]}>
+        <ScrollView
+          style={{ flex: 1, backgroundColor: c.bg }}
+          contentContainerStyle={s.container}
+          accessibilityViewIsModal
+        >
           <SafeMascot dark={!!c.dark} fallback={<IconAlertTriangle size={48} color={c.text} style={{ marginBottom: 16 }} />} />
-          <Text style={[s.title, { color: c.text }]}><BoundaryText k="common.somethingWentWrong" fb="Algo deu errado" /></Text>
+          <Text style={[s.title, { color: c.text }]} accessibilityRole="header"><BoundaryText k="common.somethingWentWrong" fb="Algo deu errado" /></Text>
           <Text style={[s.message, { color: c.sub }]}>
-            <BoundaryText k="uiG.errorBoundary.body" fb="Não foi possível carregar esta tela. Tente novamente em instantes." />
+            {stuck ? _localText('stillFailing') : <BoundaryText k="uiG.errorBoundary.body" fb="Não foi possível carregar esta tela. Tente novamente em instantes." />}
           </Text>
           {__DEV__ && this.state.error?.message && (
             <Text selectable style={{ color: c.error, fontSize: 12, marginTop: 8, textAlign: 'left', paddingHorizontal: 20, fontFamily: 'monospace' }}>
@@ -179,11 +236,23 @@ export default class ErrorBoundary extends React.Component {
               {this.state.error.stack.substring(0, 500)}
             </Text>
           )}
+          {stuck ? (
+            <TouchableOpacity
+              style={[s.button, { backgroundColor: c.btnBg }]}
+              onPress={_restartApp}
+              accessibilityRole="button"
+            >
+              <Text style={[s.buttonText, { color: c.btnText }]}>{_localText('restart')}</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
-            style={[s.button, { backgroundColor: c.btnBg }]}
-            onPress={() => this.setState({ hasError: false, error: null, componentStack: '', showDetails: false })}
+            style={[s.button, stuck
+              ? { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: c.line, marginTop: 10 }
+              : { backgroundColor: c.btnBg }]}
+            onPress={this._retry}
+            accessibilityRole="button"
           >
-            <Text style={[s.buttonText, { color: c.btnText }]}><BoundaryText k="common.tryAgain" fb="Tentar novamente" /></Text>
+            <Text style={[s.buttonText, { color: stuck ? c.text : c.btnText }]}><BoundaryText k="common.tryAgain" fb="Tentar novamente" /></Text>
           </TouchableOpacity>
           {/* Production "Detalhes" toggle — tapping reveals the raw error
               message + first stack line in a small selectable monospace
@@ -194,9 +263,10 @@ export default class ErrorBoundary extends React.Component {
           {!__DEV__ && this.state.error?.message && (
             <TouchableOpacity
               onPress={() => this.setState(prev => ({ showDetails: !prev.showDetails }))}
-              style={{ marginTop: 12 }}
+              style={{ marginTop: 12, minHeight: 44, justifyContent: 'center', paddingHorizontal: 12 }}
+              accessibilityRole="button"
             >
-              <Text style={{ color: c.sub, fontSize: 11, textDecorationLine: 'underline' }}>
+              <Text style={{ color: c.sub, fontSize: 12, textDecorationLine: 'underline' }}>
                 {this.state.showDetails
                   ? <BoundaryText k="uiG.errorBoundary.hideDetails" fb="Ocultar detalhes" />
                   : <BoundaryText k="uiG.errorBoundary.techDetails" fb="Detalhes técnicos" />}
@@ -209,7 +279,7 @@ export default class ErrorBoundary extends React.Component {
               {this.state.error.stack ? '\n' + String(this.state.error.stack).split('\n').slice(0, 2).join('\n').substring(0, 200) : ''}
             </Text>
           )}
-        </View>
+        </ScrollView>
       );
     }
     return this.props.children;
@@ -217,10 +287,10 @@ export default class ErrorBoundary extends React.Component {
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
+  container: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   title: { fontSize: 20, fontWeight: '700', marginBottom: 8 },
   message: { fontSize: 14, textAlign: 'center', marginBottom: 24, lineHeight: 20 },
   debug: { fontSize: 11, textAlign: 'center', marginBottom: 16, fontFamily: 'monospace' },
-  button: { borderRadius: 26, borderCurve: 'continuous', paddingVertical: 14, paddingHorizontal: 28 },
-  buttonText: { fontSize: 15, fontWeight: '700' },
+  button: { borderRadius: 26, borderCurve: 'continuous', paddingVertical: 14, paddingHorizontal: 28, minHeight: 50, minWidth: 220, maxWidth: 360, alignItems: 'center', justifyContent: 'center' },
+  buttonText: { fontSize: 15, fontWeight: '700', textAlign: 'center' },
 });
