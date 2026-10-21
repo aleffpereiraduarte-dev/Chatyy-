@@ -491,7 +491,8 @@ const _P2_HASH_RE = /(?:^|\s)(#[\wÀ-ſ]{2,30})/g;
 const _P2_QUOTE = /^\s*>\s(.*)$/;
 const _P2_BULLET = /^(\s*)[-*]\s+(.*)$/;
 const _P2_NUM = /^(\s*)(\d+)\.\s+(.*)$/;
-const _CODE_INLINE_BG = toArgb('rgba(0,0,0,0.08)');
+// [2026-10-21 polish-conv] cinza neutro: preto 8% sumia na bolha própria grafite e no escuro.
+const _CODE_INLINE_BG = toArgb('rgba(127,127,127,0.22)');
 
 let _iconsMod = null;
 function _icons() {
@@ -629,7 +630,7 @@ function _blocksFor(c, ctx, item, own) {
       const inner = m[0].slice(3, -3).replace(/^\n/, '').replace(/\n$/, '');
       nodes.push(N.vstack([
         N.text(inner, { ff: 'mono', fs: 13, lh, c: textColor }),
-      ], { bg: p2.codeBlockBg || 'rgba(0,0,0,0.06)', r: 8, p: [6, 10, 6, 10], m: [4, 0, 4, 0], w: -1 }));
+      ], { bg: own ? 'rgba(255,255,255,0.10)' : (p2.codeBlockBg || 'rgba(0,0,0,0.06)'), r: 8, p: [6, 10, 6, 10], m: [4, 0, 4, 0], w: -1 }));
       last = m.index + m[0].length;
     }
     pushText(c.slice(last));
@@ -637,8 +638,10 @@ function _blocksFor(c, ctx, item, own) {
     return nodes;
   }
   if (!(ctx.hasBlockMarkdown && ctx.hasBlockMarkdown(c))) return null;
-  const accent = p2.accent || '#25D366';
-  const muted = p2.muted || 'rgba(120,120,120,0.9)';
+  // [2026-10-21 polish-conv] bolha própria: barra/texto da citação na tinta da bolha
+  // (p2.accent = colors.primary #2A2A2E sumia sobre a grafite #34343A).
+  const accent = own ? (p2.ownText || '#FFFFFF') : (p2.accent || '#25D366');
+  const muted = own ? (p2.ownMeta || 'rgba(255,255,255,0.7)') : (p2.muted || 'rgba(120,120,120,0.9)');
   const avail = _contentMax(ctx);
   const lines = c.split('\n');
   const nodes = lines.map((line) => {
@@ -665,13 +668,18 @@ function _blocksFor(c, ctx, item, own) {
   return nodes;
 }
 
-function _smartNodes(c, ctx) {
+function _alphaOf(col, a) {
+  const n = toArgb(col, 0xff111111);
+  return `rgba(${(n >>> 16) & 255},${(n >>> 8) & 255},${n & 255},${a})`;
+}
+function _smartNodes(c, ctx, own) {
   const N = _N();
   const p2 = ctx.p2 || {};
   let acts = [];
   try { acts = p2.smartActions ? (p2.smartActions(c) || []) : []; } catch { acts = []; }
   if (!acts.length) return null;
-  const prim = p2.primary || '#111111';
+  // [2026-10-21 polish-conv] na bolha própria usa a tinta da bolha (primary sumia na grafite).
+  const prim = own ? (p2.ownText || '#FFFFFF') : (p2.primary || '#111111');
   const avail = _contentMax(ctx);
   const rows = [];
   let cur = []; let curW = 0;
@@ -679,7 +687,7 @@ function _smartNodes(c, ctx) {
     const label = String((a.labelKey && p2.label ? p2.label(a.labelKey, a.label || '') : '') || a.label || '');
     const ic = a.Icon ? N.icon(a.Icon, { s: 12, c: prim }) : null;
     const chip = N.hstack([ic, N.text(label, { fs: 11.5, fw: 600, c: prim, m: [0, 0, 0, ic ? 5 : 0], ml: 1 })], {
-      al: 'c', p: [5, 10, 5, 10], r: 14, bg: toArgb(prim + '1a'), bc: toArgb(prim + '40'), bw: 1, a: 'smart:' + i,
+      al: 'c', p: [5, 10, 5, 10], r: 14, bg: toArgb(_alphaOf(prim, 0.10)), bc: toArgb(_alphaOf(prim, 0.25)), bw: 1, a: 'smart:' + i,
     });
     const w = 22 + (ic ? 17 : 0) + label.length * 6.4;
     if (cur.length && curW + 6 + w > avail) { rows.push(cur); cur = []; curW = 0; }
@@ -797,7 +805,7 @@ function _p2BuildText(item, row, ctx, own) {
   // (nó id 'lp'); mesma ordem do JS: tradução → prévia → smart actions.
   if (Array.isArray(row.post) && row.post.length) post.push(...row.post);
   delete row.post;
-  const sm = _smartNodes(c, ctx);
+  const sm = _smartNodes(c, ctx, own);
   if (sm) post.push(sm);
   const failed = own && !!item._failed;
   if (failed) { post.push(_failMetaNode(item, row, ctx)); delete row.st; }
@@ -1934,6 +1942,9 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
       if (!it) { keys[i] = 'null-' + i; continue; }
       let k;
       try { k = keyOf ? keyOf(it) : String(it._key || it.id); } catch { k = 'err-' + i; }
+      // [2026-10-21 polish-conv] chave repetida (otimista + confirmada no mesmo frame,
+      // id indefinido) confundia o diff/scroll nativo → sufixo único p/ a repetida.
+      if (idx.has(k)) k = k + '#dup' + i;
       keys[i] = k;
       idx.set(k, i);
       let ent = cache.get(it);

@@ -32,7 +32,7 @@ function _ic(Comp) {
     let n = null;
     try { n = icon(Comp, { s: 22, c: '#000000' }); } catch { n = null; }
     v = n && n.ps && n.ps.length ? { vb: n.vb || 24, ps: n.ps } : null;
-    _icCache.set(Comp, v);
+    if (v) _icCache.set(Comp, v); // [2026-10-21 polish-conv] null não fica em cache
   }
   return v;
 }
@@ -236,10 +236,10 @@ export function runNativeCtxAction(action, msg, H) {
     case 'edit': H.handleEdit(msg); return;
     case 'pin': case 'unpin': H.handlePinMessage(msg); return;
     case 'forward': H.handleForward(msg); return;
-    case 'replyPrivately': _replyPrivately(msg, H); return;
+    case 'replyPrivately': { try { const p = _replyPrivately(msg, H); if (p && p.catch) p.catch(() => {}); } catch {} return; }
     case 'replyElsewhere': openReplyElsewhere(msg, H); return; // [2026-10-20 tg1]
     case 'translate': H.handleTranslate(msg); return;
-    case 'transcribe': _transcribe(msg, H); return;
+    case 'transcribe': { try { const p = _transcribe(msg, H); if (p && p.catch) p.catch(() => {}); } catch {} return; }
     case 'voiceTx': if (H.transcribeVoice) H.transcribeVoice(msg); return; // [voz-wa]
     case 'info': H.handleMessageInfo(msg); return;
     case 'editHistory': if (H.openEditHistory) H.openEditHistory(msg.id); return; // [2026-10-20 tg1]
@@ -401,7 +401,7 @@ async function _transcribe(targetMsg, H) {
     const fileUrl = api.getMediaUrl ? api.getMediaUrl(targetMsg.file_url) : targetMsg.file_url;
     const dl = await FS.downloadAsync(fileUrl, localFile);
     if (!H.mountedRef.current) return;
-    if (dl.status !== 200) { setTx({ error: 'Falha no download' }); return; }
+    if (dl.status !== 200) { setTx({ error: mt('chatConv.transcribeFailed', 'Falha na transcrição') }); return; }
     dlUri = dl.uri;
     setTx({ loading: true });
     const r = await api.aiTranscribeAudio(dl.uri);
@@ -419,7 +419,7 @@ async function _transcribe(targetMsg, H) {
       setTx({ error: r?.message || mt('chatConv.transcribeFailed', 'Falha na transcrição') });
     }
   } catch (e) {
-    setTx({ error: e?.message || 'Erro' });
+    setTx({ error: mt('chatConv.transcribeFailed', 'Falha na transcrição') }); // [2026-10-21 polish-conv] nunca e.message cru
   } finally {
     if (dlUri) { try { await FS.deleteAsync(dlUri, { idempotent: true }); } catch {} }
   }

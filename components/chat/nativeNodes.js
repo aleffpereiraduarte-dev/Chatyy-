@@ -204,8 +204,12 @@ export function icon(Comp, o = {}) {
       });
     } catch {}
     ent = { ps: out.slice(), vb: out.vb || 24 };
-    if (byColor.size > 16) byColor.clear();
-    byColor.set(ck, ent);
+    // [2026-10-21 polish-conv] não cacheia extração vazia (falha passageira virava
+    // círculo vazio a sessão inteira).
+    if (ent.ps.length) {
+      if (byColor.size > 16) byColor.clear();
+      byColor.set(ck, ent);
+    }
   }
   if (!ent.ps.length) return null;
   const n = _clean(o);

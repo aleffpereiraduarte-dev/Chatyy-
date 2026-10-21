@@ -297,8 +297,10 @@ function _loc(m) {
     loc = typeof m.content === 'string' ? JSON.parse(m.content) : (m.content && typeof m.content === 'object' ? m.content : {});
   } catch { loc = {}; }
   if (!loc || typeof loc !== 'object') loc = {};
-  const lat = loc.latitude ?? loc.lat ?? m.latitude ?? null;
-  const lng = loc.longitude ?? loc.lng ?? m.longitude ?? null;
+  // [2026-10-21 polish-conv] NaN/'' → null (antes abria o mapa em 0,0).
+  const _num = (v) => { if (v == null || v === '') return null; const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+  const lat = _num(loc.latitude ?? loc.lat ?? m.latitude);
+  const lng = _num(loc.longitude ?? loc.lng ?? m.longitude);
   const rawAddr = loc.address ?? loc.label ?? m.address ?? '';
   const addr = typeof rawAddr === 'string' ? rawAddr : '';
   const isLive = !!(loc.live || m.live);
@@ -511,7 +513,7 @@ function buildLocation(m, row, ctx, C, own) {
     ], { fl: 1 }),
     (L.active && own) ? vstack([text(_tr(C, 'chatConv.stopSharing', 'Parar'), { fs: 12, fw: 700, c: '#111111' })], { p: [6, 12, 6, 12], r: 14, bg: '#FFFFFF', m: [0, 0, 0, 4], a: 'loc_stop' }) : null,
   ], { p: [7, 6, 0, 6], g: 8, al: 'c' });
-  row.bl = [vstack([map, footer], { w: CARD_W, a: 'loc' })];
+  row.bl = [vstack([map, footer], { w: CARD_W, ...(hasCoords ? { a: 'loc' } : {}) })];
   row.cw = CARD_W;
   row.pad = [4, 4, 5, 4];
   row.mp = 'below';
@@ -519,7 +521,7 @@ function buildLocation(m, row, ctx, C, own) {
 
 function buildJsonLocation(j, row, C) {
   const col = C.colors || {};
-  const label = String(j.label || j.address || 'Localização');
+  const label = String(j.label || j.address || _tr(C, 'chatConv.location', 'Localização'));
   const sub = _tr(C, 'chatConv.tapToOpenMap', 'Toque para abrir no mapa');
   const w = _clampW(200, 280, 24 + 44 + 8 + Math.max(_estW(label, 13, true), _estW(sub, 11)));
   row.bl = [vstack([
@@ -539,7 +541,7 @@ function buildContact(m, row, ctx, C, own) {
   if (ct.count > 1 && ct.parsed) { buildContactMulti(ct, row, C, own); return; }
   const P = _palette(own, C);
   const col = P.col; const isDark = P.dark;
-  const flag = _flag(ct.phone);
+  const flag = ''; // [2026-10-21 polish-conv] sem bandeira emoji (regra: nada de emoji na UI; o DDI já está no número). _flag mantido p/ referência.
   const pretty = _prettyPhone(ct.phone);
   const cardBg = own ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.18)') : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)');
   const dividerColor = own ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.18)') : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
@@ -737,7 +739,7 @@ function buildMeetup(m, row, ctx, C, own) {
     const tc = MS.cancelled ? (own ? C.ownMeta : col.textTertiary || '#8E8E93') : (on ? '#FFFFFF' : (own ? C.ownText : col.text));
     return vstack([text(labels[s], { fs: 12, c: tc, fw: on ? 700 : 500 })], {
       fl: 1, p: [7, 0, 7, 0], r: 8, al: 'c', bg: on && !MS.cancelled ? act[s] : undefined,
-      bw: on && !MS.cancelled ? 0 : 1, bc: own ? 'rgba(255,255,255,0.15)' : ((col.border || '#E5E5EA') + '60'),
+      bw: on && !MS.cancelled ? 0 : 1, bc: own ? 'rgba(255,255,255,0.15)' : inkAlpha(col.text || '#111111', 0.16), // [2026-10-21 polish-conv] border rgba+'60' virava PRETO no toArgb
       ...(MS.cancelled ? {} : { a: `rsvp:${s}` }),
     });
   }), { g: 6, w: -1 }));
@@ -805,7 +807,7 @@ function buildJsonPlaylist(j, row, C) {
   const col = C.colors || {};
   const n = (j.songs || []).length;
   const prim = col.primary || '#111111';
-  const sub = `${n} ${n === 1 ? 'música' : 'músicas'}`;
+  const sub = `${n} ${n === 1 ? _tr(C, 'chatConv.song', 'música') : _tr(C, 'chatConv.songs', 'músicas')}`;
   const w = _clampW(240, 300, 24 + 44 + 8 + Math.max(_estW(j.playlist_name, 13, true), _estW(sub, 11)));
   row.bl = [vstack([hstack([
     vstack([iconPaths([{ d: PL_GLYPH_NOTE, f: prim }], { s: 22 })], { w: 44, h: 44, r: 12, bg: /^#[0-9a-f]{6}$/i.test(prim) ? prim + '20' : 'rgba(17,17,17,0.12)', al: 'c', jc: 'c' }),
@@ -1034,7 +1036,7 @@ function buildStatusReply(m, row, ctx, C, own) {
   // thumb_b64 embutido = placeholder e fallback depois que o status expira (mídia apagada no servidor).
   const isReaction = !!payload.reaction;
   const b64 = m.thumb_b64 ? `data:image/jpeg;base64,${m.thumb_b64}` : '';
-  const snippet = (st.content || '').split('\n')[0] || '';
+  const snippet = String(st.content || '').split('\n')[0] || '';
   // own = EU mandei → "Você respondeu"; o dono do status vê "Respondeu ao seu status".
   const label = isReaction
     ? (own ? _tr(C, 'status.youReactedToStatus', 'Você reagiu ao status') : _tr(C, 'status.reactedToYourStatus', 'Reagiu ao seu status'))
@@ -1596,8 +1598,8 @@ export function buildFallbackCard(item, row, ctx, reason) {
   if (!sub) sub = _tr(C, 'chatConv.nlTapToOpen', 'Toque para abrir');
   const own = _own(item, ctx || {});
   const col = (C && C.colors) || {};
-  const ink = own ? ((C && C.ownText) || '#111111') : (col.text || '#111111');
-  const subtle = own ? ((C && C.ownMeta) || 'rgba(0,0,0,0.5)') : (col.textSecondary || '#666666');
+  const ink = own ? ((C && C.ownText) || '#F6F6F3') : (col.text || '#111111');
+  const subtle = own ? ((C && C.ownMeta) || 'rgba(246,246,243,0.55)') : (col.textSecondary || '#666666');
   const dark = !!(C && C.isDark);
   const w = _clampW(200, 280, 36 + 10 + Math.max(_estW(title, 14, true), Math.min(_estW(sub, 12), 190)) + 10 + 14 + 8);
   row.bl = [hstack([
@@ -1772,6 +1774,7 @@ export function runCardAction(item, action, D) {
       }
       case 'loc': {
         const L = _loc(m);
+        if (L.lat == null || L.lng == null) return; // [2026-10-21 polish-conv] sem coordenadas: não abre o mapa em 0,0
         const _lj = _json(m.content) || {};
         D.setMapModalData({ lat: L.lat, lng: L.lng, label: L.addr, isLive: L.isLive, liveUntil: L.until, isUnlimited: L.unlimited, messageId: m.id, conversationId: D.conversationId,
           senderEmail: m.sender_email || '', senderName: m.sender_name || '', isOwn: String(m.sender_email || '').toLowerCase() === String(D.currentEmail || '').toLowerCase(), updatedAt: _lj.updated_at || m.created_at || null });
@@ -1795,7 +1798,7 @@ export function runCardAction(item, action, D) {
         D.setMessages(prev => D.mapKeep(prev, x => {
           if (x.id !== m.id) return x;
           try {
-            const c = JSON.parse(x.content || '{}');
+            const c = typeof x.content === 'string' ? JSON.parse(x.content || '{}') : { ...(x.content || {}) };
             c.live_until = Math.floor(Date.now() / 1000) - 1; c.live = false; c.is_unlimited = false;
             return { ...x, content: JSON.stringify(c), is_unlimited: false };
           } catch { return x; }
@@ -1887,7 +1890,8 @@ export function runCardAction(item, action, D) {
             D.setMessages(prev => D.mapKeep(prev, x => {
               if (x.id !== m.id) return x;
               let content = x.content;
-              try { const d = JSON.parse(x.content); if (r.data.rsvp) d.rsvp = r.data.rsvp; if (r.data.rsvps) d.rsvps = r.data.rsvps; content = JSON.stringify(d); } catch {}
+              const dd = r.data || {};
+              try { const d = JSON.parse(x.content); if (dd.rsvp) d.rsvp = dd.rsvp; if (dd.rsvps) d.rsvps = dd.rsvps; content = JSON.stringify(d); } catch {}
               return { ...x, content, meetup: { ...(x.meetup || {}), ...(r.data || {}) } };
             }));
           }
