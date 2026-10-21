@@ -174,7 +174,7 @@ export default function PostComposer() {
     try { require('../../services/haptics').hapticEvent?.('send'); } catch {}
     try { require('../ui/Toast').showToast({ message: t('mural.published', 'Publicado no seu perfil'), kind: 'success' }); } catch {}
     try {
-      if (fromParam === 'profile' || !me) router.back();
+      if (fromParam === 'profile' || fromParam === 'mural' || !me) router.back(); // [2026-10-21 fix] do Mural volta p/ o Mural (o post entra pela fila)
       else router.replace(`/u/${encodeURIComponent(me)}`);
     } catch {}
   }, [canPublish, editPost, trimmed, aud, user?.email, items, location, fromParam, router, t]);

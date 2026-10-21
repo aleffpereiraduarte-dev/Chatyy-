@@ -63,11 +63,12 @@ function useMuralFeed(tab, enabled, t) {
     return { posts: cached || [], cursor: null, hasMore: true, loading: false, refreshing: false, error: false, loaded: false, fromCache: !!cached, fs: null, railAt: 1 };
   });
   const busy = useRef(false);
+  const pendingRefresh = useRef(false); // [2026-10-21 fix] refresh pedido com carga em voo (ex.: post publicado) não se perde
   const stRef = useRef(st);
   stRef.current = st;
 
   const load = useCallback(async (mode) => { // 'first' | 'refresh' | 'more'
-    if (busy.current) return;
+    if (busy.current) { if (mode === 'refresh') pendingRefresh.current = true; return; }
     const cur = stRef.current;
     if (mode === 'more' && (!cur.hasMore || !cur.cursor)) return;
     busy.current = true;
@@ -77,6 +78,7 @@ function useMuralFeed(tab, enabled, t) {
       r = await _api().apiCall('mural_feed', { tab, limit: PAGE, tz: -new Date().getTimezoneOffset(), ...(mode === 'more' ? { cursor: cur.cursor } : null) }, 'POST');
     } catch { r = null; }
     busy.current = false;
+    if (pendingRefresh.current) { pendingRefresh.current = false; setTimeout(() => { try { load('refresh'); } catch {} }, 0); }
     const d = r && r.success && r.data ? r.data : null;
     if (!d || !Array.isArray(d.posts)) {
       // [2026-10-21 polish] puxar p/ atualizar sem rede com posts na tela: avisa em vez de calar
@@ -101,8 +103,13 @@ function useMuralFeed(tab, enabled, t) {
 
   // post apagado (aqui, no visualizador ou no perfil) → some da lista
   useEffect(() => store.onAnyPostChange((p) => {
-    if (p && p.deleted) setSt((s) => (s.posts.some((q) => Number(q.id) === Number(p.id)) ? { ...s, posts: s.posts.filter((q) => Number(q.id) !== Number(p.id)) } : s));
-  }), []);
+    if (p && p.deleted) setSt((s) => {
+      if (!s.posts.some((q) => String(q.id) === String(p.id))) return s;
+      const posts = s.posts.filter((q) => String(q.id) !== String(p.id));
+      _writeCache(tab, posts); // [2026-10-21 fix] apagado não volta ao abrir sem rede
+      return { ...s, posts };
+    });
+  }), [tab]);
 
   return { ...st, load };
 }
@@ -309,9 +316,19 @@ function MuralHomeTab(props) {
     const opts = [];
     if (mine) {
       opts.push(share);
-      opts.push({ label: t('mural.delete', 'Apagar'), destructive: true, onPress: async () => {
-        const ok = await store.deletePost(raw.id);
-        toast({ message: ok ? t('mural.deleted', 'Publicação apagada') : t('mural.err.delete', 'Não foi possível apagar'), kind: ok ? 'success' : 'error' });
+      opts.push({ label: t('mural.delete', 'Apagar'), destructive: true, onPress: () => {
+        const go = async () => {
+          const ok = await store.deletePost(raw.id);
+          toast({ message: ok ? t('mural.deleted', 'Publicação apagada') : t('mural.err.delete', 'Não foi possível apagar'), kind: ok ? 'success' : 'error' });
+        };
+        // [2026-10-21 fix] confirma antes de apagar (igual ao visualizador)
+        const msg = t('mural.deleteMsg', 'Ela some do seu perfil para todo mundo. Não dá para desfazer.');
+        if (Platform.OS === 'web') { if (typeof window === 'undefined' || !window.confirm || window.confirm(msg)) go(); return; }
+        const { Alert } = require('react-native');
+        setTimeout(() => Alert.alert(t('mural.deleteTitle', 'Apagar publicação?'), msg, [
+          { text: t('common.cancel', 'Cancelar'), style: 'cancel' },
+          { text: t('mural.delete', 'Apagar'), style: 'destructive', onPress: go },
+        ]), Platform.OS === 'ios' ? 350 : 0);
       } });
     } else {
       const au = raw.author || {};
@@ -419,7 +436,7 @@ function MuralHomeTab(props) {
     </View>
   );
 
-  const empty = feed.loaded && !feed.loading && !feed.posts.length && !pending.length ? (
+  const empty = feed.loaded && !feed.loading && !rows.length ? (
     <View style={s.empty}>
       <View style={[s.emptyIc, { backgroundColor: th.chip }]}>
         <MIcon name={feed.error ? 'globe' : seg === 'following' ? 'users' : 'edit'} size={30} color={th.muted} />
