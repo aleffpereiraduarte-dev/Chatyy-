@@ -4,21 +4,42 @@
 // Params: cid, name (conversa), tab (filmes|animacao|conv), mode ('add' = veio da sala → só fila).
 // [separação 20/10] SÓ vídeo, com cara de cinema (fundo escuro, hero grande, pôsteres verticais).
 // Música vive em app/listen-catalog.js (tab=musica aqui redireciona p/ lá).
+// [juntos repaginado 21/10] mockup aprovado preview-2026/juntos.html: segue o TEMA do app (Grafite claro/escuro,
+// não mais preto fixo), título 34/800, "com <nome> · grátis e legal" com avatar, busca, seletor segmentado
+// Filmes | Animação | Músicas (Músicas → listen-catalog), destaque raio 24 com sombra e selo em vidro ACIMA do
+// título, chips de gênero (+ "Da conversa"), trilhos com pôster 120x170, "Continuar assistindo" (watchProgress,
+// só quando há algo salvo desta conversa).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, Image, TextInput, ActivityIndicator, Platform, StatusBar } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as WT from '../services/watchTogether';
-import { IconPlayFill, IconHeadphones, IconTogether, IconTv, IconClip, SourceIcon } from '../components/watch/WatchIcons';
-import { IconArrowLeft, IconSearch, IconPlus, IconCheck, IconFilm, IconMusic } from '../components/Icons';
+import { IconPlayFill, IconHeadphones, IconTogether, IconClip, SourceIcon } from '../components/watch/WatchIcons';
+import { IconChevronLeft, IconSearch, IconPlus, IconCheck } from '../components/Icons';
+import { grafite, cardShadow } from '../constants/theme';
+import { GradientFill, Glass } from '../components/watch/WatchAmbient';
+import { listProgress } from '../services/watchProgress';
 
 const TABS = [
-  { k: 'filmes', icon: IconFilm, label: ['watch.tab.movies', 'Filmes'] },
-  { k: 'animacao', icon: IconTv, label: ['watch.tab.animation', 'Animação'] },
-  { k: 'conv', icon: IconClip, label: ['watch.tab.conv', 'Da conversa'] },
+  { k: 'filmes', label: ['watch.tab.movies', 'Filmes'] },
+  { k: 'animacao', label: ['watch.tab.animation', 'Animação'] },
+  { k: 'conv', label: ['watch.tab.conv', 'Da conversa'] },
 ];
+// seletor segmentado do mockup (Da conversa vira chip no fim da fileira de gêneros)
+const SEG = [['filmes', 'watch.tab.movies', 'Filmes'], ['animacao', 'watch.tab.animation', 'Animação'], ['musica', 'watch.tab.musicPl', 'Músicas']];
+const HERO_STOPS = [[0, '#000', 0], [0.3, '#000', 0], [1, '#000', 0.78]];
+const AV_STOPS = [[0, '#a9b4bd', 1], [1, '#5c6873', 1]];
+function initials(n) {
+  const p = String(n || '?').trim().split(/\s+/).filter(Boolean);
+  return ((p[0] || '?')[0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
+}
+function fmtLeft(t, sec) {
+  const m = Math.max(1, Math.round(sec / 60));
+  if (m < 60) return WT.tr(t, 'watch.leftMin', 'faltam {n} min', { n: m });
+  return WT.tr(t, 'watch.leftH', 'faltam {h} h {m}', { h: Math.floor(m / 60), m: String(m % 60).padStart(2, '0') });
+}
 const CHIP_FB = {
   tudo: 'Tudo', comedia: 'Comédia', terror: 'Terror', ficcao: 'Ficção', drama: 'Drama', curtas: 'Curtas abertos', classicos: 'Clássicos',
   lofi: 'Lo-fi', pop: 'Pop', jazz: 'Jazz', eletronica: 'Eletrônica', rock: 'Rock', acustica: 'Acústica', classica: 'Clássica',
@@ -56,11 +77,21 @@ export default function WatchCatalog() {
   const reqN = useRef(0);
   const country = useMemo(deviceCountry, []);
 
-  // cinema: sempre escuro (claro ou escuro no app)
-  const c = useMemo(() => ({
-    bg: '#000', card: '#1c1c1e', text: '#f5f5f7', muted: '#8e8e93', chip: '#1c1c1e', line: 'rgba(255,255,255,0.12)',
-    accent: '#f5f5f7', accentInk: '#000',
-  }), []);
+  // [juntos 21/10] segue o tema do app (Grafite claro/escuro)
+  const c = useMemo(() => {
+    const g = grafite(!!isDark);
+    return {
+      bg: g.bg, card: g.surface, s2: g.surface2, text: g.text, muted: g.muted, line: g.line, chip: g.surface2,
+      accent: isDark ? '#F2F2EF' : '#34343A', accentInk: isDark ? '#0E0E10' : '#FFFFFF',
+    };
+  }, [isDark]);
+  const shadow = cardShadow(!!isDark);
+  const [prog, setProg] = useState([]);
+  useFocusEffect(useCallback(() => {
+    let alive = true;
+    listProgress(cid).then((l) => { if (alive) setProg(l.filter((x) => x.cid === cid)); }).catch(() => {});
+    return () => { alive = false; };
+  }, [cid]));
   useEffect(() => { if (params.tab === 'musica') router.replace({ pathname: '/listen-catalog', params: { cid, name: convName, mode: params.mode || '' } }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { const id = setTimeout(() => setQDeb(q.trim()), 350); return () => clearTimeout(id); }, [q]);
@@ -134,34 +165,41 @@ export default function WatchCatalog() {
     ? allItems.filter((it) => qLive.split(/\s+/).every((w) => [it.title, it.original_title, it.author, it.artist, it.year].filter(Boolean).join(' ').toLowerCase().includes(w)))
     : allItems;
   const chips = tab === 'conv' ? [] : ((data && data.chips) || ['tudo']); // Da conversa = só vídeos
-  const isMusic = tab === 'musica';
-  const title = isMusic ? WT.tr(t, 'watch.listenTitle', 'Ouvir junto') : WT.tr(t, 'watch.title', 'Assistir junto');
 
-  const badge = (it, inline) => (
-    <View style={[st.badge, inline ? { backgroundColor: c.chip, position: 'relative', left: 0, top: 0 } : null]}>
-      <SourceIcon source={it.source} size={12} color={inline ? c.text : '#0b0b0c'} />
-      <Text style={[st.badgeTx, inline ? { color: c.text } : null]} numberOfLines={1}>{WT.sourceLabel(t, it)}</Text>
-    </View>
-  );
   const metaOf = (it) => [it.author, it.year, it.dur ? WT.fmtTime(it.dur) : ''].filter(Boolean).join(' · ');
+  const subOf = (it) => [it.year, it.author].filter(Boolean).join(' · ');
+  const firstName = convName ? convName.split(' ')[0] : '';
 
-  const card = (it, wide) => {
+  // continuar de onde parou (mesmo item → sala; senão começa e pula p/ o ponto salvo)
+  const resume = async (p) => {
+    if (busy) return;
+    if (live && live.item && live.item.id === p.item.id) { router.replace({ pathname: '/watch-room', params: { cid, name: convName } }); return; }
+    setBusy(p.item.id);
+    const r = await WT.start(cid, 'video', p.item, []);
+    if (r.ok) { try { await WT.cmd(cid, 'seek', { pos: p.pos, delta: Math.round(p.pos) }); } catch {} }
+    setBusy('');
+    if (!r.ok) { flash(r.error === 'host_only' ? WT.tr(t, 'watch.hostOnly', 'Só o anfitrião controla') : WT.tr(t, 'watch.startError', 'Não deu para começar. Tente de novo.')); return; }
+    router.replace({ pathname: '/watch-room', params: { cid, name: convName } });
+  };
+
+  // pôster vertical 120x170 (raio 16): duração e play no pôster, nome e ano/diretor embaixo
+  const poster = (it) => {
     const q1 = inQueue(it);
     return (
-      <View key={it.id} style={[st.card, wide ? { width: 230 } : null]}>
-        <Pressable onPress={() => open(it)} style={[st.cover, { aspectRatio: wide ? 16 / 9 : 2 / 3, backgroundColor: c.chip }]}>
-          {it.thumb ? <Image source={{ uri: it.thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : <View style={st.coverFb}>{it.kind === 'audio' ? <IconHeadphones size={34} color={c.muted} /> : <IconTogether size={34} color={c.muted} />}</View>}
-          <View style={st.coverShade} />
-          {badge(it)}
-          <Text style={st.coverTtl} numberOfLines={3}>{it.title}</Text>
-          {it.dur ? <Text style={st.dur}>{WT.fmtTime(it.dur)}</Text> : null}
-          {busy === it.id ? <View style={st.busy}><ActivityIndicator color="#fff" /></View> : null}
-        </Pressable>
-        <Pressable onPress={() => addQ(it)} style={[st.addq, q1 ? { backgroundColor: '#fff' } : null]} hitSlop={6} accessibilityLabel={WT.tr(t, 'watch.addToQueue', 'Adicionar à fila')}>
-          {q1 ? <IconCheck size={16} color="#000" /> : <IconPlus size={16} color="#fff" />}
-        </Pressable>
+      <View key={it.id} style={st.pc}>
+        <View style={[st.poWrap, shadow]}>
+          <Pressable onPress={() => open(it)} style={[st.po, { backgroundColor: c.s2 }]} accessibilityRole="button" accessibilityLabel={it.title}>
+            {it.thumb ? <Image source={{ uri: it.thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : <View style={st.coverFb}>{it.kind === 'audio' ? <IconHeadphones size={30} color={c.muted} /> : <IconTogether size={30} color={c.muted} />}</View>}
+            <View pointerEvents="none" style={st.poPlay}><IconPlayFill size={12} color="#111" /></View>
+            {it.dur ? <Text style={st.poDur}>{WT.fmtTime(it.dur)}</Text> : null}
+            {busy === it.id ? <View style={st.busy}><ActivityIndicator color="#fff" /></View> : null}
+          </Pressable>
+          <Pressable onPress={() => addQ(it)} style={[st.poAdd, q1 ? { backgroundColor: '#fff' } : null]} hitSlop={6} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.addToQueue', 'Adicionar à fila')}>
+            {q1 ? <IconCheck size={13} color="#111" /> : <IconPlus size={13} color="#fff" />}
+          </Pressable>
+        </View>
         <Text style={[st.nm, { color: c.text }]} numberOfLines={1}>{it.title}</Text>
-        <Text style={[st.mt, { color: c.muted }]} numberOfLines={1}>{metaOf(it)}</Text>
+        <Text style={[st.mt, { color: c.muted }]} numberOfLines={1}>{subOf(it)}</Text>
       </View>
     );
   };
@@ -169,23 +207,24 @@ export default function WatchCatalog() {
     const q1 = inQueue(it);
     return (
       <View key={it.id} style={st.mrow}>
-        <Pressable onPress={() => open(it)} style={[st.art, { backgroundColor: c.chip }]}>
+        <Pressable onPress={() => open(it)} style={[st.art, { backgroundColor: c.s2 }]}>
           {it.thumb ? <Image source={{ uri: it.thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : (it.kind === 'audio' ? <IconHeadphones size={22} color={c.muted} /> : <IconTogether size={22} color={c.muted} />)}
           {busy === it.id ? <View style={st.busy}><ActivityIndicator color="#fff" /></View> : null}
         </Pressable>
         <Pressable onPress={() => open(it)} style={{ flex: 1, minWidth: 0 }}>
           <Text style={[st.rowT, { color: c.text }]} numberOfLines={1}>{it.title}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 }}>
-            <Text style={[st.rowS, { color: c.muted, flexShrink: 1 }]} numberOfLines={1}>{[it.artist || it.author, it.dur ? WT.fmtTime(it.dur) : ''].filter(Boolean).join(' · ')}</Text>
-            {badge(it, true)}
+            <SourceIcon source={it.source} size={12} color={c.muted} />
+            <Text style={[st.rowS, { color: c.muted, flexShrink: 1 }]} numberOfLines={1}>{[it.artist || it.author, it.dur ? WT.fmtTime(it.dur) : '', WT.sourceLabel(t, it)].filter(Boolean).join(' · ')}</Text>
           </View>
         </Pressable>
-        <Pressable onPress={() => addQ(it)} style={[st.q, { backgroundColor: q1 ? c.accent : c.chip }]} hitSlop={6}>
+        <Pressable onPress={() => addQ(it)} style={[st.q, { backgroundColor: q1 ? c.accent : c.s2 }]} hitSlop={6} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.addToQueue', 'Adicionar à fila')}>
           {q1 ? <IconCheck size={16} color={c.accentInk} /> : <IconPlus size={16} color={c.text} />}
         </Pressable>
       </View>
     );
   };
+  const more1 = more ? <Pressable onPress={() => load(more)} style={[st.more, { backgroundColor: c.card }, shadow]}><Text style={{ color: c.text, fontWeight: '600' }}>{WT.tr(t, 'watch.loadMore', 'Carregar mais')}</Text></Pressable> : null;
 
   const legal = {
     filmes: WT.tr(t, 'watch.legal.movies', 'Filmes em domínio público e curtas abertos (Creative Commons), servidos pelo Chatyy. Não entram links piratas. Itens que ainda têm direitos no seu país ficam escondidos.'),
@@ -194,123 +233,160 @@ export default function WatchCatalog() {
     conv: WT.tr(t, 'watch.legal.conv', 'Toca o arquivo que alguém já mandou aqui, direto do nosso servidor. Ninguém precisa baixar nada.'),
   }[tab];
 
+  // "Continuar assistindo" — só quando há ponto salvo desta conversa (sem dado → a fileira não aparece)
+  const resumeList = !addMode && !q.trim() && tab !== 'conv' ? prog : [];
+  const continueRail = resumeList.length ? (
+    <View key="continue">
+      <View style={st.rowh}><Text style={[st.rowhT, { color: c.text }]}>{WT.tr(t, 'watch.continueWatching', 'Continuar assistindo')}</Text></View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.rail}>
+        {resumeList.map((p) => (
+          <View key={p.key} style={{ width: 200 }}>
+            <View style={[st.poWrap, shadow]}>
+              <Pressable onPress={() => resume(p)} style={[st.po, { height: 112, backgroundColor: c.s2 }]} accessibilityRole="button" accessibilityLabel={p.item.title}>
+                {p.item.thumb ? <Image source={{ uri: p.item.thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : <View style={st.coverFb}><IconTogether size={30} color={c.muted} /></View>}
+                <Text style={st.poDur}>{fmtLeft(t, Math.max(0, (Number(p.dur) || 0) - (Number(p.pos) || 0)))}</Text>
+                <View style={st.resBar}><View style={[st.resBarFg, { width: `${Math.min(100, ((Number(p.pos) || 0) / Math.max(1, Number(p.dur) || 1)) * 100)}%` }]} /></View>
+                {busy === p.item.id ? <View style={st.busy}><ActivityIndicator color="#fff" /></View> : null}
+              </Pressable>
+            </View>
+            <Text style={[st.nm, { color: c.text }]} numberOfLines={1}>{p.item.title}</Text>
+            <Text style={[st.mt, { color: c.muted }]} numberOfLines={1}>{p.name ? WT.tr(t, 'watch.withName', 'com {name}', { name: p.name }) : subOf(p.item)}</Text>
+          </View>
+        ))}
+      </ScrollView>
+    </View>
+  ) : null;
+
+  const chipsRow = (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.gen}>
+      {chips.map((k) => {
+        const on = tab !== 'conv' && chip === k;
+        return (
+          <Pressable key={k} onPress={() => setChip(k)} style={[st.chip, { backgroundColor: on ? c.accent : c.card }, on ? null : shadow]} accessibilityRole="button" accessibilityState={{ selected: on }}>
+            <Text style={[st.chipTx, { color: on ? c.accentInk : c.text }]}>{WT.tr(t, 'watch.chip.' + k, CHIP_FB[k] || k)}</Text>
+          </Pressable>
+        );
+      })}
+      {cid ? (
+        <Pressable onPress={() => { if (tab !== 'conv') { setTab('conv'); setData(null); } }} style={[st.chip, st.chipRow, { backgroundColor: tab === 'conv' ? c.accent : c.card }, tab === 'conv' ? null : shadow]} accessibilityRole="button" accessibilityState={{ selected: tab === 'conv' }}>
+          <IconClip size={14} color={tab === 'conv' ? c.accentInk : c.text} />
+          <Text style={[st.chipTx, { color: tab === 'conv' ? c.accentInk : c.text }]}>{WT.tr(t, 'watch.tab.conv', 'Da conversa')}</Text>
+        </Pressable>
+      ) : null}
+    </ScrollView>
+  );
+
   let body;
   if (loading && !items.length) body = <View style={st.emptyBox}><ActivityIndicator color={c.muted} /></View>;
   else if (data && data.error) body = <Text style={[st.empty, { color: c.muted }]}>{WT.tr(t, 'watch.catalogError', 'Não deu para carregar. Tente de novo daqui a pouco.')}</Text>;
   else if (!items.length) body = <Text style={[st.empty, { color: c.muted }]}>{tab === 'conv' ? WT.tr(t, 'watch.convEmptyVideo', 'Ainda não mandaram vídeos nesta conversa.') : WT.tr(t, 'watch.nothingFound', 'Nada encontrado. Tente outra palavra.')}</Text>;
-  else if (isMusic) {
-    const top = items.slice(0, 6);
-    body = (
-      <View>
-        <View style={st.shelfH}><Text style={[st.shelfT, { color: c.text }]}>{WT.tr(t, 'watch.toListen', 'Para ouvir juntos')}</Text><Text style={[st.shelfS, { color: c.muted }]}>Jamendo · Musopen</Text></View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}>
-          {top.map((it) => (
-            <Pressable key={'s' + it.id} onPress={() => open(it)} style={{ width: 148 }}>
-              <View style={[st.cover, { aspectRatio: 1, backgroundColor: c.chip }]}>
-                {it.thumb ? <Image source={{ uri: it.thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : <View style={st.coverFb}><IconHeadphones size={34} color={c.muted} /></View>}
-                <View style={st.coverShade} />
-                {badge(it)}
-              </View>
-              <Text style={[st.nm, { color: c.text }]} numberOfLines={1}>{it.title}</Text>
-              <Text style={[st.mt, { color: c.muted }]} numberOfLines={1}>{it.artist || it.author}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-        <View style={st.shelfH}><Text style={[st.shelfT, { color: c.text }]}>{WT.tr(t, 'watch.all', 'Todas')}</Text><Text style={[st.shelfS, { color: c.muted }]}>{items.length}</Text></View>
-        {items.map(row)}
-        {more ? <Pressable onPress={() => load(more)} style={[st.more, { borderColor: c.line }]}><Text style={{ color: c.text, fontWeight: '600' }}>{WT.tr(t, 'watch.loadMore', 'Carregar mais')}</Text></Pressable> : null}
-      </View>
-    );
-  } else if (tab === 'conv') {
-    body = <View>{items.map(row)}{more ? <Pressable onPress={() => load(more)} style={[st.more, { borderColor: c.line }]}><Text style={{ color: c.text, fontWeight: '600' }}>{WT.tr(t, 'watch.loadMore', 'Carregar mais')}</Text></Pressable> : null}</View>;
+  else if (tab === 'conv') {
+    body = <View style={{ paddingTop: 6 }}>{items.map(row)}{more1}</View>;
   } else {
-    const hero = items[0];
-    body = (
-      <View>
-        <Pressable onPress={() => open(hero)} style={[st.hero, { backgroundColor: c.chip }]}>
-          {hero.thumb ? <Image source={{ uri: hero.thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : null}
-          <View style={st.heroShade} />
-          <View style={st.heroIn}>
-            <View style={{ flexDirection: 'row' }}>{badge(hero, false)}</View>
-            <Text style={st.heroT} numberOfLines={2}>{hero.title}</Text>
-            <Text style={st.heroS} numberOfLines={1}>{metaOf(hero)}</Text>
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-              <Pressable onPress={() => open(hero)} style={st.heroBtn}>
-                <IconPlayFill size={16} color="#000" />
-                <Text style={st.heroBtnTx} numberOfLines={1}>{convName ? WT.tr(t, 'watch.watchWith', 'Assistir com {name}', { name: convName.split(' ')[0] }) : WT.tr(t, 'watch.watch', 'Assistir')}</Text>
-              </Pressable>
-              <Pressable onPress={() => addQ(hero)} style={[st.heroBtn, st.heroBtnG]}>
-                <IconPlus size={16} color="#fff" />
-                <Text style={[st.heroBtnTx, { color: '#fff' }]}>{WT.tr(t, 'watch.queue', 'Fila')}</Text>
-              </Pressable>
-            </View>
-          </View>
-        </Pressable>
-        {/* prateleiras por categoria (ordem dos chips); "Tudo" com 1 categoria só = 1 prateleira */}
-        {(() => {
-          const groups = [];
-          const order = chips.filter((k) => k !== 'tudo');
-          const by = {};
-          items.forEach((it) => { const k = it.chip || 'outros'; (by[k] = by[k] || []).push(it); });
-          order.forEach((k) => { if (by[k] && by[k].length) groups.push([k, by[k]]); });
-          Object.keys(by).forEach((k) => { if (!order.includes(k)) groups.push([k, by[k]]); });
-          const shelves = groups.length > 1 ? groups : [['all', items]];
-          return shelves.map(([k, list]) => (
-            <View key={k}>
-              <View style={st.shelfH}>
-                <Text style={[st.shelfT, { color: c.text }]}>{k === 'all' ? (tab === 'animacao' ? WT.tr(t, 'watch.shelf.animation', 'Curtas e desenhos liberados') : WT.tr(t, 'watch.shelf.movies', 'Clássicos e curtas liberados')) : WT.tr(t, 'watch.chip.' + k, CHIP_FB[k] || k)}</Text>
-                <Text style={[st.shelfS, { color: c.muted }]}>{list.length}</Text>
-              </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} decelerationRate="fast" snapToInterval={158} contentContainerStyle={{ paddingHorizontal: 16, gap: 10 }}>
-                {list.map((it) => card(it))}
-              </ScrollView>
-            </View>
-          ));
-        })()}
+    // prateleiras por categoria (ordem dos chips); "Tudo" com 1 categoria só = 1 prateleira
+    const groups = [];
+    const order = chips.filter((k) => k !== 'tudo');
+    const by = {};
+    items.forEach((it) => { const k = it.chip || 'outros'; (by[k] = by[k] || []).push(it); });
+    order.forEach((k) => { if (by[k] && by[k].length) groups.push([k, by[k]]); });
+    Object.keys(by).forEach((k) => { if (!order.includes(k)) groups.push([k, by[k]]); });
+    const shelves = groups.length > 1 ? groups : [['all', items]];
+    const shelfEls = shelves.map(([k, list]) => (
+      <View key={k}>
+        <View style={st.rowh}>
+          <Text style={[st.rowhT, { color: c.text }]} numberOfLines={1}>{k === 'all' ? (tab === 'animacao' ? WT.tr(t, 'watch.shelf.animation', 'Curtas e desenhos liberados') : WT.tr(t, 'watch.shelf.movies', 'Clássicos e curtas liberados')) : WT.tr(t, 'watch.chip.' + k, CHIP_FB[k] || k)}</Text>
+          {k !== 'all' && chip === 'tudo' && chips.includes(k) ? (
+            <Pressable onPress={() => setChip(k)} hitSlop={8} accessibilityRole="button"><Text style={[st.rowhA, { color: c.muted }]}>{WT.tr(t, 'watch.seeAll', 'Ver tudo')}</Text></Pressable>
+          ) : <Text style={[st.rowhA, { color: c.muted }]}>{list.length}</Text>}
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} decelerationRate="fast" snapToInterval={132} contentContainerStyle={st.rail}>
+          {list.map(poster)}
+        </ScrollView>
       </View>
-    );
+    ));
+    if (continueRail) shelfEls.splice(1, 0, continueRail);
+    body = <View>{shelfEls}{more1}</View>;
   }
+
+  const hero = tab !== 'conv' && items.length && !(data && data.error) ? items[0] : null;
+  const heroEl = hero ? (
+    <View style={[st.heroWrap, shadow]}>
+      <Pressable onPress={() => open(hero)} style={[st.hero, { backgroundColor: c.s2 }]} accessibilityRole="button" accessibilityLabel={hero.title}>
+        {hero.thumb ? <Image source={{ uri: hero.thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : null}
+        <GradientFill stops={HERO_STOPS} />
+        <View style={st.heroIn}>
+          {/* selo pequeno em vidro ACIMA do título (nunca por cima) */}
+          <View style={{ flexDirection: 'row' }}>
+            <Glass style={st.seal} veil={0.2} intensity={20}>
+              <Text style={st.sealTx} numberOfLines={1}>{WT.sourceLabel(t, hero).toUpperCase()}</Text>
+            </Glass>
+          </View>
+          <Text style={st.heroT} numberOfLines={2}>{hero.title}</Text>
+          <Text style={st.heroS} numberOfLines={1}>{metaOf(hero)}</Text>
+          <View style={st.heroBtns}>
+            <Pressable onPress={() => open(hero)} style={st.heroBtn} accessibilityRole="button">
+              {busy === hero.id ? <ActivityIndicator color="#111" size="small" /> : <IconPlayFill size={13} color="#111" />}
+              <Text style={st.heroBtnTx} numberOfLines={1}>{firstName ? WT.tr(t, 'watch.watchWith', 'Assistir com {name}', { name: firstName }) : WT.tr(t, 'watch.watch', 'Assistir')}</Text>
+            </Pressable>
+            <Pressable onPress={() => addQ(hero)} accessibilityRole="button">
+              <Glass style={[st.heroBtn, { backgroundColor: 'transparent' }]} veil={0.2} intensity={20}>
+                {inQueue(hero) ? <IconCheck size={13} color="#fff" /> : <IconPlus size={13} color="#fff" />}
+                <Text style={[st.heroBtnTx, { color: '#fff' }]}>{WT.tr(t, 'watch.queue', 'Fila')}</Text>
+              </Glass>
+            </Pressable>
+          </View>
+        </View>
+      </Pressable>
+    </View>
+  ) : null;
 
   return (
     <View style={[st.root, { backgroundColor: c.bg }]}>
-      <StatusBar barStyle="light-content" />
-      <View style={{ paddingTop: insets.top }}>
-        <View style={st.r1}>
-          <Pressable hitSlop={10} style={st.ib} onPress={() => router.back()} accessibilityLabel={WT.tr(t, 'common.back', 'Voltar')}><IconArrowLeft size={22} color={c.text} /></Pressable>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+      <View style={{ paddingTop: insets.top + 6 }}>
+        <View style={st.hd}>
+          <Pressable hitSlop={10} style={[st.back, { backgroundColor: c.card }, shadow]} onPress={() => router.back()} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'common.back', 'Voltar')}>
+            <IconChevronLeft size={18} color={c.text} />
+          </Pressable>
+          <Text style={[st.h1, { color: c.text }]} numberOfLines={1}>{WT.tr(t, 'watch.title', 'Assistir junto')}</Text>
+          <View style={st.sub}>
+            {convName ? (
+              <View style={st.subAv}>
+                <GradientFill stops={AV_STOPS} />
+                <Text style={st.subAvTx}>{initials(convName)}</Text>
+              </View>
+            ) : null}
+            <Text style={[st.subTx, { color: c.muted }]} numberOfLines={1}>
+              {convName ? WT.tr(t, 'watch.withFreeShort', 'com {name} · grátis e legal', { name: firstName }) : WT.tr(t, 'watch.freeShort', 'grátis e legal')}
+            </Text>
+          </View>
         </View>
-        <Text style={[st.h1, { color: c.text }]}>{title}</Text>
-        <Text style={[st.sub, { color: c.muted }]} numberOfLines={1}>
-          {convName ? WT.tr(t, 'watch.withFree', 'com {name} · tudo grátis e legal', { name: convName }) : WT.tr(t, 'watch.free', 'tudo grátis e legal')}
-        </Text>
-        <View style={[st.srch, { backgroundColor: c.chip }]}>
-          <IconSearch size={18} color={c.muted} />
+        <View style={[st.srch, { backgroundColor: c.s2 }]}>
+          <IconSearch size={17} color={c.muted} />
           <TextInput value={q} onChangeText={setQ} placeholder={WT.tr(t, 'watch.searchPh', 'Buscar filme, desenho ou música')} placeholderTextColor={c.muted}
-            style={[st.srchIn, { color: c.text }]} returnKeyType="search" autoCorrect={false} />
+            style={[st.srchIn, { color: c.text }]} returnKeyType="search" autoCorrect={false} keyboardAppearance={isDark ? 'dark' : 'light'} />
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[st.ctabs, { borderBottomColor: c.line }]} contentContainerStyle={{ paddingHorizontal: 12, gap: 4 }}>
-          {TABS.map((x) => {
-            const on = x.k === tab;
-            const Ic = x.icon;
+        <View style={[st.mode, { backgroundColor: c.s2 }]} accessibilityRole="tablist">
+          {SEG.map(([k, key, fb]) => {
+            const on = k === tab;
             return (
-              <Pressable key={x.k} onPress={() => { setTab(x.k); setChip('tudo'); setData(null); }} style={st.ctab}>
-                <Ic size={17} color={on ? c.text : c.muted} />
-                <Text style={[st.ctabTx, { color: on ? c.text : c.muted }]}>{WT.tr(t, x.label[0], x.label[1])}</Text>
-                {on ? <View style={[st.ctabBar, { backgroundColor: c.text }]} /> : null}
+              <Pressable key={k} accessibilityRole="tab" accessibilityState={{ selected: on }}
+                onPress={() => {
+                  if (k === 'musica') { router.replace({ pathname: '/listen-catalog', params: { cid, name: convName, mode: params.mode || '' } }); return; }
+                  if (k !== tab) { setTab(k); setChip('tudo'); setData(null); }
+                }}
+                style={[st.modeSeg, on ? [{ backgroundColor: c.card }, shadow] : null]}>
+                <Text style={[st.modeTx, { color: on ? c.text : c.muted }]} numberOfLines={1}>{WT.tr(t, key, fb)}</Text>
               </Pressable>
             );
           })}
-        </ScrollView>
+        </View>
       </View>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 90 }} keyboardShouldPersistTaps="handled">
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.chips}>
-          {chips.map((k) => (
-            <Pressable key={k} onPress={() => setChip(k)} style={[st.chip, { backgroundColor: chip === k ? c.accent : c.card, borderColor: chip === k ? 'transparent' : c.line }]}>
-              <Text style={[st.chipTx, { color: chip === k ? c.accentInk : c.text }]}>{WT.tr(t, 'watch.chip.' + k, CHIP_FB[k] || k)}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
+        {heroEl}
+        {chipsRow}
         {body}
-        <Text style={[st.legal, { color: c.muted, borderColor: c.line }]}>{legal}</Text>
+        <View style={[st.legal, { backgroundColor: c.card }, shadow]}><Text style={[st.legalTx, { color: c.muted }]}>{legal}</Text></View>
       </ScrollView>
       {pending.length && !live ? (
         <View style={[st.pend, { bottom: insets.bottom + 12, backgroundColor: c.accent }]}>
@@ -328,49 +404,56 @@ export default function WatchCatalog() {
 
 const st = StyleSheet.create({
   root: { flex: 1 },
-  r1: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6 },
-  ib: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  h1: { fontSize: 34, lineHeight: 40, fontWeight: '800', letterSpacing: -0.8, paddingHorizontal: 16 },
-  sub: { fontSize: 13, paddingHorizontal: 16, marginTop: 2 },
-  srch: { marginHorizontal: 16, marginTop: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, paddingHorizontal: 10, height: 38 },
-  srchIn: { flex: 1, fontSize: 15.5, paddingVertical: Platform.OS === 'android' ? 0 : 6 },
-  ctabs: { marginTop: 10, borderBottomWidth: StyleSheet.hairlineWidth, flexGrow: 0 },
-  ctab: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 9, paddingTop: 9, paddingBottom: 10 },
-  ctabTx: { fontSize: 15, fontWeight: '600' },
-  ctabBar: { position: 'absolute', left: 7, right: 7, bottom: -1, height: 3, borderTopLeftRadius: 3, borderTopRightRadius: 3 },
-  chips: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 2, gap: 6 },
-  chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1 },
-  chipTx: { fontSize: 13, fontWeight: '600' },
-  shelfH: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 18, paddingBottom: 8 },
-  shelfT: { fontSize: 18, fontWeight: '700' },
-  shelfS: { fontSize: 13 },
-  card: { width: 148 },
-  cover: { width: '100%', borderRadius: 14, overflow: 'hidden' },
+  hd: { paddingHorizontal: 18 },
+  back: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  h1: { fontSize: 34, lineHeight: 41, fontWeight: '800', letterSpacing: -1.2, marginTop: 10 },
+  sub: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2 },
+  subAv: { width: 22, height: 22, borderRadius: 11, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  subAvTx: { color: '#fff', fontSize: 9, fontWeight: '800' },
+  subTx: { fontSize: 13.5, flexShrink: 1 },
+  srch: { marginHorizontal: 18, marginTop: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, paddingHorizontal: 14, height: 42 },
+  srchIn: { flex: 1, fontSize: 15, paddingVertical: Platform.OS === 'android' ? 0 : 6 },
+  mode: { flexDirection: 'row', marginHorizontal: 18, marginBottom: 12, borderRadius: 999, padding: 3 },
+  modeSeg: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 999 },
+  modeTx: { fontSize: 14, fontWeight: '600' },
+  heroWrap: { marginHorizontal: 18, borderRadius: 24 },
+  hero: { borderRadius: 24, overflow: 'hidden', height: 230 },
+  heroIn: { position: 'absolute', left: 16, right: 16, bottom: 14 },
+  seal: { borderRadius: 999, paddingVertical: 4, paddingHorizontal: 8 },
+  sealTx: { color: '#fff', fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 },
+  heroT: { color: '#fff', fontSize: 24, lineHeight: 29, fontWeight: '800', letterSpacing: -0.5, marginTop: 6 },
+  heroS: { color: 'rgba(255,255,255,0.8)', fontSize: 12.5, marginTop: 1 },
+  heroBtns: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  heroBtn: { flexDirection: 'row', alignItems: 'center', gap: 7, height: 38, paddingHorizontal: 16, borderRadius: 19, backgroundColor: '#fff', maxWidth: 230 },
+  heroBtnTx: { color: '#111', fontWeight: '700', fontSize: 14, flexShrink: 1 },
+  gen: { paddingHorizontal: 18, paddingTop: 14, paddingBottom: 4, gap: 8 },
+  chip: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 999 },
+  chipRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  chipTx: { fontSize: 13.5, fontWeight: '600' },
+  rowh: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, paddingHorizontal: 18, paddingTop: 16, paddingBottom: 8 },
+  rowhT: { fontSize: 19, fontWeight: '800', letterSpacing: -0.3, flexShrink: 1 },
+  rowhA: { fontSize: 13 },
+  rail: { paddingHorizontal: 18, gap: 12, paddingBottom: 4 },
+  pc: { width: 120 },
+  poWrap: { borderRadius: 16 },
+  po: { height: 170, borderRadius: 16, overflow: 'hidden' },
+  poPlay: { position: 'absolute', right: 6, top: 6, width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(255,255,255,0.85)', alignItems: 'center', justifyContent: 'center' },
+  poAdd: { position: 'absolute', left: 6, top: 6, width: 26, height: 26, borderRadius: 13, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
+  poDur: { position: 'absolute', right: 6, bottom: 6, color: '#fff', fontSize: 10.5, fontWeight: '700', backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: 'hidden' },
+  resBar: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, backgroundColor: 'rgba(255,255,255,0.3)' },
+  resBarFg: { height: 3, backgroundColor: '#fff' },
   coverFb: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
-  coverShade: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.18)' },
-  coverTtl: { position: 'absolute', left: 10, right: 10, bottom: 10, color: '#fff', fontWeight: '800', fontSize: 16, lineHeight: 18, textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 8 },
-  dur: { position: 'absolute', right: 8, top: 40, color: '#fff', fontSize: 11, fontWeight: '700', backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 6, borderRadius: 5, overflow: 'hidden' },
-  badge: { position: 'absolute', left: 8, top: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.92)', paddingVertical: 3, paddingLeft: 5, paddingRight: 7, borderRadius: 999, maxWidth: 130 },
-  badgeTx: { color: '#0b0b0c', fontSize: 10.5, fontWeight: '700' },
-  addq: { position: 'absolute', right: 7, top: 7, width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
   busy: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
   nm: { fontSize: 13.5, fontWeight: '600', marginTop: 7 },
-  mt: { fontSize: 12 },
-  hero: { marginHorizontal: 16, marginTop: 14, borderRadius: 22, overflow: 'hidden', aspectRatio: 4 / 5 },
-  heroShade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%', backgroundColor: 'rgba(0,0,0,0.62)' },
-  heroIn: { ...StyleSheet.absoluteFillObject, padding: 16, justifyContent: 'flex-end' },
-  heroT: { color: '#fff', fontSize: 34, fontWeight: '900', letterSpacing: -1, marginTop: 8, lineHeight: 36 },
-  heroS: { color: 'rgba(255,255,255,0.85)', fontSize: 13, marginTop: 4 },
-  heroBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 9, paddingHorizontal: 14, borderRadius: 999, backgroundColor: '#fff', maxWidth: 220 },
-  heroBtnG: { backgroundColor: 'rgba(255,255,255,0.22)' },
-  heroBtnTx: { color: '#000', fontWeight: '700', fontSize: 14 },
-  mrow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 8 },
-  art: { width: 50, height: 50, borderRadius: 9, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  mt: { fontSize: 11.5, marginTop: 1 },
+  mrow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 18, paddingVertical: 8 },
+  art: { width: 64, height: 40, borderRadius: 9, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   rowT: { fontSize: 15, fontWeight: '600' },
   rowS: { fontSize: 12.5 },
   q: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  more: { marginHorizontal: 16, marginTop: 10, paddingVertical: 11, borderRadius: 12, borderWidth: 1, alignItems: 'center' },
-  legal: { marginHorizontal: 16, marginTop: 20, padding: 12, borderRadius: 14, borderWidth: 1, borderStyle: 'dashed', fontSize: 12, lineHeight: 17 },
+  more: { marginHorizontal: 18, marginTop: 14, paddingVertical: 11, borderRadius: 14, alignItems: 'center' },
+  legal: { marginHorizontal: 18, marginTop: 22, padding: 14, borderRadius: 18 },
+  legalTx: { fontSize: 12, lineHeight: 17 },
   empty: { paddingVertical: 40, paddingHorizontal: 30, textAlign: 'center', fontSize: 14 },
   emptyBox: { paddingVertical: 40, alignItems: 'center' },
   pend: { position: 'absolute', left: 16, right: 16, borderRadius: 999, paddingVertical: 8, paddingLeft: 18, paddingRight: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

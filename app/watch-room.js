@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Pressable, ScrollView, Image, Animated, ActivityIndicator, Linking, StatusBar,
-  TextInput, KeyboardAvoidingView, Platform, PanResponder, Easing,
+  TextInput, KeyboardAvoidingView, Platform, PanResponder, Easing, useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,9 +19,12 @@ import * as WT from '../services/watchTogether';
 import WatchPlayer from '../components/watch/WatchPlayer';
 import {
   IconChevronDown, IconPlayFill, IconPauseFill, IconBack10, IconFwd10, IconNextTrack, IconPrevTrack, IconQueue,
-  IconSync, IconCrown, SourceIcon, IconHeadphones, IconTogether, IconHeart, IconLaugh, IconFire, IconWow, IconPip, IconGrip, IconLyrics, IconChat,
+  IconSync, IconCrown, SourceIcon, IconHeadphones, IconTogether, IconHeart, IconLaugh, IconFire, IconWow, IconPip, IconGrip,
 } from '../components/watch/WatchIcons';
 import { IconPlus, IconX } from '../components/Icons';
+// [juntos repaginado 21/10] mockup aprovado preview-2026/juntos.html: player com as cores da capa
+import { AmbientBackdrop, Glass, Breathing, LiveDot, FloatPill } from '../components/watch/WatchAmbient';
+import { saveProgress } from '../services/watchProgress';
 
 const GRAY = '#a1a1a6';
 const REACTS = [['heart', IconHeart], ['laugh', IconLaugh], ['fire', IconFire], ['wow', IconWow]];
@@ -160,6 +163,19 @@ export default function WatchRoom() {
   const scrollRef = useRef(null);
   const sRef = useRef(s);
   sRef.current = s;
+  const { width: winW } = useWindowDimensions();
+
+  // [juntos 21/10] "Continuar assistindo" do catálogo: grava onde parou (vídeo) a cada 15 s e ao sair
+  useEffect(() => {
+    if (!cid) return undefined;
+    const snap = () => {
+      const x = sRef.current;
+      if (!x || x.kind === 'music' || !WT.isLive(x) || !x.item) return;
+      saveProgress(cid, convName, x.item, WT.positionNow(x), Number(x.item.dur) || 0).catch(() => {});
+    };
+    const iv = setInterval(snap, 15000);
+    return () => { clearInterval(iv); snap(); };
+  }, [cid, convName]);
 
   const you = WT.tr(t, 'watch.you', 'Você');
   const nameOf = useCallback((email, fb) => {
@@ -378,9 +394,14 @@ export default function WatchRoom() {
     const d = Math.abs(Number(sync.diff) || 0);
     let loc = ''; try { loc = String(t('_locale') || ''); } catch {}
     const ds = d.toFixed(1).replace('.', loc.toLowerCase().startsWith('en') ? '.' : ',');
-    syncTxt = peerLabel ? WT.tr(t, 'watch.syncedWith', 'Sincronizado com {who} · diferença {d} s', { who: peerLabel, d: ds }) : WT.tr(t, 'watch.synced', 'Sincronizado · diferença {d} s', { d: ds });
     syncWait = d > 0.5;
+    // [juntos 21/10] linha discreta: "No mesmo segundo que X" / "Esperando X entrar"; diferença só quando dá p/ notar
+    if (syncWait) syncTxt = peerLabel ? WT.tr(t, 'watch.syncedWith', 'Sincronizado com {who} · diferença {d} s', { who: peerLabel, d: ds }) : WT.tr(t, 'watch.synced', 'Sincronizado · diferença {d} s', { d: ds });
+    else if (others.length) syncTxt = WT.tr(t, 'watch.sameSecondAs', 'No mesmo segundo que {who}', { who: peerLabel });
+    else syncTxt = convName ? WT.tr(t, 'watch.waitingName', 'Esperando {name} entrar', { name: convName }) : WT.tr(t, 'watch.waitingOthers', 'Esperando os outros entrarem');
   }
+  const syncAlone = live && !held && !syncWait && !others.length;
+  const syncDot = !live ? <LiveDot color="rgba(255,255,255,0.4)" pulse={false} /> : syncWait ? <LiveDot color="#ffb224" /> : (syncAlone ? <LiveDot color="rgba(255,255,255,0.75)" /> : <LiveDot color="#3ddc84" />);
 
   // fila arrastável (segurar a alça e arrastar)
   const [drag, setDrag] = useState(null); // {from, dy}
@@ -493,10 +514,10 @@ export default function WatchRoom() {
   );
   const chatPane = (
     <View>
-      {chat.length === 0 ? <Text style={st.empty}>{WT.tr(t, 'watch.chatEmpty', 'Comente aqui: vira mensagem da conversa com o tempo do vídeo.')}</Text> : null}
+      {chat.length === 0 ? <Text style={[st.empty, { color: 'rgba(255,255,255,0.6)' }]}>{music ? WT.tr(t, 'watch.chatEmptyMusic', 'Comente aqui: vira mensagem da conversa com o tempo da música.') : WT.tr(t, 'watch.chatEmpty', 'Comente aqui: vira mensagem da conversa com o tempo do vídeo.')}</Text> : null}
       {chat.map((m) => (m.ev ? (
         <View key={m.k} style={st.vmsg}>
-          <IconSync size={13} color="#8e8e93" />
+          <IconSync size={13} color="rgba(255,255,255,0.55)" />
           <Text style={st.evTx}>{m.ev}</Text>
           <Text style={st.tsx}>{WT.fmtTime(m.ts)}</Text>
         </View>
@@ -556,14 +577,19 @@ export default function WatchRoom() {
     </Animated.View>
   ) : null;
 
+  // [juntos 21/10] campo de comentar em vidro (sem a caixa preta)
   const composer = live ? (
     <View style={[st.rbar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-      <TextInput value={draft} onChangeText={setDraft} placeholder={music ? WT.tr(t, 'watch.commentMusic', 'Comentar a música') : WT.tr(t, 'watch.commentPh', 'Comentar no vídeo')} placeholderTextColor="#8e8e93"
-        style={st.rin} returnKeyType="send" onSubmitEditing={sendChat} blurOnSubmit={false} maxLength={500} />
+      <Glass style={st.rinWrap} veil={0.14} intensity={30}>
+        <TextInput value={draft} onChangeText={setDraft} placeholder={music ? WT.tr(t, 'watch.commentMusic', 'Comentar a música') : WT.tr(t, 'watch.commentPh', 'Comentar no vídeo')} placeholderTextColor="rgba(255,255,255,0.7)"
+          style={st.rin} returnKeyType="send" onSubmitEditing={sendChat} blurOnSubmit={false} maxLength={500} keyboardAppearance="dark" />
+      </Glass>
       {draft.trim() ? (
-        <Pressable onPress={sendChat} style={[st.rbtn, { backgroundColor: '#fff' }]} accessibilityLabel={WT.tr(t, 'common.send', 'Enviar')}><IconPlayFill size={16} color="#000" /></Pressable>
+        <Pressable onPress={sendChat} style={[st.rbtn, { backgroundColor: '#fff' }]} accessibilityLabel={WT.tr(t, 'common.send', 'Enviar')}><IconPlayFill size={16} color="#111" /></Pressable>
       ) : REACTS.map(([r, Ic]) => (
-        <Pressable key={r} onPress={() => sendReact(r)} style={st.rbtn} hitSlop={4} accessibilityLabel={WT.tr(t, 'watch.react.' + r, r)}><Ic size={19} color="#fff" /></Pressable>
+        <Pressable key={r} onPress={() => sendReact(r)} hitSlop={4} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.react.' + r, r)}>
+          <Glass style={st.rbtn} veil={0.14} intensity={30}><Ic size={19} color="#fff" /></Glass>
+        </Pressable>
       ))}
     </View>
   ) : null;
@@ -575,56 +601,103 @@ export default function WatchRoom() {
   );
 
   if (music) {
-    const tabs = [['lyrics', IconLyrics, WT.tr(t, 'watch.lyrics', 'Letra')], ['queue', IconQueue, WT.tr(t, 'watch.queue', 'Fila')], ['chat', IconChat, WT.tr(t, 'watch.chat', 'Chat')]];
+    // [juntos repaginado 21/10] mockup preview-2026/juntos.html: fundo = capa desfocada, capa grande
+    // respirando, controles brancos, "No mesmo segundo que X", abas discretas, comentários flutuando.
+    const tabs = [['lyrics', WT.tr(t, 'watch.lyrics', 'Letra')], ['queue', WT.tr(t, 'watch.queue', 'Fila')], ['chat', WT.tr(t, 'watch.tabConv', 'Conversa')]];
     const mpane = pane === 'activity' ? 'chat' : pane;
+    const artW = Math.max(200, Math.min(winW - 44, 420));
+    const roster = (viewers.length ? viewers : [{ e: me, n: myName || you }]).slice(0, 5);
     return (
-      <KeyboardAvoidingView style={[st.root, { backgroundColor: '#0b0b0c' }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={[st.root, { backgroundColor: '#17171a' }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <StatusBar barStyle="light-content" />
-        {item && item.thumb ? <Image source={{ uri: item.thumb }} style={[StyleSheet.absoluteFill, { transform: [{ scale: 1.4 }], opacity: 0.85 }]} blurRadius={60} /> : null}
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)' }]} />
-        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { top: '45%', backgroundColor: 'rgba(0,0,0,0.45)' }]} />
-        <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled">
-          {header}
-          {mpane === 'lyrics' && lyr ? (
-            <View style={st.lyr}>
-              <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
-                <Text style={st.lyrTx}>{lyr}</Text>
-                <Text style={st.lyrCredit}>{WT.tr(t, 'watch.lyricsBy', 'Letra enviada pelo artista · {lic}', { lic: (item && item.lic) || 'CC' })}</Text>
-              </ScrollView>
-            </View>
-          ) : (
-            <Animated.View style={[st.bigart, { transform: [{ scale: artScale }] }]}>
-              {item && item.thumb ? <Image source={{ uri: item.thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : <IconHeadphones size={72} color="rgba(255,255,255,0.8)" />}
-            </Animated.View>
-          )}
-          <View style={st.minfo}>
-            <Text style={st.mTitle} numberOfLines={2}>{item && item.title}</Text>
-            <Text style={st.mSub} numberOfLines={1}>{item && (item.artist || item.author)}</Text>
-            <View style={{ marginTop: 6, flexDirection: 'row' }}><Badge t={t} item={item} /></View>
-          </View>
-          {timeline}
-          <View style={st.mctrl}>
-            <Pressable hitSlop={8} onPress={() => (canCtl ? doCmd('prev') : deny())}><IconPrevTrack size={32} color="#fff" /></Pressable>
-            <Pressable onPress={togglePlay} style={st.mmain}>{s.playing && !held ? <IconPauseFill size={30} color="#000" /> : <IconPlayFill size={30} color="#000" />}</Pressable>
-            <Pressable hitSlop={8} onPress={() => (canCtl ? doCmd('next') : deny())}><IconNextTrack size={32} color="#fff" /></Pressable>
-          </View>
-          <View style={[st.sync, { justifyContent: 'center' }]}>{syncWait ? <Pulse color="#ffb224" /> : <View style={st.syncDot} />}<Text style={[st.syncTx, { color: 'rgba(255,255,255,0.7)' }]}>{syncTxt}</Text></View>
-          <View style={st.together2}>
-            <View style={{ flexDirection: 'row' }}>{(viewers.length ? viewers : [{ e: me, n: you }]).slice(0, 4).map((v, i) => <View key={v.e} style={{ marginLeft: i ? -8 : 0 }}><Avatar name={v.n} email={v.e} size={28} ring="rgba(0,0,0,0.35)" /></View>)}</View>
-            <View style={{ flex: 1 }}>
-              <Text style={st.t2b} numberOfLines={1}>{others.length ? WT.tr(t, 'watch.youAndListening', 'Você e {who} ouvindo juntos', { who: peerLabel }) : WT.tr(t, 'watch.waitingOthers', 'Esperando os outros entrarem')}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Eq playing={!!(s.playing && !held)} color="rgba(255,255,255,0.85)" h={12} />
-                <Text style={st.t2s}>{WT.tr(t, 'watch.sameSecond', 'mesmo segundo em todos os celulares')}</Text>
+        <AmbientBackdrop uri={item && item.thumb} />
+        <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={[st.mhd, { paddingTop: insets.top + 6 }]}>
+            <Pressable hitSlop={8} onPress={() => router.back()} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.minimize', 'Minimizar')}>
+              <Glass style={st.gic}><IconChevronDown size={20} color="#fff" /></Glass>
+            </Pressable>
+            <View style={st.mwho}>
+              <Text style={st.mwhoB} numberOfLines={1}>{WT.tr(t, 'watch.listeningTogether', 'Ouvindo junto')}</Text>
+              {live ? (convName ? <Text style={st.mwhoS} numberOfLines={1}>{WT.tr(t, 'watch.withName', 'com {name}', { name: convName })}</Text> : null)
+                : <Text style={st.mwhoS} numberOfLines={1}>{WT.tr(t, 'watch.ended', 'Sessão encerrada')}</Text>}
+              <View style={st.mav}>
+                {roster.map((v, i) => <View key={v.e} style={{ marginLeft: i ? -6 : 0 }}><Avatar name={v.n} email={v.e} size={20} ring="rgba(255,255,255,0.9)" /></View>)}
               </View>
             </View>
-            <Pressable onPress={() => router.back()} style={st.sw2}><Text style={st.sw2Tx}>{WT.tr(t, 'watch.inChat', 'Na conversa')}</Text></Pressable>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {live && callNow && !callBlocked ? (
+                <Pressable hitSlop={8} onPress={goPip} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.pip', 'Janela flutuante')}><Glass style={st.gic}><IconPip size={18} color="#fff" /></Glass></Pressable>
+              ) : null}
+              {live && (isHost || s.ctrl_mode !== 'host') ? (
+                <Pressable hitSlop={8} onPress={endSession} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.end', 'Encerrar')}><Glass style={st.gic}><IconX size={17} color="#fff" /></Glass></Pressable>
+              ) : <View style={st.gic} />}
+            </View>
           </View>
+
+          <View style={{ alignSelf: 'center', width: artW, height: artW, marginTop: 18 }}>
+            <Animated.View style={{ flex: 1, transform: [{ scale: artScale }] }}>
+              <Breathing active={!!(s.playing && !held)} style={[st.bigart, { width: artW, height: artW }]}>
+                {mpane === 'lyrics' && lyr ? (
+                  <Glass style={st.lyr} veil={0.1}>
+                    <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
+                      <Text style={st.lyrTx}>{lyr}</Text>
+                      <Text style={st.lyrCredit}>{WT.tr(t, 'watch.lyricsBy', 'Letra enviada pelo artista · {lic}', { lic: (item && item.lic) || 'CC' })}</Text>
+                    </ScrollView>
+                  </Glass>
+                ) : (
+                  <View style={st.bigartIn}>
+                    {item && item.thumb ? <Image source={{ uri: item.thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" /> : <IconHeadphones size={72} color="rgba(255,255,255,0.8)" />}
+                  </View>
+                )}
+              </Breathing>
+            </Animated.View>
+            <View pointerEvents="none" style={st.mfloat}>
+              {over.map((m) => <FloatPill key={m.k} name={m.n} text={m.text} onDone={() => setOver((o) => o.filter((x) => x.k !== m.k))} />)}
+            </View>
+            {floatLayer}
+          </View>
+
+          <View style={st.mti}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={st.mTitle} numberOfLines={2}>{item && item.title}</Text>
+              <Text style={st.mSub} numberOfLines={1}>{item && (item.artist || item.author)}</Text>
+            </View>
+            {live ? (
+              <Pressable onPress={() => sendReact('heart')} hitSlop={6} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.react.heart', 'Amei')}>
+                <Glass style={st.gic}><IconHeart size={18} color="#fff" /></Glass>
+              </Pressable>
+            ) : null}
+          </View>
+          {item ? (
+            <Pressable onPress={() => { if (item.lic_url) Linking.openURL(item.lic_url).catch(() => {}); }} style={st.mlic} hitSlop={6}>
+              <Text style={st.mlicTx} numberOfLines={1}>{WT.sourceLabel(t, item)}</Text>
+            </Pressable>
+          ) : null}
+
+          <View style={st.mtl}>
+            <Pressable onLayout={(e) => setTrackW(e.nativeEvent.layout.width)} onPress={(e) => seekTo(e.nativeEvent.locationX)} style={st.mtrack} hitSlop={10}
+              accessibilityRole="adjustable" accessibilityLabel={WT.fmtTime(pos) + (dur > 0 ? ' / ' + WT.fmtTime(dur) : '')}>
+              <View style={st.mtrackBg} />
+              <View style={[st.mtrackFg, { width: `${pct * 100}%` }]} />
+            </Pressable>
+            <View style={st.tm}>
+              <Text style={st.mtm}>{WT.fmtTime(pos)}</Text>
+              <Text style={st.mtm}>{dur > 0 ? '-' + WT.fmtTime(Math.max(0, dur - pos)) : ''}</Text>
+            </View>
+          </View>
+          <View style={st.mctrl}>
+            <Pressable hitSlop={10} onPress={() => (canCtl ? doCmd('prev') : deny())} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.prev', 'Anterior')}><IconPrevTrack size={30} color="#fff" /></Pressable>
+            <Pressable onPress={togglePlay} style={st.mmain} accessibilityRole="button" accessibilityLabel={s.playing && !held ? WT.tr(t, 'watch.pause', 'Pausar') : WT.tr(t, 'watch.play', 'Tocar')}>
+              {s.playing && !held ? <IconPauseFill size={28} color="#111" /> : <IconPlayFill size={28} color="#111" />}
+            </Pressable>
+            <Pressable hitSlop={10} onPress={() => (canCtl ? doCmd('next') : deny())} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.next', 'Próxima')}><IconNextTrack size={30} color="#fff" /></Pressable>
+          </View>
+          <View style={st.msync}>{syncDot}<Text style={st.msyncTx} numberOfLines={1}>{syncTxt}</Text></View>
+
           <View style={st.mtabs}>
-            {tabs.map(([k, Ic, lbl]) => (
-              <Pressable key={k} onPress={() => setPane(k)} style={[st.mtab, mpane === k ? null : { opacity: 0.55 }]}>
-                <Ic size={20} color="#fff" />
-                <Text style={st.mtabTx}>{lbl}</Text>
+            {tabs.map(([k, lbl]) => (
+              <Pressable key={k} onPress={() => setPane(k)} hitSlop={8} accessibilityRole="tab" accessibilityState={{ selected: mpane === k }}>
+                <Text style={[st.mtabTx, mpane === k ? st.mtabOn : null]}>{lbl}</Text>
               </Pressable>
             ))}
           </View>
@@ -633,15 +706,13 @@ export default function WatchRoom() {
               <>
                 <View style={st.mqh}><Text style={st.mqhTx}>{WT.tr(t, 'watch.upNext', 'A seguir')}</Text><Text style={st.mqhSub}>{s.ctrl_mode === 'host' ? WT.tr(t, 'watch.hostOnly', 'Só o anfitrião controla') : WT.tr(t, 'watch.allCanAdd', 'Todos podem adicionar')}</Text></View>
                 {queuePane}
+                {viewersRow}
               </>
             ) : mpane === 'lyrics' ? (
-              <Text style={st.empty}>{lyr === null ? WT.tr(t, 'watch.loading', 'Carregando…') : (lyr ? WT.tr(t, 'watch.lyricsShown', 'A letra está no lugar da capa. Toque em Fila para voltar.') : WT.tr(t, 'watch.noLyrics', 'Esta faixa não tem letra (ou é instrumental).'))}</Text>
+              <Text style={[st.empty, { color: 'rgba(255,255,255,0.6)' }]}>{lyr === null ? WT.tr(t, 'watch.loading', 'Carregando…') : (lyr ? WT.tr(t, 'watch.lyricsShown2', 'A letra está no lugar da capa. Toque em Conversa para voltar.') : WT.tr(t, 'watch.noLyrics', 'Esta faixa não tem letra (ou é instrumental).'))}</Text>
             ) : chatPane}
           </View>
-          {credits}
-          {viewersRow}
         </ScrollView>
-        {floatLayer}
         {composer}
         {toastEl}
       </KeyboardAvoidingView>
@@ -649,8 +720,10 @@ export default function WatchRoom() {
   }
 
   return (
-    <KeyboardAvoidingView style={st.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={[st.root, { backgroundColor: '#17171a' }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <StatusBar barStyle="light-content" />
+      {/* [juntos 21/10] fora do vídeo: cores do pôster desfocado (sem o preto chapado) */}
+      <AmbientBackdrop uri={item && item.thumb} dim={0.55} />
       {header}
       <Pressable onPress={() => setOverlay((o) => !o)} style={st.player}>
         {callBlocked ? (
@@ -682,7 +755,7 @@ export default function WatchRoom() {
         {callNow && !callBlocked ? <Pressable style={st.cb} onPress={goPip}><IconPip size={22} color="#fff" /></Pressable>
           : <Pressable style={st.cb} onPress={() => (canCtl ? doCmd('next') : deny())}><IconNextTrack size={22} color="#fff" /></Pressable>}
       </View>
-      <View style={st.sync}>{syncWait ? <Pulse color="#ffb224" /> : <View style={st.syncDot} />}<Text style={st.syncTx} numberOfLines={1}>{syncTxt}</Text></View>
+      <View style={st.sync}>{syncDot}<Text style={st.syncTx} numberOfLines={1}>{syncTxt}</Text></View>
       {viewersRow}
       <View style={st.vtabs}>
         <Pressable style={st.vtab} onPress={() => setPane('chat')}><Text style={[st.vtabTx, pane !== 'queue' ? st.vtabOn : null]}>{WT.tr(t, 'watch.chat', 'Chat')}</Text>{pane !== 'queue' ? <View style={st.vtabBar} /> : null}</Pressable>
@@ -730,19 +803,19 @@ const st = StyleSheet.create({
   cmain: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
   sync: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingTop: 6, paddingHorizontal: 14 },
   syncDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#30a46c' },
-  syncTx: { color: GRAY, fontSize: 12 },
-  viewers: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#2c2c2e', marginTop: 10 },
+  syncTx: { color: 'rgba(255,255,255,0.8)', fontSize: 12.5 },
+  viewers: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(255,255,255,0.12)', marginTop: 10 },
   vp: { alignItems: 'center', width: 50, gap: 3 },
-  vst: { position: 'absolute', right: -2, bottom: -2, width: 16, height: 16, borderRadius: 8, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  vst: { position: 'absolute', right: -2, bottom: -2, width: 16, height: 16, borderRadius: 8, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
   vstDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: '#30a46c' },
   vpName: { color: GRAY, fontSize: 10.5, maxWidth: 50 },
   hostTag: { color: '#fff', backgroundColor: '#3a3a3c', fontSize: 9, fontWeight: '800', paddingHorizontal: 4, borderRadius: 4, overflow: 'hidden', textTransform: 'uppercase' },
-  pillsw: { flexDirection: 'row', backgroundColor: '#1c1c1e', borderRadius: 999, padding: 2 },
+  pillsw: { flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 999, padding: 2 },
   pill: { paddingVertical: 4, paddingHorizontal: 9, borderRadius: 999 },
   pillOn: { backgroundColor: '#fff' },
   pillTx: { color: GRAY, fontSize: 11.5, fontWeight: '700' },
   pillTxOn: { color: '#000' },
-  vtabs: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#2c2c2e', paddingHorizontal: 8 },
+  vtabs: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.12)', paddingHorizontal: 8 },
   vtab: { flex: 1, paddingVertical: 10, alignItems: 'center' },
   vtabTx: { color: '#8e8e93', fontSize: 14, fontWeight: '600' },
   vtabOn: { color: '#fff' },
@@ -750,11 +823,11 @@ const st = StyleSheet.create({
   vmsg: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, paddingHorizontal: 14, paddingVertical: 5 },
   vmsgName: { color: '#d1d1d6', fontSize: 13, fontWeight: '700' },
   vmsgTx: { color: '#fff', fontSize: 14, lineHeight: 19 },
-  evTx: { color: '#8e8e93', fontSize: 12.5, flexShrink: 1 },
-  tsx: { color: '#8e8e93', fontSize: 11, backgroundColor: '#1c1c1e', paddingHorizontal: 5, borderRadius: 4, overflow: 'hidden', fontVariant: ['tabular-nums'] },
+  evTx: { color: 'rgba(255,255,255,0.6)', fontSize: 12.5, flexShrink: 1 },
+  tsx: { color: 'rgba(255,255,255,0.7)', fontSize: 11, backgroundColor: 'rgba(255,255,255,0.12)', paddingHorizontal: 5, borderRadius: 4, overflow: 'hidden', fontVariant: ['tabular-nums'] },
   empty: { color: '#8e8e93', fontSize: 13, paddingHorizontal: 14, paddingVertical: 10 },
   qrow: { flexDirection: 'row', alignItems: 'center', gap: 11, paddingHorizontal: 14, height: ROW_H },
-  qth: { width: 76, height: 44, borderRadius: 8, overflow: 'hidden', backgroundColor: '#1c1c1e', alignItems: 'center', justifyContent: 'center' },
+  qth: { width: 76, height: 44, borderRadius: 8, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
   qnow: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
   qTitle: { color: '#fff', fontSize: 14, fontWeight: '600' },
   qSub: { color: '#8e8e93', fontSize: 12 },
@@ -765,27 +838,41 @@ const st = StyleSheet.create({
   creditTx: { color: GRAY, fontSize: 11.5, flexShrink: 1 },
   syncpop: { position: 'absolute', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(255,255,255,0.96)', paddingVertical: 6, paddingLeft: 6, paddingRight: 12, borderRadius: 999, maxWidth: '92%' },
   syncpopTx: { color: '#000', fontSize: 12.5, fontWeight: '700', flexShrink: 1 },
-  rbar: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingTop: 8, backgroundColor: 'rgba(0,0,0,0.92)' },
-  rin: { flex: 1, borderWidth: 1, borderColor: '#3a3a3c', borderRadius: 999, paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 9 : 6, color: '#fff', fontSize: 14.5 },
-  rbtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#1c1c1e', alignItems: 'center', justifyContent: 'center' },
-  bigart: { width: 290, height: 290, alignSelf: 'center', marginTop: 18, borderRadius: 18, overflow: 'hidden', backgroundColor: '#2c2c2e', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.45, shadowRadius: 25, shadowOffset: { width: 0, height: 20 }, elevation: 12 },
-  lyr: { width: 290, height: 290, alignSelf: 'center', marginTop: 18, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.28)', padding: 20, overflow: 'hidden' },
+  rbar: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingTop: 8 },
+  rinWrap: { flex: 1, height: 44, borderRadius: 22, justifyContent: 'center' },
+  rin: { flex: 1, paddingHorizontal: 16, paddingVertical: 0, color: '#fff', fontSize: 14.5 },
+  rbtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  // [juntos 21/10] Ouvir junto (mockup juntos.html)
+  mhd: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', paddingHorizontal: 22, gap: 8 },
+  gic: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  mwho: { flex: 1, minWidth: 0, alignItems: 'center' },
+  mwhoB: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  mwhoS: { color: 'rgba(255,255,255,0.85)', fontSize: 12.5, marginTop: 1 },
+  mav: { flexDirection: 'row', justifyContent: 'center', marginTop: 4 },
+  bigart: { borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.08)', shadowColor: '#000', shadowOpacity: 0.45, shadowRadius: 25, shadowOffset: { width: 0, height: 24 }, elevation: 14 },
+  bigartIn: { flex: 1, borderRadius: 22, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  lyr: { flex: 1, borderRadius: 22, padding: 20 },
   lyrTx: { color: '#fff', fontSize: 19, fontWeight: '800', lineHeight: 26 },
   lyrCredit: { color: 'rgba(255,255,255,0.6)', fontSize: 11, fontWeight: '600', marginTop: 16 },
-  minfo: { paddingHorizontal: 26, paddingTop: 22 },
-  mTitle: { color: '#fff', fontSize: 21, fontWeight: '800', letterSpacing: -0.4 },
+  mfloat: { position: 'absolute', right: 10, bottom: 14, left: 40, gap: 6, alignItems: 'flex-end', zIndex: 5 },
+  mti: { flexDirection: 'row', alignItems: 'flex-end', gap: 12, paddingHorizontal: 22, paddingTop: 22 },
+  mTitle: { color: '#fff', fontSize: 24, fontWeight: '800', letterSpacing: -0.5 },
   mSub: { color: 'rgba(255,255,255,0.75)', fontSize: 15, marginTop: 2 },
-  mctrl: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-evenly', paddingTop: 8 },
+  mlic: { paddingHorizontal: 22, marginTop: 6, alignSelf: 'flex-start' },
+  mlicTx: { color: 'rgba(255,255,255,0.6)', fontSize: 11 },
+  mtl: { paddingHorizontal: 22, paddingTop: 16 },
+  mtrack: { height: 16, justifyContent: 'center' },
+  mtrackBg: { position: 'absolute', left: 0, right: 0, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.22)' },
+  mtrackFg: { position: 'absolute', left: 0, height: 5, borderRadius: 3, backgroundColor: '#fff' },
+  mtm: { color: 'rgba(255,255,255,0.7)', fontSize: 11.5, fontVariant: ['tabular-nums'] },
+  mctrl: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 22, paddingTop: 12, paddingBottom: 6 },
   mmain: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  together2: { marginHorizontal: 16, marginTop: 16, padding: 10, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.12)', flexDirection: 'row', alignItems: 'center', gap: 10 },
-  t2b: { color: '#fff', fontSize: 13.5, fontWeight: '700' },
-  t2s: { color: 'rgba(255,255,255,0.75)', fontSize: 12, flexShrink: 1 },
-  sw2: { backgroundColor: '#fff', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999 },
-  sw2Tx: { color: '#000', fontSize: 12, fontWeight: '700' },
-  mtabs: { flexDirection: 'row', justifyContent: 'center', gap: 28, paddingTop: 16, paddingBottom: 4 },
-  mtab: { alignItems: 'center', gap: 3 },
-  mtabTx: { color: '#fff', fontSize: 11, fontWeight: '600' },
-  mq: { marginHorizontal: 12, marginTop: 10, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.35)', paddingVertical: 6, overflow: 'hidden' },
+  msync: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingTop: 4, paddingHorizontal: 22 },
+  msyncTx: { color: 'rgba(255,255,255,0.85)', fontSize: 12.5, flexShrink: 1 },
+  mtabs: { flexDirection: 'row', justifyContent: 'center', gap: 22, paddingTop: 14, paddingBottom: 4 },
+  mtabTx: { color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: '600' },
+  mtabOn: { color: '#fff', fontWeight: '800' },
+  mq: { marginHorizontal: 14, marginTop: 10, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.08)', paddingVertical: 6, overflow: 'hidden' },
   mqh: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingTop: 8, paddingBottom: 4 },
   mqhTx: { color: '#fff', fontSize: 13, fontWeight: '700' },
   mqhSub: { color: 'rgba(255,255,255,0.6)', fontSize: 12 },
