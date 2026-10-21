@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo, u
 import { Platform, useColorScheme, InteractionManager, Appearance, AppState, DeviceEventEmitter, Animated, Easing, Image, StyleSheet } from 'react-native';
 import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-15 nav-motion]
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Colors, DarkColors, FontFamily } from '../constants/theme';
+import { Colors, DarkColors, FontFamily, detailColor, onDetailColor } from '../constants/theme';
 
 const ThemeContext = createContext(null);
 
@@ -269,6 +269,10 @@ function _composeThemeColors(baseColors, accentHex, isDark, _hc) {
   c.accentOn = !!accentHex;
   // ✓✓ lido: destaque quando há cor; Grafite mantém o azul clássico.
   c.tickRead = accentHex || '#53BDEB';
+  // [2026-10-21 pitada-azul] cor dos detalhes (null = desligado → grafite de antes).
+  c.detail = detailColor(isDark, accentHex || null);
+  c.onDetail = c.detail ? onDetailColor(isDark, accentHex || null) : null;
+  if (c.detail) c.tickRead = c.detail;
   if (_hc) {
     c = {
       ...c,

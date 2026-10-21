@@ -174,6 +174,20 @@ export function getNativeCallListView(): any { return _probeNamed(CALL_LIST_VIEW
 export function isCallListAvailable(): boolean { return !!getNativeCallListView(); }
 export function getNativeStatusListView(): any { return _probeNamed(STATUS_LIST_VIEW_NAME); }
 export function isStatusListAvailable(): boolean { return !!getNativeStatusListView(); }
+/** [2026-10-21 pitada-azul] apiVersion da ChatyyStatusList (0 = ausente). 2 = palette `ringNew`/`ringNew2`. */
+let _slApi = -1;
+export function statusListApiVersion(): number {
+  if (_slApi >= 0) return _slApi;
+  _slApi = 0;
+  if (Platform.OS === 'web') return 0;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const core = require('expo-modules-core');
+    const mod = typeof core.requireOptionalNativeModule === 'function' ? core.requireOptionalNativeModule(STATUS_LIST_VIEW_NAME) : null;
+    if (mod && typeof mod.apiVersion === 'function') _slApi = Number(mod.apiVersion()) || 0;
+  } catch { _slApi = 0; }
+  return _slApi;
+}
 export function getNativeContactListView(): any { return _probeNamed(CONTACT_LIST_VIEW_NAME); }
 export function isContactListAvailable(): boolean { return !!getNativeContactListView(); }
 export function getNativeSettingsListView(): any { return _probeNamed(SETTINGS_LIST_VIEW_NAME); }

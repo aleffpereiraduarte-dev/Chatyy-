@@ -23,7 +23,7 @@ import ChatWallpaper from '../wallpaper/ChatWallpaper';
 import { buildValue, bubbleFor, resolve as resolveWallpaper, specFor } from '../wallpaper/wallpaperSpec';
 import { IconCheck, IconSend, IconPencil } from '../Icons';
 import { useGroupedColors } from './SettingsKit';
-import { THEME_V2, grafite, bubbleOwnStyle, bubbleRecvStyle } from '../../constants/theme';
+import { THEME_V2, grafite, bubbleOwnStyle, bubbleRecvStyle, detailColor } from '../../constants/theme';
 import SubtlePattern from '../wallpaper/SubtlePattern';
 import { feedback, isReduceMotionEnabled } from '../../constants/motion';
 import { ACCENT_PALETTE, resolveAccent, onAccentFor, normalizeAccent, luminance } from '../../context/ThemeContext';
@@ -62,7 +62,7 @@ function bubbleTokens(isDark, wallpaper, accentHex, accentBubbles) {
       ownGrad: !tint && !accOwn,
       otherBg: G2.recv, otherText: G2.recvText,
       otherMeta: isDark ? 'rgba(235,235,245,0.50)' : 'rgba(60,60,67,0.64)',
-      wall: G2.wall, read: accOwn ? on : (accentHex || '#53BDEB'),
+      wall: G2.wall, read: accOwn ? on : (accentHex || detailColor(isDark, null) || '#53BDEB'), // [2026-10-21 pitada-azul]
       link: accentHex && !accOwn ? accentHex : G2.recvText, v2: true, isDark: !!isDark,
     };
   }

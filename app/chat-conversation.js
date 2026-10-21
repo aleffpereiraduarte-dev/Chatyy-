@@ -1721,6 +1721,8 @@ function _accentBubblesOn() { const a = _ccAccent(); const x = _ccA11y(); return
 function _tickReadColor() {
   const a = _ccAccent();
   if (a && a.on && a.hex) return _accentBubblesOn() ? (a.onAccent || '#FFFFFF') : a.hex;
+  // [2026-10-21 pitada-azul] Grafite: ✓✓ lido azul claro dos detalhes (kill → azul clássico).
+  try { const d = require('../constants/theme').detailColor(!!(a && a.isDark), null); if (d) return d; } catch {}
   return '#53BDEB';
 }
 function _boostAlpha(c, a) {
@@ -32677,7 +32679,7 @@ function ChatConversationInnerBody() {
                       <Text style={[styles.msgTime, { color: isOwn ? ownMetaColor : otherMetaColor }]}>{formatTime(msg.created_at)}</Text>
                       {isOwn && !msg._pending && !msg._failed && (
                         msg._readStatus === 2
-                          ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={12} strokeWidth={2.6} color="#53BDEB" style={{ marginRight: -6 }} /><IconCheck size={12} strokeWidth={2.6} color="#53BDEB" /></View>
+                          ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={12} strokeWidth={2.6} color={_tickReadColor()} style={{ marginRight: -6 }} /><IconCheck size={12} strokeWidth={2.6} color={_tickReadColor()} /></View>
                           : msg._readStatus === 1.5
                           ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={11} color={isOwn ? ownMetaColor : otherMetaColor} style={{ marginRight: -6 }} /><IconCheck size={11} color={isOwn ? ownMetaColor : otherMetaColor} /></View>
                           : <IconCheck size={11} color={isOwn ? ownMetaColor : otherMetaColor} style={{ marginLeft: 1 }} />

@@ -240,6 +240,14 @@ struct CLTheme {
   var online: UIColor
   /// [2026-10-21 lista-viva] cartão das fixadas (palette `pinnedCard`).
   var pinnedCard: UIColor
+  /// [2026-10-21 pitada-azul, apiVersion 12] cor dos DETALHES (palette `detail`/
+  /// `onDetail`/`ringNew`/`ringNew2`): contador de não lidas, hora das não lidas,
+  /// "digitando"/"gravando", selo @ e anel de status NÃO visto (gradiente
+  /// ringNew → ringNew2). nil = desenho de antes (P&B/pillBg/ringHot).
+  var detail: UIColor? = nil
+  var onDetail: UIColor? = nil
+  var ringNew: UIColor? = nil
+  var ringNew2: UIColor? = nil
 
   init(dark: Bool) {
     self.dark = dark
@@ -318,6 +326,10 @@ struct CLTheme {
     ringCold = c("ringCold", ringCold)
     online = c("online", online)
     pinnedCard = c("pinnedCard", pinnedCard)
+    detail = CLTheme.paletteColor(p["detail"])
+    onDetail = CLTheme.paletteColor(p["onDetail"])
+    ringNew = CLTheme.paletteColor(p["ringNew"])
+    ringNew2 = CLTheme.paletteColor(p["ringNew2"])
   }
 
   static func paletteColor(_ v: Any?) -> UIColor? {

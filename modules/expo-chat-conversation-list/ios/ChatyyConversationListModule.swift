@@ -51,9 +51,12 @@ public class ChatyyConversationListModule: Module {
     //     entrada leve) + chaves opcionais da linha `typing` ("typing" |
     //     "recording" | texto), `typingKind`, `thumbUrl`, `thumbAuth` e
     //     palette `pinnedCard`. vivo ausente/false = desenho idêntico ao 10.
+    // [2026-10-21 pitada-azul] 12 = palette `detail`/`onDetail` (contador, hora
+    //     das não lidas, digitando/gravando, selo @) + `ringNew`/`ringNew2`
+    //     (anel NÃO visto em gradiente). Ausentes = desenho idêntico ao 11.
     Function("apiVersion") { () -> Int in
       #if canImport(ExpoChatStore)
-      return 11
+      return 12
       #else
       return 1
       #endif

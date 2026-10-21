@@ -11,7 +11,7 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, TouchableOpacity, View } from 'react-native';
 import AvatarCircle from '../AvatarCircle';
-import { THEME_V2, Grafite } from '../../constants/theme';
+import { THEME_V2, Grafite, detailColor } from '../../constants/theme';
 
 const MAX = 3;
 const SIZE = 22;
@@ -48,7 +48,7 @@ export default function CollapsedStoriesStack({ isDark, ringColor, bgColor, labe
     return st.subscribeStatusRings(sync);
   }, []);
   if (!emails.length) return null;
-  const ring = ringColor || (isDark ? '#f5f5f5' : '#0b0b0b');
+  const ring = ringColor || detailColor(isDark) || (isDark ? '#f5f5f5' : '#0b0b0b'); // [2026-10-21 pitada-azul] anel NÃO visto
   // [2026-10-21 polish] Grafite: o aro de separação acompanha o fundo do cabeçalho (#F2F2EF/#0E0E10), não branco puro
   const bg = bgColor || (THEME_V2 ? (isDark ? Grafite.dark.bg : Grafite.light.bg) : (isDark ? '#0b0b0b' : '#ffffff'));
   return (

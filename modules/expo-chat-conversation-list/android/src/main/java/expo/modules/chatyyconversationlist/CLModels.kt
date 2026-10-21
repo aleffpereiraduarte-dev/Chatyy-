@@ -230,6 +230,13 @@ internal class CLTheme(val dark: Boolean, palette: Map<String, Any?>? = null) {
   var hair: Int = if (dark) 0x17FFFFFF else 0x14000000
   // [2026-10-21 lista-viva] cartão das fixadas (palette `pinnedCard`).
   var pinnedCard: Int = if (dark) 0xFF1A1A1D.toInt() else 0xFFF6F6F3.toInt()
+  // [2026-10-21 pitada-azul, apiVersion 13] cor dos DETALHES (palette `detail`/
+  // `onDetail`/`ringNew`/`ringNew2`): contador, hora das não lidas, digitando/
+  // gravando, selo @ e anel NÃO visto (gradiente). null = desenho de antes.
+  var detail: Int? = null
+  var onDetail: Int? = null
+  var ringNew: Int? = null
+  var ringNew2: Int? = null
 
   init {
     if (dark) {
@@ -299,6 +306,10 @@ internal class CLTheme(val dark: Boolean, palette: Map<String, Any?>? = null) {
       ringCold = paletteColor(palette["ringCold"]) ?: ringCold
       online = paletteColor(palette["online"]) ?: online
       pinnedCard = paletteColor(palette["pinnedCard"]) ?: pinnedCard
+      detail = paletteColor(palette["detail"])
+      onDetail = paletteColor(palette["onDetail"])
+      ringNew = paletteColor(palette["ringNew"])
+      ringNew2 = paletteColor(palette["ringNew2"])
     }
   }
 

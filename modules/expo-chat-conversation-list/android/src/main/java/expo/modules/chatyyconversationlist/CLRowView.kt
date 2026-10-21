@@ -283,19 +283,21 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     // [lista-viva] não lida = hora escura e mais forte (também no Telegram).
     val timeStrong = if (vivo) (unread || r.timeBold) else (r.timeBold && !tg)
     timeTv.typeface = if (timeStrong) tfTimeBold else tfTime
-    timeTv.setTextColor(if (timeStrong) t.text else t.sub)
+    // [2026-10-21 pitada-azul] hora das não lidas (não silenciadas) na cor dos detalhes.
+    val detailTime = t.detail
+    timeTv.setTextColor(if (detailTime != null && unread && !r.muted) detailTime else if (timeStrong) t.text else t.sub)
 
     lockIv.visibility = if (r.locked) VISIBLE else GONE
     if (r.locked) lockIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_lock, t.icon))
 
     val isTyping = r.isTyping && !r.locked
     val drafting = !isTyping && r.draft.isNotEmpty() && !r.locked
-    typing.color = if (tg) (accent ?: t.text) else t.text
+    typing.color = t.detail ?: (if (tg) (accent ?: t.text) else t.text) // [pitada-azul]
     typing.setActive(isTyping && !vivo)
     // [lista-viva] pontinhos que sobem / ondinha do áudio, depois do texto.
     val vivoTyping = vivo && isTyping
     val recording = vivoTyping && r.typingKind == "recording"
-    val tint = if (tg) (accent ?: t.text) else t.text
+    val tint = t.detail ?: (if (tg) (accent ?: t.text) else t.text)
     vivoDots.color = tint
     waveBars.color = tint
     vivoDots.setActive(vivoTyping && !recording)
@@ -366,7 +368,13 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     if (showPin) pinIv.setImageDrawable(tintedIcon(context, R.drawable.ccl_ic_pin, if (pinOnTop) t.sub else if (tg) t.faint else t.icon))
 
     mentionTv.visibility = if (r.mention) VISIBLE else GONE
-    if (vivo) {
+    val dMention = t.detail
+    if (dMention != null) {
+      // [2026-10-21 pitada-azul] selo @ na cor dos detalhes.
+      mentionBg.setColor(dMention)
+      mentionTv.setTextColor(t.onDetail ?: android.graphics.Color.WHITE)
+      mentionTv.typeface = if (vivo) tfMentionHeavy else tfMention
+    } else if (vivo) {
       // Selo próprio da menção: círculo claro (superfície 2) com "@" forte.
       mentionBg.setColor(t.card)
       mentionTv.setTextColor(t.text)
@@ -398,8 +406,8 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
 
     unreadTv.visibility = if (unread) VISIBLE else GONE
     val mutedPill = r.muted && !r.mention
-    unreadTv.bgColor = if (mutedPill) t.mutedPillBg else t.pillBg
-    unreadTv.textColor = if (mutedPill) t.mutedPillTxt else t.pillTxt
+    unreadTv.bgColor = if (mutedPill) t.mutedPillBg else (t.detail ?: t.pillBg)
+    unreadTv.textColor = if (mutedPill) t.mutedPillTxt else (if (t.detail != null) (t.onDetail ?: android.graphics.Color.WHITE) else t.pillTxt)
     // Rola só com a pílula já na tela (2→3 sobe, 3→2 desce); nova = só "pula".
     if (prev == null) unreadTv.cancelRoll()
     val rollPill = prev != null && prev.unread > 0 && unread && prev.unread != r.unread
@@ -594,7 +602,8 @@ internal class CLRowView(ctx: Context) : ViewGroup(ctx) {
     }
     if (isTyping) {
       val tt = typingText()
-      if (tg) styled(sb, tt, accent ?: t.text, null) else styled(sb, tt, t.text, tfMedium)
+      val dTyping = theme.detail
+      if (tg) styled(sb, tt, dTyping ?: accent ?: theme.text, null) else styled(sb, tt, dTyping ?: theme.text, tfMedium)
       return sb
     }
     if (drafting) {

@@ -288,11 +288,17 @@ internal class SLRowView(ctx: Context) : View(ctx) {
     val seg = (360f - gapDeg * n) / n
     ringPaint.strokeWidth = dp(3f)
     ringPaint.strokeCap = if (n > 1) Paint.Cap.ROUND else Paint.Cap.BUTT
+    // [2026-10-21 pitada-azul] NÃO visto = gradiente ringNew → ringNew2 (diagonal do anel).
+    val rn = p.ringNew
+    val rn2 = p.ringNew2
+    val hotShader: Shader? = if (rn != null && rn2 != null) LinearGradient(cx - rr, cy - rr, cx + rr, cy + rr, rn, rn2, Shader.TileMode.CLAMP) else null
     for (i in 0 until n) {
       val v = row.loading || viewed.getOrElse(i) { true }
-      ringPaint.color = if (v) p.ringViewed else p.ink // [2026-10-16 P&B] sem verde nos Melhores amigos
+      ringPaint.color = if (v) p.ringViewed else (rn ?: p.ink) // [2026-10-16 P&B] sem verde nos Melhores amigos
+      ringPaint.shader = if (v) null else hotShader
       canvas.drawArc(tmp, -90f + i * (seg + gapDeg), if (n > 1) seg else 360f, false, ringPaint)
     }
+    ringPaint.shader = null
     // [2026-10-18 status-telegram] Toque esperando o conteúdo: arco de tinta
     // girando devagar sobre o anel esmaecido (Telegram). Redesenha por quadro
     // só enquanto row.loading (o JS limpa "ld" ao abrir / em até 6 s).

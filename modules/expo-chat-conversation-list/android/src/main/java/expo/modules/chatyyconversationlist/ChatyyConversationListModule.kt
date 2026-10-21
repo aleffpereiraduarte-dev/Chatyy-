@@ -40,7 +40,10 @@ class ChatyyConversationListModule : Module() {
     //      separadores, entrada leve) + chaves opcionais da linha `typing`
     //      ("typing" | "recording" | texto), `typingKind`, `thumbUrl`,
     //      `thumbAuth` e palette `pinnedCard`. vivo ausente/false = idêntico ao 11.
-    Function("apiVersion") { 12 }
+    // 13 = [2026-10-21 pitada-azul] palette `detail`/`onDetail` (contador, hora das
+    //      não lidas, digitando/gravando, selo @) + `ringNew`/`ringNew2` (anel NÃO
+    //      visto em gradiente). Ausentes = idêntico ao 12.
+    Function("apiVersion") { 13 }
 
     View(ChatyyConversationListView::class) {
       Events(

@@ -1207,6 +1207,75 @@ export const Grafite = {
 /** Paleta Grafite do modo atual. */
 export function grafite(isDark) { return isDark ? Grafite.dark : Grafite.light; }
 
+// ── [2026-10-21 pitada-azul] "Pitada de sal" ────────────────────────────────
+// O app continua grafite; SÓ alguns detalhes ganham azul claro (mockup
+// preview-2026/cores.html, modo "Pitada de sal"): contador de não lidas + hora
+// das não lidas + "digitando"/"gravando" + selo @ da lista, anel de status NÃO
+// visto (carrossel e lista), ✓✓ lido nas bolhas próprias, ícone/rótulo da aba
+// ativa e contadores (Apps 99+ / badges das abas). Nada além disso.
+// Usuário com cor de destaque PRÓPRIA (≠ padrão) → esses detalhes usam a cor
+// dele. Kill switch: globalThis.__chatyy_detail_blue = false → grafite puro.
+Grafite.light.detail = '#3EA6FF'; Grafite.light.detail2 = '#1E86E6'; Grafite.light.onDetail = '#FFFFFF';
+Grafite.dark.detail = '#5BB5FF'; Grafite.dark.detail2 = '#2E93F0'; Grafite.dark.onDetail = '#FFFFFF';
+/** true = pitada azul ligada (tema Grafite + kill switch não desligado). Lido a cada chamada. */
+export function detailBlueOn() {
+  try { if (globalThis.__chatyy_detail_blue === false) return false; } catch {}
+  return THEME_V2;
+}
+function _dHex(h) { const n = parseInt(String(h).slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function _dMix(a, b, k) {
+  const A = _dHex(a); const B = _dHex(b);
+  return '#' + A.map((x, i) => Math.max(0, Math.min(255, Math.round(x + (B[i] - x) * k))).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+// Cor de destaque PRÓPRIA do usuário (null = padrão Grafite). Lazy: ThemeContext importa este arquivo.
+function _userAccent(isDark) {
+  try {
+    const T = require('../context/ThemeContext');
+    const snap = T.getAccentSnapshot && T.getAccentSnapshot();
+    if (!snap || !snap.on) return null;
+    const h = T.resolveAccent(snap.value, !!isDark);
+    return h && /^#[0-9a-f]{6}$/i.test(h) ? h.toUpperCase() : null;
+  } catch { return null; }
+}
+/**
+ * Getter ÚNICO da cor dos detalhes. null = desligado (quem chama usa o grafite
+ * de antes). `accentHex` opcional (já resolvido p/ o modo) evita reler o snapshot.
+ */
+export function detailColor(isDark, accentHex) {
+  if (!detailBlueOn()) return null;
+  const a = accentHex !== undefined ? (accentHex && /^#[0-9a-f]{6}$/i.test(accentHex) ? String(accentHex).toUpperCase() : null) : _userAccent(isDark);
+  if (a) return a;
+  return (isDark ? Grafite.dark : Grafite.light).detail;
+}
+/** Texto/número por cima da cor dos detalhes (badge). null = desligado. */
+export function onDetailColor(isDark, accentHex) {
+  const d = detailColor(isDark, accentHex);
+  if (!d) return null;
+  if (d === Grafite.light.detail || d === Grafite.dark.detail) return '#FFFFFF';
+  try { return require('../context/ThemeContext').onAccentFor(d); } catch { return '#FFFFFF'; }
+}
+/**
+ * Anel de status NÃO visto: [claro, escuro] (azul claro → azul um pouco mais
+ * escuro; destaque próprio → destaque → destaque 22% mais escuro). null = desligado.
+ */
+export function detailRing(isDark, accentHex) {
+  const d = detailColor(isDark, accentHex);
+  if (!d) return null;
+  const g = isDark ? Grafite.dark : Grafite.light;
+  if (d === g.detail) return [g.detail, g.detail2];
+  return [d, _dMix(d, '#000000', 0.22)];
+}
+/** 5 paradas do anel (mesma quantidade do Grafite.*.ring) — linear claro → escuro. */
+export function detailRingStops(isDark, accentHex) {
+  const r = detailRing(isDark, accentHex);
+  if (!r) return null;
+  return [r[0], _dMix(r[0], r[1], 0.25), _dMix(r[0], r[1], 0.5), _dMix(r[0], r[1], 0.75), r[1]];
+}
+/** Paradas do anel com fallback no prateado do Grafite (desligado = igual a antes). */
+export function statusRingStops(isDark) {
+  return detailRingStops(isDark) || (isDark ? Grafite.dark : Grafite.light).ring;
+}
+
 // Sombra de cartão do Grafite: 0 1 2 /3,5% + 0 8 24 /4,5% (claro); escuro =
 // só o reflexo interno de 1 px (a separação vem do nível de cinza).
 const _V2_CARD_SH_L = '0px 1px 2px rgba(0,0,0,0.035), 0px 8px 24px rgba(0,0,0,0.045)';

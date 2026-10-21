@@ -84,7 +84,8 @@ final class SLAvatarView: UIView {
   override var intrinsicContentSize: CGSize { CGSize(width: SLAvatarView.side, height: SLAvatarView.side) }
 
   func configure(_ row: SLRow, palette: SLPalette) {
-    ring.hot = palette.ink // [2026-10-16 P&B] sem verde nos Melhores amigos
+    ring.hot = palette.ringNew ?? palette.ink // [2026-10-16 P&B] sem verde nos Melhores amigos · [pitada-azul] NÃO visto azul
+    ring.hot2 = palette.ringNew != nil ? palette.ringNew2 : nil
     ring.cold = palette.ringViewed
     let viewed = row.ring.isEmpty ? [true] : row.ring.map { $0 == "1" }
     ring.viewed = row.loading ? viewed.map { _ in true } : viewed

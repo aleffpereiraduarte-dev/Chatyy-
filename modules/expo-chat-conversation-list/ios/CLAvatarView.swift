@@ -12,6 +12,8 @@ final class CLRingView: UIView {
   var viewed: [Bool] = [] { didSet { setNeedsDisplay() } }
   var hot: UIColor = .black { didSet { setNeedsDisplay() } }
   var cold: UIColor = .gray { didSet { setNeedsDisplay() } }
+  /// [2026-10-21 pitada-azul] fim do gradiente do NÃO visto (hot → hot2, diagonal). nil = cor sólida.
+  var hot2: UIColor? = nil { didSet { setNeedsDisplay() } }
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -39,6 +41,19 @@ final class CLRingView: UIView {
       let v = i < viewed.count ? viewed[i] : true
       let start = -CGFloat.pi / 2 + (CGFloat(i) * (seg + gapLen)) / r
       let end = n > 1 ? start + seg / r : start + 2 * CGFloat.pi
+      if !v, let h2 = hot2,
+         let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [hot.cgColor, h2.cgColor] as CFArray, locations: [0, 1]) {
+        // Segmento NÃO visto com gradiente (claro no alto-esquerda → escuro embaixo-direita).
+        ctx.saveGState()
+        ctx.setLineWidth(sw)
+        ctx.beginPath()
+        ctx.addArc(center: c, radius: r, startAngle: start, endAngle: end, clockwise: false)
+        ctx.replacePathWithStrokedPath()
+        ctx.clip()
+        ctx.drawLinearGradient(grad, start: CGPoint(x: bounds.minX, y: bounds.minY), end: CGPoint(x: bounds.maxX, y: bounds.maxY), options: [])
+        ctx.restoreGState()
+        continue
+      }
       ctx.setStrokeColor((v ? cold : hot).cgColor)
       ctx.setLineWidth(v ? 1.5 : sw)
       ctx.beginPath()
@@ -183,7 +198,8 @@ final class CLAvatarView: UIView {
     hasRing = !viewed.isEmpty && !row.isGroupish
     ringView.isHidden = !hasRing
     if hasRing {
-      ringView.hot = theme.ringHot
+      ringView.hot = theme.ringNew ?? theme.ringHot
+      ringView.hot2 = theme.ringNew != nil ? theme.ringNew2 : nil
       ringView.cold = theme.ringCold
       ringView.viewed = viewed
     }

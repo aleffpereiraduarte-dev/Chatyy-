@@ -136,6 +136,12 @@ import { BlurBackdrop } from './NativeBlur'; // [2026-10-07 native-ui-build]
 // [2026-10-19 accent-real] contador de não lidas, seleção e chips ativos na cor de destaque (Grafite = P&B).
 function _accBg(P) { try { const a = require('../context/ThemeContext').getAccentSnapshot(); if (a && a.on && a.hex) return a.hex; } catch {} return P.pillBg; }
 function _accTx(P) { try { const a = require('../context/ThemeContext').getAccentSnapshot(); if (a && a.on && a.hex) return a.onAccent || '#FFFFFF'; } catch {} return P.pillTxt; }
+// [2026-10-21 pitada-azul] SÓ contador de não lidas, hora das não lidas, "digitando"/
+// "gravando", selo @ e anel de status NÃO visto: cor dos detalhes (azul claro;
+// destaque próprio vence). Kill __chatyy_detail_blue = false → como antes.
+function _det(dark) { try { return require('../constants/theme').detailColor(!!dark); } catch { return null; } }
+function _detBg(P, dark) { return _det(dark) || _accBg(P); }
+function _detTx(P, dark) { try { const d = require('../constants/theme').onDetailColor(!!dark); if (d) return d; } catch {} return _accTx(P); }
 // [2026-10-19 a11y-audit] rótulo do VoiceOver/TalkBack p/ botões só-ícone (fora do escopo do t()).
 function _axT(key, fb) {
   try {
@@ -2148,7 +2154,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 <Text maxFontSizeMultiplier={1.3} style={[s.rowTime, (unread && !isMuted) ? {
                   // [2026-10-06 UX] muted chats keep the time grey (WhatsApp)
                   // [2026-10-08 chat-beauty-list] unread = bold in text colour (B&W)
-                  color: P.text, fontWeight: _vv ? '600' : '700',
+                  color: _det(isDark) || P.text, fontWeight: _vv ? '600' : '700',
                 } : {
                   color: P.sub,
                 }]}>
@@ -2215,13 +2221,13 @@ const ConversationRow = React.memo(function ConversationRow({
                 <VivoTyping
                   label={`${isGroup ? `${typingName} ` : ''}${typingRecording ? (t('chat.recordingAudio') || 'gravando áudio...') : ((isGroup && typingNames.length > 1) ? (t('chat.typingMultiple') || 'estão digitando...') : (t('chat.typing') || 'digitando...'))}`}
                   recording={typingRecording}
-                  color={P.text}
+                  color={_det(isDark) || P.text}
                   textStyle={[s.rowPreview, { fontWeight: '500' }]}
                 />
               ) : typingName ? (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 10 }}>
-                  <TypingDotsInline color={P.text} />
-                  <Text style={[s.rowPreview, { color: P.text, fontWeight: '500', flex: 0 }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
+                  <TypingDotsInline color={_det(isDark) || P.text} />
+                  <Text style={[s.rowPreview, { color: _det(isDark) || P.text, fontWeight: '500', flex: 0 }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
                     {isGroup ? `${typingName} ` : ''}{typingRecording ? (t('chat.recordingAudio') || 'gravando áudio...') : ((isGroup && typingNames.length > 1) ? (t('chat.typingMultiple') || 'estão digitando...') : (t('chat.typing') || 'digitando...'))}
                   </Text>
                 </View>
@@ -2283,19 +2289,19 @@ const ConversationRow = React.memo(function ConversationRow({
                     off the off-brand pink to the app's neutral accent (#111111)
                     — it's differentiated from the count pill by the @ glyph +
                     weight, not by a new hue. Spring-pops when the count rises. */}
-                {conversation.unread_mentions > 0 && _vv ? <MentionSeal isDark={isDark} /> : null}
+                {conversation.unread_mentions > 0 && _vv ? <MentionSeal isDark={isDark} bg={_det(isDark)} fg={_detTx(P, isDark)} /> : null}
                 {conversation.unread_mentions > 0 && !_vv && (
-                  <Animated.View style={[s.unreadBadge, { backgroundColor: _accBg(P), minWidth: 22, transform: [{ scale: mentionScale }] }]}>
-                    <Text maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: _accTx(P), fontSize: 13, fontWeight: '800' }]}>@</Text>
+                  <Animated.View style={[s.unreadBadge, { backgroundColor: _detBg(P, isDark), minWidth: 22, transform: [{ scale: mentionScale }] }]}>
+                    <Text maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: _detTx(P, isDark), fontSize: 13, fontWeight: '800' }]}>@</Text>
                   </Animated.View>
                 )}
                 {unread && _vv ? (
                   <PopBadge
                     value={conversation.unread_count}
                     rowKey={conversation.id}
-                    style={[s.unreadBadge, { backgroundColor: (isMuted && !conversation.unread_mentions) ? P.mutedPillBg : _accBg(P) }]}
+                    style={[s.unreadBadge, { backgroundColor: (isMuted && !conversation.unread_mentions) ? P.mutedPillBg : _detBg(P, isDark) }]}
                   >
-                    <RollingNumber maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: (isMuted && !conversation.unread_mentions) ? P.mutedPillTxt : _accTx(P) }]} value={conversation.unread_count > 99 ? '99+' : conversation.unread_count} />
+                    <RollingNumber maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: (isMuted && !conversation.unread_mentions) ? P.mutedPillTxt : _detTx(P, isDark) }]} value={conversation.unread_count > 99 ? '99+' : conversation.unread_count} />
                   </PopBadge>
                 ) : null}
                 {/* [2026-10-21 lista-viva] miniatura da última foto/vídeo à direita */}
@@ -2307,12 +2313,12 @@ const ConversationRow = React.memo(function ConversationRow({
                     s.unreadBadge,
                     // [2026-10-08 chat-beauty-list] B&W pill: black/white
                     // (inverted in dark), flat — no glow. Muted = soft grey.
-                    { backgroundColor: (isMuted && !conversation.unread_mentions) ? P.mutedPillBg : _accBg(P) },
+                    { backgroundColor: (isMuted && !conversation.unread_mentions) ? P.mutedPillBg : _detBg(P, isDark) },
                     // Spring-pop only when the unread count goes UP (see unreadScale).
                     { transform: [{ scale: unreadScale }] },
                   ]}>
                     {/* [2026-10-20 ux] contador odômetro (Telegram) também na lista JS; nativa já rola */}
-                    <RollingNumber maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: (isMuted && !conversation.unread_mentions) ? P.mutedPillTxt : _accTx(P) }]} value={conversation.unread_count > 99 ? '99+' : conversation.unread_count} />
+                    <RollingNumber maxFontSizeMultiplier={1.15} style={[s.unreadText, { color: (isMuted && !conversation.unread_mentions) ? P.mutedPillTxt : _detTx(P, isDark) }]} value={conversation.unread_count > 99 ? '99+' : conversation.unread_count} />
                   </Animated.View>
                 )}
               </View>
@@ -3600,16 +3606,16 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   <View pointerEvents="none" style={{
                     position: 'absolute', left: -5, top: -5, width: _ringSz, height: _ringSz, borderRadius: _ringSz / 2,
                     borderWidth: story === 'new' ? 2.5 : 1.5,
-                    borderColor: story === 'new' ? (isDark ? (colors.text || '#F5F5F7') : '#111111') : (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)'),
+                    borderColor: story === 'new' ? (_det(isDark) || (isDark ? (colors.text || '#F5F5F7') : '#111111')) : (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)'),
                   }} testID={`home-carousel-pin-story-${story}`} />
                 ) : null}
                 {unread > 0 ? (
                   <View pointerEvents="none" style={{
                     position: 'absolute', top: -4, right: -6, minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5,
-                    backgroundColor: _accBg(isDark ? LP_DARK : LP_LIGHT), borderWidth: 2, borderColor: (isDark ? LP_DARK : LP_LIGHT).bg,
+                    backgroundColor: _detBg(isDark ? LP_DARK : LP_LIGHT, isDark), borderWidth: 2, borderColor: (isDark ? LP_DARK : LP_LIGHT).bg,
                     alignItems: 'center', justifyContent: 'center',
                   }}>
-                    <Text maxFontSizeMultiplier={1} style={{ color: _accTx(isDark ? LP_DARK : LP_LIGHT), fontSize: 10.5, fontWeight: '800' }}>{unread > 99 ? '99+' : unread}</Text>
+                    <Text maxFontSizeMultiplier={1} style={{ color: _detTx(isDark ? LP_DARK : LP_LIGHT, isDark), fontSize: 10.5, fontWeight: '800' }}>{unread > 99 ? '99+' : unread}</Text>
                   </View>
                 ) : null}
                 <PinBadge isDark={isDark} />

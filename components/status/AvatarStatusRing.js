@@ -6,7 +6,7 @@
 import React from 'react';
 import { View } from 'react-native';
 import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
-import { THEME_V2, Grafite } from '../../constants/theme';
+import { THEME_V2, statusRingStops } from '../../constants/theme';
 
 // [2026-10-20 grafite] não visto = anel prateado (gradiente grafite↔prata).
 const _OFFS = [0, 0.3, 0.55, 0.78, 1];
@@ -20,7 +20,9 @@ export default function AvatarStatusRing({ size, ring, isDark, gap = 3, inset = 
   const C = 2 * Math.PI * r;
   const n = Math.max(1, Math.min(ring.count, 30));
   const viewed = Array.from({ length: n }, (_, i) => (ring.viewed ? !!ring.viewed[i] : !!ring.allViewed));
-  const _gid = THEME_V2 ? `asr_v2${isDark ? 'd' : 'l'}_${Math.round(outer)}` : null;
+  // [2026-10-21 pitada-azul] não visto = azul claro → azul mais escuro (kill → prateado).
+  const _stops = THEME_V2 ? statusRingStops(isDark) : null;
+  const _gid = THEME_V2 ? `asr_v2${isDark ? 'd' : 'l'}${String(_stops[0] || '').replace(/[^0-9a-z]/gi, '')}_${Math.round(outer)}` : null;
   const hot = _gid ? `url(#${_gid})` : (isDark ? '#FFFFFF' : '#111111');
   const cold = isDark ? 'rgba(255,255,255,0.32)' : 'rgba(0,0,0,0.25)';
   const gapLen = n > 1 ? Math.min(C * 0.04, 6) : 0;
@@ -32,7 +34,7 @@ export default function AvatarStatusRing({ size, ring, isDark, gap = 3, inset = 
         {_gid ? (
           <Defs>
             <LinearGradient id={_gid} x1="0" y1="1" x2="1" y2="0">
-              {(isDark ? Grafite.dark : Grafite.light).ring.map((c, i) => <Stop key={i} offset={String(_OFFS[i])} stopColor={c} />)}
+              {_stops.map((c, i) => <Stop key={i} offset={String(_OFFS[i])} stopColor={c} />)}
             </LinearGradient>
           </Defs>
         ) : null}

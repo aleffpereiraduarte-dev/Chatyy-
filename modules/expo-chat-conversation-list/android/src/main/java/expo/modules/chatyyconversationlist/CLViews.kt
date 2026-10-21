@@ -403,14 +403,20 @@ internal class CLAvatarView(ctx: Context) : View(ctx) {
       val seg = circ / n - gapLen
       rect.set(outer / 2f - radius, outer / 2f - radius, outer / 2f + radius, outer / 2f + radius)
       stroke.strokeCap = if (n > 1) Paint.Cap.ROUND else Paint.Cap.BUTT
+      // [2026-10-21 pitada-azul] NÃO visto = gradiente ringNew → ringNew2 (diagonal); sem chave = ringHot sólido.
+      val rn = theme.ringNew
+      val rn2 = theme.ringNew2
+      val hotShader: Shader? = if (rn != null && rn2 != null) LinearGradient(0f, 0f, outer, outer, rn, rn2, Shader.TileMode.CLAMP) else null
       for (i in 0 until n) {
         val v = if (i < viewed.size) viewed[i] else true
-        stroke.color = if (v) theme.ringCold else theme.ringHot
+        stroke.color = if (v) theme.ringCold else (rn ?: theme.ringHot)
+        stroke.shader = if (v) null else hotShader
         stroke.strokeWidth = if (v) context.dp(1.5f) else sw
         val startDeg = -90f + ((i * (seg + gapLen)) / radius) * (180f / PI.toFloat())
         val sweep = if (n > 1) (seg / radius) * (180f / PI.toFloat()) else 360f
         canvas.drawArc(rect, startDeg, sweep, false, stroke)
       }
+      stroke.shader = null
     }
 
     // Bolinha online (14 com borda 2.5 na cor do fundo da linha)

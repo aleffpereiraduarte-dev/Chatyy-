@@ -11,7 +11,8 @@ class ChatyyStatusListModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyyStatusList")
 
-    Function("apiVersion") { 1 }
+    // 2 = [2026-10-21 pitada-azul] palette `ringNew`/`ringNew2` (anel NÃO visto em gradiente).
+    Function("apiVersion") { 2 }
 
     View(ChatyyStatusListView::class) {
       Events(

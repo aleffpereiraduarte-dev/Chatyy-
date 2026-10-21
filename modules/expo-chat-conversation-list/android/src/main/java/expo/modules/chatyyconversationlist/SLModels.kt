@@ -73,6 +73,9 @@ internal class SLPalette(val dark: Boolean, m: Map<String, Any?>? = null) {
   val ringViewed: Int = Color.argb(89, 150, 150, 150)
   // [2026-10-16 P&B] não é mais usado no anel (era verde); mantido p/ compat.
   val closeFriends: Int = Color.parseColor("#10B981")
+  // [2026-10-21 pitada-azul, apiVersion 2] anel NÃO visto em gradiente (palette ringNew → ringNew2).
+  var ringNew: Int? = null
+  var ringNew2: Int? = null
 
   init {
     if (dark) {
@@ -98,6 +101,8 @@ internal class SLPalette(val dark: Boolean, m: Map<String, Any?>? = null) {
       SLColor.parse(CLVal.str(m["text"]))?.let { text = it }
       SLColor.parse(CLVal.str(m["sub"]))?.let { sub = it }
       SLColor.parse(CLVal.str(m["pill"]))?.let { pillBg = it }
+      ringNew = SLColor.parse(CLVal.str(m["ringNew"]))
+      ringNew2 = SLColor.parse(CLVal.str(m["ringNew2"]))
     }
   }
 }

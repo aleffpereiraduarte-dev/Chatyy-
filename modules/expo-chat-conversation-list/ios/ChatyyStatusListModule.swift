@@ -19,8 +19,9 @@ public class ChatyyStatusListModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyStatusList")
 
+    // 2 = [2026-10-21 pitada-azul] palette `ringNew`/`ringNew2` (anel NÃO visto em gradiente).
     Function("apiVersion") { () -> Int in
-      return 1
+      return 2
     }
 
     View(ChatyyStatusListView.self) {

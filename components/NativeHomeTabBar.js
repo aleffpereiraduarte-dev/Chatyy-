@@ -239,6 +239,8 @@ function NativeHomeTabBarInner({
     badgeBackground: color(activeColor),
     // [2026-10-19 accent-real] badge na cor de destaque → tinta legível por cima.
     badgeText: color((() => {
+      // [2026-10-21 pitada-azul] badge na cor dos detalhes → número branco (ou tinta do destaque).
+      try { const d = require('../constants/theme').onDetailColor(!!isDark); if (d) return d; } catch {}
       try {
         const T = require('../context/ThemeContext');
         if (T.getAccentSnapshot().on && /^#[0-9a-f]{6}$/i.test(String(activeColor || ''))) return T.onAccentFor(activeColor);

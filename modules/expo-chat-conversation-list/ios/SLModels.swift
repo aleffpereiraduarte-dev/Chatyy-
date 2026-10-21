@@ -89,6 +89,10 @@ struct SLPalette {
   var ink: UIColor
   var ringViewed: UIColor
   var closeFriends: UIColor
+  /// [2026-10-21 pitada-azul, apiVersion 2] anel NÃO visto em gradiente (palette
+  /// `ringNew` → `ringNew2`, "#RRGGBB"). nil = tinta P&B de antes.
+  var ringNew: UIColor? = nil
+  var ringNew2: UIColor? = nil
 
   init(dark: Bool, dict: [String: Any]? = nil) {
     self.dark = dark
@@ -117,6 +121,8 @@ struct SLPalette {
       if let c = SLColor.parse(CLVal.str(d["text"])) { text = c }
       if let c = SLColor.parse(CLVal.str(d["sub"])) { sub = c }
       if let c = SLColor.parse(CLVal.str(d["pill"])) { pillBg = c }
+      ringNew = SLColor.parse(CLVal.str(d["ringNew"]))
+      ringNew2 = SLColor.parse(CLVal.str(d["ringNew2"]))
     }
   }
 }

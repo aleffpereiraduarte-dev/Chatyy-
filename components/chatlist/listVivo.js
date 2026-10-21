@@ -21,7 +21,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import Svg, { Path } from 'react-native-svg';
 import { useReducedMotion, isReduceMotionEnabled } from '../reducedMotion';
-import { Grafite } from '../../constants/theme';
+import { Grafite, detailRing } from '../../constants/theme';
 import { VIVO_ONLINE, listVivoOn } from './listVivoData';
 
 export { listVivoOn, VIVO_ONLINE } from './listVivoData';
@@ -151,11 +151,12 @@ export function PopBadge({ value, rowKey, style, children }) {
 }
 
 // ── selo @ ───────────────────────────────────────────────────────────────────
-export const MentionSeal = memo(function MentionSeal({ isDark }) {
+// [2026-10-21 pitada-azul] bg/fg opcionais = cor dos detalhes (null = selo cinza de antes).
+export const MentionSeal = memo(function MentionSeal({ isDark, bg = null, fg = null }) {
   const g = isDark ? Grafite.dark : Grafite.light;
   return (
-    <View style={[vs.mention, { backgroundColor: g.surface2 }]} accessibilityElementsHidden importantForAccessibility="no">
-      <Text maxFontSizeMultiplier={1.15} style={[vs.mentionText, { color: g.text }]}>@</Text>
+    <View style={[vs.mention, { backgroundColor: bg || g.surface2 }]} accessibilityElementsHidden importantForAccessibility="no">
+      <Text maxFontSizeMultiplier={1.15} style={[vs.mentionText, { color: bg ? (fg || '#FFFFFF') : g.text }]}>@</Text>
     </View>
   );
 });
@@ -200,17 +201,20 @@ function _mix(a, b, k) {
   return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
 const _arcCache = new Map();
-function _arcs(size, stroke, n = 36) {
-  const key = `${size}|${stroke}`;
+// [2026-10-21 pitada-azul] stops opcionais (anel NÃO visto azul claro → azul
+// mais escuro → volta, p/ o giro não ter "emenda"); sem stops = prateado de antes.
+function _arcs(size, stroke, n = 36, stops = null) {
+  const ST = stops && stops.length >= 2 ? stops : _SILVER;
+  const key = `${size}|${stroke}|${stops ? ST.join(',') : ''}`;
   const hit = _arcCache.get(key);
   if (hit) return hit;
   const r = size / 2 - stroke / 2; const cx = size / 2;
   const out = [];
   for (let i = 0; i < n; i++) {
     const k = (i + 0.5) / n;
-    const seg = k * (_SILVER.length - 1);
-    const j = Math.min(_SILVER.length - 2, Math.floor(seg));
-    const color = _mix(_SILVER[j], _SILVER[j + 1], seg - j);
+    const seg = k * (ST.length - 1);
+    const j = Math.min(ST.length - 2, Math.floor(seg));
+    const color = _mix(ST[j], ST[j + 1], seg - j);
     const a0 = ((i / n) * 360 - 90) * Math.PI / 180;
     const a1 = (((i + 1) / n) * 360 + 0.6 - 90) * Math.PI / 180;
     out.push({
@@ -222,11 +226,13 @@ function _arcs(size, stroke, n = 36) {
   return out;
 }
 const _SPIN_KF = [{ '0%': { transform: 'rotate(0deg)' }, '100%': { transform: 'rotate(360deg)' } }];
-export const VivoSpinRing = memo(function VivoSpinRing({ size, stroke = 2.5, style }) {
+export const VivoSpinRing = memo(function VivoSpinRing({ size, stroke = 2.5, style, isDark }) {
   const reduce = useReducedMotion();
   const p = useLoop(6000, !reduce);
   const st = useAnimatedStyle(() => ({ transform: [{ rotate: `${p.value * 360}deg` }] }));
-  const arcs = useMemo(() => _arcs(size, stroke), [size, stroke]);
+  const _dr = detailRing(!!isDark);
+  const _dk = _dr ? _dr.join(',') : '';
+  const arcs = useMemo(() => _arcs(size, stroke, 36, _dr ? [_dr[0], _dr[1], _dr[0]] : null), [size, stroke, _dk]); // eslint-disable-line react-hooks/exhaustive-deps
   const svg = (
     <Svg width={size} height={size}>
       {arcs.map((a, i) => <Path key={i} d={a.d} stroke={a.color} strokeWidth={stroke} fill="none" />)}

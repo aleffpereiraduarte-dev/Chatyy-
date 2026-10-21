@@ -292,6 +292,9 @@ function _vivoHdr(dark) {
 }
 // [2026-10-19 accent-real] aba ativa / badge na cor de destaque (Grafite = P&B de sempre).
 function _tabOn(dark) {
+  // [2026-10-21 pitada-azul] ícone/rótulo da aba ativa + badges = cor dos detalhes
+  // (azul claro; destaque próprio do usuário vence; kill __chatyy_detail_blue).
+  try { const d = require('../constants/theme').detailColor(dark); if (d) return d; } catch {}
   try {
     const T = require('../context/ThemeContext');
     const snap = T.getAccentSnapshot();
@@ -301,6 +304,7 @@ function _tabOn(dark) {
   return dark ? TAB_ON_DARK : TAB_ON_LIGHT;
 }
 function _tabOnInk(dark) {
+  try { const d = require('../constants/theme').onDetailColor(dark); if (d) return d; } catch {}
   try {
     const T = require('../context/ThemeContext');
     const snap = T.getAccentSnapshot();
@@ -309,6 +313,9 @@ function _tabOnInk(dark) {
   } catch {}
   return dark ? SHELL_DARK : SHELL_LIGHT;
 }
+// [2026-10-21 pitada-azul] contador do botão Apps (99+): cor dos detalhes ou o P&B de antes.
+function _detailOr(dark, fb) { try { return require('../constants/theme').detailColor(dark) || fb; } catch { return fb; } }
+function _onDetailOr(dark, fb) { try { return require('../constants/theme').onDetailColor(dark) || fb; } catch { return fb; } }
 function _reduceTransparency() { try { return !!require('../services/a11yPrefs').getA11y().reduceTransparency; } catch { return false; } }
 // [2026-10-13 design-system] inativos com contraste AA (era #9a9a9e 2.8:1 /
 // #7c7c80) — o estado ativo agora se distingue por ícone PREENCHIDO + pílula.
@@ -1831,8 +1838,8 @@ function ChatHub() {
             <IconAppsTab size={22} color={colors.text} active={showAppsDrawer} />
             {/* [tabs-v2 2026-10-20] selo de e-mails não lidos (o mesmo número da antiga aba Email) */}
             {TABS_V2 && emailBadge > 0 ? (
-              <View pointerEvents="none" style={[styles.appsMailBadge, { backgroundColor: isDark ? '#FFFFFF' : '#0B0B0C', borderColor: isDark ? SHELL_DARK : SHELL_LIGHT }]}>
-                <Text maxFontSizeMultiplier={1} style={[styles.appsMailBadgeText, { color: isDark ? '#000000' : '#FFFFFF' }]} numberOfLines={1}>{emailBadge > 99 ? '99+' : String(emailBadge)}</Text>
+              <View pointerEvents="none" style={[styles.appsMailBadge, { backgroundColor: _detailOr(isDark, isDark ? '#FFFFFF' : '#0B0B0C'), borderColor: isDark ? SHELL_DARK : SHELL_LIGHT }]}>
+                <Text maxFontSizeMultiplier={1} style={[styles.appsMailBadgeText, { color: _onDetailOr(isDark, isDark ? '#000000' : '#FFFFFF') }]} numberOfLines={1}>{emailBadge > 99 ? '99+' : String(emailBadge)}</Text>
               </View>
             ) : null}
           </TouchableOpacity>
@@ -2445,7 +2452,7 @@ function TabBarItem({ icon, label, active, onPress, onLongPress, isDark, badge, 
           <View style={{
             position: 'absolute', top: 2, right: 12,
             width: 8, height: 8, borderRadius: 4,
-            backgroundColor: colors.badge,
+            backgroundColor: _detailOr(isDark, colors.badge), // [2026-10-21 pitada-azul]
             borderWidth: 1.5, borderColor: isDark ? SHELL_DARK : SHELL_LIGHT, // [2026-10-10 polish-list] was navy #0f1115
           }} />
         )}

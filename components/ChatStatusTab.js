@@ -66,7 +66,7 @@ import { storyOriginRef, markStoryOrigin } from '../services/storyOrigin'; // [2
 // [2026-10-15 native-lists] Lista de atualizações NATIVA (ChatyyStatusList).
 // Binário sem a view / web → isStatusListAvailable() false → ScrollView JS idêntico.
 import NativeStatusList from './status/NativeStatusList';
-import { isStatusListAvailable as _nativeStatusAvailable } from '../modules/expo-chat-conversation-list';
+import { isStatusListAvailable as _nativeStatusAvailable, statusListApiVersion as _nativeStatusApi } from '../modules/expo-chat-conversation-list';
 
 import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // Android status bar safe area — `StatusBar.currentHeight` is null on iOS
@@ -1163,7 +1163,16 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     text: colors?.text || (isDark ? '#F5F5F7' : '#111111'),
     sub: colors?.textSecondary || (isDark ? '#8E8E93' : '#737373'),
     pill: isDark ? '#2c2c2e' : '#f0f0f0',
-  }), [isDark, colors?.background, colors?.card, colors?.text, colors?.textSecondary]);
+    // [2026-10-21 pitada-azul] anel NÃO visto azul claro → azul mais escuro (binário api >= 2;
+    // antigo ignora). Kill __chatyy_detail_blue = false → tinta P&B.
+    ...((() => {
+      try {
+        if (_nativeStatusApi() < 2) return null;
+        const r = require('../constants/theme').detailRing(!!isDark);
+        return r ? { ringNew: r[0], ringNew2: r[1] } : null;
+      } catch { return null; }
+    })()),
+  }), [isDark, colors?.background, colors?.card, colors?.text, colors?.textSecondary, colors?.detail]);
 
   // Heart-pulse Animated.Value driven by WS incoming-status events. When
   // a contact publishes while the home feed is open, we trigger a brief

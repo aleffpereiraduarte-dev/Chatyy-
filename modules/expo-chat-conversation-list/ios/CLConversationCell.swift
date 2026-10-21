@@ -235,7 +235,12 @@ final class CLConversationCell: UICollectionViewListCell {
     // [lista-viva] não lida = hora escura e mais forte (também no Telegram).
     let timeStrong = vivo ? (unread || r.timeBold) : (r.timeBold && !tg)
     timeLabel.font = timeStrong ? timeBoldFont : timeFont
-    timeLabel.textColor = timeStrong ? theme.text : theme.sub
+    // [2026-10-21 pitada-azul] hora das não lidas (não silenciadas) na cor dos detalhes.
+    if let d = theme.detail, unread && !r.muted {
+      timeLabel.textColor = d
+    } else {
+      timeLabel.textColor = timeStrong ? theme.text : theme.sub
+    }
 
     lockIcon.isHidden = !r.locked
     lockIcon.image = r.locked ? CLSymbols.image("lock", pointSize: 11, weight: .semibold, color: theme.icon) : nil
@@ -244,15 +249,15 @@ final class CLConversationCell: UICollectionViewListCell {
     let typing = r.isTyping && !r.locked
     let drafting = !typing && !r.draft.isEmpty && !r.locked
     typingDots.isHidden = !typing || vivo
-    typingDots.color = tg ? typingTint : theme.text
+    typingDots.color = typingColor
     if typing && !vivo { typingDots.start() } else { typingDots.stop() }
     // [lista-viva] pontinhos que sobem / ondinha do áudio, depois do texto.
     let vivoTyping = vivo && typing
     let recording = vivoTyping && r.typingKind == "recording"
     vivoDots.isHidden = !vivoTyping || recording
     waveBars.isHidden = !recording
-    vivoDots.color = tg ? typingTint : theme.text
-    waveBars.color = tg ? typingTint : theme.text
+    vivoDots.color = typingColor
+    waveBars.color = typingColor
     if vivoTyping && !recording { vivoDots.start() } else { vivoDots.stop() }
     if recording { waveBars.start() } else { waveBars.stop() }
 
@@ -326,7 +331,12 @@ final class CLConversationCell: UICollectionViewListCell {
 
     mentionPill.isHidden = !r.mention
     mentionPill.label.text = "@"
-    if vivo {
+    if let d = theme.detail {
+      // [2026-10-21 pitada-azul] selo @ na cor dos detalhes.
+      mentionPill.backgroundColor = d
+      mentionPill.label.font = vivo ? CLFonts.scaled(12, .heavy, cap: 1.15, traits: traitCollection) : CLFonts.scaled(13, .bold, cap: 1.15, traits: traitCollection)
+      mentionPill.label.textColor = theme.onDetail ?? .white
+    } else if vivo {
       // Selo próprio da menção: círculo claro (superfície 2) com "@" forte.
       mentionPill.backgroundColor = theme.card
       mentionPill.label.font = CLFonts.scaled(12, .heavy, cap: 1.15, traits: traitCollection)
@@ -363,8 +373,8 @@ final class CLConversationCell: UICollectionViewListCell {
 
     unreadPill.isHidden = !unread
     let mutedPill = r.muted && !r.mention
-    unreadPill.backgroundColor = mutedPill ? theme.mutedPillBg : theme.pillBg
-    unreadPill.label.textColor = mutedPill ? theme.mutedPillTxt : theme.pillTxt
+    unreadPill.backgroundColor = mutedPill ? theme.mutedPillBg : (theme.detail ?? theme.pillBg)
+    unreadPill.label.textColor = mutedPill ? theme.mutedPillTxt : (theme.detail != nil ? (theme.onDetail ?? .white) : theme.pillTxt)
     unreadPill.label.font = pillFont
     // [2026-10-16 wave8-list] Dígitos rolando quando o número muda com a pílula
     // já na tela (2→3 sobe, 3→2 desce); pílula que acabou de aparecer só "pula".
@@ -408,6 +418,8 @@ final class CLConversationCell: UICollectionViewListCell {
   /// Cor do "digitando…" no modo Telegram: destaque escolhido (o JS já troca
   /// o preto-tinta por claro no escuro); sem destaque = cor do texto.
   private var typingTint: UIColor { return accent ?? theme.text }
+  /// [2026-10-21 pitada-azul] "digitando"/"gravando": cor dos detalhes > destaque Telegram > texto.
+  private var typingColor: UIColor { return theme.detail ?? (tg ? typingTint : theme.text) }
 
   private func buildPreview(typing: Bool, drafting: Bool, unread: Bool, senderLine: Bool = false, ownMark: Bool = false) -> NSAttributedString {
     let r = row
@@ -418,7 +430,7 @@ final class CLConversationCell: UICollectionViewListCell {
       return out
     }
     if typing {
-      out.append(NSAttributedString(string: typingText, attributes: [.font: tg ? previewFont : previewMedium, .foregroundColor: tg ? typingTint : theme.text]))
+      out.append(NSAttributedString(string: typingText, attributes: [.font: tg ? previewFont : previewMedium, .foregroundColor: typingColor]))
       return out
     }
     if drafting {

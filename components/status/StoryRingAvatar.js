@@ -34,15 +34,17 @@ import Svg, { Defs, LinearGradient, Stop, Circle as SvgCircle } from 'react-nati
 import AvatarCircle from '../AvatarCircle';
 import { TextStatusThumb } from './textStatus'; // [status-texto 2026-10-14]
 import { IconPlus, IconReply, IconStarFilled } from '../Icons';
-import { THEME_V2, Grafite } from '../../constants/theme';
+import { THEME_V2, Grafite, statusRingStops } from '../../constants/theme';
 import { listVivoOn, VivoSpinRing, vivoSeenRing } from '../chatlist/listVivo'; // [2026-10-21 lista-viva]
 
 // [2026-10-20 grafite] anel prateado: gradiente "cônico" aproximado (diagonal
 // com 5 paradas grafite↔prata, Grafite.ring). Só p/ o anel padrão (sem cor do
 // chamador, sem melhores amigos). Kill switch: __chatyy_theme_v2 = false.
 const _RING_OFFS = [0, 0.3, 0.55, 0.78, 1];
+// [2026-10-21 pitada-azul] NÃO visto = azul claro → azul mais escuro (statusRingStops;
+// kill __chatyy_detail_blue = false → prateado de antes).
 function _silverStops(isDark) {
-  const r = (isDark ? Grafite.dark : Grafite.light).ring;
+  const r = statusRingStops(isDark);
   return r.map((c, i) => <Stop key={i} offset={String(_RING_OFFS[i])} stopColor={c} />);
 }
 
@@ -93,6 +95,7 @@ function StoryRingAvatar({
     ? <TextStatusThumb text={textPreview.text} bg={textPreview.bg} font={textPreview.font} size={size} />
     : <AvatarCircle name={name} email={email} size={size} />;
   const _silver = THEME_V2 && !closeFriends && ringColor === '#111111';
+  const _rk = (isDark ? 'd' : 'l') + String(statusRingStops(isDark)[0] || '').replace(/[^0-9a-z]/gi, ''); // id do gradiente por cor
   const _dim = dimmedColor || (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)');
   const _badgeBorder = colors?.background || (isDark ? '#000' : '#fff');
   // [2026-10-10 polish-list] P&B: the default ink ring/badge (#111111) vanished
@@ -187,7 +190,7 @@ function StoryRingAvatar({
         alignItems: 'center', justifyContent: 'center',
         transform: [{ scale: pulseScale }],
       }, _webPulse]}>
-        {!allViewed && !_spinOn && _vivoRing ? <VivoSpinRing size={ringSize} stroke={2.5} /> : null}
+        {!allViewed && !_spinOn && _vivoRing ? <VivoSpinRing size={ringSize} stroke={2.5} isDark={isDark} /> : null}
         {!allViewed && !_spinOn && !_vivoRing && (() => {
           // Suffix the gradient id with the palette + size so we never get
           // an id collision between a close-friends green ring and a brand
@@ -202,7 +205,7 @@ function StoryRingAvatar({
                     swapped in whenever `closeFriends` is true so the viewer
                     knows at a glance the post is restricted. Default is the
                     brand purple gradient. */}
-                <LinearGradient id={_silver ? `${gid}_v2${isDark ? 'd' : 'l'}` : gid} x1="0" y1="0" x2="1" y2="1">
+                <LinearGradient id={_silver ? `${gid}_v2${_rk}` : gid} x1="0" y1="0" x2="1" y2="1">
                   {_silver ? _silverStops(isDark) : [
                   <Stop key="a" offset="0" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />,
                   <Stop key="b" offset="0.5" stopColor={_cfInk || _ink} />,
@@ -213,7 +216,7 @@ function StoryRingAvatar({
                 cx={ringSize / 2}
                 cy={ringSize / 2}
                 r={radius}
-                stroke={`url(#${_silver ? `${gid}_v2${isDark ? 'd' : 'l'}` : gid})`}
+                stroke={`url(#${_silver ? `${gid}_v2${_rk}` : gid})`}
                 strokeWidth={2.5}
                 fill="none"
               />
@@ -263,7 +266,7 @@ function StoryRingAvatar({
                   gradient when `closeFriends` is set so the restricted
                   audience scope is visible at a glance — same per-segment
                   dimming as the purple variant once that item is viewed. */}
-              <LinearGradient id={_silver ? `${segGid}_v2${isDark ? 'd' : 'l'}` : segGid} x1="0" y1="0" x2="1" y2="1">
+              <LinearGradient id={_silver ? `${segGid}_v2${_rk}` : segGid} x1="0" y1="0" x2="1" y2="1">
                 {_silver ? _silverStops(isDark) : [
                 <Stop key="a" offset="0" stopColor={_cfInk || (_inkDefault ? _ink : '#111111')} />,
                 <Stop key="b" offset="0.5" stopColor={_cfInk || _ink} />,
@@ -284,7 +287,7 @@ function StoryRingAvatar({
                   r={radius}
                   stroke={segViewed
                     ? _dim
-                    : `url(#${_silver ? `${segGid}_v2${isDark ? 'd' : 'l'}` : segGid})`}
+                    : `url(#${_silver ? `${segGid}_v2${_rk}` : segGid})`}
                   strokeWidth={_sw}
                   fill="none"
                   strokeDasharray={`${_drawLen} ${circumference - _drawLen}`}

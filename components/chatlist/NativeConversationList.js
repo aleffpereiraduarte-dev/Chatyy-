@@ -18,7 +18,7 @@ import { buildRow, buildLabels, createPatcher, presenceEmailOf } from './nativeA
 import { buildPeekItems, buildPeekBg, peekHeightFraction, PEEK_MAX } from './peekItems';
 import { listMetrics, tgListOn, listAccentHex } from './listDensity';
 import { useTheme } from '../../context/ThemeContext';
-import { THEME_V2 as _THEME_V2, grafite as _grafite } from '../../constants/theme'; // [2026-10-20 grafite]
+import { THEME_V2 as _THEME_V2, grafite as _grafite, detailColor as _detailColor, onDetailColor as _onDetailColor, detailRing as _detailRing } from '../../constants/theme'; // [2026-10-20 grafite] · [2026-10-21 pitada-azul]
 import { toArgb as _toArgb } from '../chat/argb';
 import { listVivoOn as _listVivoOn } from './listVivoData'; // [2026-10-21 lista-viva]
 
@@ -411,7 +411,8 @@ function NativeConversationListInner(props) {
   // cor de destaque do "digitando…". Kill switch __chatyy_tg_list = false.
   try {
     if (densityProps && tgListOn() && _clApiVersion() >= (Platform.OS === 'android' ? 10 : 9)) {
-      densityProps = { density: 'telegram', accent: listAccentHex(_accent) };
+      // [2026-10-21 pitada-azul] "digitando" na cor dos detalhes (binário antigo: só via `accent`).
+      densityProps = { density: 'telegram', accent: _detailColor(!!isDark) || listAccentHex(_accent) };
     }
   } catch {}
 
@@ -433,6 +434,18 @@ function NativeConversationListInner(props) {
     if (_listVivoOn() && _clApiVersion() >= (Platform.OS === 'android' ? 12 : 11)) {
       vivoProps = _VIVO_PROPS;
       if (paletteProps) paletteProps = isDark ? _PALETTE_VD : _PALETTE_VL;
+    }
+  } catch {}
+
+  // [2026-10-21 pitada-azul] cor dos detalhes na lista nativa. Binário com as
+  // chaves novas (iOS api >= 12 / Android api >= 13): detail/onDetail (contador,
+  // hora das não lidas, digitando/gravando, selo @) + ringNew/ringNew2 (anel NÃO
+  // visto em gradiente). Binário antigo (só OTA): pillBg/pillTxt (contador e selo
+  // @) + ringHot (anel sólido). Kill: __chatyy_detail_blue = false.
+  try {
+    if (paletteProps) {
+      const d = _detailColor(!!isDark);
+      if (d) paletteProps = _withDetail(paletteProps, !!isDark, d, _clApiVersion() >= (Platform.OS === 'android' ? 13 : 12));
     }
   } catch {}
 
@@ -501,6 +514,22 @@ const _PALETTE_D = _mkPalette(true);
 function _mkVivoPalette(base, dark) {
   if (!base) return null;
   return { palette: { ...base.palette, pinnedCard: _toArgb(dark ? '#1A1A1D' : '#F6F6F3') } };
+}
+// [2026-10-21 pitada-azul] palette + cor dos detalhes (objeto estável por base/cor/binário).
+const _detailCache = new Map();
+function _withDetail(base, dark, d, nativeKeys) {
+  const k = `${base === _PALETTE_L ? 'L' : base === _PALETTE_D ? 'D' : base === _PALETTE_VL ? 'VL' : base === _PALETTE_VD ? 'VD' : '?'}|${dark ? 1 : 0}|${d}|${nativeKeys ? 1 : 0}`;
+  const hit = _detailCache.get(k);
+  if (hit && hit.base === base) return hit.v;
+  const on = _onDetailColor(dark) || '#FFFFFF';
+  const ring = _detailRing(dark) || [d, d];
+  const extra = nativeKeys
+    ? { detail: _toArgb(d), onDetail: _toArgb(on), ringNew: _toArgb(ring[0]), ringNew2: _toArgb(ring[1]) }
+    : { pillBg: _toArgb(d), pillTxt: _toArgb(on), ringHot: _toArgb(ring[0]) };
+  const v = { palette: { ...base.palette, ...extra } };
+  if (_detailCache.size > 32) _detailCache.clear();
+  _detailCache.set(k, { base, v });
+  return v;
 }
 const _PALETTE_VL = _mkVivoPalette(_PALETTE_L, false);
 const _PALETTE_VD = _mkVivoPalette(_PALETTE_D, true);
