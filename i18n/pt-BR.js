@@ -1871,6 +1871,7 @@ export default {
   "onboarding.slideChatDescV2": "Mensagens, ligações e grupos em tempo real, com conexão criptografada.",
   "plusTour.backupDescV2": "Suas conversas e mídias salvas na nuvem do Chatyy, vinculadas à sua conta. Restaure em qualquer aparelho.",
   "chatConv.e2eInactiveDescV2": "Esta conversa usa conexão criptografada (TLS) entre seu aparelho e os servidores do Chatyy, mas não é criptografada de ponta a ponta. Para isso, inicie um Chat secreto pelo menu da conversa.",
+  'chatConv.e2eSoon': 'Protegida em trânsito. A criptografia de ponta a ponta será ativada automaticamente em todas as conversas.',
   "plans.faqDataSafeAnswerV2": "Sim! Os pagamentos são processados pelos nossos parceiros (Stripe, App Store ou Google Play) por conexão criptografada. Não armazenamos o número do seu cartão — apenas os últimos 4 dígitos para sua referência.",
   // [2026-10-08 apps-native]
   'meetings.happeningNow': "Acontecendo agora",

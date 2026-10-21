@@ -1871,6 +1871,7 @@ export default {
   "onboarding.slideChatDescV2": "Mensajes, llamadas y grupos en tiempo real, con conexión cifrada.",
   "plusTour.backupDescV2": "Tus chats y archivos guardados en la nube de Chatyy, vinculados a tu cuenta. Restaura en cualquier dispositivo.",
   "chatConv.e2eInactiveDescV2": "Este chat usa una conexión cifrada (TLS) entre tu dispositivo y los servidores de Chatyy, pero no está cifrado de extremo a extremo. Para ello, inicia un Chat secreto desde el menú del chat.",
+  'chatConv.e2eSoon': 'Protegida en tránsito. El cifrado de extremo a extremo se activará automáticamente en todos los chats.',
   "plans.faqDataSafeAnswerV2": "¡Sí! Los pagos los procesan nuestros socios (Stripe, App Store o Google Play) mediante una conexión cifrada. No guardamos el número de tu tarjeta, solo los últimos 4 dígitos para tu referencia.",
   // [2026-10-08 apps-native]
   'meetings.happeningNow': "En curso",

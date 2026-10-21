@@ -27232,7 +27232,7 @@ function ChatConversationInnerBody() {
     }
     rows.push({ id: 'disappearing', sid: `${sidPrefix}priv`, icon: 'clock', title: _ciTr('chat.disappearing', 'Mensagens temporárias'), val: disappearingSummary || '', onPress: () => go(() => setShowDisappearingModal(true)) });
     rows.push({ id: 'chatLock', sid: `${sidPrefix}priv`, icon: 'lock', title: _ciTr('chatInfo.chatLock', 'Bloqueio da conversa'), val: chatLocked ? onLabel : offLabel, sub: _ciTr('chatInfo.chatLockHint', 'Tranque e oculte esta conversa neste aparelho.'), onPress: () => go(toggleChatLockFromUi) });
-    rows.push({ id: 'e2e', sid: `${sidPrefix}priv`, icon: 'shield', title: _ciTr('chatConv.e2eTitle', 'Criptografia'), sub: e2eEnabled ? _ciTr('chatConv.e2eSafetyHint', 'Ponta a ponta ativa. Toque para ver o número de segurança.') : _ciTr('chatConv.e2eInactive', 'Criptografia desativada'), onPress: () => go(showE2eInfo) });
+    rows.push({ id: 'e2e', sid: `${sidPrefix}priv`, icon: 'shield', title: _ciTr('chatConv.e2eTitle', 'Criptografia'), sub: e2eEnabled ? _ciTr('chatConv.e2eSafetyHint', 'Ponta a ponta ativa. Toque para ver o número de segurança.') : _ciTr('chatConv.e2eSoon', 'Protegida em trânsito. A criptografia de ponta a ponta será ativada automaticamente em todas as conversas.'), onPress: () => go(showE2eInfo) });
     rows.push({ id: 'advPriv', sid: `${sidPrefix}priv`, icon: 'eye', title: _ciTr('advPriv.title', 'Privacidade avançada da conversa'), val: _advPriv.statusLabel || '', onPress: () => go(_advPriv.openSheet) });
     return rows;
   };
@@ -43409,7 +43409,7 @@ function ChatConversationInnerBody() {
                       <GroupDivider colors={colors} />
                       <GroupRow colors={colors} Icon={IconShield}
                         title={t('chatConv.e2eTitle') || 'Criptografia'}
-                        subtitle={e2eEnabled ? (t('chatConv.e2eSafetyHint') || 'Ponta a ponta ativa. Toque para ver o número de segurança.') : (t('chatConv.e2eInactive') || 'Criptografia desativada')}
+                        subtitle={e2eEnabled ? (t('chatConv.e2eSafetyHint') || 'Ponta a ponta ativa. Toque para ver o número de segurança.') : (t('chatConv.e2eSoon') || 'Protegida em trânsito. A criptografia de ponta a ponta será ativada automaticamente em todas as conversas.')}
                         right="chevron"
                         onPress={() => contactInfoGo(showE2eInfo)} />
                       <GroupDivider colors={colors} />

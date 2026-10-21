@@ -1871,6 +1871,7 @@ export default {
   "onboarding.slideChatDescV2": "Messages, calls and groups in real time, over an encrypted connection.",
   "plusTour.backupDescV2": "Your chats and media saved in the Chatyy cloud, tied to your account. Restore on any device.",
   "chatConv.e2eInactiveDescV2": "This chat uses an encrypted connection (TLS) between your device and Chatyy servers, but it is not end-to-end encrypted. For that, start a Secret chat from the chat menu.",
+  'chatConv.e2eSoon': 'Protected in transit. End-to-end encryption will be turned on automatically for all chats.',
   "plans.faqDataSafeAnswerV2": "Yes! Payments are processed by our partners (Stripe, App Store or Google Play) over an encrypted connection. We do not store your card number — only the last 4 digits for your reference.",
   // [2026-10-08 apps-native]
   'meetings.happeningNow': "Happening now",
