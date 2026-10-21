@@ -196,8 +196,15 @@ public enum ChatyyE2EEConvModes {
     return ud?.bool(forKey: "chatyy.e2ee5.native.u." + uid) ?? false
   }
 
-  /// uid da conta SE o caminho nativo E2EE vale para ela agora: flag ligada E é a conta ativa
-  /// (o host abre um núcleo por conta e `open()` troca a conta "atual" do JS — ver riscos).
+  /// uid da conta SE o caminho nativo E2EE vale para ela: `e2ee5_native` ligado PARA ESTA conta.
+  /// Vale para qualquer conta logada (multi-conta): desde o WP-03 8606f73a `core(uid:)` não troca
+  /// a conta "atual" do JS (makeCurrent=false).
+  public static func nativeUid(account: String) -> String? {
+    guard let u = uid(account: account), nativeOn(uid: u) else { return nil }
+    return u
+  }
+
+  /// Variante restrita à conta ativa do último status() (mantida para quem já a usa).
   public static func activeUid(account: String) -> String? {
     guard let u = uid(account: account), nativeOn(uid: u), lastUid() == u else { return nil }
     return u

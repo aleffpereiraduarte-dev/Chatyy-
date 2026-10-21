@@ -1,7 +1,8 @@
 // [e2ee5 WP-08a 2026-10-21] E2EE v5 nos caminhos NATIVOS do app iOS que enviam/recebem sem JS
 // (CONTRATO e2ee5-contrato/1.2 §2, §4.2.19, §5.3–5.4, §6.4–6.5, §8.4, §9).
 //
-//   ChatyyE2EEGate      — núcleo no binário + `e2ee5_native` gravado pelo status() + conta ATIVA.
+//   ChatyyE2EEGate      — núcleo no binário + `e2ee5_native` gravado pelo status() PARA a conta da
+//                         mensagem (qualquer conta logada; core(uid:) não troca a conta do JS).
 //                         Fora disso: nil → todo caminho abaixo devolve "passa" = comportamento de hoje.
 //   ChatyyE2EEConvCache — e2ee_mode + membros (uids) por conversa (e2ee5_conversation_state,
 //                         WS conv_e2ee, recusas do servidor). Modo espelhado no App Group.
@@ -34,7 +35,7 @@ enum ChatyyE2EEGate {
   /// uid da conta se o caminho nativo E2EE vale agora para ela (senão nil = caminho de hoje).
   static func uid(account: String) -> String? {
     #if CHATYY_CRYPTO_CORE
-    return ChatyyE2EEConvModes.activeUid(account: account)
+    return ChatyyE2EEConvModes.nativeUid(account: account)
     #else
     return nil
     #endif
@@ -62,6 +63,8 @@ final class ChatyyE2EEConvCache {
     var sincePts: Int64
     var at: Int64
     var membersAt: Int64
+    /// e-mail canônico → uid, se o servidor mandar `email` nos membros (WP-07). Vazio = não veio.
+    var uidByEmail: [String: String] = [:]
   }
 
   /// Membros "frescos" para cifrar (quem saiu não pode receber a chave seguinte).
@@ -138,12 +141,16 @@ final class ChatyyE2EEConvCache {
           (j["success"] as? Bool) == true, let d = j["data"] as? [String: Any] else { return nil }
     let mode = (d["e2ee_mode"] as? NSNumber)?.intValue == 1 ? 1 : 0
     var members: [String] = []
+    var byEmail: [String: String] = [:]
     for x in (d["members"] as? [[String: Any]]) ?? [] {
       let u = ChatyyE2EEMsg.str(x["uid"])
       if ChatyyE2EEMsg.isDecimalId(u) && !members.contains(u) { members.append(u) }
+      let em = ChatyyE2EEMsg.str(x["email"])
+      if ChatyyE2EEMsg.isDecimalId(u) && !em.isEmpty { for v in ChatyyE2EEConvModes.accountVariants(em) { byEmail[v] = u } }
     }
     let now = ChatyyE2EEGate.nowMs()
-    let e = Entry(mode: mode, members: members, sincePts: (d["since_pts"] as? NSNumber)?.int64Value ?? 0, at: now, membersAt: now)
+    let e = Entry(mode: mode, members: members, sincePts: (d["since_pts"] as? NSNumber)?.int64Value ?? 0, at: now, membersAt: now,
+                  uidByEmail: byEmail)
     put(uid: uid, conv: conv, e)
     return e
   }
@@ -395,7 +402,9 @@ final class ChatyyE2EEIngest {
       for f in frames where f.contains(Self.needle) {
         guard let d = f.data(using: .utf8), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
               Self.msgTypes.contains(ChatyyE2EEMsg.str(o["type"])), let data = o["data"] as? [String: Any] else { continue }
-        let m = (data["message"] as? [String: Any]) ?? data
+        var m = (data["message"] as? [String: Any]) ?? data
+        // sender_uid pode vir no frame (data) e não na linha (WP-07)
+        for k in ["sender_uid", "e2e_sender_uid"] where m[k] == nil && data[k] != nil { m[k] = data[k] }
         if let c = Self.cand(m, fallbackConv: ChatyyE2EEMsg.str(data["conversation_id"])) { cands.append(c) }
       }
       if cands.isEmpty { return }
@@ -418,13 +427,14 @@ final class ChatyyE2EEIngest {
   }
 
   #if CHATYY_CRYPTO_CORE
-  /// uid do remetente: coluna do servidor (se vier) → eu → 1:1 (o outro membro).
-  /// Grupo sem `sender_uid` na linha = nil (o JS resolve; ver riscos no relatório do WP-08a).
+  /// uid do remetente: `sender_uid`/`e2e_sender_uid` da linha/frame (WP-07, vale p/ grupo) → eu →
+  /// 1:1 (o outro membro). Grupo sem `sender_uid` = nil (fica "aguardando"; o JS resolve).
   private func senderUid(_ uid: String, _ account: String, _ c: Cand) async -> String? {
     if !c.senderUid.isEmpty { return c.senderUid }
     if ChatyyE2EEConvModes.accountVariants(account).contains(c.senderEmail) ||
         ChatyyE2EEConvModes.accountVariants(c.senderEmail).contains(ChatyyE2EEConvModes.normAccount(account)) { return uid }
     guard let st = await ChatyyE2EEConvCache.shared.state(uid: uid, conv: c.conv, needMembers: true) else { return nil }
+    if let u = st.uidByEmail[c.senderEmail], st.members.contains(u) { return u }
     if st.members.count == 2 && st.members.contains(uid) { return st.members.first { $0 != uid } }
     return nil
   }
