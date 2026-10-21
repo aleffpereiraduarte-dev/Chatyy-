@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Versão** | `e2ee5-contrato/1.2` (1.2.0) — 21/10/2026 (1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n nos arquivos de idioma) |
+| **Versão** | `e2ee5-contrato/1.3` (1.3.0) — 21/10/2026 (1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n; 1.3: códigos/campos do WP-07, `e2e_np` e flag NSE do WP-10, fila NSE→app do núcleo) |
 | **Dono** | WP-00 (líder/arquiteto). Mudanças só por PR neste arquivo + entrada em `CHANGELOG.md`. |
 | **Implementação de referência** | `native/chatyy-crypto` (WP-01) e o servidor falso dos testes `native/chatyy-crypto/tests/common/fake_server.rs` (conformidade do WP-05). |
 | **Base** | `/root/e2ee-2026-10-21/PLANO.md` + DECISÕES DO FOUNDER (21/10: todas as recomendações aprovadas, "nível WhatsApp"). |
@@ -255,7 +255,7 @@ O aparelho atual nunca recebe o próprio evento.
 ### 4.2 Ações
 
 **4.2.1 `e2ee5_status`** — sempre disponível.
-Req `{}` → `{"uid":"42","user_id":"@u42:chatyy","contract":"e2ee5-contrato/1.2","enabled":true,
+Req `{}` → `{"uid":"42","user_id":"@u42:chatyy","contract":"e2ee5-contrato/1.3","enabled":true,
 "kill":false,"flags":{"e2ee5_native":true,"e2ee5_media":false,"e2ee5_calls":false,
 "e2ee5_link":false,"e2ee5_backup":false,"e2ee5_push_decrypt":false},"device_limit":5,
 "devices":[{"device_id":"P…","kind":"P","last_seen":1729500000000,"signed":true}],
@@ -406,6 +406,9 @@ Rate limit: 10/h por uid (tentativas de restauração).
 | `e2ee5_link_expired` / `e2ee5_link_seq` / `e2ee5_link_forbidden` | 410/409/403 | rendezvous |
 | `e2ee5_plaintext_refused` | 409 | (chat_send/native_send/leaf) texto puro em conversa `e2ee_mode=1` |
 | `e2ee5_not_e2ee` | 409 | envelope em conversa `e2ee_mode=0` (cliente desatualizado do estado) |
+| `e2ee5_server_read_refused` | 409 | (chat.php) ação que leria conteúdo de conversa cifrada: IA/Bia, tradução, transcrição, resumo, export, jogos (D2/D7) |
+| `e2ee5_forward_client` | 409 | (chat.php) `chat_forward`/`chat_forward_multi`/`chat_clone_to_saved`/broadcast de mensagem cifrada — o cliente recifra e envia por conta própria |
+| `e2ee5_forbidden` | 403 | (`conversation_state set:0`) em grupo só admin rebaixa a criptografia |
 
 ### 4.4 JSON canônico e verificação (PHP)
 Algoritmo Matrix: remover `signatures` e `unsigned`; serializar com chaves ordenadas
@@ -447,7 +450,10 @@ O frame de auth ganha o campo **`e2ee5_device`** (string, `^[PWTX][A-Z2-7]{12}$`
   o evento vai a todos os aparelhos do usuário e o cliente filtra. Os 3 eventos **não** entram
   em `ws_event_log` (o `sync` é a fonte; perder um aviso não perde dado).
 - Mensagens cifradas usam os eventos de mensagem atuais; o `content` é o envelope.
-  O relay **não** monta `reply_to.content` para envelopes (manda só `reply_to.id`).
+  O relay **não** monta `reply_to.content` para envelopes: a prévia `reply_to` (WS e HTTP,
+  `chatAuditReplyPreview`) vem com `content: ""` e o campo novo **`reply_to.e2e: true`** quando
+  o pai é cifrado (ausente/`null` caso contrário). O cliente pega a citação do payload
+  decifrado (`payload.reply.quote`) ou decifra o pai pelo `reply_to.id`.
 
 ### 5.3 Capacidades no auth (hub WP-06a, `HUB_E2EE5=1`)
 A resposta de auth do hub ganha caps extras:
@@ -516,7 +522,7 @@ Timeout recomendado: 15 s (NSE: 5 s).
 ### 6.3 Funções livres
 | Função | Retorno |
 |---|---|
-| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.2; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
+| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.3; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
 | `new_device_id(prefix: "P"\|"W"\|"T"\|"X")` | `String` |
 | `envelope_version(content)` | `Option<u64>` (5, ou outro N → placeholder "Atualize") |
 | `encrypt_bytes(plain: bytes) / decrypt_bytes(data: bytes, info_json)` | `EncryptedBytes{data, info_json}` / bytes |
@@ -561,6 +567,12 @@ Regras de uso:
 - Sessão Megolm: rotação a cada **100 mensagens ou 7 dias**, ou quando a lista de aparelhos
   muda / alguém sai. Compartilhamento só com aparelhos **assinados pelo dono**
   (`IdentityBasedStrategy`); decifragem só de aparelhos assinados (`TrustRequirement::CrossSigned`).
+- **Fila NSE → app (1.3)**: o `sync()` em papel `Push`/`Extension` avança o cursor do servidor.
+  Para não perder nada, o núcleo grava no store os `chatyy_events` e `convs_with_new_keys` que
+  esse processo consumiu (máx. 1000 eventos, 7 dias) e os entrega **uma vez** no próximo
+  `sync()`/`sync_with()` do papel `App`/`Web`, antes dos eventos novos. O processo Push também
+  os recebe no próprio retorno (pode ignorar). O host do app não precisa fazer nada além de
+  tratar o `SyncResult` como sempre.
 - Recebeu `convs_with_new_keys` ⇒ host re-tenta decifrar as mensagens "aguardando" dessas conversas.
 - Recebeu `identity_changed_uids` ⇒ host grava a linha local "o código de segurança de X mudou"
   e chama `pin_identity(uid)` (comportamento WhatsApp: avisa, não bloqueia). Se X era
@@ -662,6 +674,7 @@ Campos de `data` em conversa `e2ee_mode=1`:
 | `e2e_sender_uid` | uid do remetente |
 | `title` | nome do remetente / grupo (metadado, como hoje) |
 | `body` | **genérico** `"Nova mensagem"` (i18n do servidor) — a NSE substitui pelo decifrado |
+| `e2e_np` | `"1"` = prévia oculta (conversa trancada / prévia "nunca" / tela bloqueada sem prévia); `"0"` = pode mostrar o decifrado. **Ausente = oculta.** A NSE/FCM só mostra texto com `e2e_np === "0"` explícito |
 
 **Nunca** em conversa E2EE: `msg_preview`, `bg_text`, `bg_rquote`, `bg_thumb`, `bg_fname`,
 `smart_replies`, `transcript`, `preview_full`, `image`. `bg_full='0'`. O `push_preview` WS leva
@@ -684,9 +697,18 @@ ponte/live, **sem** conta Kids supervisionada (D6), todos os membros ativos com 
 `conv_id`), e `E2EE5_KILL` desligado.
 
 ### 8.3 Ativação automática
+> **Estado da implementação (WP-07, 21/10):** ainda **não** implementada — só existe a ativação
+> explícita `e2ee5_conversation_state {set:1}`. A regra abaixo continua sendo o alvo (F1/F7).
+
 No `chat_send` / `conversation_state` / quando um membro ganha aparelho elegível: se elegível
 e `e2ee_mode=0` ⇒ `e2ee_mode=1`, `e2ee_since_pts = next_pts`, mensagem `system`
 `{"sys":"e2ee_on","since_pts":…}`, WS `conv_e2ee`. Nunca volta sozinha para 0.
+
+### 8.4bis Edição
+Oficial: edição = **linha nova** com payload `t:"edit"` e `edit_of` em claro (§2.4/§2.5). Por
+compatibilidade, `chat_edit` também aceita envelope `{"e2e":5…}` no lugar do texto (substitui o
+conteúdo e guarda a versão anterior como ciphertext em `chat_message_versions`); clientes novos
+devem usar `edit_of`.
 
 ### 8.4 Imposição no envio (chat_send, native_send, leaf, aceite regional, agendadas)
 Com `e2ee_mode=1`: conteúdo de usuário **sem** prefixo `{"e2e":5` ⇒ `e2ee5_plaintext_refused`.
@@ -719,6 +741,8 @@ Toque para saber mais." (`e2ee5.divider.on`).
 | `e2ee5_native` | `e2ee5_status.flags` | módulo nativo (WP-03) grava no store nativo ao abrir | o nativo só inicializa o núcleo se `true` |
 | `e2ee5_media` / `e2ee5_calls` / `e2ee5_link` / `e2ee5_backup` / `e2ee5_push_decrypt` | `e2ee5_status.flags` (env `E2EE5_FLAGS=media,calls,…` + por conta) | clientes | um interruptor por fase |
 | input `chatyy_crypto` | workflows CI | WP-02 | inclui o núcleo no binário (sem comportamento até as flags) |
+| `chatyy.e2ee5.push_decrypt.u.<uid>` (bool) | UserDefaults do **App Group** (iOS) — gravada pelo WP-03 em `ChatyyCryptoHost.status()` = `e2ee5_native && flags.e2ee5_push_decrypt` | NSE (WP-10) | sem `true` explícito a NSE não abre o núcleo ("Nova mensagem") |
+| `chatyy.e2ee5.push_decrypt.kill` (bool) | idem, App Group | NSE (WP-10) | `true` desliga a decifragem na NSE para todas as contas do aparelho |
 
 Os clientes leem `e2ee5_status` no login, ao voltar ao 1º plano (máx. 1×/10 min) e após
 `conv_e2ee`. Sem resposta ⇒ usa o último valor salvo; nunca liga sozinho.

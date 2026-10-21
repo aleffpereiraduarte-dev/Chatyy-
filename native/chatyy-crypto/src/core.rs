@@ -119,7 +119,7 @@ pub struct EncryptResult {
 }
 
 /// Evento to-device `chatyy.*` decifrado e de aparelho ASSINADO pelo dono.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
 pub struct ChatyyEvent {
     pub event_type: String,
@@ -207,6 +207,18 @@ const CV_TD_SINCE: &str = "chatyy.td_since";
 const CV_DC_SINCE: &str = "chatyy.dc_since";
 const CV_SEEN: &str = "chatyy.session_seen";
 const CV_CONVS: &str = "chatyy.convs";
+/// Fila persistida (CONTRATO §6.4): o que um processo NÃO-App (NSE/extensão) consumiu do
+/// to-device — eventos `chatyy.*` e conversas com chave nova — fica guardado no store e é
+/// entregue no próximo `sync()` do papel App/Web (o cursor do servidor já avançou).
+const CV_PENDING: &str = "chatyy.pending_for_app";
+const PENDING_MAX_EVENTS: usize = 1000;
+const PENDING_MAX_AGE_MS: u64 = 7 * 24 * 3600 * 1000;
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+struct PendingForApp {
+    events: Vec<(u64, ChatyyEvent)>,
+    convs: BTreeSet<String>,
+}
 pub(crate) const ROTATION_MSGS: u64 = 100;
 pub(crate) const ROTATION_PERIOD: Duration = Duration::from_secs(7 * 24 * 3600);
 
@@ -240,6 +252,7 @@ pub struct CryptoCore {
     lock: CrossProcessLock<LockableCryptoStore>,
     pub(crate) metrics: Metrics,
     pub(crate) uid: String,
+    role: ProcessRole,
 }
 
 /// Guarda de operação: segura a OlmMachine e a trava entre processos.
@@ -297,6 +310,7 @@ impl CryptoCore {
         Ok(Arc::new(CryptoCore {
             transport,
             uid: opts.uid.clone(),
+            role: opts.role,
             user_id,
             device_id,
             machine: Mutex::new(machine),
@@ -359,6 +373,7 @@ impl CryptoCore {
         }
         drain(m, self.transport.as_ref()).await?;
         res.identity_changed_uids = self.identity_changes(m, &res.identity_changed_uids).await?;
+        self.hand_over(m, &mut res).await?;
         Ok(res)
     }
 
@@ -370,6 +385,7 @@ impl CryptoCore {
         let mut r = self.process_sync(&op.m, &d).await?;
         drain(&op.m, self.transport.as_ref()).await?;
         r.identity_changed_uids = self.identity_changes(&op.m, &r.identity_changed_uids).await?;
+        self.hand_over(&op.m, &mut r).await?;
         Ok(r)
     }
 
@@ -688,6 +704,42 @@ impl CryptoCore {
             set.insert(user_id_for_uid(u)?);
         }
         Ok(set.into_iter().collect())
+    }
+
+    /// Papel Push/Extension: guarda o que consumiu para o app. Papel App/Web: entrega o que
+    /// outro processo consumiu (uma vez só) junto com o resultado deste sync.
+    async fn hand_over(&self, m: &OlmMachine, res: &mut SyncResult) -> CoreResult<()> {
+        let mut p: PendingForApp = Self::cv_get(m, CV_PENDING).await?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        let had = !p.events.is_empty() || !p.convs.is_empty();
+        match self.role {
+            ProcessRole::Push | ProcessRole::Extension => {
+                if res.chatyy_events.is_empty() && res.convs_with_new_keys.is_empty() {
+                    return Ok(());
+                }
+                let now = now_ms();
+                p.events.extend(res.chatyy_events.iter().cloned().map(|e| (now, e)));
+                p.events.retain(|(t, _)| now.saturating_sub(*t) <= PENDING_MAX_AGE_MS);
+                if p.events.len() > PENDING_MAX_EVENTS {
+                    let cut = p.events.len() - PENDING_MAX_EVENTS;
+                    p.events.drain(..cut);
+                }
+                p.convs.extend(res.convs_with_new_keys.iter().cloned());
+                Self::cv_set(m, CV_PENDING, &serde_json::to_string(&p)?).await?;
+            }
+            ProcessRole::App | ProcessRole::Web => {
+                if !had {
+                    return Ok(());
+                }
+                let mut evs: Vec<ChatyyEvent> = p.events.into_iter().map(|(_, e)| e).collect();
+                evs.append(&mut res.chatyy_events);
+                res.chatyy_events = evs;
+                let mut convs: BTreeSet<String> = p.convs;
+                convs.extend(res.convs_with_new_keys.drain(..));
+                res.convs_with_new_keys = convs.into_iter().collect();
+                Self::cv_set(m, CV_PENDING, "{}").await?;
+            }
+        }
+        Ok(())
     }
 
     /// Depois do keys_query: dos usuários com mudança, quais tiveram a MSK trocada.

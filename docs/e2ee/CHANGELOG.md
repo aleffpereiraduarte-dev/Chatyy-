@@ -1,5 +1,16 @@
 # Contrato E2EE v5 — histórico
 
+## e2ee5-contrato/1.3 — 21/10/2026 (WP-00, a pedido do WP-07/WP-10)
+- §4.3 códigos novos do chat.php: `e2ee5_server_read_refused` (409), `e2ee5_forward_client` (409),
+  `e2ee5_forbidden` (403, rebaixar grupo sem ser admin).
+- §5.2 prévia `reply_to` de pai cifrado: `content:""` + `reply_to.e2e: true`.
+- §8.3 nota: ativação automática ainda não implementada (só `set:1` explícito).
+- §8.4bis `chat_edit` aceita envelope por compatibilidade; oficial = linha nova com `edit_of`.
+- §7 push: `e2e_np` ("1" oculta / "0" pode mostrar; ausente = oculta).
+- §9 flags do App Group da NSE: `chatyy.e2ee5.push_decrypt.u.<uid>` e `…push_decrypt.kill`.
+- §6.4 fila NSE→app no núcleo: eventos `chatyy.*` e conversas com chave nova consumidos em papel
+  Push/Extension são entregues uma vez no próximo `sync()` do App/Web (núcleo 0.1.0 + este commit).
+
 ## e2ee5-contrato/1.2 — 21/10/2026 (WP-00, a pedido do WP-06a/WP-15)
 - §5.3 caps de auth `e2ee5_ws`/`e2ee5_ns` (envelope pelo WS só com `e2ee5_ns`); frame WS de até
   160 KiB para contas e2ee5.

@@ -456,6 +456,24 @@ async fn dois_processos_no_mesmo_store_app_e_nse() {
     let (e, c, _) = a.send("14", &[&a, &b], "corrida").await;
     let (r1, r2) = tokio::join!(nse.recv("14", &a, &e, &c, "z"), b.recv("14", &a, &e, &c, "z"));
     assert!(r1.is_ok() && r2.is_ok(), "{r1:?} {r2:?}");
+    // a NSE consome um chatyy.call_key (o cursor do servidor avança) → o app recebe no próximo sync, uma vez só
+    a.core.track_users(vec!["42".into()]).await.unwrap();
+    let st = a.core.send_to_device("chatyy.call_key".into(), vec![DeviceTarget { uid: "42".into(), device_id: b.device_id.clone() }], json!({"v":1,"call_id":"nse-1","key":"AAAA","index":0}).to_string()).await.unwrap();
+    assert_eq!(st.sent_devices, 1);
+    let ns = nse.core.sync().await.unwrap();
+    assert!(ns.chatyy_events.iter().any(|e| e.event_type == "chatyy.call_key"), "NSE viu o evento");
+    let (e5, c5, _) = a.send("14", &[&a, &b], "chave nova consumida pela NSE").await;
+    let _ = e5; let _ = c5;
+    let rot = a.core.rotate_conversation("14".into()).await.unwrap();
+    let (e6, c6, _) = a.send("14", &[&a, &b], "depois da rotação").await;
+    let ns2 = nse.core.sync().await.unwrap();
+    println!("[NSE→app] rotacionou={rot} convs NSE={:?}", ns2.convs_with_new_keys);
+    let app1 = b.core.sync().await.unwrap();
+    assert_eq!(app1.chatyy_events.iter().filter(|e| e.event_type == "chatyy.call_key").count(), 1, "app recebe o evento que a NSE consumiu");
+    assert!(app1.convs_with_new_keys.contains(&"14".to_string()), "app sabe que chegou chave nova: {:?}", app1.convs_with_new_keys);
+    let app2 = b.core.sync().await.unwrap();
+    assert!(app2.chatyy_events.is_empty() && app2.convs_with_new_keys.is_empty(), "entregue uma vez só");
+    assert_eq!(body_of(&b.recv("14", &a, &e6, &c6, "z6").await.unwrap()), "depois da rotação");
     // reabrir do zero (como após matar o app): tudo íntegro
     drop(nse);
     let fresh = Client::open_at(&s, "42", &b.device_id, b.dir.clone(), ProcessRole::App, "reaberto").await;
