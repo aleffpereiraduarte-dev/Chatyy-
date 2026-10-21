@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../ui/useDragToDismiss';
 import AvatarCircle from '../AvatarCircle';
 import { tc } from './HomeCarousel';
+import { THEME_V2, Grafite } from '../../constants/theme';
 
 function _ago(t, iso) {
   const ms = Date.now() - (Date.parse(iso || '') || Date.now());
@@ -39,11 +40,13 @@ export default function ContactNoteSheet({ visible, note, onClose, t, isDark, ro
 
   const name = String(note.name || '').trim() || String(note.email || '').split('@')[0];
   const first = name.split(/\s+/)[0] || name;
-  const bg = isDark ? '#1C1C1E' : '#FFFFFF';
-  const ink = isDark ? '#F5F5F7' : '#111111';
-  const sub = isDark ? '#8E8E93' : '#8A8A8E';
-  const fill = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(118,118,128,0.12)';
-  const bubbleBg = isDark ? '#2C2C2E' : '#F2F2F7';
+  // [2026-10-21 polish] folha nos tokens Grafite (era cinza-azulado iOS fixo)
+  const _g = THEME_V2 ? (isDark ? Grafite.dark : Grafite.light) : null;
+  const bg = _g ? (isDark ? _g.surface : _g.sheet) : (isDark ? '#1C1C1E' : '#FFFFFF');
+  const ink = _g ? _g.text : (isDark ? '#F5F5F7' : '#111111');
+  const sub = _g ? _g.muted : (isDark ? '#8E8E93' : '#8A8A8E');
+  const fill = _g ? _g.surface2 : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(118,118,128,0.12)');
+  const bubbleBg = _g ? _g.surface2 : (isDark ? '#2C2C2E' : '#F2F2F7');
   const canSend = !!reply.trim() && !busy;
 
   const send = async () => {
