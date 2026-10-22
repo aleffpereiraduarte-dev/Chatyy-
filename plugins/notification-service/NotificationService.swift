@@ -204,6 +204,19 @@ class NotificationService: UNNotificationServiceExtension {
             best.body = (isGroup && !sn.isEmpty) ? sn + ": " + txt : txt
             p["msg_preview"] = txt
             p["__e2e_plain"] = "1"
+        } else if Self.str(p, "e2e") == "5", !locked {
+            // [e2ee5 WP-10b 2026-10-22] não decifrou (flag/chave/tempo): o servidor manda só
+            // "Fulano: Nova mensagem" no grupo e NÃO manda msg_preview → o Communication
+            // Notification repetia o nome ("Fulano" + "Fulano: Nova mensagem"). Genérico sem o
+            // prefixo; corpo vazio/"..." nunca → "Nova mensagem" no idioma do push.
+            let sn = Self.str(p, "sender_name") ?? ""
+            var g = best.body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if isGroup, !sn.isEmpty, g.hasPrefix(sn + ": ") { g = String(g.dropFirst(sn.count + 2)) }
+            if ChatyyNSEGeneric.isPlaceholder(g) {
+                g = ChatyyNSEGeneric.newMessage(Self.str(p, "lang"))
+                best.body = (isGroup && !sn.isEmpty) ? sn + ": " + g : g
+            }
+            if Self.str(p, "msg_preview") == nil { p["msg_preview"] = g }
         }
 
         guard isChat, !locked, !conv.isEmpty else {

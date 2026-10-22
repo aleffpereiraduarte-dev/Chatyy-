@@ -17,6 +17,23 @@
 // Métricas só com códigos e milissegundos (App Group `chatyy.e2ee5.nse.*`), nunca conteúdo.
 import Foundation
 
+/// [e2ee5 WP-10b 2026-10-22] Genérico de push cifrado que não decifrou (vale com e sem o núcleo).
+enum ChatyyNSEGeneric {
+  static func newMessage(_ lang: String?) -> String {
+    let l = (lang ?? Locale.preferredLanguages.first ?? "pt").lowercased()
+    if l.hasPrefix("en") { return "New message" }
+    if l.hasPrefix("es") { return "Nuevo mensaje" }
+    return "Nova mensagem"
+  }
+
+  /// Corpo que não pode ir para a tela: vazio, reticências, ou só pontuação/espaços.
+  static func isPlaceholder(_ s: String) -> Bool {
+    let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+    if t.isEmpty { return true }
+    return t.unicodeScalars.allSatisfy { CharacterSet.punctuationCharacters.contains($0) || CharacterSet.whitespaces.contains($0) }
+  }
+}
+
 #if CHATYY_CRYPTO_CORE
 import Security
 
