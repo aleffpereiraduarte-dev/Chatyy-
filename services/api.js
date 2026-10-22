@@ -281,6 +281,43 @@ function _applySelectedServer(server) {
 // quando TODAS as suas origens estão; a falha de uma origem BR vai p/ a irmã antes do US.
 const _EDGE_DOWN_MS = 5 * 60 * 1000;
 const _edgeDownUntil = {}; // origin → epoch ms
+// [2026-10-22 edge-down-proporcional] Uma falha isolada tirava a região por 5 min e jogava
+// o usuário num servidor 4× mais lento (founder no Chile: scl 17 ms → usw 219 ms). Agora o
+// prazo é proporcional às falhas seguidas da origem: 30 s → 1 min → 2 min → 5 min (zera após
+// 10 min sem falha); antes de marcar uma falha de TRANSPORTE re-sonda o /health (respondeu
+// rápido = edge saudável, não marca); edge em lag-guard (header X-Chatyy-Lag-Guard: ele
+// está encaminhando leituras ao US lento) não é marcado; timeout de leitura sozinho não
+// derruba (só 2 timeouts c/ /health mudo em 2 min). Fora → re-sonda no fim do prazo e,
+// respondendo, volta na hora p/ a região de onde saiu.
+// Kill switch (OTA): globalThis.__chatyy_edge_down_flat = true (volta aos 5 min fixos).
+const _EDGE_DOWN_STEPS_MS = [30 * 1000, 60 * 1000, 2 * 60 * 1000, 5 * 60 * 1000];
+const _EDGE_STRIKE_RESET_MS = 10 * 60 * 1000;
+const _EDGE_LAGGUARD_FRESH_MS = 60 * 1000;
+const _EDGE_HEALTH_FAST_MS = 1500;
+const _edgeStrikes = {};     // origin → { n, at }
+const _edgeLagGuardAt = {};  // origin → epoch ms do último header X-Chatyy-Lag-Guard
+const _edgeSoftFails = {};   // origin → [epoch ms] timeouts c/ /health mudo
+const _edgeUpTimers = {};    // origin → timer da re-sonda de volta
+function _edgeDownFlat() { try { return globalThis.__chatyy_edge_down_flat === true; } catch { return false; } }
+function _edgeDownMsFor(origin) {
+  if (_edgeDownFlat()) return _EDGE_DOWN_MS;
+  const now = Date.now();
+  const k = _edgeStrikes[origin];
+  const n = (k && (now - k.at) < _EDGE_STRIKE_RESET_MS) ? k.n + 1 : 1;
+  _edgeStrikes[origin] = { n, at: now };
+  return _EDGE_DOWN_STEPS_MS[Math.min(n, _EDGE_DOWN_STEPS_MS.length) - 1];
+}
+function _noteEdgeLagGuard(url, on) {
+  try {
+    const srv = _edgeServerOfUrl(url);
+    if (!srv) return;
+    const o = _originOf(srv);
+    if (on) _edgeLagGuardAt[o] = Date.now(); else if (_edgeLagGuardAt[o]) delete _edgeLagGuardAt[o];
+  } catch {}
+}
+function _edgeInLagGuard(origin) {
+  return !!origin && (Date.now() - (_edgeLagGuardAt[origin] || 0)) < _EDGE_LAGGUARD_FRESH_MS;
+}
 function _originIsDown(origin) {
   return !!origin && origin !== 'us' && (_edgeDownUntil[origin] || 0) > Date.now();
 }
@@ -295,20 +332,78 @@ function _edgeServerOfUrl(u) {
   if (typeof u !== 'string') return null;
   return _allServers().find(e => e.region !== 'us' && u.startsWith(e.url + '/')) || null;
 }
-function _markEdgeDown(srv, why) {
+function _markEdgeDown(srv, why, downMs, prevOnIt) {
   const origin = _originOf(srv);
   if (!origin || origin === 'us') return;
-  _edgeDownUntil[origin] = Date.now() + _EDGE_DOWN_MS;
+  // já fora (várias requisições paralelas falhando juntas) → não empilha degraus do recuo
+  if (!downMs && !_edgeDownFlat() && _originIsDown(origin)) return;
+  const ms = downMs || _edgeDownMsFor(origin);
+  _edgeDownUntil[origin] = Date.now() + ms;
   const onIt = !_bestServer || _originOf(_bestServer) === origin || API_URL.startsWith(srv.url + '/');
+  if (!_edgeDownFlat()) _scheduleEdgeUpCheck(srv, ms, onIt || !!prevOnIt);
   // [client-lb 2026-10-21] irmã da região → próxima região do ranking medido → US (última).
   const next = _serverForRegion(srv.region, origin) || (_lbOn() ? _lbNextServer(srv.region) : null) || EDGE_SERVERS.find(s => s.region === 'us');
   if (next && onIt) {
     if (_lbOn() && next.region !== srv.region) _lbNoteFailover(srv.region, next, why);
     // ts "envelhecido" → o tick de 5 min re-proba logo após o prazo (não fica 30 min preso fora).
-    _bestServer = { ...next, latency: null, ts: Date.now() - EDGE_CHOICE_TTL_MS + _EDGE_DOWN_MS, net: _edgeNetKey(), src: 'edge-down' };
+    _bestServer = { ...next, latency: null, ts: Date.now() - EDGE_CHOICE_TTL_MS + ms, net: _edgeNetKey(), src: 'edge-down' };
     _applySelectedServer(next);
   }
-  try { console.warn('[API] edge ' + origin + ' fora (' + why + ') → ' + _originOf(next) + ' por ' + Math.round(_EDGE_DOWN_MS / 60000) + ' min'); } catch {}
+  try { console.warn('[API] edge ' + origin + ' fora (' + why + ') → ' + _originOf(next) + ' por ' + Math.round(ms / 1000) + ' s'); } catch {}
+}
+// Fim do prazo: re-sonda o /health da origem; respondeu → limpa o "fora" e, se o usuário
+// saiu dela por causa da falha (e ainda está no substituto), volta na hora. Não respondeu →
+// novo degrau do recuo (30 s → 1 → 2 → 5 min) e tenta de novo no fim dele.
+function _scheduleEdgeUpCheck(srv, ms, wasOnIt) {
+  const origin = _originOf(srv);
+  try { if (_edgeUpTimers[origin]) clearTimeout(_edgeUpTimers[origin]); } catch {}
+  _edgeUpTimers[origin] = setTimeout(async () => {
+    _edgeUpTimers[origin] = null;
+    try {
+      if (_edgeDownFlat()) return;
+      const dt = await _lbTimed(srv.url, 2500);
+      if (dt == null) {
+        _markEdgeDown(srv, 'health ainda mudo', null, wasOnIt);
+        return;
+      }
+      delete _edgeDownUntil[origin];
+      const leftAndStuck = wasOnIt && _bestServer && ['edge-down', 'lb-failover'].includes(_bestServer.src)
+        && _originOf(_bestServer) !== origin;
+      if (leftAndStuck) {
+        _bestServer = { ...srv, latency: Math.round(dt), ts: Date.now(), net: _edgeNetKey(), src: 'edge-up' };
+        _applySelectedServer(srv);
+        try { _persistBestServer(); } catch {}
+        try { if (_lbOn()) _lbPersist(); } catch {}
+        try { if (_lbOn()) _lb()?.beacon('edge_up', { reg: srv.region, org: origin, rtt: Math.round(dt), net: _edgeNetKey() || '' }); } catch {}
+        try { console.warn('[API] edge ' + origin + ' voltou (' + Math.round(dt) + ' ms) → de volta p/ ' + origin); } catch {}
+      }
+    } catch {}
+  }, Math.max(5000, ms));
+}
+// Falha de TRANSPORTE (conexão/TLS, sem status) numa origem: re-sonda rápida do /health antes
+// de marcar. /health rápido = edge saudável (rede/app que oscilou) → não marca. Edge em
+// lag-guard (resposta anterior trouxe X-Chatyy-Lag-Guard) → não marca (está saudável,
+// encaminhando ao US). 5xx de gateway (502/503/504) marca direto (o /health é estático no
+// nginx e não enxerga o php-fpm parado), mas com o prazo proporcional.
+async function _maybeMarkEdgeDown(srv, why, r) {
+  try {
+    const origin = _originOf(srv);
+    if (!origin || origin === 'us') return;
+    if (_edgeDownFlat()) { _markEdgeDown(srv, why, _EDGE_DOWN_MS); return; }
+    if (_edgeInLagGuard(origin)) {
+      try { console.warn('[API] edge ' + origin + ' falhou (' + why + ') em lag-guard → não marca'); } catch {}
+      return;
+    }
+    const transport = !r || !(r.status > 0);
+    if (transport) {
+      const dt = await _lbTimed(srv.url, _EDGE_HEALTH_FAST_MS);
+      if (dt != null) {
+        try { console.warn('[API] edge ' + origin + ' falhou (' + why + ') mas /health ' + Math.round(dt) + ' ms → não marca'); } catch {}
+        return;
+      }
+    }
+    _markEdgeDown(srv, why);
+  } catch {}
 }
 // [2026-05-30] media.chatyy.com.br is a Cloudflare CNAME → public.r2.dev (R2)
 // that was NEVER bound to a bucket → it 404s EVERY /data/ path (verified: even
@@ -834,7 +929,17 @@ function _lbVerifyAfterTimeout(srv) {
     const nx = _serverForRegion(srv.region, _originOf(srv)) || _lbNextServer(srv.region);
     if (!nx) return;
     Promise.all([_lbTimed(srv.url, 3000), _lbTimed(nx.url, 3000)]).then(([a, b]) => {
-      if (a == null && b != null) _markEdgeDown(srv, 'timeout+health');
+      if (!(a == null && b != null)) return;
+      const o = _originOf(srv);
+      if (_edgeDownFlat()) { _markEdgeDown(srv, 'timeout+health', _EDGE_DOWN_MS); return; }
+      // [2026-10-22] timeout de leitura sozinho não derruba: edge em lag-guard nunca; senão só
+      // o 2º timeout c/ /health mudo em 2 min.
+      if (_edgeInLagGuard(o)) return;
+      const now = Date.now();
+      const arr = (_edgeSoftFails[o] || []).filter(t => now - t < 2 * 60 * 1000);
+      arr.push(now);
+      _edgeSoftFails[o] = arr;
+      if (arr.length >= 2) { _edgeSoftFails[o] = []; _markEdgeDown(srv, 'timeout+health ×2'); }
     }).catch(() => {});
   } catch {}
 }
@@ -843,11 +948,18 @@ function _lbVerifyAfterTimeout(srv) {
 export function lbReportWsFailure(region) {
   try {
     if (!_lbOn() || !region || region === 'us') return;
-    for (const s of _regionOrigins(region)) _edgeDownUntil[_originOf(s)] = Date.now() + _EDGE_DOWN_MS;
+    const origins = _regionOrigins(region);
+    let downMs = _EDGE_DOWN_MS;
+    if (!_edgeDownFlat() && origins.length) downMs = _edgeDownMsFor(_originOf(origins[0]));
+    const onIt = !!(_bestServer && _bestServer.region === region);
+    for (const s of origins) {
+      _edgeDownUntil[_originOf(s)] = Date.now() + downMs;
+      if (!_edgeDownFlat()) _scheduleEdgeUpCheck(s, downMs, onIt && s === origins[0]);
+    }
     if (_bestServer && _bestServer.region === region) {
       const nx = _lbNextServer(region) || EDGE_SERVERS[0];
       _lbNoteFailover(region, nx, 'ws_preauth');
-      _bestServer = { ...nx, latency: null, ts: Date.now() - EDGE_CHOICE_TTL_MS + _EDGE_DOWN_MS, net: _edgeNetKey(), src: 'lb-failover' };
+      _bestServer = { ...nx, latency: null, ts: Date.now() - EDGE_CHOICE_TTL_MS + downMs, net: _edgeNetKey(), src: 'lb-failover' };
       _applySelectedServer(nx);
       _lbPersist();
     }
@@ -2147,10 +2259,10 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
     if (sib) {
       const rs = await _rawApiCallOnce(action, params, method, sib.url);
       if (rs && rs.status > 0 && rs.status < 500) {
-        _markEdgeDown(srv, why);
+        _maybeMarkEdgeDown(srv, why, r);
         return rs;
       }
-      if (_edgeFailed(rs, readable)) _markEdgeDown(sib, 'irmã: ' + (rs.status ? 'HTTP ' + rs.status : 'transporte'));
+      if (_edgeFailed(rs, readable)) _maybeMarkEdgeDown(sib, 'irmã: ' + (rs.status ? 'HTTP ' + rs.status : 'transporte'), rs);
       else return r; // irmã devolveu outra coisa (ex.: 500 do PHP) → não insiste no US
     }
     // [client-lb 2026-10-21] próxima região do ranking medido antes do US (última opção).
@@ -2159,10 +2271,10 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
       if (nx && nx.region !== 'us') {
         const rn = await _rawApiCallOnce(action, params, method, nx.url);
         if (rn && rn.status > 0 && rn.status < 500) {
-          _markEdgeDown(srv, why);
+          _maybeMarkEdgeDown(srv, why, r);
           return rn;
         }
-        if (_edgeFailed(rn, readable)) _markEdgeDown(nx, 'próxima: ' + (rn.status ? 'HTTP ' + rn.status : 'transporte'));
+        if (_edgeFailed(rn, readable)) _maybeMarkEdgeDown(nx, 'próxima: ' + (rn.status ? 'HTTP ' + rn.status : 'transporte'), rn);
         else if (rn && rn.status >= 500) return r;
       }
     }
@@ -2171,7 +2283,7 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
     if (_usIsDown()) return r;
     const r2 = await _rawApiCallOnce(action, params, method, US_FALLBACK_BASE);
     if (r2 && r2.status > 0 && r2.status < 500) {
-      _markEdgeDown(srv, why);
+      _maybeMarkEdgeDown(srv, why, r);
       return r2;
     }
     // [failover 2026-10-19] edge E US falharam → US fora por _US_DOWN_MS (fica no edge, que serve
@@ -2295,6 +2407,12 @@ async function _rawApiCallOnce(action, params = {}, method = 'GET', _baseOverrid
       authToken = newToken;
       storeToken(newToken);
     }
+    // [2026-10-22 edge-down-proporcional] edge encaminhando leituras ao US (lag-guard).
+    // Só limpa com resposta do PHP (<500): um 502 do nginx não diz nada sobre o lag-guard.
+    try {
+      const lg = !!res.headers.get('x-chatyy-lag-guard');
+      if (lg || (res.status > 0 && res.status < 500)) _noteEdgeLagGuard(url, lg);
+    } catch {}
 
     const text = await res.text();
     clearTimeout(timeout);
