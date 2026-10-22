@@ -260,6 +260,29 @@ export function IconGameDesenho(p) {
 }
 const NOVOS_ICONS = { termo: IconGameTermo, ppt: IconGamePpt, stop: IconGameStop, desenho: IconGameDesenho };
 
+// [jogos3 2026-10-22] Xadrez (cavalo) e Quem me conhece mais? (duas cabeças + interrogação) — só Path/Circle: viram nós nativos
+export function IconGameXadrez(p) {
+  return (
+    <S {...p}>
+      <Path d="M7 20.5h10.5" />
+      <Path d="M8.2 18.2c0-3.6 1.4-5.6 3.6-7.4-1.3.1-2.6.7-3.5 1.7l-1.6-1.5c-.4-.4-.4-1.1.1-1.5L11 6l.3-2.2 1.5 1.6c3.4.3 5.3 3.2 5.3 7.1v5.7z" />
+      <Circle cx="11.3" cy="8.4" r="0.6" />
+    </S>
+  );
+}
+export function IconGameConhece(p) {
+  return (
+    <S {...p}>
+      <Circle cx="8" cy="8.5" r="3" />
+      <Path d="M2.8 19.5c.4-3.2 2.5-5.3 5.2-5.3s4.8 2.1 5.2 5.3" />
+      <Path d="M15.2 6.6c.3-1.5 1.5-2.4 3-2.4 1.6 0 2.9 1.1 2.9 2.6 0 1.3-.8 1.9-1.7 2.5-.8.5-1.2 1-1.2 1.9" />
+      <Circle cx="18.2" cy="13.6" r="0.5" />
+      <Path d="M15.5 19.5c.2-1.6.8-2.9 1.7-3.8" />
+    </S>
+  );
+}
+const EXTRA_ICONS = { xadrez: IconGameXadrez, conhece: IconGameConhece };
+
 export function GameTypeIcon({ type, ...p }) {
   switch (type) {
     case 'damas': return <IconGameDamas {...p} />;
@@ -272,11 +295,13 @@ export function GameTypeIcon({ type, ...p }) {
     case 'domino': return <IconGameDomino {...p} />;
     case 'memoria': return <IconGameMemoria {...p} />;
     case 'termo': case 'ppt': case 'stop': case 'desenho': { const N = NOVOS_ICONS[type]; return <N {...p} />; } // [jogos2b]
+    case 'xadrez': case 'conhece': { const N = EXTRA_ICONS[type]; return <N {...p} />; } // [jogos3]
     default: return <IconGamepad {...p} />;
   }
 }
 export function gameTypeIconComp(type) {
   if (NOVOS_ICONS[type]) return NOVOS_ICONS[type]; // [jogos2b]
+  if (EXTRA_ICONS[type]) return EXTRA_ICONS[type]; // [jogos3]
   return { damas: IconGameDamas, velha: IconGameVelha, cartas: IconGameCartas, quiz: IconGameQuiz, forca: IconGameForca,
     ligue4: IconGameLigue4, naval: IconGameNaval, domino: IconGameDomino, memoria: IconGameMemoria }[type] || IconGamepad;
 }

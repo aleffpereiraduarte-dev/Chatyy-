@@ -13,6 +13,7 @@
 // → store por jogo (subscribeGame) + ouvintes de conversa (onGameUpdate) que atualizam o cartão.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NOVOS_TYPES, NOVOS_TITLES, NOVOS_SUBS, NOVOS_ERRORS, novosStatusLine } from './gamesNovos'; // [jogos2b]
+import { EXTRA_TYPES, EXTRA_TITLES, EXTRA_SUBS, EXTRA_ERRORS, extraStatusLine } from './gamesExtra'; // [jogos3]
 
 const CAP_KEY = 'chatyy_games_cap_v1';
 const CAP_TTL = 6 * 3600 * 1000;
@@ -154,6 +155,9 @@ const TITLE_FB = { velha: 'Jogo da Velha', damas: 'Damas', cartas: 'Cartas Color
 NOVOS_TYPES.forEach((x) => { if (!GAME_TYPES.includes(x)) GAME_TYPES.push(x); });
 Object.assign(TITLE_FB, NOVOS_TITLES);
 Object.assign(TITLE_FB, { ligue4: 'Ligue 4', naval: 'Batalha Naval', domino: 'Dominó', memoria: 'Jogo da Memória' }); // [jogos2]
+// [jogos3 2026-10-22] Xadrez / Quem me conhece mais? (servidor: games_engine_<tipo>.php)
+EXTRA_TYPES.forEach((x) => { if (!GAME_TYPES.includes(x)) GAME_TYPES.push(x); });
+Object.assign(TITLE_FB, EXTRA_TITLES);
 export function tr(t, k, fb, vars) {
   let s = fb;
   try { const v = t ? t(k, vars ? { ...vars, defaultValue: fb } : fb) : fb; if (v && v !== k) s = v; } catch {}
@@ -165,6 +169,7 @@ export function gameSubtitle(t, type) {
   const fb = { damas: 'Regras brasileiras, dama voa', velha: 'Rapidinho, 3 em linha', cartas: 'Descarte por cor ou número, 2 a 6', quiz: 'Todos respondem ao mesmo tempo', forca: 'Adivinhe a palavra em turnos' };
   Object.assign(fb, NOVOS_SUBS); // [jogos2b]
   Object.assign(fb, SUB_J2); // [jogos2]
+  Object.assign(fb, EXTRA_SUBS); // [jogos3]
   return tr(t, 'games.sub.' + type, fb[type] || '');
 }
 export function parseGameContent(c) {
@@ -304,6 +309,7 @@ export function gameStatusLine(t, g, meEmail, now) {
     // [jogos2] Batalha Naval: fase de posicionar (sem vez)
     if (g.type === 'naval' && !g.turn && g.info && g.info.ph === 'place') return tr(t, 'games.naval.placing', 'Posicionando os barcos');
     { const nx = novosStatusLine(t, g, meEmail, tr, nameOf); if (nx) return nx; } // [jogos2b] termo/ppt/stop/desenho (sem vez)
+    { const nx = extraStatusLine(t, g, meEmail, tr, nameOf); if (nx) return nx; } // [jogos3] xadrez/conhece
     if (!g.turn) return tr(t, 'games.status.playing', 'Em andamento');
     if (_lc(g.turn) === me) return tr(t, 'games.status.yourTurn', 'Sua vez');
     return tr(t, 'games.status.turnOf', 'Vez de {name}', { name: nameOf(g, g.turn, meEmail, t) });
@@ -356,6 +362,7 @@ const ERR_FB = {
   choose_side: 'Escolha a ponta', can_play: 'Você tem pedra que encaixa', pile_empty: 'O monte acabou', card_taken: 'Esse par já saiu', card_up: 'Essa carta já está virada',
 };
 Object.assign(ERR_FB, NOVOS_ERRORS); // [jogos2b]
+Object.assign(ERR_FB, EXTRA_ERRORS); // [jogos3]
 export function gameErrorText(t, r) {
   const code = String((r && (r.message || (r.data && r.data.error))) || '');
   if (ERR_FB[code]) return tr(t, 'games.err.' + code, ERR_FB[code]);

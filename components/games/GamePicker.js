@@ -341,7 +341,7 @@ export default function GamePicker({ visible, onClose, conversationId, conversat
     const ex = active.find((g) => g.type === tp);
     if (ex && !isGroup) { openGame(ex); return; } // já tem uma desse jogo aberta: continua nela
     if (!isGroup) { create(tp, [], false); return; }
-    setSel([]); setOpen(tp === 'quiz'); setStep('players');
+    setSel([]); setOpen(tp === 'quiz' || tp === 'conhece'); setStep('players'); // [jogos3] conhece: aberto ao grupo
   };
   const toggle = (e) => {
     hTap();
@@ -490,7 +490,7 @@ export default function GamePicker({ visible, onClose, conversationId, conversat
                 <Text style={{ color: G.text, fontWeight: '700', fontSize: 12.5 }}>{tr(t, 'games.rules.button', 'Regras')}</Text>
               </Pressable>
             </View>
-            {type === 'quiz' ? (
+            {type === 'quiz' || type === 'conhece' ? (
               <View style={[st.openRow, { borderColor: G.line }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: G.text, fontWeight: '700', fontSize: 14.5 }}>{tr(t, 'games.pick.openTitle', 'Aberto ao grupo')}</Text>

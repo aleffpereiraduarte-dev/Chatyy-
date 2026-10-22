@@ -5,24 +5,29 @@
 // Nunca emoji: tudo SVG (react-native-svg; `color` do <Svg> alimenta o currentColor).
 import React from 'react';
 import Svg, { Rect, Circle, Path, G, Line } from 'react-native-svg';
+import { ChessShape } from './boards/chessPieces'; // [jogos3]
 
 /** Chaves dos 8 jogos novos (selo NOVO na grade). */
 export const NEW_GAMES = { ligue4: 1, naval: 1, domino: 1, memoria: 1, termo: 1, ppt: 1, stop: 1, desenho: 1 };
+Object.assign(NEW_GAMES, { xadrez: 1, conhece: 1 }); // [jogos3 2026-10-22]
 export function isNewGame(type) { return !!NEW_GAMES[type]; }
 
 /** Ordem da grade (o que não estiver aqui vai para o fim, na ordem do catálogo). */
 export const COVER_ORDER = ['ligue4', 'damas', 'cartas', 'naval', 'termo', 'velha', 'ppt', 'quiz', 'memoria', 'forca', 'domino', 'stop', 'desenho'];
+COVER_ORDER.splice(2, 0, 'xadrez'); COVER_ORDER.splice(6, 0, 'conhece'); // [jogos3]
 
 /** Títulos de reserva (pt) dos jogos novos, usados só se o app ainda não tiver a tradução. */
 export const COVER_TITLE_FB = {
   ligue4: 'Ligue 4', naval: 'Batalha Naval', domino: 'Dominó', memoria: 'Jogo da Memória',
   termo: 'Termo em dupla', ppt: 'Pedra, papel e tesoura', stop: 'Stop', desenho: 'Desenha e Adivinha',
+  xadrez: 'Xadrez', conhece: 'Quem me conhece mais?', // [jogos3]
 };
 /** Frase curta de reserva (pt) — chave i18n games.blurb.<tipo>. */
 export const COVER_BLURB_FB = {
   ligue4: '4 em linha, fichas que caem', naval: 'Afunde os barcos do outro', domino: 'Clássico de 2, pedra que encaixa',
   memoria: 'Vire pares, acerto joga de novo', termo: 'Adivinhe a palavra de 5 letras', ppt: 'Melhor de 3, jogada secreta',
   stop: 'Letra sorteada e... STOP', desenho: 'Um desenha, o outro chuta',
+  xadrez: 'Regras completas, xeque-mate', conhece: 'Quem acerta mais sobre o outro', // [jogos3]
 };
 
 // tinta do fundo da capa: claro (mockup) / escuro (mesmo matiz, bem baixo)
@@ -30,6 +35,7 @@ const TINT = {
   damas: ['#EFE8DC', '#2A261F'], cartas: ['#FBE9D6', '#2E241A'], ligue4: ['#DFE5FB', '#1C2238'], naval: ['#E3EFF6', '#17252D'],
   termo: ['#E2F1E5', '#18271C'], ppt: ['#F6E5EE', '#2B1C24'], memoria: ['#ECE6F8', '#231E31'], stop: ['#FBE3E1', '#2E1C1B'],
   desenho: ['#FCF1D6', '#2C2717'], domino: ['#ECEBE6', '#25252A'],
+  xadrez: ['#E6E8EC', '#1F2228'], conhece: ['#F7E4EA', '#2C1C22'], // [jogos3]
 };
 /** Fundo da capa. Jogos sem tinta própria usam a superfície 2 do Grafite. */
 export function coverTint(type, isDark) {
@@ -210,6 +216,28 @@ function Domino() {
     </G>
   );
 }
+// [jogos3 2026-10-22] Xadrez: canto de tabuleiro + cavalo e rei; Conhece: dois balões, um com interrogação
+function Xadrez() {
+  return (
+    <G>
+      <Rect x={6} y={6} width={58} height={58} rx={10} fill="#D9DCE2" />
+      {SQ.map((r) => SQ.map((c) => ((r + c) % 2 ? <Rect key={`${r}${c}`} x={6 + c * 14.5} y={6 + r * 14.5} width={14.5} height={14.5} fill="#8B909B" /> : null)))}
+      <G transform="translate(3 23) scale(0.9)"><ChessShape k="n" white /></G>
+      <G transform="translate(24 7) scale(0.95)"><ChessShape k="k" white={false} /></G>
+    </G>
+  );
+}
+function Conhece() {
+  return (
+    <G>
+      <Path d="M8 14c0-3.3 2.7-6 6-6h22c3.3 0 6 2.7 6 6v13c0 3.3-2.7 6-6 6H22l-7 6v-6h-1c-3.3 0-6-2.7-6-6z" fill="#C2577A" />
+      <Path d="M20.5 16.2c.5-2.4 2.4-3.8 4.6-3.8 2.5 0 4.4 1.7 4.4 4 0 2-1.3 3-2.6 3.8-1.2.8-1.8 1.4-1.8 2.9" stroke="#fff" strokeWidth={2.6} fill="none" strokeLinecap="round" />
+      <Circle cx={25.1} cy={27.4} r={1.6} fill="#fff" />
+      <Path d="M30 38c0-3.3 2.7-6 6-6h20c3.3 0 6 2.7 6 6v10c0 3.3-2.7 6-6 6h-1v6l-7-6H36c-3.3 0-6-2.7-6-6z" fill="#fff" stroke="currentColor" strokeWidth={1.4} opacity={0.95} />
+      <Path d="M39.5 42.8c1.6-1.9 4.6-1.6 6 .5 1.4-2.1 4.4-2.4 6-.5 1.6 1.9.8 4.4-1.1 6.1L45.5 53l-4.9-4.1c-1.9-1.7-2.7-4.2-1.1-6.1z" fill="#E5484D" />
+    </G>
+  );
+}
 function Generic() {
   return (
     <G fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
@@ -221,7 +249,7 @@ function Generic() {
   );
 }
 
-const ART = { damas: Damas, velha: Velha, cartas: Cartas, quiz: Quiz, forca: Forca, ligue4: Ligue4, naval: Naval, termo: Termo, ppt: Ppt, memoria: Memoria, stop: Stop, desenho: Desenho, domino: Domino };
+const ART = { damas: Damas, velha: Velha, cartas: Cartas, quiz: Quiz, forca: Forca, ligue4: Ligue4, naval: Naval, termo: Termo, ppt: Ppt, memoria: Memoria, stop: Stop, desenho: Desenho, domino: Domino, xadrez: Xadrez, conhece: Conhece };
 export function hasCover(type) { return !!ART[type]; }
 
 /** Capa do jogo (só a arte; o fundo tingido fica no contêiner). `color` = currentColor (traços neutros). */

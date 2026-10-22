@@ -7,6 +7,7 @@ import { hTap } from './fx';
 import { PressScale } from './motion';
 import { gameTitle, tr } from '../../services/games';
 import { NOVOS_RULES } from '../../services/gamesNovos'; // [jogos2b]
+import { EXTRA_RULES } from '../../services/gamesExtra'; // [jogos3]
 
 export const RULES_FB = {
   damas: [
@@ -75,6 +76,7 @@ Object.assign(RULES_FB, {
 });
 
 Object.assign(RULES_FB, NOVOS_RULES); // [jogos2b 2026-10-21] termo/ppt/stop/desenho
+Object.assign(RULES_FB, EXTRA_RULES); // [jogos3 2026-10-22] xadrez/conhece
 
 export function rulesFor(t, type) {
   const fb = RULES_FB[type] || [];

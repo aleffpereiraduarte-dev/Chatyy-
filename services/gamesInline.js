@@ -26,6 +26,7 @@ export const SHEET_TYPES = { damas: 1, cartas: 1 };
 Object.assign(SHEET_TYPES, { ligue4: 1, naval: 1, domino: 1, memoria: 1 }); // [jogos2 2026-10-21] abrem no painel
 
 Object.assign(SHEET_TYPES, { termo: 1, ppt: 1, stop: 1, desenho: 1 }); // [jogos2b 2026-10-21] simultâneos: abrem no painel
+Object.assign(SHEET_TYPES, { xadrez: 1, conhece: 1 }); // [jogos3 2026-10-22] abrem no painel
 
 export function gamesInlineOn() {
   try { if (globalThis.__chatyy_games_inline === false) return false; } catch {}

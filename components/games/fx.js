@@ -55,4 +55,5 @@ export const CARD_COLORS = { r: '#E5484D', y: '#F0B400', g: '#22A55B', b: '#2F6F
 // [2026-10-20 polish] cor de acento de cada jogo (só detalhes: ícone do cartão, filete, anel de vez)
 export const GAME_ACCENT = { velha: '#2F6FEB', forca: '#22A55B', quiz: '#8B5CF6', damas: '#E0A800', cartas: '#E5484D' };
 Object.assign(GAME_ACCENT, { ligue4: '#3B5BDB', naval: '#2F80B5', domino: '#8A6A4A', memoria: '#D9488F' }); // [jogos2]
+Object.assign(GAME_ACCENT, { xadrez: '#5B6B82', conhece: '#C2577A' }); // [jogos3]
 export function gameAccent(type) { return GAME_ACCENT[type] || '#8E8E93'; }
