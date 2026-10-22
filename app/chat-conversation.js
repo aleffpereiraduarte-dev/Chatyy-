@@ -31577,7 +31577,7 @@ function ChatConversationInnerBody() {
                       // re-send. `doRetry` holds the EXACT original retry logic.
                       const doRetry = async () => {
                       const isText = msg.type === 'text' && msg.content;
-                      const isMediaType = ['image','video','audio','voice','gif','sticker','file'].includes(msg.type);
+                      const isMediaType = ['image','video','audio','voice','gif','sticker','lottie_sticker','file'].includes(msg.type); // [2026-10-22] + figurinha animada (tocar no ! não fazia nada)
                       const localUriRaw = msg._localUri || msg.file_url || '';
                       // Media que ainda não foi pro server tem file_url local
                       // (file://... no native, blob:... no web). Esse caso o
