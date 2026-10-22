@@ -1,8 +1,10 @@
 package expo.modules.callkit
 
 import android.content.Context
+import android.media.AudioManager
 import android.util.Log
 import java.net.URI
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * [2026-10-09 native-transport] Entrada REGIONAL do WebSocket para os sockets
@@ -75,11 +77,13 @@ object ChatyyWsEndpoint {
     /** API 1 (compat): ChatyyChatCore.setWsRegion. Região desconhecida → "us".
      *  Limpa a URL da API 2 → comportamento idêntico ao binário antigo. */
     fun setRegion(ctx: Context?, region: String) {
+        val before = pick(ctx)
         val r = region.lowercase()
         val v = if (REGIONAL.containsKey(r)) r else "us"
         cachedRegion = v
         cachedUrl = ""
         try { prefs(ctx)?.edit()?.putString(KEY_REGION, v)?.remove(KEY_URL)?.apply() } catch (_: Throwable) {}
+        notifyChanged(ctx, before)
     }
 
     /** API 2: ChatyyChatCore.setWsEndpoint(region, url). Inválido → false e nada
@@ -87,6 +91,7 @@ object ChatyyWsEndpoint {
     fun setEndpoint(ctx: Context?, region: String, url: String): Boolean {
         val r = region.lowercase()
         if (!isValidRegion(r) || !isValidWsUrl(url)) return false
+        val before = pick(ctx)
         val toUs = r == "us" || url == US_URL
         val v = if (toUs) "us" else r
         cachedRegion = v
@@ -96,7 +101,44 @@ object ChatyyWsEndpoint {
             if (toUs) e?.remove(KEY_URL) else e?.putString(KEY_URL, url)
             e?.apply()
         } catch (_: Throwable) {}
+        notifyChanged(ctx, before)
         return true
+    }
+
+    // ── [2026-10-22 ws-migrate] Aviso de troca de região ────────────────────
+    /** Ouvintes (ChatCoreSocket / CallSignalWs) chamados quando o JS grava a
+     *  região (setRegion/setEndpoint). Cada socket compara o host em que ESTÁ
+     *  com pick() e, ocioso e fora de ligação, faz a troca suave (abre o novo,
+     *  autentica, resume, fecha o velho). RelayWakeService não ouve: sessão
+     *  efêmera (~10 s) que já usa pick() a cada despertar. */
+    private val listeners = CopyOnWriteArrayList<() -> Unit>()
+
+    fun addChangeListener(l: () -> Unit) { listeners.addIfAbsent(l) }
+
+    private fun notifyChanged(ctx: Context?, before: String) {
+        val after = pick(ctx)
+        if (after != before) Log.i(TAG, "endpoint ${hostOf(before)} → ${hostOf(after)} — avisando sockets nativos")
+        for (l in listeners) {
+            try { l() } catch (t: Throwable) { Log.w(TAG, "listener: ${t.message}") }
+        }
+    }
+
+    /** true = há ligação tocando/saindo/em curso neste aparelho (Telecom,
+     *  toque do app ou áudio em modo de chamada) → sockets adiam a troca. */
+    fun callBusy(ctx: Context?): Boolean {
+        try { if (IncomingCallRegistry.hasAnyConnection()) return true } catch (_: Throwable) {}
+        try { if (CallRingingService.ringingCallIds.isNotEmpty()) return true } catch (_: Throwable) {}
+        try {
+            val am = ctx?.applicationContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (am != null && am.mode != AudioManager.MODE_NORMAL) return true
+        } catch (_: Throwable) {}
+        return false
+    }
+
+    /** Mesmo host? (troca só quando o host muda de verdade) */
+    fun sameHost(a: String?, b: String?): Boolean {
+        val ha = hostOf(a) ?: return false
+        return ha == hostOf(b)
     }
 
     // ── Leitura ─────────────────────────────────────────────────────────────

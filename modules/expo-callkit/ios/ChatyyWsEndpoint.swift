@@ -1,4 +1,5 @@
 import Foundation
+import CallKit
 
 /// [2026-10-09 native-transport] Entrada REGIONAL do WebSocket para os sockets
 /// nativos (ChatCoreSocket, CallSignalWs, RelayWake) — mesma regra do JS
@@ -65,9 +66,11 @@ enum ChatyyWsEndpoint {
     static func setRegion(_ region: String) {
         let r = region.lowercased()
         let v = regionalURLs[r] != nil ? r : "us"
+        let before = pick()
         let d = UserDefaults(suiteName: appGroupId)
         d?.set(v, forKey: regionKey)
         d?.removeObject(forKey: urlKey)
+        notifyIfChanged(before)
     }
 
     /// API 2: ChatyyChatCore.setWsEndpoint(region, url). Inválido → false e
@@ -76,6 +79,8 @@ enum ChatyyWsEndpoint {
     static func setEndpoint(_ region: String, _ url: String) -> Bool {
         let r = region.lowercased()
         guard isValidRegion(r), isValidWsURL(url) else { return false }
+        let before = pick()
+        defer { notifyIfChanged(before) }
         let d = UserDefaults(suiteName: appGroupId)
         if r == "us" || url == usURL.absoluteString {
             d?.set("us", forKey: regionKey)
@@ -85,6 +90,39 @@ enum ChatyyWsEndpoint {
             d?.set(url, forKey: urlKey)
         }
         return true
+    }
+
+    // MARK: - [2026-10-22 ws-migrate] Aviso de troca de região
+
+    /// Postada (fila qualquer) sempre que o JS grava a região
+    /// (setRegion/setEndpoint), e quando a última ligação
+    /// do aparelho termina (sockets que adiaram a troca reavaliam).
+    /// ChatCoreSocket / CallSignalWs observam e fazem a troca suave (abre o
+    /// novo, autentica, resume, fecha o velho) se ociosos e fora de ligação.
+    /// RelayWake não observa: sessão efêmera (janela de segundos) que já usa
+    /// pick() a cada despertar.
+    static let changedNotification = Notification.Name("ChatyyWsEndpointChanged")
+
+    private static func notifyIfChanged(_ before: URL) {
+        let after = pick()
+        if after.absoluteString != before.absoluteString {
+            NSLog("[ChatyyWsEndpoint] endpoint %@ → %@ — avisando sockets nativos", before.host ?? "?", after.host ?? "?")
+        }
+        // Sempre avisa: cada socket compara o host em que ESTÁ com pick()
+        // (pode ter ficado numa região antiga mesmo sem a escolha mudar agora).
+        NotificationCenter.default.post(name: changedNotification, object: nil)
+    }
+
+    /// true = há ligação (CallKit) ativa, saindo ou tocando neste aparelho →
+    /// sockets NÃO trocam de região agora (adiam até acabar).
+    static func callBusy() -> Bool {
+        return ChatyyCallBusyObserver.shared.busy()
+    }
+
+    /// Mesmo host? (troca só quando o host muda de verdade)
+    static func sameHost(_ a: URL?, _ b: URL?) -> Bool {
+        guard let ha = a?.host, let hb = b?.host else { return false }
+        return ha == hb
     }
 
     // MARK: - Leitura
@@ -161,5 +199,41 @@ enum ChatyyWsEndpoint {
             "blocked": blocked,
             "url": pickLocked().absoluteString,
         ]
+    }
+}
+
+/// [2026-10-22 ws-migrate] Observa o CallKit: quantas ligações não terminadas
+/// existem (tocando, saindo, em curso — de qualquer app). Quando a última
+/// termina, posta ChatyyWsEndpoint.changedNotification → sockets que adiaram a
+/// troca de região reavaliam.
+final class ChatyyCallBusyObserver: NSObject, CXCallObserverDelegate {
+    static let shared = ChatyyCallBusyObserver()
+    private let observer = CXCallObserver()
+    private let lock = NSLock()
+    private var wasBusy = false
+
+    private override init() {
+        super.init()
+        observer.setDelegate(self, queue: nil)
+    }
+
+    func busy() -> Bool {
+        let b = observer.calls.contains(where: { !$0.hasEnded })
+        lock.lock(); wasBusy = wasBusy || b; lock.unlock()
+        return b
+    }
+
+    func callObserver(_ callObserver: CXCallObserver, callChanged call: CXCall) {
+        let b = callObserver.calls.contains(where: { !$0.hasEnded })
+        lock.lock()
+        let fire = wasBusy && !b
+        wasBusy = b
+        lock.unlock()
+        if fire {
+            // pequena folga: CallSignalWs ainda pode estar mandando call_end
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                NotificationCenter.default.post(name: ChatyyWsEndpoint.changedNotification, object: nil)
+            }
+        }
     }
 }

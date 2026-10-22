@@ -149,6 +149,30 @@ object ChatCoreSocket {
 
     private fun bump(k: String, by: Long = 1L) { stats.merge(k, by) { a, b -> a + b } }
 
+    // [2026-10-22 ws-migrate] Troca suave de região: o JS mudou a região
+    // (ChatyyWsEndpoint.addChangeListener) e este socket está noutra. Ocioso
+    // (nenhum envio sem ack) e fora de ligação → abre migRef na região nova
+    // (mesmo instance_id/device_id), autentica, ela vira wsRef, manda
+    // resume{last_event_id} (mesmo cursor de sempre → nada se perde) e só então
+    // fecha a velha. Ocupado/em ligação → migWanted e reavalia no ping/ack.
+    private const val MIG_AUTH_TIMEOUT_MS = 8_000L
+    private val migLock = Any()
+    private val migRef = AtomicReference<WebSocket?>(null)
+    @Volatile private var migUrl: String? = null
+    private val migWanted = AtomicBoolean(false)
+    @Volatile private var migFails = 0
+    @Volatile private var migRetryAt = 0L
+    private var migWatchdogJob: Job? = null
+
+    init {
+        ChatyyWsEndpoint.addChangeListener {
+            migWanted.set(true)
+            migFails = 0
+            migRetryAt = 0L
+            scope.launch { maybeMigrate("endpoint_changed") }
+        }
+    }
+
     // ─── Public API (called from ChatCoreModule) ──────────────────────────
 
     /**
@@ -252,6 +276,9 @@ object ChatCoreSocket {
         m["primary"] = primary
         m["caps"] = caps.get().toList()
         m["outbox"] = synchronized(outbox) { outbox.size }.toDouble()
+        m["url"] = wsUrlCur ?: ""
+        m["migrating"] = migRef.get() != null
+        m["migWanted"] = migWanted.get()
         val s = HashMap<String, Any?>()
         for ((k, v) in stats) s[k] = v.toDouble()
         m["stats"] = s
@@ -268,6 +295,7 @@ object ChatCoreSocket {
     }
 
     private fun closeSocket(reason: String) {
+        abortMigration(null, reason, false)
         watchdogJob?.cancel(); watchdogJob = null
         authed.set(false)
         connecting.set(false)
@@ -311,6 +339,8 @@ object ChatCoreSocket {
         emitState("connecting")
         val wsUrl = ChatyyWsEndpoint.pick(ctx)
         wsUrlCur = wsUrl
+        migWanted.set(false) // conexão nova já nasce na região escolhida
+        abortMigration(null, "connect", false)
         val req = Request.Builder().url(wsUrl).build()
         val listenerObj = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -381,6 +411,12 @@ object ChatCoreSocket {
         emitState("closed", mapOf("reason" to why))
         persistLastEventId(true)
         markOutboxUnsent()
+        if (migRef.get() != null) {
+            // velha caiu (ex.: hub a "superseded" ao autenticar a nova) no meio
+            // da troca → a nova assume no auth_success; se falhar, reconecta.
+            bump("mig_old_closed")
+            return
+        }
         scheduleReconnect()
     }
 
@@ -417,10 +453,12 @@ object ChatCoreSocket {
                 invisibleSince.set(0L)
                 val ws = wsRef.get()
                 if (ws == null) {
+                    if (migRef.get() != null) continue // troca em curso assume
                     if (!connecting.get()) { attempts.set(0); connect() }
                     continue
                 }
                 if (!authed.get()) continue
+                if (migWanted.get()) maybeMigrate("ping")
                 val sentAt = System.currentTimeMillis()
                 pingSentAt.set(sentAt)
                 try { ws.send(JSONObject().put("type", "ping").put("ts", sentAt).toString()) } catch (_: Throwable) {}
@@ -513,7 +551,13 @@ object ChatCoreSocket {
                 // non-fatal → server closes; onDisconnect backs off and re-reads the bearer.
             }
             "pong" -> lastPongAt.set(System.currentTimeMillis())
-            "session_replaced" -> {
+            "session_replaced", "superseded" -> {
+                if (migRef.get() != null) {
+                    // troca em curso: o hub fechou a VELHA → a nova assume.
+                    bump("mig_old_replaced")
+                    return
+                }
+                if (type == "superseded") return
                 // Evicted (16-socket cap). Don't fight for the slot in phase 1.
                 bump("session_replaced")
                 emitState("replaced")
@@ -612,6 +656,157 @@ object ChatCoreSocket {
         val ok = type == "chat_send_ack" && msg.optBoolean("success", true)
         bump(if (ok) "send_ack" else "send_fallback")
         emitAck(cmi, ok, if (ok) "" else msg.optString("reason", "fallback"), text)
+        if (migWanted.get()) scope.launch { maybeMigrate("ack") }
+    }
+
+    // ─── [2026-10-22 ws-migrate] Troca suave de região ─────────────────────
+
+    private fun idle(): Boolean = synchronized(outbox) { outbox.values.none { it.sentAt > 0L } }
+
+    private fun maybeMigrate(why: String) {
+        synchronized(migLock) {
+            if (!migWanted.get() || migRef.get() != null || !enabled.get()) return
+            if (!authed.get() || wsRef.get() == null) {
+                if (wsRef.get() == null && !connecting.get()) migWanted.set(false) // próxima conexão já usa pick()
+                return
+            }
+            val ctx = appCtx ?: return
+            if (!ChatNotifStore.isAppVisibleToUser(ctx)) return
+            val target = ChatyyWsEndpoint.pick(ctx)
+            if (ChatyyWsEndpoint.sameHost(target, wsUrlCur)) { migWanted.set(false); return }
+            if (System.currentTimeMillis() < migRetryAt) return
+            if (ChatyyWsEndpoint.callBusy(ctx)) { bump("mig_defer_call"); return }
+            if (!idle()) { bump("mig_defer_busy"); return }
+            val token = ChatNotifStore.bearerFor(ctx, expectedAcct)
+            if (token.isNullOrEmpty()) return
+            Log.i(TAG, "troca de região ($why): $wsUrlCur → $target")
+            bump("mig_start")
+            migUrl = target
+            val l = object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    if (migRef.get() !== webSocket) return
+                    val auth = JSONObject()
+                    auth.put("type", "auth")
+                    auth.put("token", token)
+                    auth.put("instance_id", instanceId)
+                    auth.put("device_id", deviceId)
+                    auth.put("client", "native-core")
+                    auth.put("platform", "android")
+                    webSocket.send(auth.toString())
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    if (!enabled.get()) return
+                    if (migRef.get() === webSocket) { handleMigFrame(webSocket, text); return }
+                    if (wsRef.get() === webSocket) handleFrame(webSocket, text)
+                }
+
+                override fun onMessage(webSocket: WebSocket, bytes: ByteString) {}
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    try { webSocket.close(1000, null) } catch (_: Throwable) {}
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    if (migRef.get() === webSocket) abortMigration(webSocket, "mig_closed_$code", true)
+                    else onDisconnect(webSocket, "closed_$code")
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    if (migRef.get() === webSocket) abortMigration(webSocket, "mig_failure", true)
+                    else onDisconnect(webSocket, "failure")
+                }
+            }
+            val ws = try {
+                client().newWebSocket(Request.Builder().url(target).build(), l)
+            } catch (t: Throwable) {
+                Log.w(TAG, "mig newWebSocket failed: ${t.message}")
+                null
+            }
+            if (ws == null) { noteMigFail("mig_new_failed"); return }
+            migRef.set(ws)
+            migWatchdogJob?.cancel()
+            migWatchdogJob = scope.launch {
+                delay(MIG_AUTH_TIMEOUT_MS)
+                if (migRef.get() === ws) abortMigration(ws, "mig_auth_timeout", true)
+            }
+        }
+    }
+
+    /** Frames da nova ANTES de assumir: só o auth (eventos ao vivo seguem pela
+     *  velha até a troca; o resume cobre o resto). */
+    private fun handleMigFrame(ws: WebSocket, text: String) {
+        val msg = try { JSONObject(text) } catch (_: Throwable) { return }
+        when (msg.optString("type", "")) {
+            "auth_success" -> {
+                val email = ChatNotifStore.normEmail(msg.optString("email", ""))
+                val acct = if (authedAcct.isNotEmpty()) authedAcct else expectedAcct
+                if (acct.isNotEmpty() && email.isNotEmpty() && email != acct) {
+                    abortMigration(ws, "mig_acct_mismatch", true)
+                    return
+                }
+                swapToMigrated(ws, msg)
+            }
+            "auth_error" -> abortMigration(ws, "mig_auth_error", true)
+            else -> {}
+        }
+    }
+
+    private fun swapToMigrated(ws: WebSocket, msg: JSONObject) {
+        val old: WebSocket?
+        synchronized(migLock) {
+            if (!migRef.compareAndSet(ws, null)) return
+            migWatchdogJob?.cancel(); migWatchdogJob = null
+            val oldUrl = wsUrlCur
+            old = wsRef.getAndSet(ws)
+            wsUrlCur = migUrl
+            migUrl = null
+            migWanted.set(false)
+            migFails = 0
+            authed.set(true)
+            connecting.set(false)
+            attempts.set(0)
+            watchdogJob?.cancel(); watchdogJob = null
+            lastPongAt.set(System.currentTimeMillis())
+            ChatyyWsEndpoint.noteAuthed(wsUrlCur)
+            val capsArr = msg.optJSONArray("caps")
+            val cs = HashSet<String>()
+            if (capsArr != null) for (i in 0 until minOf(capsArr.length(), 32)) cs.add(capsArr.optString(i, ""))
+            caps.set(cs)
+            bump("mig_ok")
+            Log.i(TAG, "região trocada $oldUrl → $wsUrlCur (resume ${lastEventId.get()})")
+        }
+        // mesmo cursor da reconexão normal: tudo depois de lastEventId vem pela nova
+        persistLastEventId(true)
+        sendResume(ws)
+        // envio sem ack (corrida rara) vai de novo com o mesmo client_message_id
+        markOutboxUnsent()
+        scope.launch { flushOutbox() }
+        emitState("authenticated", mapOf("email" to authedAcct, "caps" to caps.get().toList(), "migrated" to true))
+        try { old?.close(1000, "region_switch") } catch (_: Throwable) {}
+    }
+
+    private fun noteMigFail(why: String) {
+        migFails += 1
+        val wait = minOf(300_000L, 30_000L shl minOf(migFails - 1, 4))
+        migRetryAt = System.currentTimeMillis() + wait
+        bump("mig_fail")
+        Log.w(TAG, "troca de região falhou ($why) — fica na atual, nova tentativa em ${wait / 1000} s")
+    }
+
+    /** [ws] null = qualquer troca em curso. */
+    private fun abortMigration(ws: WebSocket?, why: String, failed: Boolean) {
+        synchronized(migLock) {
+            val m = migRef.get() ?: return
+            if (ws != null && m !== ws) return
+            migRef.set(null)
+            migUrl = null
+            migWatchdogJob?.cancel(); migWatchdogJob = null
+            try { m.cancel() } catch (_: Throwable) {}
+            if (failed) noteMigFail(why)
+        }
+        // a velha já tinha caído durante a troca → reconexão normal
+        if (failed && wsRef.get() == null && enabled.get()) scheduleReconnect()
     }
 
     private fun markOutboxUnsent() {

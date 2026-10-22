@@ -98,6 +98,19 @@ final class ChatCoreSocket {
     private var caps = Set<String>()
     private var outbox: [OutItem] = []
     private var outboxLoaded = false
+    // [2026-10-22 ws-migrate] troca suave de região (all on q): o JS mudou a
+    // região (ChatyyWsEndpoint.changedNotification) e este socket está noutra.
+    // Abre migTask na região nova, autentica (mesmo instance_id/device_id),
+    // aí ela vira `task`, manda resume{last_event_id} (mesmo cursor de sempre
+    // → nada se perde) e só então fecha a velha. Ocupado (envio sem ack) ou
+    // em ligação → migWanted e reavalia no ping/ack/fim da ligação.
+    private var migTask: URLSessionWebSocketTask?
+    private var migURL: URL?
+    private var migWatchdog: DispatchWorkItem?
+    private var migWanted = false
+    private var migFails = 0
+    private var migRetryAt: Date = .distantPast
+    private let migAuthTimeout: TimeInterval = 8
 
     private init() {}
 
@@ -200,6 +213,7 @@ final class ChatCoreSocket {
                 "acct": authedAcct, "lastEventId": NSNumber(value: lastEventId),
                 "instanceId": instanceId, "stats": s,
                 "primary": primary, "caps": Array(caps), "outbox": NSNumber(value: outbox.count),
+                "url": taskURL?.absoluteString ?? "", "migrating": migTask != nil, "migWanted": migWanted,
             ]
         }
     }
@@ -229,7 +243,16 @@ final class ChatCoreSocket {
                 self.connectLocked()
             }
         }
-        observerTokens = [bgTok, fgTok]
+        let epTok = nc.addObserver(forName: ChatyyWsEndpoint.changedNotification, object: nil, queue: nil) { [weak self] _ in
+            guard let self = self else { return }
+            self.q.async {
+                self.migWanted = true
+                self.migFails = 0
+                self.migRetryAt = .distantPast
+                self.maybeMigrateLocked(why: "endpoint_changed")
+            }
+        }
+        observerTokens = [bgTok, fgTok, epTok]
     }
 
     // MARK: - Internals (all on q)
@@ -263,6 +286,7 @@ final class ChatCoreSocket {
     }
 
     private func closeLocked(reason: String) {
+        abortMigrationLocked(why: reason, failed: false)
         watchdogItem?.cancel(); watchdogItem = nil
         markOutboxUnsentLocked()
         authed = false
@@ -302,8 +326,10 @@ final class ChatCoreSocket {
         guard let s = session else { connecting = false; return }
         let url = ChatyyWsEndpoint.pick()
         taskURL = url
+        migWanted = false // conexão nova já nasce na região escolhida
         let t = s.webSocketTask(with: url)
         task = t
+        abortMigrationLocked(why: "connect", failed: false)
         bump("connect")
         emitState("connecting")
         t.resume()
@@ -339,7 +365,10 @@ final class ChatCoreSocket {
             guard let self = self else { return }
             switch result {
             case .failure:
-                self.q.async { self.disconnectLocked(from: t, why: "receive_failed") }
+                self.q.async {
+                    if self.migTask === t { self.abortMigrationLocked(why: "mig_receive_failed", failed: true); return }
+                    self.disconnectLocked(from: t, why: "receive_failed")
+                }
             case .success(let m):
                 var text: String?
                 switch m {
@@ -348,7 +377,12 @@ final class ChatCoreSocket {
                 @unknown default: text = nil
                 }
                 self.q.async {
-                    guard self.task === t, self.enabled else { return }
+                    guard self.enabled else { return }
+                    if self.migTask === t {
+                        if let tx = text { self.handleMigFrameLocked(t, tx) }
+                        return
+                    }
+                    guard self.task === t else { return }
                     if let tx = text { self.handleFrameLocked(t, tx) }
                 }
                 self.receiveLoop(t)
@@ -357,6 +391,7 @@ final class ChatCoreSocket {
     }
 
     private func disconnectLocked(from t: URLSessionWebSocketTask, why: String) {
+        if migTask === t { abortMigrationLocked(why: why, failed: true); return }
         guard task === t else { return } // stale callback of an old task
         task = nil
         t.cancel(with: .goingAway, reason: nil)
@@ -368,6 +403,12 @@ final class ChatCoreSocket {
         emitState("closed", ["reason": why])
         persistLocked(force: true)
         markOutboxUnsentLocked()
+        if migTask != nil {
+            // velha caiu (ex.: hub a "superseded" ao autenticar a nova) no meio
+            // da troca → a nova assume no auth_success; se falhar, reconecta.
+            bump("mig_old_closed")
+            return
+        }
         scheduleReconnectLocked()
     }
 
@@ -392,10 +433,12 @@ final class ChatCoreSocket {
         tm.setEventHandler { [weak self] in
             guard let self = self, self.enabled, self.inForeground else { return }
             guard let t = self.task else {
+                if self.migTask != nil { return } // troca em curso assume
                 if !self.connecting && self.reconnectItem == nil { self.attempts = 0; self.connectLocked() }
                 return
             }
             guard self.authed else { return }
+            if self.migWanted { self.maybeMigrateLocked(why: "ping") }
             let sentAt = Date()
             self.sendLocked(t, ["type": "ping", "ts": NSNumber(value: Int64(sentAt.timeIntervalSince1970 * 1000))])
             self.q.asyncAfter(deadline: .now() + self.pongDeadline) { [weak self] in
@@ -474,7 +517,14 @@ final class ChatCoreSocket {
             if fatal { stopLocked(reason: "logged_out") }
         case "pong":
             lastPongAt = Date()
-        case "session_replaced":
+        case "session_replaced", "superseded":
+            if migTask != nil {
+                // troca em curso: o hub fechou o socket VELHO (cap/instância) →
+                // não para o núcleo; a nova assume no auth_success.
+                bump("mig_old_replaced")
+                return
+            }
+            if type == "superseded" { return }
             bump("session_replaced")
             emitState("replaced")
             stopLocked(reason: "session_replaced")
@@ -559,6 +609,124 @@ final class ChatCoreSocket {
         ])
     }
 
+    // MARK: - [2026-10-22 ws-migrate] Troca suave de região (all on q)
+
+    /// Ocioso = nenhum envio da outbox aguardando ack neste socket.
+    private func idleLocked() -> Bool {
+        return !outbox.contains(where: { $0.sent })
+    }
+
+    private func maybeMigrateLocked(why: String) {
+        guard migWanted, enabled, inForeground, migTask == nil else { return }
+        guard authed, task != nil else {
+            // sem socket autenticado: a próxima conexão já usa pick()
+            if task == nil { migWanted = false }
+            return
+        }
+        let target = ChatyyWsEndpoint.pick()
+        if ChatyyWsEndpoint.sameHost(target, taskURL) { migWanted = false; return }
+        if Date() < migRetryAt { return }
+        if ChatyyWsEndpoint.callBusy() { bump("mig_defer_call"); return }
+        if !idleLocked() { bump("mig_defer_busy"); return }
+        guard let token = bearer(), let s = session else { return }
+        let t = s.webSocketTask(with: target)
+        migTask = t
+        migURL = target
+        bump("mig_start")
+        NSLog("[ChatCoreSocket] troca de região (%@): %@ → %@", why, taskURL?.host ?? "?", target.host ?? "?")
+        t.resume()
+        let auth: [String: Any] = [
+            "type": "auth", "token": token, "instance_id": instanceId,
+            "device_id": deviceId, "client": "native-core", "platform": "ios",
+        ]
+        if let d = try? JSONSerialization.data(withJSONObject: auth), let str = String(data: d, encoding: .utf8) {
+            t.send(.string(str)) { [weak self] err in
+                guard let self = self, err != nil else { return }
+                self.q.async { if self.migTask === t { self.abortMigrationLocked(why: "mig_send_failed", failed: true) } }
+            }
+        }
+        let wd = DispatchWorkItem { [weak self] in
+            guard let self = self, self.migTask === t else { return }
+            self.abortMigrationLocked(why: "mig_auth_timeout", failed: true)
+        }
+        migWatchdog?.cancel()
+        migWatchdog = wd
+        q.asyncAfter(deadline: .now() + migAuthTimeout, execute: wd)
+        receiveLoop(t)
+    }
+
+    /// Frames da task nova ANTES de ela assumir: só o auth importa (eventos
+    /// ao vivo continuam chegando pela velha até a troca; o resume cobre o resto).
+    private func handleMigFrameLocked(_ t: URLSessionWebSocketTask, _ text: String) {
+        guard let d = text.data(using: .utf8),
+              let msg = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return }
+        let type = (msg["type"] as? String) ?? ""
+        switch type {
+        case "auth_success":
+            let email = Self.normEmail(msg["email"] as? String)
+            let acct = authedAcct.isEmpty ? expectedAcct : authedAcct
+            if !acct.isEmpty && !email.isEmpty && email != acct {
+                abortMigrationLocked(why: "mig_acct_mismatch", failed: true)
+                return
+            }
+            swapToMigratedLocked(t, msg)
+        case "auth_error":
+            abortMigrationLocked(why: "mig_auth_error", failed: true)
+        default:
+            break
+        }
+    }
+
+    private func swapToMigratedLocked(_ t: URLSessionWebSocketTask, _ msg: [String: Any]) {
+        migWatchdog?.cancel(); migWatchdog = nil
+        let old = task
+        let oldHost = taskURL?.host ?? "?"
+        task = t
+        taskURL = migURL
+        migTask = nil
+        migURL = nil
+        migWanted = false
+        migFails = 0
+        authed = true
+        connecting = false
+        attempts = 0
+        lastPongAt = Date()
+        ChatyyWsEndpoint.noteAuthed(taskURL)
+        var cs = Set<String>()
+        if let arr = msg["caps"] as? [Any] {
+            for c in arr.prefix(32) { if let str = c as? String { cs.insert(str) } }
+        }
+        caps = cs
+        bump("mig_ok")
+        NSLog("[ChatCoreSocket] região trocada %@ → %@ (resume %lld)", oldHost, taskURL?.host ?? "?", lastEventId)
+        // mesmo cursor da reconexão normal: tudo depois de lastEventId vem pela nova
+        persistLocked(force: true)
+        sendLocked(t, ["type": "resume", "last_event_id": NSNumber(value: lastEventId)])
+        // envio sem ack (corrida rara) vai de novo com o mesmo client_message_id
+        markOutboxUnsentLocked()
+        flushOutboxLocked()
+        emitState("authenticated", ["email": authedAcct, "caps": Array(cs), "migrated": true])
+        old?.cancel(with: .normalClosure, reason: "region_switch".data(using: .utf8))
+    }
+
+    private func abortMigrationLocked(why: String, failed: Bool) {
+        guard let t = migTask else { return }
+        migTask = nil
+        migURL = nil
+        migWatchdog?.cancel(); migWatchdog = nil
+        t.cancel(with: .goingAway, reason: nil)
+        if failed {
+            // a velha segue viva; tenta de novo com recuo (30 s → 5 min)
+            migFails += 1
+            let wait = min(300.0, 30.0 * pow(2.0, Double(migFails - 1)))
+            migRetryAt = Date().addingTimeInterval(wait)
+            bump("mig_fail")
+            NSLog("[ChatCoreSocket] troca de região falhou (%@) — fica na atual, nova tentativa em %.0f s", why, wait)
+        }
+        // a velha já tinha caído durante a troca → reconexão normal
+        if task == nil && enabled { scheduleReconnectLocked() }
+    }
+
     // MARK: - [phase 2] Outbox internals (all on q)
 
     private func emitAck(_ cmi: String, ok: Bool, reason: String, raw: String?) {
@@ -583,6 +751,7 @@ final class ChatCoreSocket {
         var reason = ""
         if !ok { reason = (msg["reason"] as? String) ?? "fallback" }
         emitAck(cmi, ok: ok, reason: reason, raw: text)
+        if migWanted { maybeMigrateLocked(why: "ack") }
     }
 
     private func markOutboxUnsentLocked() {

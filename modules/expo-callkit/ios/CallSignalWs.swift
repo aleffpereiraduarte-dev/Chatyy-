@@ -190,7 +190,35 @@ final class CallSignalWs: NSObject {
     private var selfAnsweredCallIds: [String] = []
     private let kSelfAnsweredMax = 16
 
-    private override init() { super.init() }
+    // [2026-10-22 ws-migrate] Troca suave de região (queue). O JS mudou a
+    // região (ChatyyWsEndpoint.changedNotification) e este socket está noutra:
+    // fora de ligação (CallKit vazio, sem call em andamento, fila vazia) abre
+    // migTask na região nova, autentica, ela vira `task` (drena a fila) e só
+    // então a velha fecha. Em ligação → adia (migWanted) até acabar (o
+    // observador do CallKit reposta o aviso; o ping também reavalia).
+    private var migTask: URLSessionWebSocketTask?
+    private var migURL: URL?
+    private var migWatchdog: DispatchWorkItem?
+    private var migWanted = false
+    private var migFails = 0
+    private var migRetryAt: Date = .distantPast
+    private let migAuthTimeout: TimeInterval = 8
+    private var endpointObserver: NSObjectProtocol?
+
+    private override init() {
+        super.init()
+        endpointObserver = NotificationCenter.default.addObserver(
+            forName: ChatyyWsEndpoint.changedNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            self.queue.async {
+                self.migWanted = true
+                self.migFails = 0
+                self.migRetryAt = .distantPast
+                self.maybeMigrateLocked(why: "endpoint_changed")
+            }
+        }
+    }
 
     // MARK: – Public API
 
@@ -433,8 +461,10 @@ final class CallSignalWs: NSObject {
         }
         let url = ChatyyWsEndpoint.pick()
         taskURL = url
+        migWanted = false // conexão nova já nasce na região escolhida
         let newTask = session!.webSocketTask(with: url)
         task = newTask
+        abortMigrationLocked(why: "connect", failed: false)
         newTask.resume()
 
         // Send auth immediately. URLSessionWebSocketTask buffers the send
@@ -477,7 +507,9 @@ final class CallSignalWs: NSObject {
                 NSLog("[CallSignalWs] receive failure: \(err.localizedDescription)")
                 self.queue.async { self.onDisconnectLocked(from: task) }
             case .success(let msg):
-                self.queue.async { self.handleFrameLocked(msg) }
+                self.queue.async {
+                    if self.migTask === task { self.handleMigFrameLocked(task, msg) } else { self.handleFrameLocked(msg) }
+                }
                 self.listenLocked(on: task) // re-arm
             }
         }
@@ -1428,6 +1460,10 @@ final class CallSignalWs: NSObject {
     private func onDisconnectLocked(from failed: URLSessionWebSocketTask? = nil) {
         // Callback atrasado de um task que já não é o atual: só garante que
         // ele morreu — NÃO derruba o task atual nem agenda outra reconexão.
+        if let failed = failed, failed === migTask {
+            abortMigrationLocked(why: "mig_failed", failed: true)
+            return
+        }
         if let failed = failed, failed !== task {
             failed.cancel(with: .goingAway, reason: nil)
             return
@@ -1441,6 +1477,11 @@ final class CallSignalWs: NSObject {
         authTimeoutWorkItem = nil
         pingTimer?.cancel()
         pingTimer = nil
+        if migTask != nil {
+            // velha caiu no meio da troca → a nova assume no auth_success
+            // (se falhar, abortMigrationLocked reconecta)
+            return
+        }
         scheduleReconnectLocked()
     }
 
@@ -1497,6 +1538,7 @@ final class CallSignalWs: NSObject {
         t.schedule(deadline: .now() + pingInterval, repeating: pingInterval)
         t.setEventHandler { [weak self] in
             guard let self = self, let task = self.task, self.authed else { return }
+            if self.migWanted { self.maybeMigrateLocked(why: "ping") }
             // [P2 pong watchdog 2026-10-04] Half-open detection: if we haven't
             // seen a pong in >2 ping intervals the socket is dead to the peer
             // even though sendPing's own error may not have fired yet. Force a
@@ -1519,6 +1561,106 @@ final class CallSignalWs: NSObject {
         }
         t.resume()
         pingTimer = t
+    }
+
+    // MARK: – [2026-10-22 ws-migrate] Troca suave de região (queue)
+
+    /// Ocupado = ligação em andamento/tocando (CallKit ou callIds deste socket)
+    /// ou frame de sinalização na fila.
+    private func busyLocked() -> Bool {
+        return !activeCallIds.isEmpty || !pendingMessages.isEmpty || ChatyyWsEndpoint.callBusy()
+    }
+
+    private func maybeMigrateLocked(why: String) {
+        guard migWanted, migTask == nil else { return }
+        guard authed, task != nil, !connecting else {
+            if task == nil { migWanted = false } // próxima conexão já usa pick()
+            return
+        }
+        let target = ChatyyWsEndpoint.pick()
+        if ChatyyWsEndpoint.sameHost(target, taskURL) { migWanted = false; return }
+        if Date() < migRetryAt { return }
+        if busyLocked() {
+            NSLog("[CallSignalWs] troca de região adiada (ligação/fila) — %@", why)
+            return
+        }
+        guard let ud = UserDefaults(suiteName: kAppGroupId),
+              let token = ud.string(forKey: "auth_token"), !token.isEmpty,
+              let s = session else { return }
+        let t = s.webSocketTask(with: target)
+        migTask = t
+        migURL = target
+        NSLog("[CallSignalWs] troca de região (%@): %@ → %@", why, taskURL?.host ?? "?", target.host ?? "?")
+        t.resume()
+        let authMsg = "{\"type\":\"auth\",\"token\":\"\(escapeJSON(token))\"}"
+        t.send(.string(authMsg)) { [weak self] err in
+            guard let self = self, err != nil else { return }
+            self.queue.async { if self.migTask === t { self.abortMigrationLocked(why: "mig_send_failed", failed: true) } }
+        }
+        let wd = DispatchWorkItem { [weak self] in
+            guard let self = self, self.migTask === t else { return }
+            self.abortMigrationLocked(why: "mig_auth_timeout", failed: true)
+        }
+        migWatchdog?.cancel()
+        migWatchdog = wd
+        queue.asyncAfter(deadline: .now() + migAuthTimeout, execute: wd)
+        listenLocked(on: t)
+    }
+
+    /// Frames da task nova ANTES de assumir: só o auth (convites/fim de
+    /// ligação seguem chegando pela velha até a troca).
+    private func handleMigFrameLocked(_ t: URLSessionWebSocketTask, _ msg: URLSessionWebSocketTask.Message) {
+        let text: String?
+        switch msg {
+        case .string(let s): text = s
+        case .data(let d): text = String(data: d, encoding: .utf8)
+        @unknown default: text = nil
+        }
+        guard let tx = text, let data = tx.data(using: .utf8),
+              let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        let type = (o["type"] as? String) ?? ""
+        if type == "auth_success" {
+            swapToMigratedLocked(t)
+        } else if type == "auth_error" {
+            abortMigrationLocked(why: "mig_auth_error", failed: true)
+        }
+    }
+
+    private func swapToMigratedLocked(_ t: URLSessionWebSocketTask) {
+        migWatchdog?.cancel(); migWatchdog = nil
+        let old = task
+        let oldHost = taskURL?.host ?? "?"
+        task = t
+        taskURL = migURL
+        migTask = nil
+        migURL = nil
+        migWanted = false
+        migFails = 0
+        authed = true
+        connecting = false
+        reconnectAttempts = 0
+        authTimeoutWorkItem?.cancel()
+        authTimeoutWorkItem = nil
+        ChatyyWsEndpoint.noteAuthed(taskURL)
+        NSLog("[CallSignalWs] região trocada %@ → %@", oldHost, taskURL?.host ?? "?")
+        startPingTimerLocked()
+        drainLocked()
+        old?.cancel(with: .normalClosure, reason: "region_switch".data(using: .utf8))
+    }
+
+    private func abortMigrationLocked(why: String, failed: Bool) {
+        guard let t = migTask else { return }
+        migTask = nil
+        migURL = nil
+        migWatchdog?.cancel(); migWatchdog = nil
+        t.cancel(with: .goingAway, reason: nil)
+        if failed {
+            migFails += 1
+            let wait = min(300.0, 30.0 * pow(2.0, Double(migFails - 1)))
+            migRetryAt = Date().addingTimeInterval(wait)
+            NSLog("[CallSignalWs] troca de região falhou (%@) — fica na atual, nova tentativa em %.0f s", why, wait)
+        }
+        if task == nil && failed { scheduleReconnectLocked() }
     }
 
     private func escapeJSON(_ s: String) -> String {

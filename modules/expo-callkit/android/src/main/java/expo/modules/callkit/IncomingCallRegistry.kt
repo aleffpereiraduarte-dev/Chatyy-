@@ -314,6 +314,9 @@ object IncomingCallRegistry {
 
     fun hasConnection(callId: String): Boolean = callId.isNotEmpty() && connections.containsKey(callId)
 
+    /** [2026-10-22 ws-migrate] Alguma Connection do Telecom viva (tocando/saindo/ativa)? */
+    fun hasAnyConnection(): Boolean = connections.isNotEmpty()
+
     /**
      * Our own Accept (IncomingCallActivity / notification action) answered
      * the call — tell Telecom so the Connection flips RINGING → ACTIVE and
