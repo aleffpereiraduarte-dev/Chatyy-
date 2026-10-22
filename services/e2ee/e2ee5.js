@@ -212,7 +212,9 @@ export function ensureSession() {
   _sessP = (async () => {
     const c = _C();
     const email = _me();
-    if (_sess) { try { await c.close(); } catch (_) {} _sess = null; _conv.clear(); _plain.clear(); _byMid.clear(); }
+    // [2026-10-22 reconexão-sem-vazio] reabrir p/ a MESMA conta (bearer renovado na reconexão) não joga
+    // fora o texto já decifrado: limpar aqui escondia (_e5Hidden) a conversa inteira até decifrar de novo.
+    if (_sess) { const _sameAcct = !!email && _sess.email === email; try { await c.close(); } catch (_) {} _sess = null; _conv.clear(); if (!_sameAcct) { _plain.clear(); _byMid.clear(); } }
     const qa = _g().__chatyy_e2ee5_qa_transport;
     if (typeof qa === 'function') await c.setAuth({ mode: 'main', base: '', bearer, transport: qa });
     else await c.setAuth({ base: _base(), bearer, account: email });

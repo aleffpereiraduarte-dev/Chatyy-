@@ -29621,11 +29621,16 @@ function ChatConversationInnerBody() {
   // Cache of wrapped message objects so identical messages keep the same
   // reference across renders — critical for MemoizedMessageRow to skip work.
   const _groupCacheRef = useRef(new Map()); // id → { wrapped, source, isFirst, isLast }
+  // [2026-10-22 reconexão-sem-vazio] última versão VISÍVEL de cada linha E2EE desta conversa (_e5KeepShownRow).
+  const _e5ShownRef = useRef({ cid: null, m: new Map() });
+  if (_e5ShownRef.current.cid !== conversationId) _e5ShownRef.current = { cid: conversationId, m: new Map() };
   const _allMessages = messages;
   const messagesWithSeparators = React.useMemo(() => {
     // [2026-10-21 e2ee5 nível WhatsApp] mensagem recebida ainda cifrada (até ~2,5 s) fica FORA da
     // lista (JS e nativa) e entra já com o texto; continua no estado, então ordem/scroll não mudam.
-    const messages = _allMessages.some(m => m && m._e5Hidden) ? _allMessages.filter(m => !(m && m._e5Hidden)) : _allMessages;
+    // [2026-10-22 reconexão-sem-vazio] linha que JÁ estava decifrada na tela não sai na ressincronização.
+    const _kept = _e5KeepShownList(_allMessages, _e5ShownRef.current.m);
+    const messages = _kept.some(m => m && m._e5Hidden) ? _kept.filter(m => !(m && m._e5Hidden)) : _kept;
     const result = [];
     let lastDate = '';
     let unreadInserted = false;
@@ -47393,6 +47398,54 @@ function ConvLightShellHost() {
       {shellOn ? <ConvLightShell rec={rec} params={params} acct={acct} colors={colors} isDark={isDark} t={t} insets={insets} onBack={onBack} /> : null}
     </View>
   );
+}
+
+// [2026-10-22 reconexão-sem-vazio] Bug founder (reinícios 14:30-14:51 UTC): a conversa E2EE
+// esvaziava ("Nenhuma mensagem ainda") e voltava. Na ressincronização (WS reconectou → delta/
+// loadMessages; flag/sessão do núcleo reaberta → re-map de todas as linhas) a linha v5 JÁ
+// DECIFRADA na tela era trocada pela versão do servidor ainda sem texto em memória → applyToRow
+// devolvia _e5Hidden (fica fora da lista ~2,5 s) ou "Aguardando" → com tudo cifrado a lista ficava
+// vazia até decifrar de novo. Nível WhatsApp: o que já foi mostrado fica na tela até chegar o novo.
+// Mesmo envelope (_e2eRaw idêntico) = mesmo texto → reaproveita a última versão VISÍVEL da linha,
+// só com os campos vivos (recibos/reações/apagar/fixar) da linha nova. "update_to_read"/falha
+// definitiva não são cobertos (flag desligada = nunca texto com o núcleo fechado).
+// Kill: global.__chatyy_e5_keep_shown = false.
+const _E5_LIVE_KEYS = ['_read', '_delivered', 'read_at', 'delivered_at', 'read_by', 'delivered_to', 'all_read',
+  'reactions', '_reactionsStale', 'deleted_at', 'deleted', 'is_deleted', 'pinned', 'is_pinned', 'starred', 'is_starred',
+  'kept', 'expires_at', 'topic_id', '_pending', '_failed', 'status', '_animateIn', '_played', 'played_at'];
+const _E5_SHOWN_MAX = 3000;
+function _e5KeepShownRow(m, shown) {
+  if (!m || !shown || typeof m._e2eRaw !== 'string' || m.id == null) return m;
+  const k = String(m.id);
+  const st = m._e5State;
+  if (m._e5Hidden || st === 'decrypting' || st === 'waiting') {
+    const s = shown.get(k);
+    if (!s || s._e2eRaw !== m._e2eRaw) return m;
+    let o = null;
+    for (let i = 0; i < _E5_LIVE_KEYS.length; i++) {
+      const key = _E5_LIVE_KEYS[i];
+      if (key in m && m[key] !== s[key]) { if (!o) o = { ...s }; o[key] = m[key]; }
+    }
+    return o || s;
+  }
+  if (!st && !m._e2eFailed && typeof m.content === 'string' && m.content) {
+    if (shown.get(k) !== m) {
+      shown.delete(k);
+      shown.set(k, m);
+      if (shown.size > _E5_SHOWN_MAX) shown.delete(shown.keys().next().value);
+    }
+  }
+  return m;
+}
+function _e5KeepShownList(list, shown) {
+  if (!Array.isArray(list) || !shown || global.__chatyy_e5_keep_shown === false) return list;
+  let out = null;
+  for (let i = 0; i < list.length; i++) {
+    const m = list[i];
+    const r = (m && typeof m._e2eRaw === 'string') ? _e5KeepShownRow(m, shown) : m;
+    if (r !== m) { if (!out) out = list.slice(0, i); out.push(r); } else if (out) out.push(m);
+  }
+  return out || list;
 }
 
 
