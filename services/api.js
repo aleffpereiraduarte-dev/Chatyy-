@@ -7474,7 +7474,11 @@ export async function chatRead(conversationId, messageId) {
 // callers should use chatDeliveryAckBatched below which coalesces multiple
 // per-message acks into a single POST per 250ms window.
 export async function chatDeliveryAck(conversationId, messageIds) {
-  return apiCall('chat_delivery_ack', { conversation_id: conversationId, message_ids: messageIds }, 'POST');
+  // [apagar-ao-entregar F1 2026-10-22] + device_id e2ee5 (ack POR APARELHO, fila sombra no servidor; campo
+  // extra é ignorado por servidor antigo). Sem e2ee5 → sem o campo.
+  const body = { conversation_id: conversationId, message_ids: messageIds };
+  try { const d = require('./dlvDevice').dlvDeviceIdSync(); if (d) body.device_id = d; } catch {}
+  return apiCall('chat_delivery_ack', body, 'POST');
 }
 
 // Coalesced delivery-ack batcher. In an active group, 20 messages can land

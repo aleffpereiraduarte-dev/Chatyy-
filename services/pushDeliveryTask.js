@@ -119,6 +119,9 @@ async function _postAck(tok) {
   try {
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = ctl ? setTimeout(() => { try { ctl.abort(); } catch {} }, 8000) : null;
+    // [apagar-ao-entregar F1 2026-10-22] + device_id e2ee5 (ack POR APARELHO na fila sombra; servidor antigo ignora).
+    const ackBody = { d_ack: tok };
+    try { const d = await require('./dlvDevice').dlvDeviceIdAsync(); if (d) ackBody.device_id = d; } catch {}
     const r = await fetch(ACK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -126,7 +129,7 @@ async function _postAck(tok) {
       // cookie de sessão do app o gate CSRF do email.php devolvia 403
       // (23 de 91 acks em 2 dias).
       credentials: 'omit',
-      body: JSON.stringify({ d_ack: tok }),
+      body: JSON.stringify(ackBody),
       signal: ctl ? ctl.signal : undefined,
     });
     if (timer) clearTimeout(timer);

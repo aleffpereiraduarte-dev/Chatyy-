@@ -3527,15 +3527,20 @@ class MailWebSocket {
     if (!conversationId || !Array.isArray(messageIds) || messageIds.length === 0) return false;
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated || !this.isHealthy) return false;
     try {
+      // [apagar-ao-entregar F1 2026-10-22] device_id e2ee5 no frame (o hub novo usa o do auth; hub antigo ignora).
+      let dlvDev = '';
+      try { dlvDev = require('./dlvDevice').dlvDeviceIdSync(); } catch {}
       // [2026-10-09 net-resilience] lotes de 100 (antes só os 100 primeiros
       // saíam e o chamador marcava TODOS como entregues → ✓✓ perdido no
       // catch-up pós-reconexão).
       for (let i = 0; i < messageIds.length; i += 100) {
-        this.ws.send(this._encodeOutbound({
+        const fr = {
           type: 'delivery_ack',
           conversation_id: conversationId,
           message_ids: messageIds.slice(i, i + 100),
-        }));
+        };
+        if (dlvDev) fr.device_id = dlvDev;
+        this.ws.send(this._encodeOutbound(fr));
       }
       return true;
     } catch {
