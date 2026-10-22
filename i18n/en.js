@@ -15644,6 +15644,8 @@ export default {
   "e2ee5.banner.needs_update": "{name} needs to update Chatyy to turn on end-to-end encryption in this chat.",
   "e2ee5.banner.needs_update_many": "{count} people need to update Chatyy to turn on end-to-end encryption in this chat.",
   "e2ee5.common.cancel": "Cancel",
+  "e2ee5.composer.update_action": "Update",
+  "e2ee5.composer.update_to_continue": "Update to continue in this chat",
   "e2ee5.common.close": "Close",
   "e2ee5.common.contact": "your contact",
   "e2ee5.common.ok": "OK",

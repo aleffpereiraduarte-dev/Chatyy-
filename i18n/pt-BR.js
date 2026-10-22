@@ -15722,6 +15722,8 @@ export default {
   "e2ee5.banner.needs_update": "{name} precisa atualizar o Chatyy para ativar a criptografia de ponta a ponta nesta conversa.",
   "e2ee5.banner.needs_update_many": "{count} pessoas precisam atualizar o Chatyy para ativar a criptografia de ponta a ponta nesta conversa.",
   "e2ee5.common.cancel": "Cancelar",
+  "e2ee5.composer.update_action": "Atualizar",
+  "e2ee5.composer.update_to_continue": "Atualize para continuar nesta conversa",
   "e2ee5.common.close": "Fechar",
   "e2ee5.common.contact": "o contato",
   "e2ee5.common.ok": "OK",

@@ -15528,11 +15528,31 @@ function ChatConversationInnerBody() {
   const [exMember, setExMember] = _useStateT(false);
   // [2026-10-18 chat-info-native] "Editar dados do grupo: Todos os membros" (eco do servidor).
   const [membersEditInfo, setMembersEditInfo] = _useStateT(false);
+  // [e2ee5 rollout §5 2026-10-22] conversa cifrada (e2ee_mode=1) + app que não consegue cifrar (flag
+  // __chatyy_e2ee5 desligada ou sem o núcleo nativo) → composer vira "Atualize para continuar nesta conversa".
+  // Modo vem do estado E2EE, da recusa 409 e2ee5_plaintext_refused ou do histórico (services/e2ee/updateGate).
+  const [e5NeedsUpdate, setE5NeedsUpdate] = _useStateT(() => {
+    try { return !!require('../services/e2ee/updateGate').needsUpdate(conversationId); } catch { return false; }
+  });
+  useEffect(() => {
+    if (!conversationId) return undefined;
+    let off = null;
+    try {
+      const _ug = require('../services/e2ee/updateGate');
+      setE5NeedsUpdate(!!_ug.needsUpdate(conversationId));
+      off = _ug.watch(conversationId, (v) => { if (mountedRef.current) setE5NeedsUpdate(!!v); });
+    } catch {}
+    return () => { try { off && off(); } catch {} };
+  }, [conversationId]);
+  useEffect(() => {
+    if (!conversationId || !messages.length) return;
+    try { require('../services/e2ee/updateGate').noteMessages(conversationId, messages.length > 60 ? messages.slice(-60) : messages); } catch {}
+  }, [conversationId, messages.length]);
   const composerBlocked = useMemo(() => (
-    waImported || exMember ||
+    e5NeedsUpdate || waImported || exMember ||
     (conversationType === 'channel' && !members.find(m => m.email === currentEmail && m.role === 'admin')) ||
     (conversationType === 'group' && adminOnlyMessages && members.some(m => m.email === currentEmail && m.role !== 'admin'))
-  ), [waImported, exMember, conversationType, members, currentEmail, adminOnlyMessages]);
+  ), [e5NeedsUpdate, waImported, exMember, conversationType, members, currentEmail, adminOnlyMessages]);
   // [2026-10-20 tg1] lido pelo "arrastar p/ responder" (sem composer não há onde responder)
   const _composerBlockedRef = useRef(false);
   _composerBlockedRef.current = composerBlocked;
@@ -19262,6 +19282,7 @@ function ChatConversationInnerBody() {
         if (!rjCmi && !rjTid && !rjId) return;
         // [e2ee5 WP-06b] recusa E2EE no dreno: e2ee5.js recifra e reenvia sozinho (mesmo cmid) → relógio, não "não enviada"
         let _e5Retry = false; try { _e5Retry = require('../services/e2ee/e2ee5').willRetryRejected(data); } catch {}
+        if (!_e5Retry) { try { require('../services/e2ee/updateGate').noteResult(conversationId, data); } catch {} } // [e2ee5 rollout §5] recusa → "Atualize para continuar"
         setMessages(prev => {
           let hit = false;
           const next = prev.map(m => {
@@ -21019,7 +21040,7 @@ function ChatConversationInnerBody() {
     // explanation. Keep the typed text, tell the user why.
     if (conversationType === 'group') {
       if (composerBlocked) {
-        try { setScheduleToast(t('chat.onlyAdmins') || 'Somente admins podem enviar mensagens'); setTimeout(() => setScheduleToast(''), 2500); } catch {}
+        try { setScheduleToast(e5NeedsUpdate ? (t('e2ee5.composer.update_to_continue') || 'Atualize para continuar nesta conversa') : (t('chat.onlyAdmins') || 'Somente admins podem enviar mensagens')); setTimeout(() => setScheduleToast(''), 2500); } catch {}
         return;
       }
       const _smSec = Number(slowModeSeconds || 0);
@@ -39881,7 +39902,22 @@ function ChatConversationInnerBody() {
           and every send died on the backend 403 (admin_only) with no feedback.
           Group check requires the member row to be loaded (fail-open while
           members === []), so the composer never hides during initial load. */}
-      {composerBlocked ? (
+      {composerBlocked && e5NeedsUpdate ? (
+        <View style={{ paddingVertical: 14, paddingHorizontal: 20, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, alignItems: 'center' }}>
+          <Text style={{ color: colors.textSecondary || colors.textTertiary, fontSize: 14, textAlign: 'center' }}>{t('e2ee5.composer.update_to_continue') || 'Atualize para continuar nesta conversa'}</Text>
+          {Platform.OS !== 'web' ? (
+            <Pressable
+              onPress={() => { try { require('../services/e2ee/updateGate').openStore(); } catch {} }}
+              accessibilityRole="button"
+              accessibilityLabel={t('e2ee5.composer.update_action') || 'Atualizar'}
+              hitSlop={8}
+              style={{ marginTop: 10, paddingVertical: 8, paddingHorizontal: 22, borderRadius: 18, backgroundColor: colors.primary }}
+            >
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>{t('e2ee5.composer.update_action') || 'Atualizar'}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : composerBlocked ? (
         <View style={{ paddingVertical: 14, paddingHorizontal: 20, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, alignItems: 'center' }}>
           <Text style={{ color: colors.textTertiary, fontSize: 14, textAlign: 'center' }}>{waImported ? t('waImport.readOnlyBanner') : exMember ? (t('chatInfo.exMemberBanner') || 'Você não pode enviar mensagens para este grupo porque não é mais membro.') : t('chat.onlyAdmins')}</Text>
         </View>

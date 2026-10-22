@@ -15628,6 +15628,8 @@ export default {
   "e2ee5.banner.needs_update": "{name} tiene que actualizar Chatyy para activar el cifrado de extremo a extremo en este chat.",
   "e2ee5.banner.needs_update_many": "{count} personas tienen que actualizar Chatyy para activar el cifrado de extremo a extremo en este chat.",
   "e2ee5.common.cancel": "Cancelar",
+  "e2ee5.composer.update_action": "Actualizar",
+  "e2ee5.composer.update_to_continue": "Actualiza para continuar en este chat",
   "e2ee5.common.close": "Cerrar",
   "e2ee5.common.contact": "tu contacto",
   "e2ee5.common.ok": "OK",

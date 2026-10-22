@@ -6756,6 +6756,9 @@ async function _chatSendInner(conversationId, content, type = 'text', replyToId 
   _webNoteSendOutcome(conversationId, stableCMI, result, opts);
   // [e2ee5 WP-08c] ✓ do envio cifrado: id do servidor ↔ texto local; recusa por estado → re-busca o estado.
   if (_e5) { try { require('./e2ee/e2ee5').afterSend(conversationId, content, result); } catch {} }
+  // [e2ee5 rollout §5 2026-10-22] 409 e2ee5_plaintext_refused (inclusive com a flag desligada / sem núcleo):
+  // a conversa é cifrada → composer vira "Atualize para continuar" se este app não consegue cifrar.
+  if (result && !result.success) { try { require('./e2ee/updateGate').noteResult(conversationId, result); } catch {} }
   // [2026-10-14 lista-eco-envio] O envio pelo hub (native_send, frame WS) e o Rust
   // não passam pelo apiCall → o chat_list do SWR (60 s) NÃO era invalidado. Ao voltar
   // p/ a lista, o refresh de foco recebia o snapshot de ANTES do envio (prévia do

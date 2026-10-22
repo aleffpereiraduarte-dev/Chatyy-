@@ -35,6 +35,24 @@ function _bearer() {
   try { const a = require('../api'); return String((a.getAuthToken && a.getAuthToken()) || (a.getToken && a.getToken()) || ''); } catch (_) { return ''; }
 }
 function _E() { return require('./e2ee5'); }
+// [e2ee5 rollout §5 2026-10-22] o servidor só liga a coorte (E2EE5_PCT) p/ app que DECLARA
+// {platform, build ≥ E2EE5_MIN_IOS/ANDROID, core: 1}. `core` = o binário tem o núcleo chatyy-crypto
+// carregado (módulo + API + coreLinked), nunca suposição; `build` = nativeBuildVersion do binário.
+let _infoCache = null;
+function _clientInfo() {
+  if (_infoCache) return _infoCache;
+  let build = 0;
+  try {
+    const { requireOptionalNativeModule } = require('expo-modules-core');
+    const A = requireOptionalNativeModule ? requireOptionalNativeModule('ExpoApplication') : null;
+    build = parseInt(String((A && A.nativeBuildVersion) || '0'), 10) || 0;
+  } catch (_) { build = 0; }
+  let core = 0;
+  try { core = require('./updateGate').coreLinked() ? 1 : 0; } catch (_) { core = 0; }
+  const out = { platform: Platform.OS, build, core };
+  if (build > 0) _infoCache = out; // o binário não muda durante a sessão
+  return out;
+}
 
 async function _cacheGet() {
   try { const v = JSON.parse((await AsyncStorage.getItem(CACHE_KEY)) || '{}'); return v && typeof v === 'object' ? v : {}; } catch (_) { return {}; }
@@ -77,7 +95,7 @@ async function _ask(gen, tries = 0) {
     const tm = setTimeout(() => { try { ctl && ctl.abort(); } catch (_) {} }, 12000);
     try {
       const r = await fetch(ORIGIN + '/api/email.php?action=e2ee5_client_flag', {
-        method: 'POST', headers: { Authorization: 'Bearer ' + bearer, 'Content-Type': 'application/json' }, body: '{}',
+        method: 'POST', headers: { Authorization: 'Bearer ' + bearer, 'Content-Type': 'application/json' }, body: JSON.stringify(_clientInfo()),
         signal: ctl ? ctl.signal : undefined,
       });
       j = await r.json().catch(() => null);

@@ -558,8 +558,11 @@ function _applyState(k, d, prev) {
     since: d.since_pts != null ? Number(d.since_pts) : null,
     members,
     capable: Array.isArray(d.members) ? d.members : [],
-    blocked: d.blocked_reason || null,
-    canEnable: !!d.can_enable,
+    // [e2ee5 rollout §5 2026-10-22] 1.7.1: `reserved` (canário 971) e `group_size` (grupo acima do teto) = como
+    // `public`: sem faixa "protegida", sem aviso de atualizar e sem tentar ligar. Motivo cru em blockedRaw.
+    blocked: (d.blocked_reason === 'reserved' || d.blocked_reason === 'group_size') ? 'public' : (d.blocked_reason || null),
+    blockedRaw: d.blocked_reason || null,
+    canEnable: !!d.can_enable && d.blocked_reason !== 'reserved' && d.blocked_reason !== 'group_size',
     at: Date.now(),
   };
   _conv.set(k, ns);

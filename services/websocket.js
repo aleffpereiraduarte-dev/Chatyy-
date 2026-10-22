@@ -3038,10 +3038,12 @@ class MailWebSocket {
           const entry = this._pendingOutgoing.get(resolveId);
           clearTimeout(entry.timer);
           this._pendingOutgoing.delete(resolveId);
-          if (entry.resolve) entry.resolve(msg);
+          if (entry.resolve) entry.resolve(msg.refused ? { ...msg, failed: true } : msg); // [e2ee5 vazamento-eco] recusado ≠ ✓
         }
         // [WAVE 66 2026-05-21] Reset zombie ack-fail counter on any ack.
         this._consecutiveAckFails = 0;
+        // [e2ee5 vazamento-eco 2026-10-22] hub recusou relay em claro (conversa e2ee_mode=1) → o app passa a saber.
+        if (msg.refused) { try { require('./e2ee/updateGate').noteResult(msg.conversation_id, msg); } catch {} }
         this._emit('message_ack', msg);
         break;
       }
@@ -3287,6 +3289,24 @@ class MailWebSocket {
       if (nid != null && globalThis.__chatyy_nativeSentIds && (globalThis.__chatyy_nativeSentIds.has(nid) || globalThis.__chatyy_nativeSentIds.has(String(nid)))) {
         this._trackMsgId(nid);
         return Promise.resolve({ viaNative: true, msg_id: nid });
+      }
+    } catch {}
+    // [e2ee5 vazamento-eco 2026-10-22] eco otimista em claro numa conversa que acabou de virar E2EE (estado em
+    // cache ainda 0) vazava pelo relay. Texto puro só sai quando a conversa é SABIDAMENTE normal: modo 1
+    // conhecido (estado, recusa 409, histórico) → nunca; flag ligada com estado ausente/velho (> 60 s) →
+    // pula o relay (o chat_send HTTP/hub entrega) e re-busca o estado. O hub também descarta (kit vazamento-eco).
+    try {
+      const _e5 = require('./e2ee/e2ee5');
+      const _env5 = _e5.isEnvelope(message && message.content);
+      if (!_env5 && message && typeof message === 'object' && message.type !== 'system') {
+        if (require('./e2ee/updateGate').knownE2ee(conversationId)) return Promise.resolve({ failed: true, skipped: 'e2ee5' });
+        if (_e5.isOn()) {
+          const _st5 = _e5.convStateSync(conversationId);
+          if (!_st5 || _st5.mode !== 0 || Date.now() - (Number(_st5.at) || 0) > 60 * 1000) {
+            try { _e5.convState(conversationId, { force: true }).catch(() => {}); } catch {}
+            return Promise.resolve({ failed: true, skipped: 'e2ee5_state' });
+          }
+        }
       }
     } catch {}
     // ─── Phoenix parallel transport (flag-gated, ADDITIVE) ───
