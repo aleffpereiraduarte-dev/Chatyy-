@@ -213,8 +213,10 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/chatyy-crypto-target
           CHATYY_CRYPTO_BUILD_FALLBACK: '1'
         run: |
+          # [2026-10-21] founder: com o núcleo, submit=true vai SÓ para a faixa de teste interno da Play
+          # (perfil "internal" no passo de submit). E2EE continua desligado por flag/allowlist.
           if [ "${{ inputs.submit }}" = "true" ]; then
-            echo "::error::chatyy_crypto=true é só build de teste — rode com submit=false"; exit 1
+            echo "::warning::chatyy_crypto=true + submit=true → Play faixa INTERNA com o núcleo (E2EE desligado por flag)"
           fi
           test -d modules/expo-chatyy-crypto || { echo "::error::modules/expo-chatyy-crypto (WP-03) ainda não existe"; exit 1; }
           export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)}}"
@@ -290,7 +292,7 @@ jobs:
           set +e
           npx eas-cli submit \
             --platform android \
-            --profile production \
+            --profile ${{ inputs.chatyy_crypto == 'true' && 'internal' || 'production' }} \
             --path ./build.aab \
             --non-interactive 2>&1 | tee submit.log
           rc=${PIPESTATUS[0]}
