@@ -1936,7 +1936,7 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     const list = Array.isArray(data) ? data : [];
     const _t0 = Date.now(); // [2026-10-20 perf-js] custo do diff → perfTrace 'nl:diff'
     try { require('../../services/perfTrace').traceAction('nl:diff'); } catch {}
-    const keys = new Array(list.length);
+    const keys = [];
     const upserts = [];
     const nextJson = new Map();
     const idx = new Map();
@@ -1945,13 +1945,12 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
     let rebuilt = 0;
     for (let i = 0; i < list.length; i++) {
       const it = list[i];
-      if (!it) { keys[i] = 'null-' + i; continue; }
+      if (!it) { keys.push('null-' + i); continue; }
       let k;
       try { k = keyOf ? keyOf(it) : String(it._key || it.id); } catch { k = 'err-' + i; }
       // [2026-10-21 polish-conv] chave repetida (otimista + confirmada no mesmo frame,
       // id indefinido) confundia o diff/scroll nativo → sufixo único p/ a repetida.
       if (idx.has(k)) k = k + '#dup' + i;
-      keys[i] = k;
       idx.set(k, i);
       let ent = cache.get(it);
       if (!ent || ent.rev !== ctxRev || ent.key !== k) {
@@ -1964,6 +1963,12 @@ export const ChatyyMessageList = React.memo(forwardRef(function ChatyyMessageLis
         cache.set(it, ent);
         rebuilt++;
       }
+      // [2026-10-22 pilula-vazia] data/sistema SEM texto (evento oculto) não vai ao nativo: o iOS
+      // (binários até o fix do CMLCell) pintava a cápsula vazia 20×22 por cima da linha seguinte
+      // ("círculo branco" sobre o divisor de não lidas). Fica fora de keys (sem linha de 1 pt).
+      const _r = ent.row;
+      if (_r && (_r.kind === 'system' || _r.kind === 'date') && !_r.text && !_r.ab && !unsupported) continue;
+      keys.push(k);
       nextJson.set(k, ent.json);
       if (sent.json.get(k) !== ent.json) upserts.push(ent.row);
     }

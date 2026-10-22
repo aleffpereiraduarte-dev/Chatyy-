@@ -286,7 +286,10 @@ final class CMLCell: UICollectionViewCell {
     if row.sel == 2 { highlight.alpha = 1 } else if highlight.layer.animationKeys() == nil { highlight.alpha = 0 }
 
     let isPill = row.kind != .msg
-    pillBg.isHidden = !isPill
+    // [2026-10-22 pilula-vazia] data/sistema SEM texto (evento de sistema oculto) = linha de 1 pt,
+    // mas a cápsula (20×22, mín. do tg-style) era pintada mesmo assim e vazava por cima da
+    // linha seguinte → "círculo branco" sobre o divisor "1 mensagem não lida". = Android (só pinta c/ texto).
+    pillBg.isHidden = !isPill || (row.kind != .unread && row.text.isEmpty)
     pillText.isHidden = !isPill
     slide.isHidden = isPill
     selIcon.isHidden = isPill || row.sel == 0

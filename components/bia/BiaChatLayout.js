@@ -27,7 +27,7 @@ import {
   IconChevronLeft, IconMoreVert, IconPlus, IconCamera, IconMic, IconX, IconSend,
 } from '../Icons';
 import { HeaderIconButton } from '../nativeHeader';
-import { grafite, bubbleOwnStyle, bubbleRecvStyle, THEME_V2 } from '../../constants/theme';
+import { grafite, bubbleOwnStyle, bubbleRecvStyle, THEME_V2, ownBubblePalette, chatOwnBubbleStyle, detailColor } from '../../constants/theme';
 import SubtlePattern, { subtlePatternOn } from '../wallpaper/SubtlePattern';
 import { isReduceMotionEnabled } from '../reducedMotion';
 import { BiaMarkdown, BiaToolCards } from '../BiaRich';
@@ -53,6 +53,7 @@ export function biaChatLayoutOn() {
 // (só a sombra/gradiente da bolha somem — bubbleOwnStyle devolve {}).
 export function biaChatColors(isDark) {
   const g = grafite(isDark);
+  const op = ownBubblePalette(isDark);
   return {
     g,
     wall: g.wall,
@@ -60,9 +61,12 @@ export function biaChatColors(isDark) {
     fg: g.text,
     sub: g.muted,
     line: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(24,24,27,0.08)',
-    own: g.ownMid,
-    ownText: g.ownText,
-    ownMeta: g.ownMeta,
+    // [2026-10-22 bia-bolha] própria = MESMA paleta da conversa normal (clara #E4E4DF /
+    // #3A3A40; kill __chatyy_light_bubbles=false → grafite escuro de antes).
+    own: op.mid,
+    ownText: op.text,
+    ownMeta: op.meta,
+    ownLight: op.light,
     recv: g.recv,
     recvText: g.recvText,
     recvMeta: isDark ? 'rgba(242,242,239,0.45)' : 'rgba(24,24,27,0.42)',
@@ -264,6 +268,16 @@ export function BiaTypingBubble({ isDark, t }) {
   );
 }
 
+// [2026-10-22 bia-hora-dupla] Reserva invisível p/ a hora+✓✓ (técnica WA, = _waMetaGhost
+// da conversa). O Android IGNORA color:'transparent' em <Text> aninhado → a hora do ghost
+// aparecia por cima da real (hora duplicada branca+cinza). Lá vai só NBSP (sem glifo).
+const _NB = '\u00A0';
+function biaMetaGhost(time) {
+  let s = ' ' + _NB + _NB + String(time || '00:00').replace(/ /g, _NB) + _NB.repeat(9);
+  if (Platform.OS === 'android') s = s.replace(/[^\u00A0 ]/g, _NB + _NB);
+  return s;
+}
+
 // ─── linha (bolha) ───────────────────────────────────────────────────────────
 const WA_OPTIN_URL = 'https://wa.me/12093093434?text=Oi!%20Quero%20receber%20lembretes%20do%20Chatyy.';
 
@@ -288,20 +302,20 @@ export const BiaChatRow = memo(function BiaChatRow({
       <View>
         {pill}
         <Enter dy={8} duration={260} style={[ms.row, ms.rowOwn]}>
-          <View style={[ms.bubble, ms.bubbleOwn, { backgroundColor: c.own }, bubbleOwnStyle(isDark), item.imageUri ? ms.bubbleMedia : null]}>
+          <View style={[ms.bubble, ms.bubbleOwn, { backgroundColor: c.own }, c.ownLight ? chatOwnBubbleStyle(isDark) : bubbleOwnStyle(isDark), item.imageUri ? ms.bubbleMedia : null]}>
             {item.imageUri ? (
               <Image source={{ uri: item.imageUri }} style={ms.media} resizeMode="cover" accessibilityIgnoresInvertColors />
             ) : null}
             {item.content ? (
               <Text style={[ms.text, { color: c.ownText }, item.imageUri ? ms.caption : null]} selectable>
                 {item.content}
-                <Text style={ms.ghost}>{time ? `    ${time}   ` : ''}</Text>
+                {time ? <Text style={ms.ghost} selectable={false} accessible={false} importantForAccessibility="no">{biaMetaGhost(time)}</Text> : null}
               </Text>
             ) : null}
             {time ? (
               <View style={ms.meta} accessible accessibilityLabel={`${time}, ${t('biaChat.read')}`}>
                 <Text style={[ms.metaText, { color: c.ownMeta }]}>{time}</Text>
-                <DoubleCheck color={c.ownMeta} />
+                <DoubleCheck color={(c.ownLight && detailColor(isDark)) || c.ownMeta} />
               </View>
             ) : null}
           </View>
@@ -402,7 +416,7 @@ const ms = StyleSheet.create({
   media: { width: 232, height: 232, borderRadius: 14 },
   text: { fontSize: 16, lineHeight: 21.5, letterSpacing: -0.15, paddingRight: 3 },
   caption: { marginTop: 6, paddingHorizontal: 8, paddingBottom: 2 },
-  ghost: { fontSize: 11, color: 'transparent' },
+  ghost: { fontSize: 11, fontWeight: '500', fontVariant: ['tabular-nums'], color: 'transparent', ...(Platform.OS === 'web' ? { userSelect: 'none' } : {}) },
   meta: { position: 'absolute', right: 10, bottom: 5, flexDirection: 'row', alignItems: 'center', gap: 3 },
   metaAi: { position: 'absolute', right: 10, bottom: 5 },
   metaText: { fontSize: 11, fontWeight: '500', fontVariant: ['tabular-nums'] },
