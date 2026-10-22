@@ -179,6 +179,8 @@ export async function scheduleDaily() {
   if (Platform.OS === 'web') return false; // no BG fetch on web
   // [2026-10-09 own-backup] gatilho em primeiro plano (boot + volta do app).
   try { require('./ownBackup').startAutoBackupRunner(); } catch {}
+  // [backup-nuvem 2026-10-22] backup v4 na nuvem do Chatyy — no-op salvo globalThis.__chatyy_cloud_backup === true.
+  try { require('./cloudBackup').startRunner(); } catch {}
 
   let BackgroundFetch, TaskManager;
   try {

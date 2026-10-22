@@ -18,6 +18,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing } from '../constants/theme';
 import { IconArrowLeft, IconLock, IconUpload, IconRefresh } from '../components/Icons';
 import OwnBackupCard from '../components/OwnBackupCard';
+import CloudBackupCard from '../components/CloudBackupCard'; // [backup-nuvem 2026-10-22] flag __chatyy_cloud_backup
 import {
   backupNow,
   listBackups,
@@ -528,6 +529,8 @@ export default function ChatBackupScreen() {
       <ScrollView contentContainerStyle={{ padding: Spacing.lg, paddingBottom: insets.bottom + 80 }}>
         {/* [2026-10-09 own-backup] Principal: backup E2E no servidor do Chatyy. */}
         <OwnBackupCard />
+        {/* [backup-nuvem 2026-10-22] v4 na nuvem do Chatyy — some sozinho com a flag desligada. */}
+        <CloudBackupCard />
         <Text style={[styles.label, { color: colors.textSecondary }]}>{t('ownBackup.otherOptions')}</Text>
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <View style={styles.row}>
