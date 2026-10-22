@@ -827,7 +827,7 @@ class CallActivity : ComponentActivity() {
               try { p2p?.setMicEnabled(!state.isMuted) } catch (_: Throwable) {}
               // [2026-10-10 call-states] never publish the caller mic during the ring.
               if (!callerRingGateClosed()) {
-                try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(!state.isMuted) } catch (_: Throwable) {} } } catch (_: Throwable) {}
+                try { lifecycleScope.launch { try { room?.let { __e5r -> CallE2EE.setMic(__e5r, callId, "CallActivity:830", !state.isMuted) } } catch (_: Throwable) {} } } catch (_: Throwable) {}
               }
             }
           }, 500L)
@@ -841,7 +841,7 @@ class CallActivity : ComponentActivity() {
           try { p2p?.setMicEnabled(!muted) } catch (_: Throwable) {}
           // [2026-10-10 call-states] never publish the caller mic during the ring.
           if (!callerRingGateClosed()) {
-            try { lifecycleScope.launch { try { room?.localParticipant?.setMicrophoneEnabled(!muted) } catch (_: Throwable) {} } } catch (_: Throwable) {}
+            try { lifecycleScope.launch { try { room?.let { __e5r -> CallE2EE.setMic(__e5r, callId, "CallActivity:844", !muted) } } catch (_: Throwable) {} } } catch (_: Throwable) {}
           }
         }
       }
@@ -1166,7 +1166,7 @@ class CallActivity : ComponentActivity() {
                   // setCameraEnabled(x) on an existing publication = pub.muted
                   // (signalled to the SFU → TrackMuted/Unmuted on the peer) +
                   // stop/startCapture. Same track, no republish.
-                  r.localParticipant.setCameraEnabled(desired)
+                  CallE2EE.setCam(r, callId, "CallActivity:1169", desired)
                   if (desired) {
                     bindLocalCameraIfReady(r)
                   } else {
@@ -1196,7 +1196,7 @@ class CallActivity : ComponentActivity() {
                   // First-time enable — perform the full publish path.
                   // setCameraEnabled honors the room-level
                   // VideoTrackPublishDefaults configured at bringUpRoom.
-                  r.localParticipant.setCameraEnabled(true)
+                  CallE2EE.setCam(r, callId, "CallActivity:1199", true)
                   Log.d(TAG, "camera first-publish via setCameraEnabled")
                   // [2026-05-19] Bug #989 fix — see attemptConnect for full
                   // root cause. setCameraEnabled returns AFTER the track is
@@ -1208,7 +1208,7 @@ class CallActivity : ComponentActivity() {
                 }
               } catch (t: Throwable) {
                 Log.w(TAG, "toggleCam (mute path) failed: ${t.message} — falling back")
-                try { room?.localParticipant?.setCameraEnabled(desired) }
+                try { room?.let { __e5r -> CallE2EE.setCam(__e5r, callId, "CallActivity:1211", desired) } }
                 catch (t2: Throwable) { Log.w(TAG, "setCameraEnabled fallback: ${t2.message}") }
               }
             }
@@ -2010,7 +2010,7 @@ class CallActivity : ComponentActivity() {
                 try { r.localParticipant.setCameraEnabled(false) } catch (_: Throwable) {}
                 state.hasLocalVideo = false
               }
-              r.localParticipant.setCameraEnabled(true)
+              CallE2EE.setCam(r, callId, "CallActivity:2013", true)
               bindLocalCameraIfReady(r)
               verifyCameraPublished(r, "late-grant")
               Log.d(TAG, "camera published after late CAMERA grant (initial video)")
@@ -2052,7 +2052,7 @@ class CallActivity : ComponentActivity() {
       if (r != null && !callerRingGateClosed()) {
         lifecycleScope.launch {
           try {
-            r.localParticipant.setMicrophoneEnabled(!state.isMuted)
+            CallE2EE.setMic(r, callId, "CallActivity:2055", !state.isMuted)
             Log.d(TAG, "mic published after late RECORD_AUDIO grant")
           } catch (t: Throwable) {
             Log.w(TAG, "late mic publish failed: ${t.message}")
@@ -2298,7 +2298,7 @@ class CallActivity : ComponentActivity() {
     // mic if the user grants the perm after this point.
     if (state.micPermissionGranted) {
       val micT0 = System.currentTimeMillis()
-      r.localParticipant.setMicrophoneEnabled(!state.isMuted)
+      CallE2EE.setMic(r, callId, "CallActivity:2301", !state.isMuted)
       // [mic-first-frame 2026-10-17] Timing probe: publish RPC duration + when
       // the first capture frame reaches the APM. SFU first-RTP comes from the
       // LiveKit server log; the gap tells capture vs negotiation apart.
@@ -2324,7 +2324,7 @@ class CallActivity : ComponentActivity() {
       if (!camGranted) {
         Log.w(TAG, "[camera] LK connected but CAMERA not granted yet — publish deferred to onRequestPermissionsResult")
       } else {
-        r.localParticipant.setCameraEnabled(state.isCameraOn)
+        CallE2EE.setCam(r, callId, "CallActivity:2327", state.isCameraOn)
         // [2026-05-19] Bug #989 fix: LK Android 2.x doesn't always emit
         // RoomEvent.TrackPublished for the local participant — depending on
         // the SDK rev, local publish surfaces as RoomEvent.LocalTrackPublished
@@ -3043,7 +3043,7 @@ class CallActivity : ComponentActivity() {
           val r = room
           if (r != null && !finishing && state.isCameraOn) lifecycleScope.launch {
             try {
-              r.localParticipant.setCameraEnabled(true)
+              CallE2EE.setCam(r, callId, "CallActivity:3046", true)
               bindLocalCameraIfReady(r)
             } catch (t: Throwable) { Log.w(TAG, "autoresume: ${t.message}") }
           }
@@ -4566,7 +4566,7 @@ class CallActivity : ComponentActivity() {
     pendingVideoAnnounce = false
     lifecycleScope.launch {
       try {
-        r.localParticipant.setCameraEnabled(true)
+        CallE2EE.setCam(r, callId, "CallActivity:4569", true)
         bindLocalCameraIfReady(r)
         Log.d(TAG, "enterVideoModeAndPublish: camera published")
         CallDiag.log("camera_on", callId, "first=$firstPublish announce=$doAnnounce", applicationContext)
@@ -4756,13 +4756,13 @@ class CallActivity : ComponentActivity() {
       // cost is negligible for mute toggle on Android side.
       lifecycleScope.launch {
         // [2026-10-11 call-parity] On hold the mic stays closed until "Retomar".
-        try { room?.localParticipant?.setMicrophoneEnabled(desired && !state.isOnHold) }
+        try { room?.let { __e5r -> CallE2EE.setMic(__e5r, callId, "CallActivity:4759", desired && !state.isOnHold) } }
         catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled: ${t.message}") }
       }
     } catch (t: Throwable) {
       Log.w(TAG, "fast mute fail, falling back: ${t.message}")
       lifecycleScope.launch {
-        try { room?.localParticipant?.setMicrophoneEnabled(desired) } catch (_: Throwable) {}
+        try { room?.let { __e5r -> CallE2EE.setMic(__e5r, callId, "CallActivity:4765", desired) } } catch (_: Throwable) {}
       }
     }
     try { ExpoCallKitModule.emitLkLocalAudioChanged(desired) } catch (_: Throwable) {}
@@ -4784,7 +4784,7 @@ class CallActivity : ComponentActivity() {
     p2p?.let { s -> try { s.setMicEnabled(micOn) } catch (_: Throwable) {} }
     if (!callerRingGateClosed()) {
       lifecycleScope.launch {
-        try { room?.localParticipant?.setMicrophoneEnabled(micOn) } catch (t: Throwable) { Log.w(TAG, "hold mic: ${t.message}") }
+        try { room?.let { __e5r -> CallE2EE.setMic(__e5r, callId, "CallActivity:4787", micOn) } } catch (t: Throwable) { Log.w(TAG, "hold mic: ${t.message}") }
       }
     }
     if (held) {
@@ -4804,7 +4804,7 @@ class CallActivity : ComponentActivity() {
     val r = room ?: return
     lifecycleScope.launch {
       try {
-        r.localParticipant.setCameraEnabled(on)
+        CallE2EE.setCam(r, callId, "CallActivity:4807", on)
         if (on) bindLocalCameraIfReady(r) else try { localRenderer?.clearImage() } catch (_: Throwable) {}
       } catch (t: Throwable) { Log.w(TAG, "setCameraLive($on): ${t.message}") }
     }
@@ -4969,7 +4969,7 @@ class CallActivity : ComponentActivity() {
             }
           },
         )
-        val ok = r.localParticipant.setScreenShareEnabled(true, params)
+        val ok = CallE2EE.setScreen(r, callId, "CallActivity:4972", params)
         state.isScreenSharing = ok
         CallDiag.log(if (ok) "screen_share_published" else "screen_share_error", callId, "mediaprojection", applicationContext)
         if (ok) onLocalScreenShareStarted(r)

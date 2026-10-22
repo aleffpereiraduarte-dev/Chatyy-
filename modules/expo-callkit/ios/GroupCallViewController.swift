@@ -410,7 +410,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             do {
                 // [Wave B audio] Pin AudioCaptureOptions (AEC+AGC+NS).
                 _ = try await lkPublishWhenConnected(r, callId: self.roomName, label: "group_mic") {
-                    try await r.localParticipant.setMicrophone(
+                    try await CallE2EE.gated(r, self.roomName, "group_mic", enabling: wantMic).setMicrophone(
                         enabled: wantMic,
                         captureOptions: CallViewController.defaultAudioCaptureOptions()
                     )
@@ -450,7 +450,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 }
             }
             do {
-                let pub = try await r.localParticipant.setCamera(
+                let pub = try await CallE2EE.gated(r, self.roomName, "group_cam").setCamera(
                     enabled: true,
                     captureOptions: captureOpts,
                     publishOptions: publishOpts
@@ -806,7 +806,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         Task { [weak self] in
             do {
                 // [Wave B audio] Pin AudioCaptureOptions on every toggle.
-                try await r.localParticipant.setMicrophone(
+                try await CallE2EE.gated(r, self?.roomName ?? "", "group_mic_toggle", enabling: enabled).setMicrophone(
                     enabled: enabled,
                     captureOptions: CallViewController.defaultAudioCaptureOptions()
                 )
@@ -862,7 +862,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                     if !ok { await MainActor.run { self.session.camEnabled = false } }
                     return
                 }
-                let pub = try await r.localParticipant.setCamera(enabled: enabled)
+                let pub = try await CallE2EE.gated(r, self.roomName, "group_cam_toggle", enabling: enabled).setCamera(enabled: enabled)
                 await MainActor.run {
                     if enabled {
                         self.updateLocalParticipant(videoTrack: pub?.track as? LocalVideoTrack)
@@ -931,14 +931,14 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             }
             do {
                 let opts = CallViewController.defaultCameraCaptureOptions(position: next, profile: CallViewController.CallVideoQuality.current)
-                let pub = try await r.localParticipant.setCamera(enabled: true, captureOptions: opts)
+                let pub = try await CallE2EE.gated(r, self.roomName, "group_switch_cam").setCamera(enabled: true, captureOptions: opts)
                 if let track = pub?.track as? LocalVideoTrack {
                     await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
                 }
             } catch {
                 print("[GroupCallVC] switchCamera failed: \(error) — fallback to disable/enable")
                 _ = try? await r.localParticipant.setCamera(enabled: false)
-                let pub = try? await r.localParticipant.setCamera(enabled: true)
+                let pub = try? await CallE2EE.gated(r, self.roomName, "group_switch_cam_last").setCamera(enabled: true)
                 if let track = pub?.track as? LocalVideoTrack {
                     await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
                 }

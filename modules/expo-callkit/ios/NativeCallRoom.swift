@@ -434,6 +434,12 @@ public enum NativeCallRoomEvent {
         guard let r = room, let active = _callId, active == callId else {
             return nil
         }
+        // [e2ee5 WP-13 2026-10-22] Fail closed: Room do toque SEM E2EE numa ligação exigida → não
+        // publica o mic aqui (o CallViewController sai dele e entra de novo cifrado).
+        if CallE2EE.shared.roomViolatesPolicy(callId, room: r) {
+            nativeCallDiag("e2ee5_fast_mic_blocked", callId, "reason=\(reason)")
+            return nil
+        }
         if micPublishCallId == callId, let existing = micPublishTask {
             return existing
         }
@@ -505,7 +511,7 @@ public enum NativeCallRoomEvent {
                     }
                 }
                 do {
-                    let pub = try await r.localParticipant.setMicrophone(
+                    let pub = try await CallE2EE.gated(r, callId, "fast_mic").setMicrophone(
                         enabled: true,
                         captureOptions: CallViewController.defaultAudioCaptureOptions()
                     )
@@ -890,7 +896,7 @@ public enum NativeCallRoomEvent {
                 // voice; only the explicit 48k bump is deferred until it can be
                 // compiled on the Mac. Android got the full HD-voice tuning
                 // (compiled local). Back to the known-good call.
-                _ = try await r.localParticipant.setMicrophone(
+                _ = try await CallE2EE.gated(r, self._callId ?? "", "native_mic_toggle", enabling: enabled).setMicrophone(
                     enabled: enabled,
                     captureOptions: AudioCaptureOptions()
                 )
@@ -916,7 +922,7 @@ public enum NativeCallRoomEvent {
                     // duplicate the numbers again.
                     let captureOpts = CallViewController.defaultCameraCaptureOptions()
                     let publishOpts = CallViewController.defaultVideoPublishOptions()
-                    _ = try await r.localParticipant.setCamera(
+                    _ = try await CallE2EE.gated(r, self._callId ?? "", "native_cam").setCamera(
                         enabled: true,
                         captureOptions: captureOpts,
                         publishOptions: publishOpts
@@ -995,7 +1001,7 @@ final class OutgoingAnswerWatcher: NSObject, RoomDelegate {
         Task {
             if wantMic {
                 do {
-                    _ = try await r.localParticipant.setMicrophone(
+                    _ = try await CallE2EE.gated(r, self.callId, "outgoing_watcher_mic").setMicrophone(
                         enabled: true,
                         captureOptions: AudioCaptureOptions()
                     )

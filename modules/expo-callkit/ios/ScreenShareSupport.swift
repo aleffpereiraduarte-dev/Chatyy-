@@ -148,6 +148,8 @@ enum ScreenShareSupport {
             _ = try await room.localParticipant.set(source: .screenShareVideo, enabled: false)
             return
         }
+        // [e2ee5 WP-13 2026-10-22] Ligação cifrada num Room sem E2EE → não compartilha a tela (lança).
+        _ = try CallE2EE.gated(room, callId, "screen_set")
         if useBroadcastExtension {
             await MainActor.run {
                 armPending(room: room, callId: callId)
@@ -262,7 +264,7 @@ enum ScreenShareSupport {
         Task {
             do {
                 let track = LocalVideoTrack.createBroadcastScreenCapturerTrack(options: captureOptions())
-                _ = try await r.localParticipant.publish(videoTrack: track,
+                _ = try await CallE2EE.gated(r, callId, "screen_broadcast").publish(videoTrack: track,
                                                          options: CallViewController.screenSharePublishOptions())
                 let ms = Int((CACurrentMediaTime() - startedAt) * 1000)
                 nativeCallDiag("screen_share_publish_ok", callId, "ms=\(ms)")

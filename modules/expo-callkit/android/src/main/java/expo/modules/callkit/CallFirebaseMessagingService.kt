@@ -231,6 +231,9 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 ?: callerEmail.substringBefore('@').takeIf { it.isNotBlank() }
                 ?: "Chamada"
             val conversationId = data["conversation_id"] ?: ""
+            // [e2ee5 WP-07/WP-13 2026-10-22] Conversa cifrada (dica do servidor "e2ee":"5" ou dica local)
+            // ⇒ ligação EXIGIDA antes do preconnect: o Room do toque já nasce com E2EE (sem chave = sem mídia).
+            try { CallE2EE.noteIncoming(applicationContext, callId, conversationId, callerEmail, CallE2EE.serverHint(data["e2ee"])) } catch (_: Throwable) {}
             val hasVideo = data["video"] == "1"
             // Avatar URL ships in the FCM payload (backend adds caller_avatar
             // pointing to email.php?action=get_avatar). Without it, native

@@ -45,6 +45,7 @@ internal object CallE2EE {
     @Volatile var required = false
     @Volatile var key: String? = null
     @Volatile var provider: BaseKeyProvider? = null
+    @Volatile var keyAt: Long = 0L
     val createdAt = System.currentTimeMillis()
   }
 
@@ -61,6 +62,7 @@ internal object CallE2EE {
     if (callId.isEmpty()) return
     entry(callId).required = on
     Log.i(TAG, "required=${if (on) 1 else 0} call=$callId")
+    if (on) try { enforce(callId, "required") } catch (_: Throwable) {}
   }
 
   /** Chave nova (1ª ou rotação): também no provider do Room vivo. */
@@ -68,9 +70,11 @@ internal object CallE2EE {
     if (callId.isEmpty() || !validKey(keyB64)) return false
     val e = entry(callId)
     e.key = keyB64
+    if (e.keyAt == 0L) e.keyAt = System.currentTimeMillis()
     val live = e.provider
     try { live?.setSharedKey(keyB64, 0) } catch (t: Throwable) { Log.w(TAG, "setSharedKey falhou: ${t.javaClass.simpleName}") }
     Log.i(TAG, "key set call=$callId live=${if (live != null) 1 else 0}")
+    try { enforce(callId, "key") } catch (_: Throwable) {}
     return true
   }
 
@@ -99,6 +103,79 @@ internal object CallE2EE {
   fun roomViolatesPolicy(callId: String?, room: Room?): Boolean =
     room != null && isRequired(callId) && room.e2eeManager == null
 
+  // ───── [e2ee5 WP-13 2026-10-22] fail closed na PUBLICAÇÃO ─────
+
+  private val watched = ConcurrentHashMap<String, MutableList<java.lang.ref.WeakReference<Room>>>()
+
+  /**
+   * Porteiro de TODA publicação de mídia local (mic, câmera, tela) de uma ligação: false (não publica)
+   * quando a ligação é exigida e o Room não tem E2EE. Anota o Room para [enforce] despublicar o que já
+   * saiu se a ligação virar exigida DEPOIS (JS/dica tardia).
+   */
+  fun mayPublish(callId: String?, room: Room?, site: String): Boolean {
+    val r = room ?: return true
+    val cid = if (callId.isNullOrEmpty()) (NativeCallRoom.currentCallId() ?: "") else callId
+    if (cid.isEmpty()) return true
+    try {
+      val list = watched.getOrPut(cid) { java.util.Collections.synchronizedList(mutableListOf()) }
+      synchronized(list) {
+        list.removeAll { it.get() == null }
+        if (list.none { it.get() === r }) list.add(java.lang.ref.WeakReference(r))
+      }
+      if (watched.size > 20) watched.entries.removeAll { e -> synchronized(e.value) { e.value.all { it.get() == null } } }
+    } catch (_: Throwable) {}
+    if (roomViolatesPolicy(cid, r)) {
+      Log.w(TAG, "publish BLOQUEADO (Room sem E2EE numa ligação exigida) call=$cid site=$site")
+      try { CallDiag.log("e2ee5_publish_blocked", cid, "site=$site") } catch (_: Throwable) {}
+      return false
+    }
+    return true
+  }
+
+  /** setMicrophoneEnabled pelo porteiro (desligar nunca é bloqueado). false = não publicou. */
+  suspend fun setMic(room: Room, callId: String?, site: String, enabled: Boolean): Boolean {
+    if (enabled && !mayPublish(callId, room, site)) return false
+    return room.localParticipant.setMicrophoneEnabled(enabled)
+  }
+
+  /** setCameraEnabled pelo porteiro. */
+  suspend fun setCam(room: Room, callId: String?, site: String, enabled: Boolean): Boolean {
+    if (enabled && !mayPublish(callId, room, site)) return false
+    return room.localParticipant.setCameraEnabled(enabled)
+  }
+
+  /** setScreenShareEnabled(true, params) pelo porteiro. */
+  suspend fun setScreen(room: Room, callId: String?, site: String, params: io.livekit.android.room.track.screencapture.ScreenCaptureParams?): Boolean {
+    if (!mayPublish(callId, room, site)) return false
+    return room.localParticipant.setScreenShareEnabled(true, params)
+  }
+
+  /** A ligação virou exigida com Room(s) já publicando sem E2EE → despublica tudo. Nada exigido = no-op. */
+  fun enforce(callId: String, reason: String) {
+    if (callId.isEmpty() || !isRequired(callId)) return
+    // P2P nativo (SDP pelo hub, sem autenticação) também sai: volta ao LiveKit, onde o porteiro decide.
+    try {
+      P2PCallSession.get(callId)?.let { s ->
+        try { CallDiag.log("e2ee5_p2p_dropped", callId, "reason=$reason") } catch (_: Throwable) {}
+        Handler(Looper.getMainLooper()).post { try { s.fallback("e2ee5_required") } catch (_: Throwable) {} }
+      }
+    } catch (_: Throwable) {}
+    val rooms = mutableListOf<Room>()
+    try { watched[callId]?.let { l -> synchronized(l) { l.mapNotNullTo(rooms) { it.get() } } } } catch (_: Throwable) {}
+    try {
+      if (NativeCallRoom.currentCallId() == callId) NativeCallRoom.currentRoomOrNull()?.let { r -> if (rooms.none { it === r }) rooms.add(r) }
+    } catch (_: Throwable) {}
+    for (r in rooms) {
+      if (!roomViolatesPolicy(callId, r)) continue
+      try {
+        val tracks = r.localParticipant.trackPublications.values.mapNotNull { it.track }
+        if (tracks.isEmpty()) continue
+        try { CallDiag.log("e2ee5_plain_unpublished", callId, "reason=$reason tracks=${tracks.size}") } catch (_: Throwable) {}
+        for (t in tracks) { try { r.localParticipant.unpublishTrack(t) } catch (_: Throwable) {} }
+      } catch (t: Throwable) { Log.w(TAG, "enforce falhou: ${t.javaClass.simpleName}") }
+    }
+  }
+
   /** P2P nativo (SDP pelo hub sem autenticação) fica de fora das ligações cifradas. */
   fun blocksNativeP2P(callId: String?): Boolean = isRequired(callId)
 
@@ -114,12 +191,21 @@ internal object CallE2EE {
 
   fun status(callId: String): Map<String, Any> {
     val e = calls[callId]
-    return mapOf(
+    val out = mutableMapOf<String, Any>(
       "required" to (e?.required ?: false),
       "hasKey" to (e?.key != null),
       "live" to (e?.provider != null),
       "ageMs" to (if (e != null) System.currentTimeMillis() - e.createdAt else 0L),
+      // [e2ee5 WP-13 2026-10-22] telemetria: ms do registro da ligação até a 1ª chave (-1 = sem chave)
+      "keyMs" to (if (e != null && e.keyAt > 0L) e.keyAt - e.createdAt else -1L),
     )
+    try {
+      if (NativeCallRoom.currentCallId() == callId) NativeCallRoom.currentRoomOrNull()?.let { r ->
+        out["roomE2ee"] = r.e2eeManager != null
+        out["unencryptedRemote"] = hasUnencryptedRemote(r)
+      }
+    } catch (_: Throwable) {}
+    return out
   }
 
   // ───── dica por conversa (toque com o app morto) ─────
@@ -143,9 +229,25 @@ internal object CallE2EE {
     } catch (t: Throwable) { Log.w(TAG, "hint falhou: ${t.javaClass.simpleName}") }
   }
 
-  /** Toque/atendimento: conversa (ou par do 1:1) marcada como cifrada ⇒ exigida. */
-  fun noteIncoming(ctx: Context, callId: String, convId: String, peerEmail: String) {
+  /** [e2ee5 WP-07 2026-10-22] Campo "e2ee" do push/call_invite: "5" (ou ≥5) = conversa e2ee_mode=1. */
+  fun serverHint(v: Any?): Boolean {
+    val n = when (v) { is Number -> v.toInt(); is String -> v.trim().toIntOrNull() ?: 0; else -> 0 }
+    return n >= 5
+  }
+
+  /**
+   * Toque/atendimento: conversa (ou par do 1:1) marcada como cifrada ⇒ exigida. `serverHint` = o
+   * servidor disse que a conversa é cifrada (push/call_invite "e2ee":"5") → exigida já, e grava a dica
+   * local (vale também para o próximo toque com o app morto). O servidor só LIGA a exigência.
+   */
+  fun noteIncoming(ctx: Context, callId: String, convId: String, peerEmail: String, serverHint: Boolean = false) {
     if (callId.isEmpty()) return
+    if (serverHint) {
+      setRequired(callId, true)
+      if (convId.isNotEmpty()) setConvHint(ctx, convId, peerEmail, true)
+      try { CallDiag.log("e2ee5_server_hint", callId, "conv=${if (convId.isNotEmpty()) 1 else 0}") } catch (_: Throwable) {}
+      return
+    }
     try {
       val raw = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(HINTS, null) ?: return
       val o = JSONObject(raw)

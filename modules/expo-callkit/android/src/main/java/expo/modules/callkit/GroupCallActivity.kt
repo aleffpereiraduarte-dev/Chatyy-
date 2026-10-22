@@ -825,9 +825,9 @@ class GroupCallActivity : ComponentActivity() {
     connectJob = lifecycleScope.launch {
       try {
         r.connect(url, token, LkTokenFetcher.connectOptionsFor(token))
-        r.localParticipant.setMicrophoneEnabled(micEnabled)
+        CallE2EE.setMic(r, roomName, "GroupCallActivity:828", micEnabled)
         if (hasVideo && camEnabled) {
-          r.localParticipant.setCameraEnabled(true)
+          CallE2EE.setCam(r, roomName, "GroupCallActivity:830", true)
           bindLocalCameraIfReady(r)
         }
         Log.d(TAG, "LK group connect + publish OK")
@@ -2109,7 +2109,7 @@ class GroupCallActivity : ComponentActivity() {
       try {
         // [2026-10-08 call-video-fix] Mute the PUBLICATION (peers swap to
         // the avatar) instead of track.enabled (frozen last frame).
-        r.localParticipant.setCameraEnabled(on)
+        CallE2EE.setCam(r, roomName, "GroupCallActivity:2112", on)
         if (on) bindLocalCameraIfReady(r)
         refreshControlStates()
       } catch (t: Throwable) {
@@ -2182,7 +2182,7 @@ class GroupCallActivity : ComponentActivity() {
             }
           },
         )
-        val ok = r.localParticipant.setScreenShareEnabled(true, params)
+        val ok = CallE2EE.setScreen(r, roomName, "GroupCallActivity:2185", params)
         screenSharing = ok
         CallDiag.log(if (ok) "group_screen_share_published" else "group_screen_share_error", roomName, "mediaprojection", applicationContext)
         if (ok) onLocalScreenShareStarted(r)
@@ -2307,7 +2307,7 @@ class GroupCallActivity : ComponentActivity() {
     micEnabled = enabled
     refreshControlStates()
     lifecycleScope.launch {
-      try { room?.localParticipant?.setMicrophoneEnabled(micEnabled) }
+      try { room?.let { __e5r -> CallE2EE.setMic(__e5r, roomName, "GroupCallActivity:2310", micEnabled) } }
       catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled failed: ${t.message}") }
     }
   }

@@ -392,6 +392,8 @@ object NativeCallRoom {
     }
 
     fun currentCallId(): String? = callId
+    /** [e2ee5 WP-13 2026-10-22] Room vivo (para CallE2EE.enforce). */
+    fun currentRoomOrNull(): Room? = room
 
     /** [2026-10-14 leave-first] Live Room (any call) — app-shutdown leave. */
     fun roomForLeave(): Room? = room
@@ -557,7 +559,7 @@ object NativeCallRoom {
         val t0 = System.currentTimeMillis()
         scope.launch {
             try {
-                r.localParticipant.setMicrophoneEnabled(enabled)
+                CallE2EE.setMic(r, callId, "NativeCallRoom:562", enabled)
                 ExpoCallKitModule.emitLkLocalAudioChanged(enabled)
                 if (firstOn) {
                     try { CallDiag.log("mic_publish_native", cid, "ms=${System.currentTimeMillis() - t0} lk=${r.state}") } catch (_: Throwable) {}
@@ -700,7 +702,7 @@ object NativeCallRoom {
                     // The Room is now created with the profile ladder pinned
                     // (buildCallRoomOptions → CallVideoQuality), so the plain
                     // call publishes exactly the intended codec/res/bitrate.
-                    r.localParticipant.setCameraEnabled(true)
+                    CallE2EE.setCam(r, callId, "NativeCallRoom:705", true)
                     Log.d(TAG, "setCameraEnabled(true) profile=${CallVideoQuality.current.name} codec=${preferredVideoCodec()}")
                 } else {
                     r.localParticipant.setCameraEnabled(false)

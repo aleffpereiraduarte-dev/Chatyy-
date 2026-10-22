@@ -465,6 +465,14 @@ function _e5nativeKey(callId, keyB64) {
   const n = _e5native();
   try { if (n && typeof n.setCallE2EEKey === 'function') n.setCallE2EEKey(String(callId), String(keyB64)); } catch {}
 }
+function _e5nativeStatus(callId) {
+  const n = _e5native();
+  try { return n && typeof n.callE2EEStatus === 'function' ? (n.callE2EEStatus(String(callId)) || null) : null; } catch { return null; }
+}
+function _e5nativeHint(convId, peerEmail) {
+  const n = _e5native();
+  try { if (n && typeof n.setCallE2EEConvHint === 'function') n.setCallE2EEConvHint(String(convId), _e5canon(peerEmail || ''), true); } catch {}
+}
 function _e5nativeClear(callId) {
   const n = _e5native();
   try { if (n && typeof n.clearCallE2EE === 'function') n.clearCallE2EE(String(callId)); } catch {}
@@ -595,8 +603,19 @@ export async function e2ee5BeginCall({ callId, convId, isGroup, needsNative } = 
  * → `{required, keyB64?, index?, blocked?}`.
  */
 export async function e2ee5PrepareJoin({ callId, convId, isGroup, needsNative } = {}) {
-  const pol = await e2ee5Policy({ convId });
-  if (!pol.required) return { required: false, reason: pol.reason };
+  let pol = await e2ee5Policy({ convId });
+  if (!pol.required) {
+    // [e2ee5 WP-07/WP-13 2026-10-22] Fail closed: o convite/push disse "conversa cifrada" ("e2ee":"5")
+    // ou o nativo já marcou a ligação como exigida (dica do servidor/local no toque com o app fechado)
+    // → NÃO entra em claro, mesmo que a política local ainda não saiba (núcleo frio, estado sem cache).
+    const pre = _e5ctx(callId, false);
+    const nat = _e5nativeStatus(callId);
+    if ((pre && pre.serverHint) || (nat && nat.required === true)) {
+      pol = { required: true, reason: _e5flag() && _e5sess() ? 'hint' : 'no_session' };
+    } else {
+      return { required: false, reason: pol.reason };
+    }
+  }
   const c = _e5ctx(callId, true);
   if (!c) return { required: true, blocked: 'bad_call' };
   if (c.convId && c.convId !== String(convId) && !c.initiator) {
@@ -612,6 +631,28 @@ export async function e2ee5PrepareJoin({ callId, convId, isGroup, needsNative } 
   _e5armDrain();
   if (!c.keyB64) { try { _e5mod()?.requestSync?.(0); } catch {} }
   return { required: true, keyB64: c.keyB64 || null, index: c.index };
+}
+
+/**
+ * [e2ee5 WP-07/WP-13 2026-10-22] Convite/push de ligação recebido com a dica do servidor
+ * (`e2ee: "5"` = a conversa tem e2ee_mode=1). Marca a ligação como EXIGIDA no JS e no nativo ANTES
+ * de qualquer Room (o nativo cria o Room com E2EE; sem chave = sem mídia) e grava a dica da conversa
+ * para o próximo toque com o app fechado. O servidor só LIGA a exigência; sem a dica não muda nada.
+ * → true se marcou.
+ */
+export function e2ee5NoteInvite({ callId, convId, callerEmail, hint } = {}) {
+  const h = parseInt(String(hint == null ? '' : hint), 10);
+  if (!(h >= 5)) return false;
+  const c = _e5ctx(callId, true);
+  if (!c) return false;
+  c.serverHint = true;
+  c.required = true;
+  if (convId != null && convId !== '' && !c.convId) c.convId = String(convId);
+  c.updatedAt = Date.now();
+  _e5nativeRequire(c.callId, true);
+  if (convId != null && convId !== '') _e5nativeHint(convId, callerEmail);
+  _e5log('invite_hint', { call: c.callId });
+  return true;
 }
 
 /** Espera a chave desta ligação. → `{keyB64, index}` ou null (timeout). */
@@ -944,6 +985,7 @@ export default {
   e2ee5Policy,
   e2ee5BeginCall,
   e2ee5PrepareJoin,
+  e2ee5NoteInvite,
   e2ee5AwaitKey,
   e2ee5OnKey,
   e2ee5Status,

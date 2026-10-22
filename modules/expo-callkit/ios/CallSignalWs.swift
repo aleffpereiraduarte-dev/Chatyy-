@@ -994,6 +994,11 @@ final class CallSignalWs: NSObject {
             if let n = obj["conversation_id"] as? NSNumber { return n.stringValue }
             return ""
         }()
+        // [e2ee5 WP-07/WP-13 2026-10-22] Conversa cifrada (dica do servidor "e2ee":"5" no call_invite, ou a
+        // dica local) ⇒ ligação EXIGIDA já aqui, antes de qualquer preconnect deste caminho (os dicts do
+        // kickRingWindowPreconnect do WS não levam conversation_id).
+        CallE2EE.shared.noteIncoming(callId: callId, convId: conversationId, peerEmail: callerEmail,
+                                     serverHint: CallE2EE.serverHint(obj["e2ee"]))
         // [CALL-TRACE 2026-05-20 WAVE42] Step 6/12 — callee picks up call_invite
         // off the WS.
         NSLog("[CallTrace][6/12] WS recv call_invite callId=\(callId) fromCallerEmail=\(callerEmail) conv=\(conversationId) ts=\(Int(Date().timeIntervalSince1970 * 1000))")

@@ -285,7 +285,7 @@ final class P2PCallBridge {
         }
         Task {
             do {
-                _ = try await r.localParticipant.setMicrophone(
+                _ = try await CallE2EE.gated(r, callId, "p2p_fallback_mic").setMicrophone(
                     enabled: true,
                     captureOptions: CallViewController.defaultAudioCaptureOptions()
                 )

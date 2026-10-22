@@ -355,6 +355,22 @@ function _inviteAgeMs(callId) {
 // (calculado no servidor) → server_ts (relógio do servidor, tolera 60 s de
 // relógio torto) → call_id (relógio do CALLER, só > 90 s).
 const _INVITE_RING_MAX_MS = 45 * 1000;
+// [e2ee5 WP-07/WP-13 2026-10-22] call_invite/push com "e2ee":"5" (conversa e2ee_mode=1): marca a
+// ligação como EXIGIDA no JS + nativo antes de qualquer Room (sem chave = sem mídia). Sem o campo = no-op.
+function _e5NoteInvite(data) {
+  try {
+    if (!data || data.e2ee == null || data.e2ee === '') return;
+    const callId = String(data.call_id || data.room_id || '');
+    if (!callId) return;
+    require('../services/callE2ee').e2ee5NoteInvite({
+      callId,
+      convId: data.conversation_id != null ? String(data.conversation_id) : '',
+      callerEmail: String(data.caller_email || ''),
+      hint: data.e2ee,
+    });
+  } catch {}
+}
+
 function _inviteStaleReason(data) {
   try {
     const r = Number(data?.replay_age_ms);
@@ -393,6 +409,7 @@ function IosCallInviteBridge() {
           if (!callId) return;
           const caller = String(data?.caller_email || '').toLowerCase();
           if (!caller || caller === myEmail) return;
+          _e5NoteInvite(data); // [e2ee5 WP-07 2026-10-22]
           const _stale = _inviteStaleReason(data);
           if (_stale) {
             voipDiag('js_invite_bridge_skip_stale', callId, { age_ms: _inviteAgeMs(callId), why: _stale });
@@ -408,6 +425,7 @@ function IosCallInviteBridge() {
           };
           if (typeof data?.lk_token === 'string' && data.lk_token) payload.lk_token = data.lk_token;
           if (typeof data?.lk_url === 'string' && data.lk_url) payload.lk_url = data.lk_url;
+          if (data?.e2ee != null && data.e2ee !== '') payload.e2ee = String(data.e2ee); // [e2ee5 WP-07 2026-10-22] CallSignalWs nativo lê
           const ok = ck.handleJsCallInvite(payload);
           voipDiag('js_invite_bridged', callId, { ok: !!ok, app: AppState.currentState });
         } catch {}
@@ -571,6 +589,7 @@ function IncomingCallListenerWeb() {
       return;
     }
     const normalizedCallId = String(data.call_id || data.room_id);
+    _e5NoteInvite(data); // [e2ee5 WP-07 2026-10-22] dica "ligação cifrada" do convite/push
     // [2026-10-16 call-state] chamada já atendida/recusada/encerrada (aqui ou
     // em outro aparelho) ou convite velho nunca toca (push atrasado, replay).
     if (wasCallRecentlyHandled(normalizedCallId) || _inviteStaleReason(data)) {
@@ -860,6 +879,7 @@ function IncomingCallListenerWeb() {
 
       // call_invite — NO SDP yet
       unsubs.push(mailWs.on('call_invite', (data) => {
+        _e5NoteInvite(data); // [e2ee5 WP-07 2026-10-22]
         voipDiag('ws_call_invite_received', data?.call_id || data?.room_id || '', {
           caller_email: data?.caller_email || '',
           accepted: acceptedRef.current,

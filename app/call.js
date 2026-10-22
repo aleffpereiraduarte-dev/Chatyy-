@@ -297,6 +297,60 @@ import { getGlobalCall as _getGC, setGlobalCall as _setGC, clearGlobalCall as _c
 import { CALL_E2EE_ENABLED, isPstnEnabled } from '../constants/featureFlags';
 // [e2ee5 WP-13] Ligações E2EE v5 — gate JS barato (o resto mora em services/callE2ee.js).
 function _e5JsOn() { try { return globalThis.__chatyy_e2ee5 === true; } catch { return false; } }
+// [e2ee5 WP-13 2026-10-22] Telemetria da ligação cifrada: beacon callkit_diag kind "e2ee5_call"
+// (/var/mail/_native_diag, leitura conferir.sh) a partir de callE2EEStatus do nativo + estado JS.
+// Só booleanos/ms/papel/fase — NUNCA chave, call_id, e-mail ou identity. Fases: "key" (1ª chave ou
+// "no_key" em 30 s) e "snap" (20 s: Room vivo cifrado? par sem cifra?). 1x por fase por ligação.
+// Kill (OTA): globalThis.__chatyy_e2ee5_call_beacon = false.
+const _e5BeaconSent = new Set();
+function _e5CallBeacon(callId, isCaller, t0, hadKey, blocked, endedRef) {
+  try { if (globalThis.__chatyy_e2ee5_call_beacon === false) return; } catch {}
+  const send = (phase, keyAtMs) => {
+    const k = callId + '|' + phase;
+    if (_e5BeaconSent.has(k)) return;
+    if (_e5BeaconSent.size > 64) _e5BeaconSent.clear();
+    _e5BeaconSent.add(k);
+    let st = null;
+    try { st = require('../modules/expo-callkit').callE2EEStatus(callId); } catch { st = null; }
+    let js = null;
+    try { js = require('../services/callE2ee').e2ee5Status(callId); } catch { js = null; }
+    const b = (v) => (v === true ? 1 : v === false ? 0 : '-');
+    const hasKey = (st && typeof st.hasKey === 'boolean') ? st.hasKey : !!(js && js.hasKey);
+    const msKey = (st && typeof st.keyMs === 'number' && st.keyMs >= 0) ? Math.round(st.keyMs)
+      : (keyAtMs != null ? Math.max(0, keyAtMs - t0) : -1);
+    const unenc = (st && typeof st.unencryptedRemote === 'boolean') ? st.unencryptedRemote
+      : !!(js && js.warn && js.warn.kind === 'unencrypted_peer');
+    const info = [
+      'required=' + b(st ? st.required === true : !!(js && js.required)),
+      'hasKey=' + b(hasKey),
+      'live=' + b(st ? st.live : undefined),
+      'room_e2ee=' + b(st ? st.roomE2ee : undefined),
+      'ms_ate_chave=' + msKey,
+      'unencrypted_remote=' + b(unenc),
+      'role=' + (isCaller ? 'caller' : 'callee'),
+      'native=' + (st ? 1 : 0),
+      'os=' + Platform.OS,
+      blocked ? 'blocked=' + String(blocked).replace(/[^a-z_]/gi, '').slice(0, 24) : '',
+    ].filter(Boolean).join(' ');
+    try { require('../services/nativeTelemetry').nativeBeacon('e2ee5_call', phase, info); } catch {}
+  };
+  if (blocked) { send('blocked', null); return; }
+  if (hadKey) send('key', Date.now());
+  else {
+    let off = null;
+    try {
+      off = require('../services/callE2ee').e2ee5OnKey(callId, (ev) => {
+        if (ev && ev.keyB64) { try { off && off(); } catch {} ; send('key', Date.now()); }
+      });
+    } catch {}
+    setTimeout(() => {
+      try { off && off(); } catch {}
+      if (endedRef && endedRef.current) return;
+      if (!_e5BeaconSent.has(callId + '|key')) send('no_key', null);
+    }, 30000);
+  }
+  setTimeout(() => { if (!(endedRef && endedRef.current)) send('snap', null); }, 20000);
+}
 function _e5ConvCached(cid) { try { return require('../services/e2ee/e2ee5').convModeSync(cid) === 1; } catch { return false; } }
 export const getGlobalCall = _getGC;
 export const clearGlobalCall = _clearGC;
@@ -1916,6 +1970,7 @@ function CallScreenInner() {
     // conecta em claro: mostra e2ee5.call.unsupported. Quem liga gera e distribui a chave;
     // quem atende marca o nativo como "exigido" e espera a chave (sem chave = sem mídia).
     let _e5 = null;
+    const _e5T0 = Date.now();
     if (_e5JsOn()) {
       try {
         const _ce = require('../services/callE2ee');
@@ -1927,6 +1982,7 @@ function CallScreenInner() {
       e5Ref.current = _e5 && _e5.required ? _e5 : null;
       if (_e5 && _e5.required) {
         setE5Required(true);
+        try { _e5CallBeacon(String(callId), isCaller, _e5T0, !!_e5.keyB64, _e5.blocked || '', endedRef); } catch {}
         try { _callDiagAppend('info', 'e2ee5_call', { call_id: callId, role: isCaller ? 'caller' : 'callee', blocked: _e5.blocked || '', key: _e5.keyB64 ? 1 : 0 }); } catch {}
         if (_e5.blocked) {
           setErrorMsg(t('e2ee5.call.unsupported') || 'Não foi possível proteger esta ligação. Atualize o Chatyy.');

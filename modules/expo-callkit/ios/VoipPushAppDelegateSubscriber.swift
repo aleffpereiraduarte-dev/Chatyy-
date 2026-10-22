@@ -944,18 +944,19 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
     /// reported by the native WS invite) run the identical preconnect. See the
     /// STAGE-A / WAVE 104D comments inside for the history.
     static func kickRingWindowPreconnect(callId: String, dict: [AnyHashable: Any]) {
+        // [e2ee5 WP-13] Conversa marcada como cifrada (dica gravada pelo JS) ⇒ o Room do toque já
+        // nasce com E2EE (sem chave = sem mídia). Sem dica (= hoje) não muda nada.
+        CallE2EE.shared.noteIncoming(
+            callId: callId,
+            convId: (dict["conversation_id"] as? String) ?? ((dict["conversation_id"] as? NSNumber)?.stringValue ?? ""),
+            peerEmail: (dict["caller_email"] as? String) ?? "",
+            serverHint: CallE2EE.serverHint(dict["e2ee"])) // [e2ee5 WP-07 2026-10-22] push "e2ee":"5"
         // [2026-10-15 chamadas-dnd] CallKit recusou o toque (Foco/Não Perturbe):
         // entrar na sala faria o caller ver "Tocando…" com o telefone mudo.
         if IncomingCallFilter.isFiltered(callId) {
             nativeCallDiag("preconnect_skip_filtered", callId)
             return
         }
-        // [e2ee5 WP-13] Conversa marcada como cifrada (dica gravada pelo JS) ⇒ o Room do toque já
-        // nasce com E2EE (sem chave = sem mídia). Sem dica (= hoje) não muda nada.
-        CallE2EE.shared.noteIncoming(
-            callId: callId,
-            convId: (dict["conversation_id"] as? String) ?? ((dict["conversation_id"] as? NSNumber)?.stringValue ?? ""),
-            peerEmail: (dict["caller_email"] as? String) ?? "")
         // [STAGE-A 2026-05-20] GAP #2 — Kick Room.connect during the ring
         // window, BEFORE the user taps Accept. Audio is hot the instant
         // they answer (WhatsApp parity). The push may carry an inline

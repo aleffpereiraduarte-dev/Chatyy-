@@ -798,7 +798,7 @@ export function setCallE2EEConvHint(convId: string, peerEmail: string, on: boole
   if (!m || typeof m.setCallE2EEConvHint !== 'function') return false;
   try { return m.setCallE2EEConvHint(String(convId), String(peerEmail || ''), !!on) !== false; } catch { return false; }
 }
-export function callE2EEStatus(callId: string): { required?: boolean; hasKey?: boolean; live?: boolean; ageMs?: number } | null {
+export function callE2EEStatus(callId: string): { required?: boolean; hasKey?: boolean; live?: boolean; ageMs?: number; keyMs?: number; roomE2ee?: boolean; unencryptedRemote?: boolean } | null {
   const m = getModule() as any;
   if (!m || typeof m.callE2EEStatus !== 'function') return null;
   try { return m.callE2EEStatus(String(callId)) || null; } catch { return null; }

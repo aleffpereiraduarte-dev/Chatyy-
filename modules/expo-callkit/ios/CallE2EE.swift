@@ -19,6 +19,11 @@ import LiveKitClient
 //
 // Chave = TEXTO base64 de 32 B (44 chars), igual ao Android (setSharedKey(String)) e à web
 // (ExternalE2EEKeyProvider.setKey(string)) → mesmo PBKDF2 nos 3. Nunca logar a chave.
+struct CallE2EEPublishBlocked: Error, CustomStringConvertible {
+    let site: String
+    var description: String { return "e2ee5_publish_blocked(\(site))" }
+}
+
 final class CallE2EE {
     static let shared = CallE2EE()
     /// Versão da API exposta ao JS (`callE2EECaps`). 0 = binário sem E2EE de ligação.
@@ -67,6 +72,7 @@ final class CallE2EE {
         }
         NSLog("[CallE2EE] required=%@ call=%@", on ? "1" : "0", callId)
         notify(callId)
+        if on { DispatchQueue.main.async { self.enforce(callId, reason: "required") } }
     }
 
     /// Chave nova (1ª ou rotação). Atualiza o provider do Room vivo na hora.
@@ -85,6 +91,7 @@ final class CallE2EE {
         provider?.setKey(key: keyB64, participantId: nil, index: 0)
         NSLog("[CallE2EE] key set call=%@ live=%@", callId, provider == nil ? "0" : "1")
         notify(callId)
+        DispatchQueue.main.async { self.enforce(callId, reason: "key") }
     }
 
     func clear(_ callId: String) {
@@ -125,6 +132,63 @@ final class CallE2EE {
         return isRequired(callId) && room.e2eeManager == nil
     }
 
+    // MARK: [e2ee5 WP-13 2026-10-22] fail closed na PUBLICAÇÃO
+
+    private final class WeakRoom { weak var room: Room?; init(_ r: Room) { room = r } }
+    private var watched: [String: [WeakRoom]] = [:]
+
+    /// Porteiro de TODA publicação de mídia local (mic, câmera, tela) de uma ligação: devolve false
+    /// (e não publica) quando a ligação é exigida e o Room não tem E2EE. Também anota o Room para
+    /// `enforce` derrubar o que já foi publicado se a ligação virar exigida DEPOIS (JS/dica tardia).
+    func mayPublish(_ callId: String, room: Room, site: String) -> Bool {
+        let cid = callId.isEmpty ? (NativeCallRoom.shared.currentCallId() ?? "") : callId
+        guard !cid.isEmpty else { return true }
+        locked {
+            var list = (watched[cid] ?? []).filter { $0.room != nil }
+            if !list.contains(where: { $0.room === room }) { list.append(WeakRoom(room)) }
+            watched[cid] = list
+            if watched.count > 20 { watched = watched.filter { !$0.value.allSatisfy { $0.room == nil } } }
+        }
+        if roomViolatesPolicy(cid, room: room) {
+            NSLog("[CallE2EE] publish BLOQUEADO (Room sem E2EE numa ligação exigida) call=%@ site=%@", cid, site)
+            nativeCallDiag("e2ee5_publish_blocked", cid, "site=\(site)")
+            return false
+        }
+        return true
+    }
+
+    /// Forma de expressão do porteiro: `try await CallE2EE.gated(r, callId, "site").setMicrophone(...)`.
+    /// Bloqueado ⇒ lança (o `catch`/`try?` de cada ponto já trata falha de publicação) e a mídia não sai.
+    /// `enabling: false` (mutar/desligar) nunca é bloqueado.
+    static func gated(_ room: Room, _ callId: String, _ site: String, enabling: Bool = true) throws -> LocalParticipant {
+        if enabling && !CallE2EE.shared.mayPublish(callId, room: room, site: site) {
+            throw CallE2EEPublishBlocked(site: site)
+        }
+        return room.localParticipant
+    }
+
+    /// A ligação virou exigida com Room(s) já publicando sem E2EE → despublica tudo (o selo mostra
+    /// "não está protegida. Desligue e ligue de novo"). Nada exigido = no-op.
+    func enforce(_ callId: String, reason: String) {
+        guard !callId.isEmpty, isRequired(callId) else { return }
+        // P2P nativo (SDP pelo hub, sem autenticação) também sai: volta ao LiveKit, onde o porteiro decide.
+        if P2PCallBridge.ownsMedia(callId) {
+            nativeCallDiag("e2ee5_p2p_dropped", callId, "reason=\(reason)")
+            P2PCallBridge.requestFallback(callId: callId, reason: "e2ee5_required")
+        }
+        var rooms: [Room] = locked { (watched[callId] ?? []).compactMap { $0.room } }
+        if NativeCallRoom.shared.currentCallId() == callId, let r = NativeCallRoom.shared.currentRoom(),
+           !rooms.contains(where: { $0 === r }) { rooms.append(r) }
+        if let r = NativeCallRoom.shared.registeredPreconnectRoom(callId: callId),
+           !rooms.contains(where: { $0 === r }) { rooms.append(r) }
+        for r in rooms where roomViolatesPolicy(callId, room: r) {
+            let n = r.localParticipant.trackPublications.count
+            guard n > 0 else { continue }
+            nativeCallDiag("e2ee5_plain_unpublished", callId, "reason=\(reason) tracks=\(n)")
+            Task { await r.localParticipant.unpublishAll(notify: true) }
+        }
+    }
+
     /// P2P nativo (DTLS-SRTP com SDP pelo hub, sem autenticação) fica de fora das ligações cifradas.
     func blocksNativeP2P(_ callId: String) -> Bool {
         return isRequired(callId)
@@ -141,15 +205,24 @@ final class CallE2EE {
     }
 
     func status(_ callId: String) -> [String: Any] {
-        return locked {
+        var out: [String: Any] = locked {
             let e = calls[callId]
-            return [
+            var d: [String: Any] = [
                 "required": e?.required ?? false,
                 "hasKey": e?.key != nil,
                 "live": e?.provider != nil,
                 "ageMs": Int((Date().timeIntervalSince(e?.createdAt ?? Date())) * 1000),
             ]
+            // [e2ee5 WP-13 2026-10-22] telemetria: ms do registro da ligação até a 1ª chave (-1 = sem chave)
+            if let e = e, let k = e.keyAt { d["keyMs"] = Int(k.timeIntervalSince(e.createdAt) * 1000) } else { d["keyMs"] = -1 }
+            return d
         }
+        // Room vivo desta ligação: tem E2EE? algum remoto publica sem cifra? (só booleanos)
+        if NativeCallRoom.shared.currentCallId() == callId, let r = NativeCallRoom.shared.currentRoom() {
+            out["roomE2ee"] = r.e2eeManager != nil
+            out["unencryptedRemote"] = hasUnencryptedRemote(r)
+        }
+        return out
     }
 
     // MARK: dica por conversa (VoIP push com o app morto)
@@ -175,8 +248,23 @@ final class CallE2EE {
         return s
     }
 
+    /// [e2ee5 WP-07 2026-10-22] Campo "e2ee" do push/call_invite: "5" (ou ≥5) = conversa e2ee_mode=1.
+    static func serverHint(_ v: Any?) -> Bool {
+        if let n = v as? NSNumber { return n.intValue >= 5 }
+        if let s = v as? String { return (Int(s.trimmingCharacters(in: .whitespaces)) ?? 0) >= 5 }
+        return false
+    }
+
     /// Toque chegou (push/WS): conversa (ou par do 1:1) marcada como cifrada ⇒ exigida.
-    func noteIncoming(callId: String, convId: String, peerEmail: String) {
+    /// `serverHint` = o servidor disse que a conversa é cifrada ("e2ee":"5") → exigida já e grava a
+    /// dica local (próximo toque com o app morto). O servidor só LIGA a exigência, nunca desliga.
+    func noteIncoming(callId: String, convId: String, peerEmail: String, serverHint: Bool = false) {
+        if serverHint && !callId.isEmpty {
+            setRequired(callId, true)
+            if !convId.isEmpty { setConvHint(convId: convId, peerEmail: peerEmail, on: true) }
+            nativeCallDiag("e2ee5_server_hint", callId, "conv=\(convId.isEmpty ? 0 : 1)")
+            return
+        }
         guard !callId.isEmpty, let ud = UserDefaults(suiteName: groupId),
               let m = ud.dictionary(forKey: hintKey) as? [String: [String: Any]], !m.isEmpty else { return }
         var hit = !convId.isEmpty && m[convId] != nil

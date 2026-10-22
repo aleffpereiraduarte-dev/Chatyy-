@@ -884,7 +884,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             guard let self = self else { return }
             if micOn && !p2p {
                 do {
-                    let pub = try await r.localParticipant.setMicrophone(
+                    let pub = try await CallE2EE.gated(r, self.callId, "app_rejoin_mic").setMicrophone(
                         enabled: true, captureOptions: Self.defaultAudioCaptureOptions())
                     if let t = pub?.track as? LocalAudioTrack {
                         await MainActor.run { self.localAudioTrackRef = t }
@@ -896,7 +896,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             if camOn {
                 do {
                     let pos = await MainActor.run { self.currentCameraPosition }
-                    let pub = try await r.localParticipant.setCamera(
+                    let pub = try await CallE2EE.gated(r, self.callId, "app_rejoin_cam").setCamera(
                         enabled: true,
                         captureOptions: Self.defaultCameraCaptureOptions(position: pos),
                         publishOptions: Self.defaultVideoPublishOptions())
@@ -1108,7 +1108,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 let camOn: Bool = await MainActor.run { self.session.camEnabled }
                 if camOn {
                     do {
-                        let pub = try await r.localParticipant.setCamera(
+                        let pub = try await CallE2EE.gated(r, self.callId, "rejoin_cam").setCamera(
                             enabled: true,
                             captureOptions: Self.defaultCameraCaptureOptions(position: self.currentCameraPosition),
                             publishOptions: Self.defaultVideoPublishOptions()
@@ -1329,14 +1329,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     do {
                         let pub: LocalTrackPublication?
                         if let preview = preview, attempt < 3 {
-                            pub = try await r2.localParticipant.publish(videoTrack: preview, options: publishOpts)
+                            pub = try await CallE2EE.gated(r2, self.callId, "answer_cam_preview").publish(videoTrack: preview, options: publishOpts)
                         } else {
                             // Last try: drop the preview capturer (if any) and
                             // let LiveKit build a fresh camera track.
                             if let preview = preview, r2.localParticipant.localVideoTracks.first(where: { $0.track === preview }) == nil {
                                 try? await preview.stop()
                             }
-                            pub = try await r2.localParticipant.setCamera(enabled: true, captureOptions: captureOpts, publishOptions: publishOpts)
+                            pub = try await CallE2EE.gated(r2, self.callId, "answer_cam").setCamera(enabled: true, captureOptions: captureOpts, publishOptions: publishOpts)
                         }
                         if let track = pub?.track as? LocalVideoTrack {
                             await MainActor.run {
@@ -1381,7 +1381,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             do {
                 // .reconnecting (resume) → wait for .connected; 101/104 → retry.
                 let micPub = try await lkPublishWhenConnected(r, callId: self.callId, label: "gate_mic") {
-                    try await r.localParticipant.setMicrophone(
+                    try await CallE2EE.gated(r, self.callId, "gate_mic").setMicrophone(
                         enabled: true,
                         captureOptions: Self.defaultAudioCaptureOptions()
                     )
@@ -2160,6 +2160,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if !isOutgoing {
             NativeCallRoom.shared.reclaimPreconnect(callId: callId, reason: "callvc")
         }
+        // [e2ee5 WP-13 2026-10-22] Atender sem ter passado pelo preconnect (toque filtrado, push sem
+        // credenciais, cold start): consulta a dica local da conversa/par antes de criar ou adotar o Room.
+        if !isOutgoing {
+            CallE2EE.shared.noteIncoming(callId: callId, convId: conversationId, peerEmail: callerEmail)
+        }
         // [e2ee5 WP-13] Room do toque criado SEM E2EE numa ligação que agora é exigida: sai dele
         // e conecta de novo cifrado (nunca adota mídia em claro). Ligação não cifrada = no-op.
         if let pre = NativeCallRoom.shared.currentRoom(), NativeCallRoom.shared.isPreconnected(callId: callId),
@@ -2249,7 +2254,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                             if r.connectionState == .connected {
                                 // [2026-10-14 publish-wait] short retry on 101/104.
                                 micPub = try await lkPublishWhenConnected(r, callId: self.callId, label: "stage_a_mic") {
-                                    try await r.localParticipant.setMicrophone(
+                                    try await CallE2EE.gated(r, self.callId, "stage_a_mic").setMicrophone(
                                         enabled: true,
                                         captureOptions: Self.defaultAudioCaptureOptions()
                                     )
@@ -2282,7 +2287,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                             // the adopted Room — "Publisher is nil" (101/104)
                             // whenever it was still joining / resuming at Accept.
                             let pub = try await lkPublishWhenConnected(r, callId: self.callId, label: "stage_a_cam") {
-                                try await r.localParticipant.setCamera(
+                                try await CallE2EE.gated(r, self.callId, "stage_a_cam").setCamera(
                                     enabled: true,
                                     captureOptions: captureOpts,
                                     publishOptions: publishOpts
@@ -2486,7 +2491,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     // right after the join throws "Publisher is nil" → wait for
                     // .connected + short retry before giving up ("Erro").
                     let micPub = try await lkPublishWhenConnected(r, callId: self.callId, label: "fresh_mic") {
-                        try await r.localParticipant.setMicrophone(
+                        try await CallE2EE.gated(r, self.callId, "fresh_mic").setMicrophone(
                             enabled: true,
                             captureOptions: Self.defaultAudioCaptureOptions()
                         )
@@ -2522,7 +2527,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
                         let publishOpts = Self.defaultVideoPublishOptions()
                         if let pub = try? await lkPublishWhenConnected(r, callId: self.callId, label: "fresh_cam", {
-                            try await r.localParticipant.setCamera(
+                            try await CallE2EE.gated(r, self.callId, "fresh_cam").setCamera(
                                 enabled: true,
                                 captureOptions: captureOpts,
                                 publishOptions: publishOpts
@@ -2973,7 +2978,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         Task { [weak self] in
             guard let self = self else { return }
             do {
-                let micPub = try await r.localParticipant.setMicrophone(
+                let micPub = try await CallE2EE.gated(r, self.callId, "mic_toggle", enabling: enabled).setMicrophone(
                     enabled: enabled,
                     captureOptions: Self.defaultAudioCaptureOptions()
                 )
@@ -3090,7 +3095,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     // First-time enable: full publish with simulcast tiers.
                     let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
                     let publishOpts = Self.defaultVideoPublishOptions()
-                    let pub = try await r.localParticipant.setCamera(
+                    let pub = try await CallE2EE.gated(r, self.callId, "cam_toggle").setCamera(
                         enabled: true,
                         captureOptions: captureOpts,
                         publishOptions: publishOpts
@@ -3350,7 +3355,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // suspend-async so we don't block the UI thread.
             do {
                 let opts = Self.defaultCameraCaptureOptions(position: next, profile: CallVideoQuality.current)
-                let pub = try await r.localParticipant.setCamera(
+                let pub = try await CallE2EE.gated(r, self.callId, "switch_cam").setCamera(
                     enabled: true,
                     captureOptions: opts,
                     publishOptions: Self.defaultVideoPublishOptions()
@@ -3362,7 +3367,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             } catch {
                 print("[CallVC] switchCamera failed: \(error) — last-resort disable/enable")
                 _ = try? await r.localParticipant.setCamera(enabled: false)
-                let pub = try? await r.localParticipant.setCamera(enabled: true)
+                let pub = try? await CallE2EE.gated(r, self.callId, "switch_cam_last").setCamera(enabled: true)
                 if let track = pub?.track as? LocalVideoTrack {
                     await MainActor.run { self.session.localVideoTrack = track }
                 }
@@ -4210,7 +4215,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 Task { [weak self] in
                     guard let self = self, let r = self.room else { return }
                     do {
-                        try await r.localParticipant.setMicrophone(
+                        try await CallE2EE.gated(r, self.callId, "interruption_mic", enabling: desired).setMicrophone(
                             enabled: desired,
                             captureOptions: Self.defaultAudioCaptureOptions()
                         )
@@ -4263,7 +4268,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 guard let self = self else { return }
                 do {
                     if self.outgoingMicGateOpen && !P2PCallBridge.ownsMedia(self.callId) {
-                    let micPub = try await r.localParticipant.setMicrophone(
+                    let micPub = try await CallE2EE.gated(r, self.callId, "didactivate_mic", enabling: desired).setMicrophone(
                         enabled: desired,
                         captureOptions: Self.defaultAudioCaptureOptions()
                     )
@@ -4288,7 +4293,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 // the caller.
                 if self.hasVideo, self.session.localVideoTrack == nil {
                     do {
-                        let pub = try await r.localParticipant.setCamera(
+                        let pub = try await CallE2EE.gated(r, self.callId, "didactivate_cam").setCamera(
                             enabled: true,
                             captureOptions: Self.defaultCameraCaptureOptions(position: self.currentCameraPosition),
                             publishOptions: Self.defaultVideoPublishOptions()
@@ -5957,6 +5962,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     defaultAudioPublishOptions: Self.defaultAudioPublishOptions(),
                     adaptiveStream: !CallVideoQuality.isDataSaver,
                     dynacast: true,
+                    // [e2ee5 WP-13 2026-10-22] O Room de reserva TAMBÉM nasce com E2EE quando a ligação é
+                    // exigida (antes saía sem e2eeOptions → atender por cima dele publicava áudio em claro).
+                    e2eeOptions: CallE2EE.shared.e2eeOptions(callId: callId),
                     reportRemoteTrackStatistics: true
                 ))
                 NativeCallRoom.shared.publish(room: r2, callId: callId, roomName: callId, url: fresh.url, token: fresh.token)
