@@ -1,21 +1,27 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Text, FlatList, Pressable, StyleSheet, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, SectionList, Pressable, StyleSheet, Platform, TextInput, ScrollView } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 more-native]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
-  IconArrowLeft, IconStar, IconStarFilled, IconBookmark, IconArrowRight, IconImage, IconVideo, IconMic,
-  IconFileText, IconMapPin, IconUser, IconBarChart, IconSmile, IconPhone, IconLock, IconCopy, IconMessageSquare,
+  IconArrowLeft, IconStar, IconStarFilled, IconBookmark, IconImage, IconVideo, IconMic,
+  IconFileText, IconMapPin, IconUser, IconBarChart, IconSmile, IconPhone, IconLock, IconMessageSquare,
+  IconSearch, IconX, IconLink, IconCalendar, IconUsers, IconPlay,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
 import PressableRow from '../components/PressableRow';
-import { Sheet, ActionList, showToast, useSurface } from '../components/ui';
+import { showToast, useSurface, Skeleton } from '../components/ui';
+import UIRefreshControl from '../components/ui/RefreshControl';
 import * as api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { regionalLocale } from '../utils/dateFormat';
+import { detailColor } from '../constants/theme';
+import {
+  STARRED_FILTERS, starredKind, starredThumb, firstLink, starredPlainText, foldSearch,
+} from '../components/chat/starredKinds';
 
 let NativeSwipeable = null;
 if (Platform.OS !== 'web') {
@@ -26,24 +32,29 @@ try { ExpoImage = require('expo-image').Image; } catch {}
 
 // Unified "Salvas | Favoritas" screen (E.3).
 //
-// These are two genuinely different concepts, so neither is destroyed:
 //   - Salvas    = your Telegram-style self-chat ("Mensagens Salvas"). Lives in
 //                 a real conversation; opening it routes to /saved-messages.
 //   - Favoritas = individual starred messages bookmarked across any chat
 //                 (chat_starred_messages).
 //
-// [2026-10-19 favoritas-wa] Print do founder: "Você › Fulano" com a SUA foto,
-// estrela solta e prévia VAZIA em foto/áudio, datas em inglês ("Sat",
-// "5/26/2026"). Agora (JS, sem build):
-//   • avatar = da CONVERSA (contato no 1:1, foto do grupo) — nunca a sua;
-//   • linha 1 = nome da conversa + data localizada (hoje = hora, "Ontem",
-//     "sáb.", "26/05/2026"); linha 2 = "Você:"/"Ana:" + prévia com ícone
-//     (Foto / Vídeo / Áudio 0:12 / Documento / Localização / Contato / Enquete /
-//     Figurinha / GIF), miniatura da foto à direita;
-//   • toque = abre a conversa NA mensagem (scrollToMessageId + highlight);
-//   • deslizar ← "Desfavoritar"; segurar = folha (Ir para a mensagem, Copiar,
-//     Desfavoritar);
-//   • estados vazios de verdade nas 2 abas.
+// [2026-10-19 favoritas-wa] avatar da conversa, datas localizadas, prévia com
+// ícone, toque abre NA mensagem, deslizar ← desfavorita, estados vazios.
+//
+// [2026-10-21 favoritas-pro] Nível WhatsApp/Telegram (JS, sem build):
+//   • MINIATURA DAS FOTOS: o chat_starred_messages servido por email.php não
+//     trazia file_url → describe() montava thumb vazio e o <Image> nem existia.
+//     Servidor corrigido (file_url + image_variants t320 + blurhash) e a
+//     miniatura sai de starredThumb() (t320 → disp → original; vídeo = pôster),
+//     com blurhash de placeholder;
+//   • busca (texto, legenda, arquivo, remetente, conversa — sem acento);
+//   • filtros por tipo: Tudo / Fotos / Vídeos / Links / Arquivos / Áudio / Texto
+//     (só aparecem os que têm itens; contador em cada um);
+//   • agrupado POR DATA (Hoje, Ontem, dia da semana, data, mês) ou POR
+//     CONVERSA (cabeçalho com avatar + contagem);
+//   • prévia real: miniatura c/ play e duração, link com domínio, arquivo com
+//     nome/tamanho, áudio com duração;
+//   • tocar = abre a conversa na mensagem; segurar ou deslizar = remove com
+//     "Desfazer" (toast); puxar p/ atualizar; skeleton no 1º carregamento.
 
 const WEEKDAYS = {
   pt: ['dom.', 'seg.', 'ter.', 'qua.', 'qui.', 'sex.', 'sáb.'],
@@ -57,6 +68,7 @@ function parseTs(v) {
   if (typeof v === 'number') return new Date(v < 1e12 ? v * 1000 : v);
   let s = String(v).trim();
   if (/^\d{4}-\d{2}-\d{2} /.test(s)) s = s.replace(' ', 'T');
+  s = s.replace(/(\.\d{3})\d+/, '$1');
   s = s.replace(/([+-]\d{2})$/, '$1:00');
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += 'Z';
   const d = new Date(s);
@@ -64,6 +76,13 @@ function parseTs(v) {
 }
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+function clock(d, lang) {
+  if (String(lang || '').slice(0, 2).toLowerCase() === 'en') {
+    try { return d.toLocaleTimeString(regionalLocale(lang) || 'en-US', { hour: 'numeric', minute: '2-digit' }); } catch {}
+  }
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
 
 function formatWhen(v, t, language) {
   const d = parseTs(v);
@@ -73,10 +92,7 @@ function formatWhen(v, t, language) {
   const now = new Date();
   const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const ts = d.getTime();
-  if (ts >= startToday) {
-    if (base === 'en') { try { return d.toLocaleTimeString(regionalLocale(lang) || 'en-US', { hour: 'numeric', minute: '2-digit' }); } catch {} }
-    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-  }
+  if (ts >= startToday) return clock(d, lang);
   if (ts >= startToday - 86400000) return t('common.yesterday', 'Ontem');
   if (ts >= startToday - 6 * 86400000) {
     const arr = WEEKDAYS[base];
@@ -86,57 +102,112 @@ function formatWhen(v, t, language) {
   if (base === 'en') {
     try { return d.toLocaleDateString(regionalLocale(lang) || 'en-US', { day: 'numeric', month: 'numeric', year: 'numeric' }); } catch {}
   }
-  if (base === 'pt' || base === 'es' || base === 'fr' || base === 'it') return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
-  try { return d.toLocaleDateString(regionalLocale(lang), { day: '2-digit', month: '2-digit', year: 'numeric' }); } catch { return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`; }
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+// Cabeçalho de seção (agrupado por data): Hoje / Ontem / Quarta-feira /
+// 12 de outubro / outubro de 2025.
+function sectionDay(d, t, language) {
+  if (!d) return { key: 'none', label: t('starredPro.older', 'Mais antigas') };
+  const lang = String(language || 'pt-BR');
+  const loc = regionalLocale(lang) || lang;
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const ts = d.getTime();
+  const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+  if (ts >= startToday) return { key: 'today', label: t('starredPro.today', 'Hoje') };
+  if (ts >= startToday - 86400000) return { key: 'yday', label: t('common.yesterday', 'Ontem') };
+  if (ts >= startToday - 6 * 86400000) {
+    let s = '';
+    try { s = d.toLocaleDateString(loc, { weekday: 'long' }); } catch {}
+    return { key: `wd${d.getDay()}`, label: cap(s) || formatWhen(d.getTime(), t, lang) };
+  }
+  if (d.getFullYear() === now.getFullYear() && now.getTime() - ts < 62 * 86400000) {
+    let s = '';
+    try { s = d.toLocaleDateString(loc, { day: 'numeric', month: 'long' }); } catch {}
+    return { key: `d${d.getMonth()}-${d.getDate()}`, label: cap(s) || `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}` };
+  }
+  let s = '';
+  try { s = d.toLocaleDateString(loc, { month: 'long', year: 'numeric' }); } catch {}
+  return { key: `m${d.getFullYear()}-${d.getMonth()}`, label: cap(s) || `${pad2(d.getMonth() + 1)}/${d.getFullYear()}` };
 }
 
 function fmtDur(sec) {
-  const n = Math.round(Number(sec) || 0);
+  let n = Number(sec) || 0;
+  if (n > 36000) n = n / 1000;
+  n = Math.round(n);
   if (!(n > 0)) return '';
   return `${Math.floor(n / 60)}:${pad2(n % 60)}`;
 }
+function fmtSize(b) {
+  const n = Number(b) || 0;
+  if (!n) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 1048576).toFixed(1).replace('.', ',')} MB`;
+}
 
-const FILE_LIKE = /\.(jpe?g|png|gif|webp|heic|heif|bmp|mp4|mov|m4v|webm|avif|mp3|m4a|ogg|opus|wav|aac)$/i;
+const FILE_LIKE = /\.(jpe?g|png|gif|webp|heic|heif|bmp|mp4|mov|m4v|webm|avif|mp3|m4a|ogg|opus|wav|aac|caf)$/i;
 function isFileNameLike(s) {
   const v = String(s || '').trim();
   if (!v) return false;
-  if (/^https?:\/\//i.test(v)) return true;
+  if (/^https?:\/\//i.test(v) && !/\s/.test(v) && FILE_LIKE.test(v.split('?')[0])) return true;
+  if (/^\/data\//.test(v)) return true;
   if (FILE_LIKE.test(v)) return true;
-  return !/\s/.test(v) && v.length > 14 && /[_\-/\d]/.test(v);
+  if (/^\[[a-z_]+\]/i.test(v)) return true;
+  return !/\s/.test(v) && v.length > 14 && /[_\-/\d]/.test(v) && !/^https?:/i.test(v);
 }
 
-// Mensagem favorita → { Icon, text, thumb, copyText }
+// Mensagem favorita → { Icon, text, thumb, copyText, link, meta, play, dur }
 function describeMessage(m, t) {
   const type = String(m.type || m.message_type || 'text');
-  let content = typeof m.content === 'string' ? m.content : '';
+  const content = typeof m.content === 'string' ? m.content : '';
   let parsed = null;
   const trimmed = content.trim();
   if (trimmed.startsWith('{')) { try { parsed = JSON.parse(trimmed); } catch {} }
   const plain = parsed ? '' : trimmed;
   const caption = (parsed && typeof parsed.caption === 'string' && parsed.caption.trim()) || (plain && !isFileNameLike(plain) ? plain : '');
   const L = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+  const typeLabel = {
+    image: [IconImage, L('chat.photo', 'Foto')], video: [IconVideo, L('chat.video', 'Vídeo')],
+    audio: [IconMic, L('chat.audio', 'Áudio')], voice: [IconMic, L('chat.audio', 'Áudio')],
+    file: [IconFileText, L('starredV2.document', 'Documento')], document: [IconFileText, L('starredV2.document', 'Documento')],
+  }[type];
 
   if (parsed && parsed.e2e) {
     let pk = null;
     try { pk = require('../services/e2eeV4').peekPlaintext(content); } catch {}
     try { if (pk == null) { const _e5 = require('../services/e2ee/e2ee5').peek(content); if (_e5) pk = _e5.text; } } catch {} // [e2ee5] texto já decifrado neste aparelho
-    return pk != null ? { text: pk, copyText: pk } : { Icon: IconLock, text: L('e2ee.listPreview', 'Mensagem criptografada') };
+    // Mídia cifrada: o servidor sabe só o TIPO — mostra "Foto"/"Vídeo"… com cadeado.
+    if (typeLabel) return { Icon: typeLabel[0], text: pk ? String(pk) : typeLabel[1], copyText: pk || '', locked: true };
+    return pk != null && String(pk).trim()
+      ? { text: String(pk), copyText: String(pk), link: firstLink(String(pk)) }
+      : { Icon: IconLock, text: L('e2ee.listPreview', 'Mensagem criptografada') };
   }
-  if (type === 'image') {
-    const url = m.file_url ? api.getMediaUrl(m.file_url) : '';
-    return { Icon: IconImage, text: caption || L('chat.photo', 'Foto'), thumb: url || null, copyText: caption };
+  const viewOnce = m.is_view_once === true || m.is_view_once === 1 || !!(parsed && parsed.view_once);
+  if (type === 'image' || type === 'video') {
+    const isVid = type === 'video';
+    const th = viewOnce ? null : starredThumb(m);
+    const dur = isVid ? fmtDur(m.duration || (parsed && parsed.duration)) : '';
+    const label = isVid ? L('chat.video', 'Vídeo') : L('chat.photo', 'Foto');
+    return {
+      Icon: isVid ? IconVideo : IconImage,
+      text: caption || (viewOnce ? `${label} · ${L('starredPro.viewOnce', 'Visualização única')}` : label),
+      thumb: th, play: isVid, dur, copyText: caption,
+    };
   }
-  if (type === 'video') return { Icon: IconVideo, text: caption || L('chat.video', 'Vídeo'), copyText: caption };
+  if (type === 'gif' || /^https?:\/\/(media[0-9]*\.)?(tenor|giphy)\.com\//i.test(plain)) {
+    return { Icon: IconImage, text: type === 'gif' && caption ? caption : 'GIF', thumb: starredThumb(m) };
+  }
   if (type === 'audio' || type === 'voice') {
     const dur = fmtDur(m.duration || (parsed && parsed.duration));
-    return { Icon: IconMic, text: dur ? `${L('chat.audio', 'Áudio')} ${dur}` : L('chat.audio', 'Áudio') };
+    return { Icon: IconMic, text: L('chat.audio', 'Áudio'), meta: dur };
   }
   if (type === 'file' || type === 'document') {
     const name = m.file_name && !/^(blob|file)$/i.test(m.file_name) ? m.file_name : '';
-    return { Icon: IconFileText, text: name || L('starredV2.document', 'Documento'), copyText: caption };
+    return { Icon: IconFileText, text: name || L('starredV2.document', 'Documento'), meta: fmtSize(m.file_size), copyText: caption, file: true };
   }
   if (type === 'sticker' || type === 'lottie_sticker') return { Icon: IconSmile, text: L('chat.sticker', 'Figurinha') };
-  if (type === 'gif') return { Icon: IconImage, text: caption || 'GIF' };
   if (type === 'location' || (parsed && typeof parsed.latitude === 'number')) {
     return { Icon: IconMapPin, text: parsed && parsed.live ? L('chat.liveLocation', 'Localização ao vivo') : L('chat.location', 'Localização') };
   }
@@ -153,15 +224,13 @@ function describeMessage(m, t) {
     return { Icon: IconPhone, text: parsed && (parsed.video || parsed.call_type === 'video') ? L('chat.videoCall', 'Chamada de vídeo') : L('chat.voiceCall', 'Chamada de voz') };
   }
   if (parsed) {
-    const txt = [parsed.text, parsed.body, parsed.caption, parsed.message, typeof parsed.content === 'string' ? parsed.content : '']
-      .find((x) => typeof x === 'string' && x.trim() && !x.trim().startsWith('{'));
-    if (txt) return { text: txt.trim(), copyText: txt.trim() };
+    const txt = starredPlainText(m);
+    if (txt) return { text: txt, copyText: txt, link: firstLink(txt) };
     if (parsed.file_url || parsed.media_url || parsed.url) return { Icon: IconFileText, text: L('chat.attachment', 'Anexo') };
     return { Icon: IconMessageSquare, text: L('chat.message', 'Mensagem') };
   }
-  if (m.file_url && !plain) return { Icon: IconFileText, text: m.file_name || L('chat.attachment', 'Anexo') };
-  if (/^https?:\/\/(media[0-9]*\.)?(tenor|giphy)\.com\//i.test(plain)) return { Icon: IconImage, text: 'GIF' };
-  return { text: plain || L('chat.message', 'Mensagem'), copyText: plain };
+  if (m.file_url && (!plain || isFileNameLike(plain))) return { Icon: IconFileText, text: m.file_name || L('chat.attachment', 'Anexo'), meta: fmtSize(m.file_size), file: true };
+  return { text: plain || L('chat.message', 'Mensagem'), copyText: plain, link: firstLink(plain) };
 }
 
 function EmptyState({ Icon, title, body, s, action }) {
@@ -177,37 +246,97 @@ function EmptyState({ Icon, title, body, s, action }) {
   );
 }
 
-const StarredRow = React.memo(function StarredRow({ item, conv, myEmail, t, language, s, onOpen, onMenu, onUnstar }) {
+function SkeletonList() {
+  return (
+    <View style={{ paddingTop: 8 }}>
+      {[0, 1, 2, 3, 4, 5].map((i) => (
+        <View key={i} style={styles.skRow}>
+          <Skeleton width={46} height={46} radius={23} delay={i * 40} />
+          <View style={{ flex: 1, marginLeft: 12, gap: 8 }}>
+            <Skeleton width="48%" height={13} radius={6} delay={i * 40 + 20} />
+            <Skeleton width="78%" height={11} radius={6} delay={i * 40 + 40} />
+          </View>
+          {i % 2 === 0 ? <Skeleton width={52} height={52} radius={10} delay={i * 40 + 60} style={{ marginLeft: 10 }} /> : null}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function Thumb({ d, s, id }) {
+  const th = d.thumb;
+  return (
+    <View style={[styles.thumb, { backgroundColor: s.fill }]}>
+      {th && ExpoImage ? (
+        <ExpoImage
+          source={th.uri ? { uri: th.uri } : null}
+          placeholder={th.blurhash ? { blurhash: th.blurhash } : undefined}
+          style={StyleSheet.absoluteFill}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          recyclingKey={String(id)}
+          transition={140}
+          accessibilityIgnoresInvertColors
+        />
+      ) : (d.Icon ? <d.Icon size={20} color={s.textSecondary} /> : null)}
+      {d.play ? (
+        <View style={styles.playWrap} pointerEvents="none">
+          <View style={styles.playDot}><IconPlay size={11} color="#FFFFFF" /></View>
+        </View>
+      ) : null}
+      {d.dur ? <Text style={styles.durBadge} numberOfLines={1}>{d.dur}</Text> : null}
+    </View>
+  );
+}
+
+const StarredRow = React.memo(function StarredRow({ item, conv, myEmail, t, language, s, accent, byChat, onOpen, onUnstar, onCopy }) {
   const swipeRef = useRef(null);
   const isMine = String(item.sender_email || '').toLowerCase() === myEmail;
-  const isGroup = item.conversation_type === 'group' || conv?.type === 'group' || conv?.type === 'channel';
+  const isGroup = item.conversation_type === 'group' || item.conversation_type === 'channel' || conv?.type === 'group' || conv?.type === 'channel';
   const senderName = isMine ? (t('chat.you', 'Você')) : api.emailToDisplayName(item.sender_name || item.sender_email || '');
-  // Título = conversa (1:1: o contato; grupo: o nome do grupo).
-  const title = isGroup
+  // Título = conversa (1:1: o contato; grupo: o nome do grupo). Agrupado por
+  // conversa o cabeçalho já diz qual é → o título vira quem mandou.
+  const convTitle = isGroup
     ? (item.conversation_name || conv?.title || senderName)
     : (conv?.title || (isMine ? (item.conversation_name || '') : senderName) || senderName);
-  const peerEmail = isGroup ? null : (conv?.peerEmail || (isMine ? '' : item.sender_email) || null);
-  const showWho = isMine || isGroup;
+  const title = byChat ? senderName : convTitle;
+  const peerEmail = byChat
+    ? (item.sender_email || null)
+    : (isGroup ? null : (conv?.peerEmail || (isMine ? '' : item.sender_email) || null));
+  const showWho = !byChat && (isMine || isGroup);
   const d = describeMessage(item, t);
   const when = formatWhen(item.created_at, t, language);
   const Ic = d.Icon;
+  const hasThumb = !!(d.thumb && (d.thumb.uri || d.thumb.blurhash));
+
+  const a11yActions = [{ name: 'unstar', label: t('chat.unstar', 'Desfavoritar') }];
+  if (d.copyText) a11yActions.push({ name: 'copy', label: t('common.copy', 'Copiar') });
 
   const row = (
     <PressableRow
       onPress={() => onOpen(item)}
-      onLongPress={() => onMenu(item, d)}
-      delayLongPress={350}
+      onLongPress={() => {
+        try { require('../services/haptics').HapticsCompat.impactAsync?.('medium'); } catch {}
+        onUnstar(item);
+      }}
+      delayLongPress={420}
       accessibilityRole="button"
-      accessibilityLabel={`${title}. ${showWho ? senderName + ': ' : ''}${d.text}. ${when}`}
-      accessibilityHint={t('starredV2.openHint', 'Abre a conversa nesta mensagem')}
+      accessibilityLabel={`${title}. ${showWho ? senderName + ': ' : ''}${d.text}${d.meta ? ', ' + d.meta : ''}. ${when}`}
+      accessibilityHint={t('starredPro.rowHint', 'Toque para abrir na conversa. Segure para remover das favoritas.')}
+      accessibilityActions={a11yActions}
+      onAccessibilityAction={(e) => {
+        const n = e?.nativeEvent?.actionName;
+        if (n === 'unstar') onUnstar(item);
+        else if (n === 'copy' && d.copyText) onCopy(d.copyText);
+      }}
       style={{ backgroundColor: s.bg }}
     >
       <View style={styles.row}>
         <AvatarCircle
           name={title}
           email={peerEmail || null}
-          uri={isGroup ? (conv?.avatar || undefined) : undefined}
-          size={48}
+          uri={!byChat && isGroup ? (conv?.avatar || undefined) : undefined}
+          size={46}
         />
         <View style={styles.rowBody}>
           <View style={styles.rowHead}>
@@ -215,15 +344,22 @@ const StarredRow = React.memo(function StarredRow({ item, conv, myEmail, t, lang
             <Text style={[styles.rowTime, { color: s.textSecondary }]} numberOfLines={1}>{when}</Text>
           </View>
           <View style={styles.rowContent}>
-            <IconStarFilled size={12} color={s.textSecondary} />
+            <IconStarFilled size={11} color={accent} />
             {showWho ? <Text style={[styles.rowWho, { color: s.text }]} numberOfLines={1}>{senderName}:</Text> : null}
-            {Ic ? <Ic size={14} color={s.textSecondary} /> : null}
-            <Text style={[styles.rowPreview, { color: s.textSecondary }]} numberOfLines={2}>{d.text}</Text>
+            {Ic && !hasThumb ? <Ic size={14} color={s.textSecondary} /> : null}
+            {d.locked ? <IconLock size={12} color={s.textSecondary} /> : null}
+            <Text style={[styles.rowPreview, { color: s.textSecondary }]} numberOfLines={2}>
+              {d.text}{d.meta ? `  ·  ${d.meta}` : ''}
+            </Text>
           </View>
+          {d.link ? (
+            <View style={[styles.linkChip, { backgroundColor: s.fill }]}>
+              <IconLink size={12} color={accent} />
+              <Text style={[styles.linkHost, { color: s.text }]} numberOfLines={1}>{d.link.host}</Text>
+            </View>
+          ) : null}
         </View>
-        {d.thumb && ExpoImage ? (
-          <ExpoImage source={{ uri: d.thumb }} style={[styles.thumb, { backgroundColor: s.fill }]} contentFit="cover" recyclingKey={String(item.id)} transition={120} />
-        ) : null}
+        {hasThumb ? <Thumb d={d} s={s} id={item.id} /> : null}
       </View>
       <View style={[styles.sep, { backgroundColor: s.separator }]} />
     </PressableRow>
@@ -253,6 +389,16 @@ const StarredRow = React.memo(function StarredRow({ item, conv, myEmail, t, lang
   );
 });
 
+function ChatSectionHeader({ section, s }) {
+  return (
+    <View style={[styles.chatHead, { backgroundColor: s.bg, borderBottomColor: s.separator }]}>
+      <AvatarCircle name={section.title} email={section.email || null} uri={section.avatar || undefined} size={26} />
+      <Text style={[styles.chatHeadTxt, { color: s.text }]} numberOfLines={1} accessibilityRole="header">{section.title}</Text>
+      <Text style={[styles.chatHeadCount, { color: s.textSecondary }]}>{section.data.length}</Text>
+    </View>
+  );
+}
+
 export default function StarredMessagesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -261,25 +407,30 @@ export default function StarredMessagesScreen() {
   const { t, language } = useLanguage();
   const { user } = useAuth() || {};
   const myEmail = String(user?.email || '').toLowerCase();
-  // [2026-10-11 qa-sweep2] conversation_id → { title, peerEmail, type, avatar }.
-  // The starred API only carries conversation_name for groups.
+  const accent = detailColor(!!isDark) || s.textSecondary;
+  // conversation_id → { title, peerEmail, type, avatar }.
   const [convMap, setConvMap] = useState({});
 
   const [tab, setTab] = useState('starred'); // 'saved' | 'starred'
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [menu, setMenu] = useState(null); // { item, d }
+  const [refreshing, setRefreshing] = useState(false);
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [groupBy, setGroupBy] = useState('date'); // 'date' | 'chat'
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const [r, cv] = await Promise.all([
         api.chatStarredMessages(),
         api.chatConversations().catch(() => null),
       ]);
+      if (!aliveRef.current) return;
       if (r?.success && r.data) {
         const list = Array.isArray(r.data) ? r.data : (r.data.items || r.data.messages || []);
-        setMessages(list);
+        setMessages(Array.isArray(list) ? list : []);
       }
       const convs = Array.isArray(cv?.data) ? cv.data : (Array.isArray(cv?.data?.conversations) ? cv.data.conversations : []);
       if (convs.length) {
@@ -298,10 +449,16 @@ export default function StarredMessagesScreen() {
         setConvMap(m);
       }
     } catch (e) { console.warn('[starred] load:', e); }
-    setLoading(false);
+    if (aliveRef.current) { setLoading(false); setRefreshing(false); }
   }, [myEmail]);
 
   useEffect(() => { load(); }, [load]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {}
+    load();
+  }, [load]);
 
   const openSavedMessages = useCallback(() => {
     try { router.push('/saved-messages'); } catch (e) { console.warn('[starred] saved nav:', e); }
@@ -319,22 +476,28 @@ export default function StarredMessagesScreen() {
     } catch (e) { console.warn('[starred] nav:', e); }
   }, [convMap, myEmail]);
 
+  // Desfavoritar com "Desfazer": some na hora (otimista); Desfazer devolve o
+  // item NO MESMO LUGAR e refaz a estrela no servidor.
+  const restar = useCallback(async (msg) => {
+    setMessages((prev) => (prev.some((m) => String(m.id) === String(msg.id)) ? prev : [msg, ...prev]));
+    try { await api.chatStarMessage(msg.id, true); } catch {}
+  }, []);
   const unstar = useCallback(async (msg) => {
     if (!msg || msg.id == null) return;
     setMessages((prev) => prev.filter((m) => String(m.id) !== String(msg.id)));
     try {
       const r = await api.chatStarMessage(msg.id, false);
       if (r && r.success === false) throw new Error(r.message || '');
-      showToast({ message: t('starredV2.removed', 'Removida das favoritas') });
+      showToast({
+        message: t('starredV2.removed', 'Removida das favoritas'),
+        action: { label: t('starredPro.undo', 'Desfazer'), onPress: () => restar(msg) },
+        duration: 5000,
+      });
     } catch {
       setMessages((prev) => (prev.some((m) => String(m.id) === String(msg.id)) ? prev : [msg, ...prev]));
+      showToast({ message: t('starredPro.unstarFailed', 'Não foi possível remover. Tente de novo.'), kind: 'error' });
     }
-  }, [t]);
-
-  const openMenu = useCallback((item, d) => {
-    try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {}
-    setMenu({ item, d });
-  }, []);
+  }, [t, restar]);
 
   const copyText = useCallback(async (text) => {
     try {
@@ -344,7 +507,51 @@ export default function StarredMessagesScreen() {
     } catch {}
   }, [t]);
 
-  const sorted = useMemo(() => messages, [messages]);
+  // Índice: tipo + texto de busca por mensagem (sem acento).
+  const indexed = useMemo(() => messages.map((m) => {
+    const cm = convMap[String(m.conversation_id)] || {};
+    const sender = api.emailToDisplayName(m.sender_name || m.sender_email || '');
+    const hay = foldSearch([starredPlainText(m), m.file_name || '', sender, m.sender_email || '', m.conversation_name || '', cm.title || ''].join(' \u0001 '));
+    return { m, kind: starredKind(m), hay, d: parseTs(m.created_at) };
+  }), [messages, convMap]);
+
+  const counts = useMemo(() => {
+    const c = { all: indexed.length };
+    for (const x of indexed) c[x.kind] = (c[x.kind] || 0) + 1;
+    return c;
+  }, [indexed]);
+
+  const q = foldSearch(query.trim());
+  const visible = useMemo(() => indexed
+    .filter((x) => (filter === 'all' || x.kind === filter) && (!q || x.hay.includes(q)))
+    .sort((a, b) => (b.d ? b.d.getTime() : 0) - (a.d ? a.d.getTime() : 0)), [indexed, filter, q]);
+
+  const sections = useMemo(() => {
+    const out = [];
+    const byKey = new Map();
+    for (const x of visible) {
+      let key; let meta;
+      if (groupBy === 'chat') {
+        key = 'c' + String(x.m.conversation_id);
+        if (!byKey.has(key)) {
+          const cm = convMap[String(x.m.conversation_id)] || {};
+          const isGroup = x.m.conversation_type === 'group' || x.m.conversation_type === 'channel' || cm.type === 'group' || cm.type === 'channel';
+          const isMine = String(x.m.sender_email || '').toLowerCase() === myEmail;
+          const title = (isGroup ? (x.m.conversation_name || cm.title) : (cm.title || (!isMine ? api.emailToDisplayName(x.m.sender_name || x.m.sender_email || '') : x.m.conversation_name)))
+            || t('starredPro.byChat', 'Conversa');
+          meta = { title, email: isGroup ? null : (cm.peerEmail || (!isMine ? x.m.sender_email : null)), avatar: isGroup ? cm.avatar : '' };
+        }
+      } else {
+        const sd = sectionDay(x.d, t, language);
+        key = sd.key;
+        if (!byKey.has(key)) meta = { title: sd.label };
+      }
+      let sec = byKey.get(key);
+      if (!sec) { sec = { key, ...meta, data: [] }; byKey.set(key, sec); out.push(sec); }
+      sec.data.push(x.m);
+    }
+    return out;
+  }, [visible, groupBy, convMap, myEmail, t, language]);
 
   const renderItem = useCallback(({ item }) => (
     <StarredRow
@@ -354,23 +561,94 @@ export default function StarredMessagesScreen() {
       t={t}
       language={language}
       s={s}
+      accent={accent}
+      byChat={groupBy === 'chat'}
       onOpen={openConversation}
-      onMenu={openMenu}
       onUnstar={unstar}
+      onCopy={copyText}
     />
-  ), [convMap, myEmail, t, language, s, openConversation, openMenu, unstar]);
+  ), [convMap, myEmail, t, language, s, accent, groupBy, openConversation, unstar, copyText]);
 
-  // [2026-10-09 more-native] Com header nativo (fundo = superfície do tema) as
-  // abas seguem a mesma superfície (texto/hairline), sem a faixa preta fixa.
+  const renderSectionHeader = useCallback(({ section }) => (
+    groupBy === 'chat'
+      ? <ChatSectionHeader section={section} s={s} />
+      : (
+        <View style={[styles.dayHead, { backgroundColor: s.bg }]}>
+          <Text style={[styles.dayHeadTxt, { color: s.textSecondary }]} accessibilityRole="header">{section.title}</Text>
+        </View>
+      )
+  ), [groupBy, s]);
+
   const tabAccent = colors.text;
   const tabInactive = colors.textSecondary;
   const tabBarBg = colors.headerBgSolid || colors.surface || colors.background;
 
-  const menuItems = menu ? [
-    { key: 'go', label: t('starredV2.goToMessage', 'Ir para a mensagem'), icon: IconArrowRight, onPress: () => openConversation(menu.item) },
-    ...(menu.d?.copyText ? [{ key: 'copy', label: t('common.copy', 'Copiar'), icon: IconCopy, onPress: () => copyText(menu.d.copyText) }] : []),
-    { key: 'unstar', label: t('chat.unstar', 'Desfavoritar'), icon: IconStar, destructive: true, onPress: () => unstar(menu.item) },
-  ] : [];
+  const filterLabel = {
+    all: t('starredPro.fAll', 'Tudo'), photo: t('starredPro.fPhotos', 'Fotos'), video: t('starredPro.fVideos', 'Vídeos'),
+    link: t('starredPro.fLinks', 'Links'), file: t('starredPro.fFiles', 'Arquivos'), audio: t('starredPro.fAudio', 'Áudio'),
+    text: t('starredPro.fText', 'Texto'),
+  };
+  const chips = STARRED_FILTERS.filter((k) => k === 'all' || counts[k] || k === filter);
+  const filtering = !!q || filter !== 'all';
+
+  const toolbar = messages.length ? (
+    <View style={[styles.toolbar, { borderBottomColor: s.separator }]}>
+      <View style={styles.searchRow}>
+        <View style={[styles.search, { backgroundColor: s.fill }]}>
+          <IconSearch size={16} color={s.textSecondary} />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder={t('starredPro.searchPh', 'Buscar nas favoritas')}
+            placeholderTextColor={s.textTertiary || s.textSecondary}
+            style={[styles.searchInput, { color: s.text }]}
+            returnKeyType="search"
+            autoCorrect={false}
+            autoCapitalize="none"
+            clearButtonMode="never"
+            accessibilityLabel={t('starredPro.searchPh', 'Buscar nas favoritas')}
+          />
+          {query ? (
+            <Pressable onPress={() => setQuery('')} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('starredPro.clearSearch', 'Limpar busca')}>
+              <View style={[styles.clearDot, { backgroundColor: s.textTertiary || s.textSecondary }]}><IconX size={10} color={s.bg} /></View>
+            </Pressable>
+          ) : null}
+        </View>
+        <Pressable
+          onPress={() => { try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {} setGroupBy((g) => (g === 'date' ? 'chat' : 'date')); }}
+          accessibilityRole="button"
+          accessibilityLabel={groupBy === 'date' ? t('starredPro.groupByChat', 'Agrupar por conversa') : t('starredPro.groupByDate', 'Agrupar por data')}
+          style={({ pressed }) => [styles.groupBtn, { backgroundColor: s.fill }, pressed && { opacity: 0.7 }]}
+        >
+          {groupBy === 'date' ? <IconCalendar size={15} color={s.text} /> : <IconUsers size={15} color={s.text} />}
+          <Text style={[styles.groupTxt, { color: s.text }]} numberOfLines={1}>
+            {groupBy === 'date' ? t('starredPro.byDate', 'Data') : t('starredPro.byChat', 'Conversa')}
+          </Text>
+        </Pressable>
+      </View>
+      {chips.length > 1 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} accessibilityRole="tablist" keyboardShouldPersistTaps="handled">
+          {chips.map((k) => {
+            const on = filter === k;
+            const n = counts[k] || 0;
+            return (
+              <Pressable
+                key={k}
+                onPress={() => { try { require('../services/haptics').HapticsCompat.selectionAsync(); } catch {} setFilter(k); }}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: on }}
+                accessibilityLabel={`${filterLabel[k]}, ${n}`}
+                style={[styles.chip, on ? { backgroundColor: s.ink, borderColor: s.ink } : { borderColor: s.separator }]}
+              >
+                <Text style={[styles.chipTxt, { color: on ? s.onInk : s.text }]} numberOfLines={1}>{filterLabel[k]}</Text>
+                <Text style={[styles.chipN, { color: on ? s.onInk : s.textSecondary }]}>{n}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+    </View>
+  ) : null;
 
   return (
     <View style={[styles.container, { backgroundColor: s.bg, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
@@ -430,9 +708,7 @@ export default function StarredMessagesScreen() {
           )}
         />
       ) : loading && !messages.length ? (
-        <View style={styles.loading}>
-          <ActivityIndicator color={s.textSecondary} />
-        </View>
+        <SkeletonList />
       ) : messages.length === 0 ? (
         <EmptyState
           s={s}
@@ -441,27 +717,48 @@ export default function StarredMessagesScreen() {
           body={t('starredV2.emptyHint', 'Toque e segure uma mensagem em qualquer conversa e escolha Favoritar. Ela aparece aqui para você achar depois.')}
         />
       ) : (
-        <FlatList
-          data={sorted}
-          keyExtractor={(m) => String(m.id)}
-          renderItem={renderItem}
-          contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
-          initialNumToRender={14}
-          windowSize={9}
-          onRefresh={load}
-          refreshing={false}
-          ListHeaderComponent={(
-            <Text style={[styles.paneExplain, { color: s.textSecondary }]}>
-              {t('starredV2.explain', 'Mensagens marcadas com estrela em qualquer conversa. Deslize para a esquerda para remover.')}
-            </Text>
-          )}
-        />
+        <View style={{ flex: 1 }}>
+          {toolbar}
+          <SectionList
+            sections={sections}
+            keyExtractor={(m) => String(m.id)}
+            renderItem={renderItem}
+            renderSectionHeader={renderSectionHeader}
+            stickySectionHeadersEnabled
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            contentContainerStyle={{ paddingBottom: insets.bottom + 24, flexGrow: 1 }}
+            initialNumToRender={14}
+            windowSize={9}
+            refreshControl={<UIRefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={s.textSecondary} />}
+            ListEmptyComponent={filtering ? (
+              <EmptyState
+                s={s}
+                Icon={IconSearch}
+                title={t('starredPro.noResults', 'Nada encontrado')}
+                body={q
+                  ? t('starredPro.noResultsQuery', 'Nenhuma favorita com “{q}”.').replace('{q}', query.trim())
+                  : t('starredPro.noResultsFilter', 'Nenhuma favorita deste tipo.')}
+                action={(
+                  <Pressable
+                    onPress={() => { setQuery(''); setFilter('all'); }}
+                    accessibilityRole="button"
+                    style={({ pressed }) => [styles.ctaOutline, { borderColor: s.separator }, pressed && { opacity: 0.7 }]}
+                  >
+                    <Text style={[styles.ctaOutlineTxt, { color: s.text }]}>{t('starredPro.clearFilters', 'Limpar filtros')}</Text>
+                  </Pressable>
+                )}
+              />
+            ) : null}
+            ListFooterComponent={visible.length > 6 ? (
+              <Text style={[styles.footer, { color: s.textSecondary }]}>
+                {t('starredPro.footerHint', 'Segure ou deslize uma mensagem para remover das favoritas.')}
+              </Text>
+            ) : null}
+          />
+        </View>
       )}
       </FadeSlideIn>
-
-      <Sheet visible={!!menu} onClose={() => setMenu(null)} title={menu?.d?.text ? String(menu.d.text).slice(0, 80) : undefined}>
-        <ActionList onDone={() => setMenu(null)} items={menuItems} />
-      </Sheet>
     </View>
   );
 }
@@ -476,14 +773,32 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 15, fontWeight: '600' },
   tabCount: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center' },
   tabCountTxt: { fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  paneExplain: { fontSize: 13, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6, lineHeight: 18 },
+  toolbar: { paddingTop: 10, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, gap: 10 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 8 },
+  search: { flex: 1, height: 38, borderRadius: 19, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 8 },
+  searchInput: { flex: 1, fontSize: 16, paddingVertical: 0, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }) },
+  clearDot: { width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  groupBtn: { height: 38, borderRadius: 19, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  groupTxt: { fontSize: 14, fontWeight: '600' },
+  chips: { paddingHorizontal: 16, gap: 8 },
+  chip: { height: 32, borderRadius: 16, borderWidth: 1, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  chipTxt: { fontSize: 14, fontWeight: '600' },
+  chipN: { fontSize: 12.5, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  dayHead: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 },
+  dayHeadTxt: { fontSize: 13, fontWeight: '600', letterSpacing: 0.2 },
+  chatHead: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth },
+  chatHeadTxt: { flex: 1, fontSize: 15, fontWeight: '700', letterSpacing: -0.2 },
+  chatHeadCount: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 36, paddingBottom: 60 },
+  skRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 36, paddingVertical: 60 },
   emptyIcon: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
   emptyTitle: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3, textAlign: 'center' },
   emptySubtitle: { fontSize: 15, lineHeight: 21, textAlign: 'center', marginTop: 8, maxWidth: 320 },
   cta: { marginTop: 22, height: 46, borderRadius: 23, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center' },
   ctaTxt: { fontSize: 16, fontWeight: '600' },
+  ctaOutline: { marginTop: 20, height: 40, borderRadius: 20, paddingHorizontal: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  ctaOutlineTxt: { fontSize: 15, fontWeight: '600' },
   row: { flexDirection: 'row', paddingVertical: 11, paddingHorizontal: 16, alignItems: 'center' },
   rowBody: { flex: 1, minWidth: 0, marginLeft: 12 },
   rowHead: { flexDirection: 'row', alignItems: 'center' },
@@ -492,8 +807,14 @@ const styles = StyleSheet.create({
   rowContent: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
   rowWho: { fontSize: 14, fontWeight: '500', flexShrink: 0, maxWidth: '40%' },
   rowPreview: { fontSize: 14, flex: 1, lineHeight: 19 },
-  thumb: { width: 46, height: 46, borderRadius: 8, marginLeft: 10 },
-  sep: { position: 'absolute', left: 76, right: 0, bottom: 0, height: StyleSheet.hairlineWidth },
+  linkChip: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6, height: 24, borderRadius: 12, paddingHorizontal: 9, maxWidth: '100%' },
+  linkHost: { fontSize: 12.5, fontWeight: '600', flexShrink: 1 },
+  thumb: { width: 52, height: 52, borderRadius: 10, marginLeft: 10, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  playWrap: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  playDot: { width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', paddingLeft: 2 },
+  durBadge: { position: 'absolute', right: 4, bottom: 3, fontSize: 10, fontWeight: '700', color: '#FFFFFF', textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 3, fontVariant: ['tabular-nums'] },
+  sep: { position: 'absolute', left: 74, right: 0, bottom: 0, height: StyleSheet.hairlineWidth },
   swipeAct: { width: 104, alignItems: 'center', justifyContent: 'center', gap: 4 },
   swipeTxt: { fontSize: 12, fontWeight: '600' },
+  footer: { fontSize: 13, textAlign: 'center', paddingHorizontal: 32, paddingTop: 18, lineHeight: 18 },
 });

@@ -16,8 +16,12 @@
 // A altura inicial vem de starredSheetDetents(n) (detent médio proporcional ao
 // conteúdo; arrastar expande até a tela cheia).
 // Textos novos: dicionário local pt/en/es (sem mexer nos pacotes i18n).
+// [2026-10-21 favoritas-pro] + busca e filtros por tipo (Fotos/Vídeos/Links/
+// Arquivos/Áudio/Texto — só os que existem na conversa) e miniatura via
+// starredKinds.starredThumb (t320 → disp → original + blurhash). A lista do
+// servidor (email.php chat_starred_messages) agora traz file_url/variantes.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, FlatList, StyleSheet, Platform, Animated } from 'react-native';
+import { View, Text, Pressable, FlatList, StyleSheet, Platform, Animated, TextInput, ScrollView } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { grafite, cardShadow } from '../../constants/theme';
@@ -25,9 +29,10 @@ import AvatarCircle from '../AvatarCircle';
 import * as api from '../../services/api';
 import {
   IconStar, IconStarFilled, IconX, IconImage, IconVideo, IconMic, IconFileText, IconMapPin,
-  IconUser, IconBarChart, IconSmile, IconPhone, IconLock, IconMessageSquare, IconPlay,
+  IconUser, IconBarChart, IconSmile, IconPhone, IconLock, IconMessageSquare, IconPlay, IconSearch, IconLink,
 } from '../Icons';
 import { lastMediaThumb } from '../chatlist/listVivoData';
+import { STARRED_FILTERS, starredKind, starredThumb, firstLink, starredPlainText, foldSearch } from './starredKinds';
 
 let ExpoImage = null;
 try { ExpoImage = require('expo-image').Image; } catch {}
@@ -46,6 +51,8 @@ const STR = {
     location: 'Localização', liveLocation: 'Localização ao vivo', contact: 'Contato', poll: 'Enquete',
     voiceCall: 'Chamada de voz', videoCall: 'Chamada de vídeo', encrypted: 'Mensagem criptografada',
     message: 'Mensagem', attachment: 'Anexo', viewOnce: 'Visualização única', close: 'Fechar', openHint: 'Abre a conversa nesta mensagem',
+    search: 'Buscar nas favoritas', clearSearch: 'Limpar busca', noResults: 'Nada encontrado', noResultsBody: 'Nenhuma favorita com esse filtro.', clearFilters: 'Limpar filtros',
+    fAll: 'Tudo', fPhotos: 'Fotos', fVideos: 'Vídeos', fLinks: 'Links', fFiles: 'Arquivos', fAudio: 'Áudio', fText: 'Texto',
   },
   en: {
     title: 'Starred messages', hint: 'Tap to jump to the message. Hold or swipe to remove.',
@@ -56,6 +63,8 @@ const STR = {
     location: 'Location', liveLocation: 'Live location', contact: 'Contact', poll: 'Poll',
     voiceCall: 'Voice call', videoCall: 'Video call', encrypted: 'Encrypted message',
     message: 'Message', attachment: 'Attachment', viewOnce: 'View once', close: 'Close', openHint: 'Opens the chat at this message',
+    search: 'Search starred', clearSearch: 'Clear search', noResults: 'Nothing found', noResultsBody: 'No starred messages match this filter.', clearFilters: 'Clear filters',
+    fAll: 'All', fPhotos: 'Photos', fVideos: 'Videos', fLinks: 'Links', fFiles: 'Files', fAudio: 'Audio', fText: 'Text',
   },
   es: {
     title: 'Mensajes destacados', hint: 'Toca para ir al mensaje. Mantén pulsado o desliza para quitarlo.',
@@ -66,6 +75,8 @@ const STR = {
     location: 'Ubicación', liveLocation: 'Ubicación en tiempo real', contact: 'Contacto', poll: 'Encuesta',
     voiceCall: 'Llamada de voz', videoCall: 'Videollamada', encrypted: 'Mensaje cifrado',
     message: 'Mensaje', attachment: 'Adjunto', viewOnce: 'Ver una vez', close: 'Cerrar', openHint: 'Abre el chat en este mensaje',
+    search: 'Buscar en destacados', clearSearch: 'Borrar búsqueda', noResults: 'Sin resultados', noResultsBody: 'Ningún mensaje destacado coincide con este filtro.', clearFilters: 'Quitar filtros',
+    fAll: 'Todo', fPhotos: 'Fotos', fVideos: 'Videos', fLinks: 'Enlaces', fFiles: 'Archivos', fAudio: 'Audio', fText: 'Texto',
   },
 };
 function _strs(language) {
@@ -166,20 +177,25 @@ export function describeStarred(m, S) {
     let pk = null;
     try { pk = require('../../services/e2eeV4').peekPlaintext(content); } catch {}
     try { if (pk == null) { const _e5 = require('../../services/e2ee/e2ee5').peek(content); if (_e5) pk = _e5.text; } } catch {} // [e2ee5] texto já decifrado neste aparelho
-    return pk != null ? { kind: 'text', text: String(pk) } : { kind: 'row', Icon: IconLock, label: S.encrypted };
+    // Mídia cifrada: o servidor só sabe o TIPO → "Foto"/"Vídeo"/… em vez de "criptografada".
+    const ml = { image: [IconImage, S.photo], video: [IconVideo, S.video], audio: [IconMic, S.audio], voice: [IconMic, S.voice], file: [IconFileText, S.doc], document: [IconFileText, S.doc] }[type];
+    if (ml) return { kind: 'row', Icon: ml[0], label: ml[1], text: pk ? String(pk) : '' };
+    return pk != null ? { kind: 'text', text: String(pk), link: firstLink(String(pk)) } : { kind: 'row', Icon: IconLock, label: S.encrypted };
   }
   const viewOnce = !!(m.is_view_once || m.view_once || (parsed && parsed.view_once));
   if (type === 'image' || type === 'video') {
     const isVid = type === 'video';
     if (viewOnce) return { kind: 'row', Icon: isVid ? IconVideo : IconImage, label: `${isVid ? S.video : S.photo} · ${S.viewOnce}` };
-    let thumb = '';
-    try { thumb = lastMediaThumb(m) || ''; } catch { thumb = ''; }
+    let thumb = null;
+    try { thumb = starredThumb(m); } catch { thumb = null; }
+    if (!thumb) { try { const u = lastMediaThumb(m); if (u) thumb = { uri: u, blurhash: '' }; } catch {} }
     const dur = isVid ? fmtDur(m.duration || m.video_duration || (parsed && parsed.duration)) : '';
     return { kind: 'media', Icon: isVid ? IconVideo : IconImage, label: isVid ? S.video : S.photo, text: caption, thumb, play: isVid, dur };
   }
   if (type === 'gif' || /^https?:\/\/(media[0-9]*\.)?(tenor|giphy)\.com\//i.test(plain)) {
     const u = m.file_url || (parsed && (parsed.url || parsed.gif_url)) || (/^https?:/i.test(plain) ? plain : '');
-    return { kind: 'media', Icon: IconImage, label: S.gif, text: type === 'gif' ? caption : '', thumb: absUrl(u) };
+    const gu = absUrl(u);
+    return { kind: 'media', Icon: IconImage, label: S.gif, text: type === 'gif' ? caption : '', thumb: gu ? { uri: gu, blurhash: '' } : null };
   }
   if (type === 'audio' || type === 'voice' || type === 'ptt') {
     const dur = fmtDur(m.duration || m.audio_duration || (parsed && parsed.duration));
@@ -216,12 +232,12 @@ export function describeStarred(m, S) {
   if (parsed) {
     const txt = [parsed.text, parsed.body, parsed.caption, parsed.message, typeof parsed.content === 'string' ? parsed.content : '']
       .find((x) => typeof x === 'string' && x.trim() && !x.trim().startsWith('{'));
-    if (txt) return { kind: 'text', text: txt.trim() };
+    if (txt) return { kind: 'text', text: txt.trim(), link: firstLink(txt) };
     if (parsed.file_url || parsed.media_url || parsed.url) return { kind: 'row', Icon: IconFileText, label: S.attachment };
     return { kind: 'row', Icon: IconMessageSquare, label: S.message };
   }
   if (m.file_url && (!plain || isFileNameLike(plain))) return { kind: 'row', Icon: IconFileText, label: m.file_name || S.attachment };
-  if (plain && !/^\[[a-z_]+\]$/i.test(plain)) return { kind: 'text', text: plain };
+  if (plain && !/^\[[a-z_]+\]$/i.test(plain)) return { kind: 'text', text: plain, link: firstLink(plain) };
   return { kind: 'row', Icon: IconMessageSquare, label: S.message };
 }
 
@@ -239,7 +255,17 @@ function SkeletonRow({ g }) {
 
 function Preview({ d, g }) {
   if (d.kind === 'text') {
-    return <Text style={[st.text, { color: g.text }]} numberOfLines={3}>{d.text}</Text>;
+    return (
+      <View>
+        <Text style={[st.text, { color: g.text }]} numberOfLines={3}>{d.text}</Text>
+        {d.link ? (
+          <View style={[st.linkChip, { backgroundColor: g.surface2 }]}>
+            <IconLink size={12} color={g.text2} />
+            <Text style={[st.linkHost, { color: g.text }]} numberOfLines={1}>{d.link.host}</Text>
+          </View>
+        ) : null}
+      </View>
+    );
   }
   if (d.kind === 'sticker' && d.sticker && ExpoImage) {
     return <ExpoImage source={{ uri: d.sticker }} style={st.sticker} contentFit="contain" transition={120} accessibilityLabel={d.label} />;
@@ -249,8 +275,15 @@ function Preview({ d, g }) {
     return (
       <View style={st.mediaRow}>
         <View style={[st.thumb, { backgroundColor: g.surface2 }]}>
-          {d.thumb && ExpoImage ? (
-            <ExpoImage source={{ uri: d.thumb }} style={StyleSheet.absoluteFill} contentFit="cover" transition={120} />
+          {d.thumb && (d.thumb.uri || d.thumb.blurhash) && ExpoImage ? (
+            <ExpoImage
+              source={d.thumb.uri ? { uri: d.thumb.uri } : null}
+              placeholder={d.thumb.blurhash ? { blurhash: d.thumb.blurhash } : undefined}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={120}
+            />
           ) : <Ic size={22} color={g.muted} />}
           {d.play ? (
             <View style={st.playWrap}><View style={st.playDot}><IconPlay size={12} color="#FFFFFF" /></View></View>
@@ -410,6 +443,27 @@ export default function StarredMessagesSheet({
     if (it) { try { onRestar && onRestar(it); } catch {} }
   }, [undo, onRestar]);
 
+  // Busca + filtro por tipo (chips só dos tipos presentes).
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const indexed = useMemo(() => list.map((it) => {
+    const lm = localById.get(String(it.id));
+    const m = lm ? { ...it, ...lm, id: it.id, conversation_id: it.conversation_id } : it;
+    const who = whoFor(it);
+    return { it, kind: starredKind(m), hay: foldSearch([starredPlainText(m), m.file_name || '', who.name || '', it.sender_email || ''].join(' \u0001 ')) };
+  }), [list, localById, whoFor]);
+  const kindCounts = useMemo(() => {
+    const c = { all: indexed.length };
+    for (const x of indexed) c[x.kind] = (c[x.kind] || 0) + 1;
+    return c;
+  }, [indexed]);
+  const q = foldSearch(query.trim());
+  const shown = useMemo(() => indexed
+    .filter((x) => (filter === 'all' || x.kind === filter) && (!q || x.hay.includes(q)))
+    .map((x) => x.it), [indexed, filter, q]);
+  const chipKeys = STARRED_FILTERS.filter((k) => k === 'all' || kindCounts[k] || k === filter);
+  const chipLabel = { all: S.fAll, photo: S.fPhotos, video: S.fVideos, link: S.fLinks, file: S.fFiles, audio: S.fAudio, text: S.fText };
+
   const renderItem = useCallback(({ item, index }) => (
     <StarredItem
       item={item}
@@ -421,11 +475,57 @@ export default function StarredMessagesSheet({
       onOpen={onOpen}
       onUnstar={doUnstar}
       first={index === 0}
-      last={index === list.length - 1}
+      last={index === shown.length - 1}
     />
-  ), [localById, whoFor, g, S, language, onOpen, doUnstar, list.length]);
+  ), [localById, whoFor, g, S, language, onOpen, doUnstar, shown.length]);
 
   const count = list.length;
+  const showSearch = count >= 4;
+  const toolbar = count && (showSearch || chipKeys.length > 2) ? (
+    <View style={st.toolbar}>
+      {showSearch ? (
+        <View style={[st.search, { backgroundColor: g.surface2 }]}>
+          <IconSearch size={15} color={g.muted} />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder={S.search}
+            placeholderTextColor={g.muted}
+            style={[st.searchInput, { color: g.text }]}
+            returnKeyType="search"
+            autoCorrect={false}
+            autoCapitalize="none"
+            accessibilityLabel={S.search}
+          />
+          {query ? (
+            <Pressable onPress={() => setQuery('')} hitSlop={10} accessibilityRole="button" accessibilityLabel={S.clearSearch}>
+              <View style={[st.clearDot, { backgroundColor: g.muted }]}><IconX size={10} color={g.bg} /></View>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+      {chipKeys.length > 2 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.chips} keyboardShouldPersistTaps="handled" accessibilityRole="tablist">
+          {chipKeys.map((k) => {
+            const on = filter === k;
+            return (
+              <Pressable
+                key={k}
+                onPress={() => { try { require('../../services/haptics').HapticsCompat.selectionAsync(); } catch {} setFilter(k); }}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: on }}
+                accessibilityLabel={`${chipLabel[k]}, ${kindCounts[k] || 0}`}
+                style={[st.chip, on ? { backgroundColor: g.ink, borderColor: g.ink } : { borderColor: g.line }]}
+              >
+                <Text style={[st.chipTxt, { color: on ? g.onInk : g.text }]} numberOfLines={1}>{chipLabel[k]}</Text>
+                <Text style={[st.chipN, { color: on ? g.onInk : g.muted }]}>{kindCounts[k] || 0}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : null}
+    </View>
+  ) : null;
   let content;
   if (loading && !count) {
     content = (
@@ -443,15 +543,30 @@ export default function StarredMessagesSheet({
         <Text style={[st.emptyBody, { color: g.muted }]}>{S.emptyBody}</Text>
       </View>
     );
+  } else if (!shown.length) {
+    content = (
+      <View style={[st.empty, { minHeight: 200 }]}>
+        <View style={[st.emptyIcon, { backgroundColor: g.surface }, shadow]}>
+          <IconSearch size={30} color={g.text2} />
+        </View>
+        <Text style={[st.emptyTitle, { color: g.text }]}>{S.noResults}</Text>
+        <Text style={[st.emptyBody, { color: g.muted }]}>{S.noResultsBody}</Text>
+        <Pressable onPress={() => { setQuery(''); setFilter('all'); }} accessibilityRole="button" style={[st.clearBtn, { borderColor: g.line }]}>
+          <Text style={[st.clearBtnTxt, { color: g.text }]}>{S.clearFilters}</Text>
+        </Pressable>
+      </View>
+    );
   } else {
     content = (
       <FlatList
-        data={list}
+        data={shown}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         keyExtractor={(m) => String(m.id)}
         renderItem={renderItem}
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: bottomInset + 24 }}
-        ListHeaderComponent={<Text style={[st.hint, { color: g.muted }]}>{S.hint}</Text>}
+        ListHeaderComponent={!q && filter === 'all' ? <Text style={[st.hint, { color: g.muted }]}>{S.hint}</Text> : <View style={{ height: 8 }} />}
         initialNumToRender={10}
         windowSize={9}
         removeClippedSubviews={false}
@@ -475,6 +590,7 @@ export default function StarredMessagesSheet({
           <IconX size={18} color={g.text} />
         </Pressable>
       </View>
+      {toolbar}
       {content}
       {undo ? (
         <Animated.View style={[st.undoBar, { backgroundColor: g.ink, bottom: bottomInset + 14, opacity: fade, transform: [{ translateY: fade.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }]}>
@@ -530,4 +646,16 @@ const st = StyleSheet.create({
   undoBar: { position: 'absolute', left: 16, right: 16, minHeight: 48, borderRadius: 14, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 10 },
   undoTxt: { flex: 1, fontSize: 14.5, fontWeight: '500' },
   undoBtn: { fontSize: 14.5, fontWeight: '700' },
+  toolbar: { paddingTop: 8, paddingBottom: 6, gap: 10 },
+  search: { marginHorizontal: 16, height: 36, borderRadius: 18, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 8 },
+  searchInput: { flex: 1, fontSize: 15.5, paddingVertical: 0, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }) },
+  clearDot: { width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  chips: { paddingHorizontal: 16, gap: 8 },
+  chip: { height: 30, borderRadius: 15, borderWidth: 1, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  chipTxt: { fontSize: 13.5, fontWeight: '600' },
+  chipN: { fontSize: 12, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  linkChip: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6, height: 24, borderRadius: 12, paddingHorizontal: 9, maxWidth: '100%' },
+  linkHost: { fontSize: 12.5, fontWeight: '600', flexShrink: 1 },
+  clearBtn: { marginTop: 16, height: 38, borderRadius: 19, paddingHorizontal: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  clearBtnTxt: { fontSize: 14.5, fontWeight: '600' },
 });

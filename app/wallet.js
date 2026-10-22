@@ -17,7 +17,7 @@
 // Sem P2P (desligado no servidor): presente é pelo chat/live/reel/post.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, ScrollView, Share, Platform } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, ScrollView, Platform } from 'react-native';
 import UIRefreshControl from '../components/ui/RefreshControl'; // [2026-10-16 motion] P&B + toque soft ao armar
 import { useRouter, Redirect, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,299 +27,43 @@ import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import * as api from '../services/api';
 import { WALLET_ENABLED } from '../constants/featureFlags';
-import { IconDiamond, IconChevronRight, IconBroadcast, IconReels, IconMessageCircle, IconCopy, IconShare } from '../components/Icons';
-import { TopBar, useSurface, Skeleton, PressableScale, FadeSlideIn, Sheet, ActionList, showToast, Type, Space, Radius, Layout } from '../components/ui';
+import { IconChevronRight, IconBroadcast, IconReels, IconMessageCircle } from '../components/Icons';
+import { TopBar, useSurface, Skeleton, PressableScale, FadeSlideIn, Sheet, ActionList, Type, Space, Radius, Layout } from '../components/ui';
 import { haptic } from '../constants/theme';
 import { formatInt } from '../utils/dateFormat';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 import { peekCached, putCached } from '../hooks/useCachedAction';
 import { WALLET_SCREEN, fetchWalletScreen } from '../services/screenData';
-import { useWallet, refreshWallet, isMinorAccount, MIN_CASHOUT_CENTS, getCachedGiftCatalog, noteCashoutRules } from '../services/diamonds';
+import { useWallet, isMinorAccount, MIN_CASHOUT_CENTS, getCachedGiftCatalog, loadGiftCatalog, noteCashoutRules } from '../services/diamonds';
 import useDiamondStore from '../components/diamonds/useDiamondStore';
 import {
-  tr, moneyBRL, TABULAR, HERO, HeroCard, HeroButton, AnimatedNumber, DiamondMark,
-  ProgressBar, TxGlyph, FilterChips, PackCard, NOFLEX, txCategory,
+  tr, moneyBRL, TABULAR, HERO, HeroCard, AnimatedNumber, DiamondMark,
+  ProgressBar, TxGlyph, FilterChips, PackCard, NOFLEX, txCategory, QuickActions,
 } from '../components/wallet/WalletKit';
+import {
+  WALLET_PAGE, RECV, filterOf, describe, buildActivityRows, walletFilters, emptyMsg,
+  TxRow, TxDetailSheet, EmptyActivity, DayHeader, txSubtitle,
+} from '../components/wallet/WalletActivity';
 // [2026-10-15 native-wallet] Herói + histórico em NATIVO (kill switch __chatyy_native_wallet).
 import NativeWalletList, { useNativeWallet, walletColors } from '../components/native/NativeWalletList';
 import WalletHowItWorksSheet from '../components/wallet/WalletHowItWorksSheet';
 
-let Clipboard = null;
-try { Clipboard = require('expo-clipboard'); } catch {}
-
-const PAGE = 30;
+const PAGE = WALLET_PAGE;
 const FEATURED = [550, 1700, 6000];
-const RECV = new Set(['gift_recv', 'live_gift_recv', 'tip_recv', 'receive']);
 
-function handleOf(email) { const s = String(email || ''); return s.split('@')[0] || s; }
-
-const KIND = {
-  topup: ['wallet.kind.topup', 'Recarga'],
-  topup_refund: ['wallet.kind.topupRefund', 'Estorno de compra'],
-  gift_send: ['wallet.kind.giftSend', 'Presente enviado'],
-  gift_recv: ['wallet.kind.giftRecv', 'Presente recebido'],
-  live_gift_send: ['wallet.kind.giftSend', 'Presente enviado'],
-  live_gift_recv: ['wallet.kind.giftRecv', 'Presente recebido'],
-  tip_send: ['wallet.kind.giftSend', 'Presente enviado'],
-  tip_recv: ['wallet.kind.giftRecv', 'Presente recebido'],
-  live_react: ['wallet.kind.giftSend', 'Presente enviado'],
-  send: ['wallet.kind.send', 'Enviado'],
-  receive: ['wallet.kind.receive', 'Recebido'],
-  promote: ['wallet.kind.promote', 'Promoção'],
-  cashout: ['wallet.kind.cashout', 'Saque'],
-  cashout_reversal: ['wallet.kind.cashoutReversal', 'Saque devolvido'],
-  legacy_convert: ['wallet.kind.earningsConversion', 'Conversão de ganhos'],
-};
-const SOURCE = {
-  live_gift: ['creatorEarnings.source.live', 'Ao vivo'], live: ['creatorEarnings.source.live', 'Ao vivo'],
-  feed_post: ['creatorEarnings.source.feed', 'Post'], post: ['creatorEarnings.source.feed', 'Post'], post_gift: ['creatorEarnings.source.feed', 'Post'],
-  reel: ['creatorEarnings.source.reel', 'Reel'], reel_tip: ['creatorEarnings.source.reel', 'Reel'],
-  chat: ['gifts.sourceChat', 'Chat'], chat_gift: ['gifts.sourceChat', 'Chat'],
-};
-
-function filterOf(item) {
-  const k = String(item.kind || '');
-  if (k === 'cashout' || k === 'cashout_reversal') return 'cashouts';
-  if (RECV.has(k) || k === 'legacy_convert') return 'earnings';
-  if (/gift|tip|react/.test(k) || k === 'send') return 'gifts';
-  if (k === 'topup' || k === 'topup_refund' || k === 'promote') return 'purchases';
-  return 'other';
-}
-
-// Normaliza uma linha do ledger p/ exibição.
-function describe(item, t) {
-  const kind = String(item.kind || '');
-  const credit = item.direction === 'credit';
-  const [k, fb] = KIND[kind] || (credit ? KIND.receive : KIND.send);
-  const isCashout = kind === 'cashout' || kind === 'cashout_reversal';
-  const isConvert = kind === 'legacy_convert';
-  // Linhas legadas de ganho (tip_recv/live_gift_recv antigos) gravavam centavos em `amount`.
-  const legacyEarn = (kind === 'tip_recv' || kind === 'live_gift_recv') && item.diamonds == null;
-  const diamonds = isConvert ? null : (item.diamonds != null ? Number(item.diamonds) : (legacyEarn || isCashout ? null : Number(item.amount) || 0));
-  const payout = item.payout_cents != null ? Number(item.payout_cents) : (legacyEarn || isCashout || isConvert ? Number(item.amount) || 0 : null);
-  const showPayout = payout != null && (RECV.has(kind) || isCashout || isConvert);
-  const src = SOURCE[String(item.ref_kind || '')];
-  return {
-    kind, credit, title: tr(t, k, fb), isCashout, isConvert, diamonds,
-    payout: showPayout ? payout : null,
-    source: src ? tr(t, src[0], src[1]) : '',
-    who: item.counterparty ? handleOf(item.counterparty) : '',
-  };
-}
-
-function dayKey(ts) { const d = new Date(ts * 1000); return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; }
-function dayLabel(ts, t, language) {
-  const d = new Date(ts * 1000);
-  const now = new Date();
-  const y = new Date(now); y.setDate(now.getDate() - 1);
-  if (dayKey(ts) === dayKey(now.getTime() / 1000)) return tr(t, 'walletV3.today', 'Hoje');
-  if (dayKey(ts) === dayKey(y.getTime() / 1000)) return tr(t, 'walletV3.yesterday', 'Ontem');
-  try {
-    const opts = { weekday: 'short', day: 'numeric', month: 'long' };
-    if (d.getFullYear() !== now.getFullYear()) { delete opts.weekday; opts.year = 'numeric'; }
-    const s = d.toLocaleDateString(language || undefined, opts);
-    return s.charAt(0).toUpperCase() + s.slice(1);
-  } catch { return d.toDateString(); }
-}
-function timeLabel(ts, language) {
-  try { return new Date(ts * 1000).toLocaleTimeString(language || undefined, { hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
-}
-
-// ── Linha da atividade ─────────────────────────────────────────────────────
-function TxRow({ item, s, t, language, first, last, onPress }) {
-  const d = describe(item, t);
-  const ts = Number(item.created_at_ts) || 0;
-  const sub = [d.who && '@' + d.who, d.source, d.isConvert ? tr(t, 'wallet.earningsConversionSub', 'Saldo antigo convertido em reais') : '', ts ? timeLabel(ts, language) : '']
-    .filter(Boolean).join(' · ');
-  const sign = d.credit ? '+' : '−';
-  const amtColor = d.credit ? s.success : s.text;
-  const mainIsMoney = d.diamonds == null && d.payout != null;
-  const a11y = `${d.title}. ${d.diamonds != null ? sign + formatInt(Math.abs(d.diamonds), language) + ' ' + tr(t, 'wallet.diamondsLabel', 'diamantes') : ''} ${d.payout != null ? sign + moneyBRL(d.payout) : ''}. ${sub}`;
-  return (
-    <PressableScale
-      onPress={onPress}
-      haptic="select"
-      scaleTo={0.985}
-      accessibilityRole="button"
-      accessibilityLabel={a11y}
-      accessibilityHint={tr(t, 'walletV3.openDetailHint', 'Abre os detalhes da transação')}
-      style={[
-        styles.txRow,
-        { backgroundColor: s.surface },
-        first && styles.txFirst,
-        last && styles.txLast,
-      ]}
-    >
-      <View style={[styles.txIcon, { backgroundColor: s.fill }]}>
-        <TxGlyph kind={d.kind} size={20} color={s.text} />
-      </View>
-      <View style={styles.txMid}>
-        <Text style={[Type.callout, { color: s.text, fontWeight: '600' }]} numberOfLines={1}>{d.title}</Text>
-        {sub ? <Text style={[Type.footnote, { color: s.textSecondary, marginTop: 1 }]} numberOfLines={1}>{sub}</Text> : null}
-      </View>
-      <View style={styles.txRight}>
-        {mainIsMoney ? (
-          <Text style={[Type.callout, TABULAR, { color: amtColor, fontWeight: '700' }]}>{`${sign}${moneyBRL(d.payout)}`}</Text>
-        ) : (
-          <View style={styles.amt}>
-            <Text style={[Type.callout, TABULAR, { color: amtColor, fontWeight: '700' }]}>{`${sign}${formatInt(Math.abs(d.diamonds || 0), language)}`}</Text>
-            <IconDiamond size={12} color={amtColor} />
-          </View>
-        )}
-        {!mainIsMoney && d.payout != null ? (
-          <Text style={[Type.caption, TABULAR, { color: s.textSecondary, marginTop: 1 }]}>{`+${moneyBRL(d.payout)}`}</Text>
-        ) : null}
-      </View>
-      {!last ? <View style={[styles.txSep, { backgroundColor: s.separator }]} /> : null}
-    </PressableScale>
-  );
-}
-
-// ── Detalhe da transação ───────────────────────────────────────────────────
-function DetailRow({ label, value, s, right, mono }) {
-  if (!value && !right) return null;
-  return (
-    <View style={[styles.dRow, { borderBottomColor: s.separator }]}>
-      <Text style={[Type.subhead, { color: s.textSecondary }]}>{label}</Text>
-      <View style={styles.dRowVal}>
-        {value ? <Text style={[Type.subhead, mono && TABULAR, { color: s.text, fontWeight: '600', textAlign: 'right', flexShrink: 1 }]} selectable numberOfLines={2}>{value}</Text> : null}
-        {right || null}
-      </View>
-    </View>
-  );
-}
-
-function TxDetailSheet({ item: openItem, onClose, s, t, language }) {
-  const [cashoutStatus, setCashoutStatus] = useState(null);
-  // Mantém o conteúdo durante a animação de saída do sheet.
-  const lastRef = useRef(null);
-  if (openItem) lastRef.current = openItem;
-  const item = openItem || lastRef.current;
-  const d = item ? describe(item, t) : null;
-  useEffect(() => {
-    setCashoutStatus(null);
-    if (!item || item.kind !== 'cashout' || !item.ref_id) return undefined;
-    let alive = true;
-    (async () => {
-      try {
-        const r = await api.walletCashoutList?.();
-        const hit = (r?.data?.items || []).find((x) => String(x.id) === String(item.ref_id));
-        if (alive && hit) setCashoutStatus(String(hit.status || 'pending'));
-      } catch {}
-    })();
-    return () => { alive = false; };
-  }, [item]);
-  if (!item || !d) return null;
-
-  const ts = Number(item.created_at_ts) || 0;
-  let when = '';
-  try { when = ts ? new Date(ts * 1000).toLocaleString(language || undefined, { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''; } catch {}
-  const txId = `CHY-${String(item.id ?? '').padStart(8, '0')}`;
-  const statusKey = item.kind === 'cashout'
-    ? (cashoutStatus ? [`wallet.cashoutStatus.${cashoutStatus}`, cashoutStatus === 'paid' ? 'Pago' : cashoutStatus === 'rejected' ? 'Rejeitado' : 'Em análise'] : ['wallet.cashoutStatus.pending', 'Em análise'])
-    : /refund|reversal/.test(d.kind) ? ['walletV3.statusReversed', 'Estornado'] : ['walletV3.statusDone', 'Concluído'];
-  const statusTone = item.kind === 'cashout' && cashoutStatus === 'rejected' ? s.danger : (item.kind === 'cashout' && cashoutStatus !== 'paid') ? s.textSecondary : s.success;
-  const gift = item.gift_sku ? (getCachedGiftCatalog() || []).find((g) => g.sku === item.gift_sku) : null;
-  const giftLabel = gift ? `${gift.label_key ? tr(t, gift.label_key, gift.label || gift.sku) : (gift.label || gift.sku)}${Number(item.quantity) > 1 ? ' ×' + item.quantity : ''}` : '';
-  const sign = d.credit ? '+' : '−';
-  const mainIsMoney = d.diamonds == null && d.payout != null;
-  const big = mainIsMoney ? `${sign}${moneyBRL(d.payout)}` : `${sign}${formatInt(Math.abs(d.diamonds || 0), language)}`;
-
-  const copyId = async () => {
-    try {
-      if (Clipboard?.setStringAsync) await Clipboard.setStringAsync(txId);
-      else if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) await navigator.clipboard.writeText(txId);
-      try { haptic.success(); } catch {}
-      showToast({ message: tr(t, 'walletV3.idCopied', 'ID copiado') });
-    } catch {}
-  };
-  const receipt = [
-    tr(t, 'walletV3.receiptTitle', 'Comprovante Chatyy'),
-    `${d.title}: ${big}${mainIsMoney ? '' : ' ' + tr(t, 'wallet.diamondsLabel', 'diamantes')}`,
-    d.payout != null && !mainIsMoney ? `${tr(t, 'walletV3.earned', 'Ganho')}: ${moneyBRL(d.payout)}` : '',
-    d.who ? `${tr(t, 'walletV3.person', 'Pessoa')}: @${d.who}` : '',
-    when ? `${tr(t, 'walletV3.dateTime', 'Data e hora')}: ${when}` : '',
-    `${tr(t, 'walletV3.status', 'Status')}: ${tr(t, statusKey[0], statusKey[1])}`,
-    `${tr(t, 'walletV3.txId', 'ID da transação')}: ${txId}`,
-  ].filter(Boolean).join('\n');
-  const shareReceipt = async () => {
-    try {
-      if (Platform.OS === 'web') { await copyText(receipt); showToast({ message: tr(t, 'walletV3.receiptCopied', 'Comprovante copiado') }); return; }
-      await Share.share({ message: receipt });
-    } catch {}
-  };
-  async function copyText(txt) {
-    if (Clipboard?.setStringAsync) return Clipboard.setStringAsync(txt);
-    if (typeof navigator !== 'undefined' && navigator.clipboard) return navigator.clipboard.writeText(txt);
-    return null;
-  }
-
-  return (
-    <Sheet visible={!!openItem} onClose={onClose} scroll>
-      <View style={styles.dHead}>
-        <View style={[styles.dIcon, { backgroundColor: s.fill }]}>
-          <TxGlyph kind={d.kind} size={26} color={s.text} />
-        </View>
-        <Text style={[Type.subhead, { color: s.textSecondary, marginTop: Space.md }]}>{d.title}</Text>
-        <View style={[styles.amt, { marginTop: Space.xs }]}>
-          <Text style={[styles.dBig, TABULAR, { color: d.credit ? s.success : s.text }]} accessibilityRole="header">{big}</Text>
-          {!mainIsMoney ? <IconDiamond size={22} color={d.credit ? s.success : s.text} /> : null}
-        </View>
-        {!mainIsMoney && d.payout != null ? (
-          <Text style={[Type.footnote, TABULAR, { color: s.textSecondary, marginTop: 2 }]}>
-            {tr(t, 'walletV3.earnedAmount', 'Você ganhou {amount}').replace('{amount}', moneyBRL(d.payout))}
-          </Text>
-        ) : null}
-        <View style={[styles.statusPill, { backgroundColor: s.fill }]}>
-          <View style={[styles.statusDot, { backgroundColor: statusTone }]} />
-          <Text style={[Type.caption, { color: s.text, fontWeight: '700' }]}>{tr(t, statusKey[0], statusKey[1])}</Text>
-        </View>
-      </View>
-      <View style={styles.dBody}>
-        <DetailRow s={s} label={tr(t, 'walletV3.dateTime', 'Data e hora')} value={when} />
-        <DetailRow s={s} label={tr(t, 'walletV3.person', 'Pessoa')} value={d.who ? '@' + d.who : ''} />
-        <DetailRow s={s} label={tr(t, 'walletV3.origin', 'Origem')} value={d.source} />
-        <DetailRow s={s} label={tr(t, 'walletV3.gift', 'Presente')} value={giftLabel} />
-        <DetailRow s={s} label={tr(t, 'walletV3.txId', 'ID da transação')} value={txId} mono
-          right={(
-            <PressableScale onPress={copyId} haptic="select" hitSlop={10} accessibilityRole="button" accessibilityLabel={tr(t, 'walletV3.copyId', 'Copiar ID')} style={styles.copyBtn}>
-              <IconCopy size={16} color={s.textSecondary} />
-            </PressableScale>
-          )} />
-      </View>
-      <View style={styles.dActions}>
-        <PressableScale onPress={shareReceipt} haptic="light" accessibilityRole="button" style={[styles.dBtn, { backgroundColor: s.ink }]}>
-          <IconShare size={18} color={s.onInk} />
-          <Text style={[styles.dBtnText, { color: s.onInk }]}>{tr(t, 'walletV3.shareReceipt', 'Compartilhar comprovante')}</Text>
-        </PressableScale>
-      </View>
-    </Sheet>
-  );
-}
-
-// ── Estado vazio ───────────────────────────────────────────────────────────
-function EmptyActivity({ s, t, filter, onBuy }) {
-  const msg = {
-    all: ['walletV3.emptyAllSub', 'Compras, presentes e saques vão aparecer aqui.'],
-    purchases: ['walletV3.emptyPurchasesSub', 'Suas compras de diamantes aparecem aqui.'],
-    gifts: ['walletV3.emptyGiftsSub', 'Mande um presente numa live, reel, post ou conversa.'],
-    earnings: ['walletV3.emptyEarningsSub', 'Presentes que você receber aparecem aqui.'],
-    cashouts: ['walletV3.emptyCashoutsSub', 'Seus saques via Pix aparecem aqui.'],
-  }[filter] || ['walletV3.emptyAllSub', 'Compras, presentes e saques vão aparecer aqui.'];
-  return (
-    <View style={[styles.empty, { backgroundColor: s.surface }]}>
-      <View style={[styles.emptyIcon, { borderColor: s.separator }]}>
-        <TxGlyph name="receipt" size={26} color={s.textSecondary} strokeWidth={1.4} />
-      </View>
-      <Text style={[Type.headline, { color: s.text, marginTop: Space.md }]}>{tr(t, 'wallet.historyEmptyTitle', 'Nenhuma transação ainda')}</Text>
-      <Text style={[Type.footnote, { color: s.textSecondary, marginTop: Space.xs, textAlign: 'center' }]}>{tr(t, msg[0], msg[1])}</Text>
-      {onBuy && (filter === 'all' || filter === 'purchases') ? (
-        <PressableScale onPress={onBuy} haptic="medium" accessibilityRole="button" style={[styles.emptyBtn, { borderColor: s.ink }]}>
-          <Text style={[Type.subhead, { color: s.text, fontWeight: '700' }]}>{tr(t, 'wallet.topup', 'Comprar diamantes')}</Text>
-        </PressableScale>
-      ) : null}
-    </View>
-  );
+// [2026-10-21 carteira-pro] Equivalência EXATA do saldo (sem "≈" e sem valor em
+// dinheiro — diretriz de 16/10): quantos presentes do maior presente que cabe no
+// saldo. Ex.: 450 → "Dá para 2 Coroas" (Coroa = 199).
+function giftEquivalence(balance, t) {
+  const n = Number(balance) || 0;
+  if (n <= 0) return '';
+  const cat = (getCachedGiftCatalog() || []).filter((g) => Number(g.diamonds_cost) > 0)
+    .sort((a, b) => Number(b.diamonds_cost) - Number(a.diamonds_cost));
+  const g = cat.find((x) => Number(x.diamonds_cost) <= n && Number(x.diamonds_cost) >= 5) || cat.find((x) => Number(x.diamonds_cost) <= n);
+  if (!g) return '';
+  const qty = Math.floor(n / Number(g.diamonds_cost));
+  const name = g.label_key ? tr(t, g.label_key, g.label || g.sku) : (g.label || g.sku);
+  return tr(t, 'walletPro.equivalence', 'Dá para enviar {n}× {gift}').replace('{n}', String(qty)).replace('{gift}', name);
 }
 
 function WalletSkeleton({ insetsTop }) {
@@ -399,27 +143,7 @@ function WalletScreen() {
   // Filtro com poucos itens carregados → busca mais páginas sozinho.
   useEffect(() => { if (!loading && filter !== 'all' && filtered.length < 12 && more && !loadingMore) loadMore(); }, [filter, filtered.length, more, loadingMore, loading, loadMore]);
 
-  const rows = useMemo(() => {
-    const out = [];
-    let cur = null;
-    let group = [];
-    const flush = () => {
-      group.forEach((it, i) => out.push({ type: 'tx', key: 'tx' + String(it.id ?? i) + '_' + out.length, item: it, first: i === 0, last: i === group.length - 1 }));
-      group = [];
-    };
-    for (const it of filtered) {
-      const ts = Number(it.created_at_ts) || 0;
-      const k = ts ? dayKey(ts) : 'none';
-      if (k !== cur) {
-        flush();
-        cur = k;
-        out.push({ type: 'day', key: 'day' + k, label: ts ? dayLabel(ts, t, language) : '' });
-      }
-      group.push(it);
-    }
-    flush();
-    return out;
-  }, [filtered, t, language]);
+  const rows = useMemo(() => buildActivityRows(filtered, t, language), [filtered, t, language]);
 
   const title = tr(t, 'wallet.title', 'Carteira');
   // [2026-10-17 carteira-sem-piscar] Skeleton SÓ quando não há nada local (nem
@@ -463,17 +187,23 @@ function WalletScreen() {
     return (pick.length >= 2 ? pick : list.slice(1, 4)).slice(0, 3);
   }, [store.packs]);
 
-  const filters = [
-    { value: 'all', label: tr(t, 'walletV3.filterAll', 'Tudo') },
-    { value: 'purchases', label: tr(t, 'walletV3.filterPurchases', 'Compras') },
-    { value: 'gifts', label: tr(t, 'walletV3.filterGifts', 'Presentes') },
-    { value: 'earnings', label: tr(t, 'walletV3.filterEarnings', 'Ganhos') },
-    { value: 'cashouts', label: tr(t, 'walletV3.filterCashouts', 'Saques') },
-  ];
+  const filters = walletFilters(t);
+
 
   // [2026-10-16 carteira-clara] nada de "≈ US$ … em valor de compra": diamante
   // não é dinheiro sacável. Linha-guia do uso real.
-  const heroSub = tr(t, 'walletHow.diamondsUse', 'Use para enviar presentes');
+  // [2026-10-21 carteira-pro] + equivalência exata em presentes ("Dá para
+  // enviar 2× Coroa") quando há saldo; catálogo vem do cache/servidor.
+  const [giftCatTick, setGiftCatTick] = useState(0);
+  useEffect(() => { let on = true; loadGiftCatalog().then(() => { if (on) setGiftCatTick((n) => n + 1); }).catch(() => {}); return () => { on = false; }; }, []);
+  const equivalence = useMemo(() => (giftCatTick >= 0 ? giftEquivalence(wallet.diamonds, t) : ''), [wallet.diamonds, t, giftCatTick]);
+  const heroSub = equivalence || tr(t, 'walletHow.diamondsUse', 'Use para enviar presentes');
+  const canGift = !minor && !off && wallet.giftingEnabled !== false;
+  const quickActions = [
+    { id: 'buy', glyph: 'plus', primary: true, label: tr(t, 'walletPro.qaBuy', 'Comprar'), a11y: tr(t, 'wallet.topup', 'Comprar diamantes'), disabled: !canPurchase, onPress: openTopup, testID: 'wallet-buy' },
+    { id: 'gift', glyph: 'gift', label: tr(t, 'walletV3.sendGift', 'Enviar presente'), disabled: !canGift, onPress: () => setGiftOpen(true), testID: 'wallet-gift' },
+    { id: 'history', glyph: 'history', label: tr(t, 'wallet.history', 'Histórico'), a11y: tr(t, 'walletPro.qaHistoryA11y', 'Ver todo o histórico'), onPress: () => router.push('/wallet-history'), testID: 'wallet-history' },
+  ];
 
   const heroCard = (
       <FadeSlideIn style={NOFLEX}>
@@ -508,9 +238,9 @@ function WalletScreen() {
               <Text style={[Type.footnote, { color: HERO.sub }]}>{tr(t, 'diamondShop.purchasesOff', 'Compras de diamantes indisponíveis no momento.')}</Text>
             </View>
           ) : (
-            <View style={styles.heroActions}>
-              <HeroButton primary weight={1.15} haptic="medium" label={tr(t, 'wallet.topup', 'Comprar diamantes')} onPress={openTopup} disabled={!canPurchase} testID="wallet-buy" />
-              <HeroButton label={tr(t, 'walletV3.sendGift', 'Enviar presente')} onPress={() => setGiftOpen(true)} testID="wallet-gift" />
+            // [2026-10-21 carteira-pro] ações saíram do cartão → botões redondos logo abaixo.
+            <View style={[styles.heroFoot, { borderColor: HERO.line }]}>
+              <Text style={[Type.caption, { color: HERO.faint }]} numberOfLines={1}>{tr(t, 'walletPro.heroFoot', 'Diamantes · presentes em lives, reels, posts e conversas')}</Text>
             </View>
           )}
         </HeroCard>
@@ -520,6 +250,8 @@ function WalletScreen() {
   // Blocos abaixo do herói (no nativo viram o filho RN, logo abaixo do herói nativo).
   const restBlocks = (
     <>
+      {/* ── Ações principais (redondas) ─────────────────────── */}
+      <QuickActions actions={quickActions} s={s} />
       {/* ── Ganhos (criador) ─────────────────────────────────── */}
       {isCreator ? (
         <FadeSlideIn delay={60} style={NOFLEX}>
@@ -626,7 +358,13 @@ function WalletScreen() {
 
       {/* ── Atividade ───────────────────────────────────────── */}
       <View style={{ gap: Space.md, marginTop: Space.xs }}>
-        <Text style={[Type.title3, { color: s.text, fontWeight: '700' }]} accessibilityRole="header">{tr(t, 'walletV3.activity', 'Atividade')}</Text>
+        <View style={styles.secHeadTight}>
+          <Text style={[Type.title3, { color: s.text, fontWeight: '700' }]} accessibilityRole="header">{tr(t, 'walletV3.activity', 'Atividade')}</Text>
+          <PressableScale onPress={() => router.push('/wallet-history')} hitSlop={10} accessibilityRole="link" style={styles.linkRow} testID="wallet-see-all">
+            <Text style={[Type.subhead, { color: s.text, fontWeight: '600' }]}>{tr(t, 'walletV3.seeAll', 'Ver todos')}</Text>
+            <IconChevronRight size={16} color={s.textSecondary} />
+          </PressableScale>
+        </View>
         <View style={styles.chipsBleed}>
           <FilterChips options={filters} value={filter} onChange={setFilter} s={s} inset={Layout.gutter} fadeColor={s.bgGrouped} />
         </View>
@@ -643,9 +381,7 @@ function WalletScreen() {
   );
 
   const renderItem = useCallback(({ item: r }) => {
-    if (r.type === 'day') {
-      return <Text style={[Type.footnote, styles.dayLabel, { color: s.textSecondary }]} accessibilityRole="header">{r.label}</Text>;
-    }
+    if (r.type === 'day') return <DayHeader row={r} s={s} language={language} />;
     return <TxRow item={r.item} s={s} t={t} language={language} first={r.first} last={r.last} onPress={() => setDetail(r.item)} />;
   }, [s, t, language]);
 
@@ -654,8 +390,9 @@ function WalletScreen() {
     if (!nativeOn) return null;
     const bal = typeof wallet.diamonds === 'number' ? wallet.diamonds : null;
     const caps = tr(t, 'wallet.diamondBalance', 'Saldo de diamantes');
-    const buttons = [{ id: 'buy', label: tr(t, 'wallet.topup', 'Comprar diamantes'), primary: true, disabled: !canPurchase }];
-    buttons.push({ id: 'gift', label: tr(t, 'walletV3.sendGift', 'Enviar presente') });
+    // [2026-10-21 carteira-pro] botões do herói nativo vazios: as ações agora são
+    // os botões REDONDOS (QuickActions, 1º bloco RN logo abaixo do herói).
+    const buttons = [];
     // [2026-10-17 carteira-sem-piscar] `value` = null + `text` pronto: o herói
     // nativo rolava a contagem 0 → saldo A CADA abertura (o "pisca" do número).
     // Saldo vem do cache por conta (services/diamonds) → 1º quadro já certo.
@@ -679,9 +416,7 @@ function WalletScreen() {
       if (r.type === 'day') { sid = r.key; out.push({ id: r.key, k: 'd', t: r.label }); continue; }
       const it = r.item;
       const d = describe(it, t);
-      const ts = Number(it.created_at_ts) || 0;
-      const sub = [d.who && '@' + d.who, d.source, d.isConvert ? tr(t, 'wallet.earningsConversionSub', 'Saldo antigo convertido em reais') : '', ts ? timeLabel(ts, language) : '']
-        .filter(Boolean).join(' · ');
+      const sub = txSubtitle(d, it, t, language);
       const sign = d.credit ? '+' : '−';
       const mainIsMoney = d.diamonds == null && d.payout != null;
       const a11y = `${d.title}. ${d.diamonds != null ? sign + formatInt(Math.abs(d.diamonds), language) + ' ' + tr(t, 'wallet.diamondsLabel', 'diamantes') : ''} ${d.payout != null ? sign + moneyBRL(d.payout) : ''}. ${sub}`;
@@ -700,13 +435,7 @@ function WalletScreen() {
       return out;
     }
     if (!filtered.length && !more && !loadingMore) {
-      const msg = {
-        all: ['walletV3.emptyAllSub', 'Compras, presentes e saques vão aparecer aqui.'],
-        purchases: ['walletV3.emptyPurchasesSub', 'Suas compras de diamantes aparecem aqui.'],
-        gifts: ['walletV3.emptyGiftsSub', 'Mande um presente numa live, reel, post ou conversa.'],
-        earnings: ['walletV3.emptyEarningsSub', 'Presentes que você receber aparecem aqui.'],
-        cashouts: ['walletV3.emptyCashoutsSub', 'Seus saques via Pix aparecem aqui.'],
-      }[filter] || ['walletV3.emptyAllSub', 'Compras, presentes e saques vão aparecer aqui.'];
+      const msg = emptyMsg(filter);
       const btn = canPurchase && (filter === 'all' || filter === 'purchases');
       out.push({
         id: 'empty:' + filter, k: 'e', gl: 'receipt',
@@ -817,7 +546,8 @@ const styles = StyleSheet.create({
   heroBrand: { fontSize: 11, fontWeight: '800', letterSpacing: 2.2 },
   balRow: { flexDirection: 'row', alignItems: 'center', marginTop: Space.sm, marginLeft: -10 },
   bigNum: { flex: 1, fontSize: 46, lineHeight: 54, fontWeight: '700', letterSpacing: -1.4, marginLeft: 2 },
-  heroActions: { flexDirection: 'row', gap: Space.sm, marginTop: Space.xl },
+  heroFoot: { marginTop: Space.xl, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: Space.md },
+  secHeadTight: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   heroNotice: { marginTop: Space.lg, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: Space.md },
   card: { borderRadius: Radius.card + 4, padding: Space.lg, borderWidth: StyleSheet.hairlineWidth },
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Space.xs },

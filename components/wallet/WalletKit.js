@@ -10,6 +10,8 @@
 //   TxGlyph         ícone SVG traço fino por tipo de transação.
 //   FilterChips     pílulas de filtro (selecionada = tinta).
 //   PackCard        cartão de pacote (carrossel "Mais vendidos" e grade da loja).
+//   QuickActions    [2026-10-21 carteira-pro] ações principais em botões
+//                   REDONDOS com rótulo embaixo (Revolut/Apple Wallet).
 //
 // Cor só para estado: crédito = verde sutil, saldo negativo = vermelho.
 import React, { useEffect, useRef, useState } from 'react';
@@ -198,6 +200,9 @@ const G = {
   promo: 'M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6L12 4Z M18.5 16.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6.6-1.4Z',
   // genérico: setas
   transfer: 'M7 17 17 7 M9 7h8v8',
+  // ações rápidas
+  plus: 'M12 5v14 M5 12h14',
+  history: 'M4.5 12a7.5 7.5 0 1 0 2.2-5.3 M4.5 4.5v3.2h3.2 M12 8.2V12l2.6 1.6',
   // vazio: recibo
   receipt: 'M6 3.5h12v17l-2-1.3-2 1.3-2-1.3-2 1.3-2-1.3-2 1.3v-17Z M9 8h6 M9 11.5h6 M9 15h3.5',
 };
@@ -281,6 +286,44 @@ export function FilterChips({ options, value, onChange, s, inset = 0, fadeColor 
   );
 }
 
+// [2026-10-21 carteira-pro] Ações principais em botões redondos (56 pt) com
+// rótulo embaixo. `actions`: [{ id, label, glyph, primary, disabled, onPress,
+// testID, a11y }]. Primário = tinta (grafite); demais = superfície + contorno.
+export function QuickActions({ actions, s, style }) {
+  return (
+    <View style={[styles.qaRow, style]}>
+      {(actions || []).map((a) => {
+        const fg = a.disabled ? s.textTertiary || s.textSecondary : (a.primary ? s.onInk : s.text);
+        return (
+          <PressableScale
+            key={a.id}
+            onPress={a.onPress}
+            disabled={a.disabled}
+            haptic={a.primary ? 'medium' : 'light'}
+            scaleTo={0.94}
+            testID={a.testID}
+            accessibilityRole="button"
+            accessibilityLabel={a.a11y || a.label}
+            accessibilityState={{ disabled: !!a.disabled }}
+            style={styles.qaItem}
+          >
+            <View style={[
+              styles.qaCircle,
+              a.disabled ? { backgroundColor: s.fill }
+                : a.primary ? { backgroundColor: s.ink }
+                  : { backgroundColor: s.surface, borderWidth: s.isDark ? 1 : StyleSheet.hairlineWidth, borderColor: s.isDark ? s.separator : s.border },
+              !a.primary && !a.disabled && !s.isDark && Platform.OS !== 'android' ? { shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } } : null,
+            ]}>
+              <TxGlyph name={a.glyph} size={22} color={fg} strokeWidth={1.8} />
+            </View>
+            <Text style={[styles.qaLabel, { color: a.disabled ? (s.textTertiary || s.textSecondary) : s.text }]} numberOfLines={2}>{a.label}</Text>
+          </PressableScale>
+        );
+      })}
+    </View>
+  );
+}
+
 // Cartão de pacote. `width` fixo no carrossel; flex na grade.
 export function PackCard({ pack, s, t, language, price, soon, disabled, loading, onPress, width, highlight, badge }) {
   const unit = tr(t, 'wallet.diamondsLabel', 'diamantes');
@@ -338,6 +381,10 @@ const styles = StyleSheet.create({
   chipFade: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 40 },
   chip: { height: 34, paddingHorizontal: 14, borderRadius: 17, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   chipText: { fontSize: 14, fontWeight: '600' },
+  qaRow: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'flex-start', paddingHorizontal: Space.sm },
+  qaItem: { alignItems: 'center', width: 92 },
+  qaCircle: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
+  qaLabel: { fontSize: 13, lineHeight: 17, fontWeight: '600', textAlign: 'center', marginTop: Space.sm, letterSpacing: -0.1 },
   pack: { borderRadius: Radius.card + 4, padding: Space.md, paddingTop: Space.sm, minHeight: 170 },
   packTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginLeft: -6 },
   badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3, marginTop: 8 },
