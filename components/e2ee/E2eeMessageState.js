@@ -54,7 +54,7 @@ function E2eeMessageState({ state = 'waiting', color, onUpdate, style }) {
     text = tx(t, 'e2ee5.msg.waiting', 'Aguardando esta mensagem. Isso pode levar um tempo.');
     action = { label: tx(t, 'e2ee5.msg.learn_more', 'Saiba mais'), fn: () => setOpen(true) };
   }
-  const Icon = state === 'waiting' ? ClockGlyph : LockGlyph;
+  const Icon = LockGlyph; // [2026-10-21] founder: "Aguardando esta mensagem" com cadeado discreto (era relógio)
   return (
     <View style={[s.wrap, style]} accessible accessibilityLabel={text}>
       <Text style={[s.text, { color: fg }]} maxFontSizeMultiplier={1.6}>

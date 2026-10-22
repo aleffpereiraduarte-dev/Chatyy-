@@ -659,7 +659,25 @@ async function _onWsPushPreview(p) {
     let body = String(p.body || '');
     if (data.preview_when === 'never') {
       try { body = (await _notifActionLabels()).newMessage || 'Nova mensagem'; } catch {}
+    } else if (String(data.e2e || '') === '5') {
+      // [2026-10-21 e2ee5] conversa protegida: o servidor não tem o texto → decifra AQUI (≤ 600 ms,
+      // sem rede no caminho: sender_uid vem no frame) e mostra o texto; senão "Nova mensagem". Nunca "...".
+      let txt = '';
+      try {
+        const e5 = require('./e2ee/e2ee5');
+        // prévia ligada para ESTA conversa (e2e_np=0) e conversa não trancada; senão só "Nova mensagem"
+        if (e5.isOn() && String(data.e2e_np) === '0' && String(data.locked) !== '1' && typeof data.e2e_c === 'string' && data.e2e_c) {
+          const conv = data.e2e_conv || data.conversation_id;
+          const row = { id: data.e2e_mid || data.message_id, conversation_id: conv, client_message_id: data.e2e_cmid || '', content: data.e2e_c, _senderUid: data.e2e_sender_uid, sender_email: data.sender_email || '' };
+          const r = await Promise.race([e5.decryptRow(row, conv).catch(() => null), new Promise((res) => setTimeout(() => res(null), 600))]);
+          if (r && !r.error) txt = String(e5.previewText(row, null, conv) || '');
+        }
+      } catch {}
+      if (!txt || txt === '...') { try { txt = (await _notifActionLabels()).newMessage || 'Nova mensagem'; } catch { txt = 'Nova mensagem'; } }
+      const _pfx = /^([^:\n]{1,60}): /.exec(body); // grupo: "Fulano: …" do servidor
+      body = _pfx && data.conversation_type === 'group' ? _pfx[1] + ': ' + txt : txt;
     }
+    if (AppState.currentState !== 'active') return;
     const mid = String(data.message_id);
     if (_wsPreviewWasShown(mid)) return;
     _rxSoundCancel(mid); // o som sai AQUI, junto com o banner

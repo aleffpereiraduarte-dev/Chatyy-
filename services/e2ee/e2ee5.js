@@ -123,7 +123,7 @@ function _tx(t, key, fb, params) {
 export function stateText(t, state) {
   if (state === 'update_to_read') return _tx(t, 'e2ee5.msg.update_to_read', 'Mensagem protegida. Atualize o Chatyy para ler.');
   if (state === 'cannot_decrypt') return _tx(t, 'e2ee5.msg.cannot_decrypt', 'Não foi possível exibir esta mensagem.');
-  if (state === 'decrypting') return '...';
+  if (state === 'decrypting') return ''; // [2026-10-21] nunca "...": a linha fica fora da lista (_e5Hidden) até decifrar
   return _tx(t, 'e2ee5.msg.waiting', 'Aguardando esta mensagem. Isso pode levar um tempo.');
 }
 
@@ -362,7 +362,7 @@ function _onSyncResult(r) {
     const uids = Array.isArray(r.identityChangedUids) ? r.identityChangedUids.map(String) : [];
     if (uids.length) {
       // Comportamento WhatsApp: avisa (linha local), não bloqueia. Verificado → encrypt falha até confirmar.
-      for (const u of uids) { try { _C().pinIdentity(u).catch(() => {}); } catch (_) {} }
+      for (const u of uids) { invalidateDevices(u); try { _C().pinIdentity(u).catch(() => {}); } catch (_) {} }
       const convs = [];
       for (const [cid, st] of _conv) if (st && st.mode === 1 && (st.members || []).some((m) => uids.includes(m))) convs.push(cid);
       _emitLocal('e2ee5_identity_changed', { uids, conversations: convs });
@@ -423,7 +423,12 @@ function _wireOnce() {
     if (d.device_id && _sess && d.device_id !== _sess.deviceId) return;
     requestSync(300);
   });
-  ws.on('e2ee5_devices', () => { if (isOn()) requestSync(300); });
+  ws.on('e2ee5_devices', (raw) => {
+    if (!isOn()) return;
+    const d = dataOf(raw);
+    invalidateDevices(d && d.uid != null ? d.uid : null);
+    requestSync(300);
+  });
   ws.on('conv_e2ee', (raw) => {
     if (!isOn()) return;
     const d = dataOf(raw);
@@ -1037,6 +1042,7 @@ function _wireNative() {
   try {
     _nativeSub = m.addListener('onE2EEPlain', (ev) => {
       if (!isOn() || !ev || !Array.isArray(ev.items)) return;
+      _nativeTried.clear(); // a ingestão nativa gravou texto novo: applyToRow/prévia voltam a olhar o store
       for (const it of ev.items) {
         if (!it || it.conv == null) continue;
         _emitLocal('e2ee5_plain', { conversation_id: String(it.conv), id: it.id, native: true });
@@ -1048,9 +1054,11 @@ function _wireNative() {
 // ───────────────────────────────────────────────────────────── decifrar
 
 const _devCache = new Map(); // uid → {at, devs}
+const DEV_TTL_MS = 10 * 60 * 1000; // invalidado antes por e2ee5_devices / identidade mudada
+export function invalidateDevices(uid) { if (uid == null) _devCache.clear(); else _devCache.delete(String(uid)); }
 async function _devicesOf(uid) {
   const c = _devCache.get(uid);
-  if (c && Date.now() - c.at < 60000) return c.devs;
+  if (c && Date.now() - c.at < DEV_TTL_MS) return c.devs;
   let devs = [];
   try { devs = (await _C().listDevices(uid)) || []; } catch (_) { devs = []; }
   _devCache.set(uid, { at: Date.now(), devs });
@@ -1059,13 +1067,23 @@ async function _devicesOf(uid) {
 
 // O núcleo exige o uid do remetente (confere com a sessão Megolm). A linha só tem o e-mail:
 // eu mesmo → meu uid; aprendido antes → cache; 1:1 → o outro membro; grupo → aparelho do envelope.
+const _UID_RE = /^[1-9][0-9]{0,19}$/;
+function _hintUid(row) {
+  // [e2ee5 WP-06b] hub/leaf/Rust/push já entregam o uid do remetente: fonte preferida, sem rede
+  for (const v of [row && row._senderUid, row && row.sender_uid, row && row.e2e_sender_uid]) {
+    if (v != null && _UID_RE.test(String(v))) return String(v);
+  }
+  return null;
+}
 async function _senderUid(convId, email, env, hint) {
-  if (hint) return String(hint);
+  if (hint && _UID_RE.test(String(hint))) return String(hint);
   const s = _sess;
   const em = _canon(email);
   if (s && em && em === _canon(s.email)) return s.uid;
   if (em && _emailUid.has(em)) return _emailUid.get(em);
-  const st = await convState(convId);
+  // estado em cache (mesmo vencido) antes de ir à rede: membros mudam raramente
+  const _c0 = _conv.get(String(convId));
+  const st = _c0 && Array.isArray(_c0.members) && _c0.members.length ? _c0 : await convState(convId);
   const others = ((st && st.members) || []).filter((u) => !s || u !== s.uid);
   if (others.length === 1 && em) return others[0];
   if (!em && s && others.length === 0) return s.uid;
@@ -1109,6 +1127,7 @@ export function decryptRow(row, convId) {
       try { payload = JSON.parse(np.payload) || {}; } catch (_) { payload = {}; }
       const e = { conv, mid: String(row.id), cmid: String(payload.cmid || np.cmid || ''), text: _textOfPayload(payload), t: String(payload.t || 'text'), payload, sender: _norm(row.sender_email), ts: _rowTs(row), trust: np.trust };
       _plain.set(k, e); _byMid.set(e.mid, e); _fail.delete(k); _unwait(conv, k); _noteEdit(e);
+      _notePlainLat(k);
       _emitLocal('e2ee5_plain', { conversation_id: conv, key: k, id: row.id });
       return e;
     }
@@ -1118,12 +1137,13 @@ export function decryptRow(row, convId) {
       _plain.set(k, e);
       if (e.mid != null) _byMid.set(String(e.mid), e);
       _noteEdit(e);
+      _notePlainLat(k);
       _emitLocal('e2ee5_plain', { conversation_id: conv, key: k, id: row.id });
       return e;
     }
     const s = await ensureSession();
     if (!s) return _setFail(k, 'no_session', row, conv);
-    const su = await _senderUid(conv, row.sender_email, env, row._senderUid);
+    const su = await _senderUid(conv, row.sender_email, env, _hintUid(row));
     if (!su) return _setFail(k, 'sender_unknown', row, conv);
     try {
       const d = await _C().decrypt({ convId: conv, envelopeJson: env, senderUid: su, serverMid: String(row.id != null ? row.id : ''), cmid: String(row.client_message_id || row._client_id || ''), tsMs: _rowTs(row) });
@@ -1139,6 +1159,7 @@ export function decryptRow(row, convId) {
       };
       const wasWaiting = _fail.has(k);
       _plainPut(env, entry);
+      _notePlainLat(k);
       _unwait(conv, k);
       if (wasWaiting) { try { _health()?.recordResolved(k); } catch (_) {} }
       _emitLocal('e2ee5_plain', { conversation_id: conv, key: k, id: row.id });
@@ -1194,7 +1215,7 @@ async function _maybeReport(conv, k) {
   if (!w || w.reported || !_sess) return;
   w.reported = true;
   try {
-    const su = await _senderUid(conv, w.row.sender_email, w.row.content, w.row._senderUid);
+    const su = await _senderUid(conv, w.row.sender_email, w.row.content, _hintUid(w.row));
     if (!su || su === _sess.uid) return;
     const sid = /"session_id":"([^"]+)"/.exec(w.row.content || '');
     await _C().sendToDevice('chatyy.decrypt_report', [{ uid: su, deviceId: '' }], { v: 1, conv_id: conv, mid: String(w.row.id || ''), session_id: sid ? sid[1] : '', reason: (_fail.get(k) || {}).reason || 'missing_session', ts: Date.now() });
@@ -1215,14 +1236,86 @@ export function applyToRow(msg, raw, convId, t) {
     return { ...msg, content: stateText(t, 'update_to_read'), _e2e: true, _e2eRaw: raw, _e5State: 'update_to_read' };
   }
   if (msg.id != null && /^\d+$/.test(String(msg.id))) { _lastRows.set(String(msg.id), msg); if (_lastRows.size > 3000) _lastRows.delete(_lastRows.keys().next().value); } // [e2ee5 WP-09]
-  const e = _plain.get(keyOf(raw));
+  const k = keyOf(raw);
+  const conv = String(convId != null ? convId : (msg.conversation_id != null ? msg.conversation_id : ''));
+  let e = _plain.get(k);
+  // [2026-10-21] texto já decifrado pela ingestão nativa (store e2e_plain): síncrono, sem esperar o JS
+  if (!e && conv && !_nativeTried.has(k)) e = _plainFromNative(conv, msg, k);
   if (e) return _rowFromEntry(msg, raw, e);
-  const f = _fail.get(keyOf(raw));
-  if (!f || f.state === 'waiting') decryptRow({ ...msg, content: raw }, convId != null ? convId : msg.conversation_id).catch(() => {}); // [e2ee5 WP-09] não repete o que não decifra
+  const f = _fail.get(k);
+  if (!f || f.state === 'waiting') decryptRow({ ...msg, content: raw }, conv || msg.conversation_id).catch(() => {}); // [e2ee5 WP-09] não repete o que não decifra
   // [e2ee5 WP-09] linha de mídia ainda sem payload: balão de texto do estado (nunca "foto quebrada")
   const _ty = msg.type && msg.type !== 'text' ? { type: 'text', _e5Ty: msg._e5Ty || msg.type } : null;
-  if (f) return { ...msg, ..._ty, content: stateText(t, f.state), _e2e: true, _e2eFailed: f.state !== 'waiting', _e2eRaw: raw, _e5State: f.state };
-  return { ...msg, ..._ty, content: '...', _e2e: true, _e2eRaw: raw, _e5State: 'decrypting' };
+  if (f && f.state !== 'waiting') return { ...msg, ..._ty, content: stateText(t, f.state), _e2e: true, _e2eFailed: true, _e2eRaw: raw, _e5State: f.state };
+  // [2026-10-21 nível WhatsApp] a mensagem só ENTRA na conversa decifrada: até HOLD_MS a linha fica
+  // fora da lista (JS e nativa — _e5Hidden, filtrado antes do messagesWithSeparators; ordem e scroll
+  // intactos porque ela continua no estado). Passou disso sem chave → "Aguardando esta mensagem."
+  // com cadeado (WP-15); quando a chave chega, o e2ee5_plain troca pelo texto. Nunca "...".
+  if (_holdLeft(k, conv, msg.id) > 0) {
+    return { ...msg, ..._ty, content: '', _e2e: true, _e2eRaw: raw, _e5State: f ? 'waiting' : 'decrypting', _e5Hidden: true };
+  }
+  return { ...msg, ..._ty, content: stateText(t, 'waiting'), _e2e: true, _e2eRaw: raw, _e5State: 'waiting' };
+}
+
+// ── [2026-10-21] segurar a linha nova até decifrar + latência applyToRow→texto (beacon)
+const HOLD_MS = 2500;
+const _seenAt = new Map();   // keyOf → 1º applyToRow (ms)
+const _holdTm = new Map();   // keyOf → timer do fim da espera
+const _nativeTried = new Set();
+function _holdLeft(k, conv, id) {
+  const now = Date.now();
+  let t0 = _seenAt.get(k);
+  if (t0 == null) {
+    t0 = now; _seenAt.set(k, t0);
+    if (_seenAt.size > 4000) _seenAt.delete(_seenAt.keys().next().value);
+  }
+  const left = t0 + HOLD_MS - now;
+  if (left > 0 && !_holdTm.has(k)) {
+    try {
+      _holdTm.set(k, setTimeout(() => {
+        _holdTm.delete(k);
+        if (_plain.has(k)) return;
+        _latMiss += 1;
+        _emitLocal('e2ee5_plain', { conversation_id: conv, key: k, id, hold: 'expired' });
+      }, left + 20));
+    } catch (_) {}
+  }
+  return left;
+}
+function _plainFromNative(conv, msg, k) {
+  _nativeTried.add(k);
+  if (_nativeTried.size > 4000) _nativeTried.delete(_nativeTried.values().next().value);
+  const np = _nativePlain(conv, msg.id);
+  if (!(np && np.state === 'ok' && np.payload)) return null;
+  let payload = {};
+  try { payload = JSON.parse(np.payload) || {}; } catch (_) { return null; }
+  const e = { conv, mid: String(msg.id), cmid: String(payload.cmid || np.cmid || ''), text: _textOfPayload(payload), t: String(payload.t || 'text'), payload, sender: _norm(msg.sender_email), ts: _rowTs(msg), trust: np.trust };
+  _plain.set(k, e); _byMid.set(e.mid, e); _fail.delete(k); _unwait(conv, k); _noteEdit(e);
+  _latNative += 1;
+  return e;
+}
+let _lat = [];
+let _latMiss = 0;
+let _latNative = 0;
+let _latSent = 0;
+function _notePlainLat(k) {
+  const t0 = _seenAt.get(k);
+  const tm = _holdTm.get(k);
+  if (tm) { try { clearTimeout(tm); } catch (_) {} _holdTm.delete(k); }
+  if (t0 == null) return;
+  _seenAt.delete(k);
+  _lat.push(Date.now() - t0);
+  if (_lat.length >= 20) _flushLat();
+}
+function _flushLat() {
+  if (!_lat.length || _latSent >= 12) { _lat = []; return; }
+  const a = _lat.slice().sort((x, y) => x - y);
+  const q = (p) => a[Math.min(a.length - 1, Math.floor(p * (a.length - 1)))];
+  _latSent += 1;
+  try {
+    require('../nativeTelemetry').nativeBeacon('e2ee5', 'plain_lat', 'n=' + a.length + ' p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + a[a.length - 1] + ' miss=' + _latMiss + ' native=' + _latNative + ' hold=' + HOLD_MS + ' os=' + Platform.OS);
+  } catch (_) {}
+  _lat = []; _latMiss = 0; _latNative = 0;
 }
 
 function _rowFromEntry(msg, raw, e) {
@@ -1623,9 +1716,18 @@ export function previewText(lastMsg, t, convId) {
   if (e) return e.text || _tx(t, 'e2ee5.msg.generic', 'Mensagem');
   const f = _fail.get(keyOf(s));
   const cid = convId != null ? convId : (lastMsg.conversation_id != null ? lastMsg.conversation_id : lastMsg.conv_id);
+  // [2026-10-21] decifrado pela ingestão nativa / FCM (store e2e_plain) → texto já na 1ª pintura
+  if (cid != null && !f) {
+    const k = keyOf(s);
+    const ne = !_nativeTried.has(k) ? _plainFromNative(String(cid), lastMsg, k) : null;
+    if (ne) {
+      if (ne.payload && ne.payload.t && ne.payload.t !== 'text' && ne.payload.t !== 'edit') { try { return _P5().previewOf(ne.payload, t) || _tx(t, 'e2ee5.msg.generic', 'Mensagem'); } catch (_) {} }
+      return ne.text || _tx(t, 'e2ee5.msg.generic', 'Mensagem');
+    }
+  }
   if (cid != null) decryptRow({ ...lastMsg, content: s }, cid).catch(() => {});
   if (f && f.state !== 'waiting') return stateText(t, f.state);
-  return _tx(t, 'e2ee5.msg.generic', 'Mensagem');
+  return _tx(t, 'e2ee5.msg.new', 'Nova mensagem');
 }
 
 // ───────────────────────────────────────────────────────────── busca local

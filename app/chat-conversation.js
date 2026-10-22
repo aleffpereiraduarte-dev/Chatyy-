@@ -12696,7 +12696,7 @@ function ChatConversationInnerBody() {
           if ((j.e2e === 1 || j.e2e === 2 || j.e2e === 3) && j.envelopes) return { ...msg, content: '...', _e2e: true, _e2eRaw: trimmed };
           if (j.e2e === 4 && j.c) return { ...msg, content: '...', _e2e: true, _e2eRaw: trimmed };
           // [e2ee5] v5 (e N>5): texto do cache local já decifrado ou placeholder — nunca o JSON cru.
-          if (typeof j.e2e === 'number' && j.e2e >= 5) { try { return require('../services/e2ee/e2ee5').applyToRow(msg, trimmed, msg.conversation_id, null) || msg; } catch { return { ...msg, content: '...', _e2e: true, _e2eRaw: trimmed }; } }
+          if (typeof j.e2e === 'number' && j.e2e >= 5) { try { return require('../services/e2ee/e2ee5').applyToRow(msg, trimmed, msg.conversation_id, null) || msg; } catch { return { ...msg, content: '', _e2e: true, _e2eRaw: trimmed, _e5State: 'decrypting', _e5Hidden: true }; } }
         } catch {}
         return msg;
       });
@@ -15779,7 +15779,7 @@ function ChatConversationInnerBody() {
             const _rawC = m && typeof m.content === 'string' && m.content.startsWith('{"e2e":5'); // [e2ee5 WP-09] linha que entrou crua no estado
             if (!_rawC && !_e5.rowNeedsRefresh(m, d.key) && !(d.id != null && m && String(m.id) === String(d.id) && typeof m._e2eRaw === 'string')) return m;
             const r = _e5.applyToRow(m, _rawC ? m.content : m._e2eRaw, conversationId, t);
-            if (!r || (r.content === m.content && r._e5State === m._e5State && r._e5EditOf === m._e5EditOf && r._e5V === m._e5V)) return m; // [e2ee5 WP-09] _e5V
+            if (!r || (r.content === m.content && r._e5State === m._e5State && r._e5Hidden === m._e5Hidden && r._e5EditOf === m._e5EditOf && r._e5V === m._e5V)) return m; // [e2ee5 WP-09] _e5V · [2026-10-21] _e5Hidden (fim da espera)
             touched = true;
             return r;
           });
@@ -29493,7 +29493,11 @@ function ChatConversationInnerBody() {
   // Cache of wrapped message objects so identical messages keep the same
   // reference across renders — critical for MemoizedMessageRow to skip work.
   const _groupCacheRef = useRef(new Map()); // id → { wrapped, source, isFirst, isLast }
+  const _allMessages = messages;
   const messagesWithSeparators = React.useMemo(() => {
+    // [2026-10-21 e2ee5 nível WhatsApp] mensagem recebida ainda cifrada (até ~2,5 s) fica FORA da
+    // lista (JS e nativa) e entra já com o texto; continua no estado, então ordem/scroll não mudam.
+    const messages = _allMessages.some(m => m && m._e5Hidden) ? _allMessages.filter(m => !(m && m._e5Hidden)) : _allMessages;
     const result = [];
     let lastDate = '';
     let unreadInserted = false;

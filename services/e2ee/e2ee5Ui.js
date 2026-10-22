@@ -6,7 +6,7 @@ import React, { memo } from 'react';
 import { Text, View, StyleSheet } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { isE2eeUiEnabled, E2eeDivider, E2eeMessageState } from '../../components/e2ee';
+import { isE2eeUiEnabled, E2eeDivider, E2eeMessageState, LockGlyph } from '../../components/e2ee';
 import { sysKind, sysObj, sysText, stateText, myUidSync } from './e2ee5';
 
 /** Linha de sistema `{"sys":"e2ee_on"|"e2ee_off"}`: divisor do WP-15 ou pílula de texto. */
@@ -36,8 +36,14 @@ export const E2ee5SystemRow = memo(E2ee5SystemRowImpl);
 /** Corpo do balão quando a mensagem v5 não pôde ser exibida (aguardando / não deu / atualize). */
 function E2ee5MessageBodyImpl({ state, color }) {
   const { t } = useLanguage();
-  if (isE2eeUiEnabled() && state !== 'decrypting') return <E2eeMessageState state={state} color={color} />;
-  return <Text style={[s.italic, { color }]}>{stateText(t, state)}</Text>;
+  if (state === 'decrypting') return null; // [2026-10-21] nunca "...": a linha nem entra na lista
+  if (isE2eeUiEnabled()) return <E2eeMessageState state={state} color={color} />;
+  return (
+    <View style={s.row} accessible accessibilityLabel={stateText(t, state)}>
+      <LockGlyph size={13} color={color} />
+      <Text style={[s.italic, { color, flexShrink: 1 }]}>{stateText(t, state)}</Text>
+    </View>
+  );
 }
 export const E2ee5MessageBody = memo(E2ee5MessageBodyImpl);
 
@@ -46,4 +52,5 @@ const s = StyleSheet.create({
   pill: { alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, overflow: 'hidden', backgroundColor: 'rgba(128,128,128,0.16)', maxWidth: '88%' },
   text: { fontSize: 12, textAlign: 'center', fontWeight: '500', lineHeight: 17 },
   italic: { fontSize: 15, lineHeight: 20, fontStyle: 'italic' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
 });
