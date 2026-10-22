@@ -787,8 +787,13 @@ module.exports = function withNotificationService(config) {
   config = withNotificationServiceFiles(config);
   config = withMainAppGroup(config);
   config = withCommunicationNotifications(config);
-  config = withNotificationServiceTarget(config);
+  // [e2ee5 WP-10c 2026-10-22] ORDEM: no @expo/config-plugins o mod registrado POR ÚLTIMO roda
+  // PRIMEIRO. Com o Crypto depois do Target, no prebuild --clean do CI ele rodava antes do alvo
+  // existir ("alvo da NSE não encontrado — núcleo fora da NSE", builds 763-765) → NSE sem o
+  // núcleo = stub = push E2EE sempre "Nova mensagem" e nenhuma métrica nse_*. Registrado ANTES
+  // do Target, roda DEPOIS dele (alvo já criado).
   config = withNotificationServiceCrypto(config);
+  config = withNotificationServiceTarget(config);
   config = withNotificationServicePodTarget(config);
   config = withNotificationServiceProviderStub(config);
   return config;

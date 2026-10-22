@@ -718,6 +718,8 @@ if (Platform.OS !== 'web' && typeof setTimeout === 'function') {
   // its first line while NATIVE_CORE_ENABLED is false and the test allowlist
   // is empty (default) — nothing else runs.
   afterFirstPaint(() => { try { require('../services/nativeCore').init(); } catch {} }, 4000);
+  // [e2ee5 WP-10c 2026-10-22] contagens do push E2EE com o app fechado (NSE / FCM) → e2ee5_metrics.
+  afterFirstPaint(() => { try { require('../services/e2ee/pushMetrics').installPushMetrics(); } catch {} }, 6000);
   // [2026-10-19 perf-android] onTrimMemory (ChatyyPerf api ≥ 2) / memoryWarning iOS → limpa caches de imagem/JS.
   afterFirstPaint(() => { try { require('../services/memoryPressure').startMemoryPressure(); } catch {} }, 5000);
 }

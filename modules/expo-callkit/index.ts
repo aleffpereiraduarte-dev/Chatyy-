@@ -1343,6 +1343,17 @@ export function bgJournalClear(): void {
   try { m.bgJournalClear(); } catch {}
 }
 
+// [e2ee5 WP-10c 2026-10-22] Métricas do push E2EE com o app fechado (iOS NSE no App Group /
+// Android serviço FCM): lê e ZERA. null = binário sem a função (anterior ao WP-10c).
+export function e2ee5PushMetricsTake(): { counts: Record<string, number>; ms: number[] } | null {
+  const m: any = getModule();
+  if (!m || typeof m.e2ee5PushMetricsTake !== 'function') return null;
+  try {
+    const j = JSON.parse(String(m.e2ee5PushMetricsTake() || '{}')) || {};
+    return { counts: (j.counts && typeof j.counts === 'object') ? j.counts : {}, ms: Array.isArray(j.ms) ? j.ms : [] };
+  } catch { return null; }
+}
+
 export async function bgSyncConfigure(cfgJson: string): Promise<void> {
   const m: any = getModule();
   if (!m || typeof m.bgSyncConfigure !== 'function') return;

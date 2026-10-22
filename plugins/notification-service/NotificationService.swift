@@ -183,7 +183,11 @@ class NotificationService: UNNotificationServiceExtension {
         }
         if e2eUid != nil {
             DispatchQueue.global(qos: .userInitiated).asyncAfter(
-                deadline: .now() + max(Self.bannerDeadline, ChatyyNSEE2EE.deadline)) { finalize() }
+                deadline: .now() + max(Self.bannerDeadline, ChatyyNSEE2EE.deadline)) {
+                resultLock.lock(); let late = e2ePending; resultLock.unlock()
+                if late { ChatyyNSEE2EE.noteDeadline() } // [e2ee5 WP-10c] métrica skip_deadline
+                finalize()
+            }
         }
         group.notify(queue: DispatchQueue.global(qos: .userInitiated)) { finalize() }
     }

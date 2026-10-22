@@ -657,22 +657,44 @@ async function _onWsPushPreview(p) {
     if (cs && _isMutedNow(cs.mute_until) && data.type !== 'chat_mention') { _rxSoundCancel(_pmid); return; }
     if (AppState.currentState !== 'active') return;
     let body = String(p.body || '');
+    let _e2eWhy = '';
     if (data.preview_when === 'never') {
       try { body = (await _notifActionLabels()).newMessage || 'Nova mensagem'; } catch {}
     } else if (String(data.e2e || '') === '5') {
+      _e2eWhy = 'start';
       // [2026-10-21 e2ee5] conversa protegida: o servidor não tem o texto → decifra AQUI (≤ 600 ms,
       // sem rede no caminho: sender_uid vem no frame) e mostra o texto; senão "Nova mensagem". Nunca "...".
       let txt = '';
       try {
         const e5 = require('./e2ee/e2ee5');
         // prévia ligada para ESTA conversa (e2e_np=0) e conversa não trancada; senão só "Nova mensagem"
-        if (e5.isOn() && String(data.e2e_np) === '0' && String(data.locked) !== '1' && typeof data.e2e_c === 'string' && data.e2e_c) {
+        // [e2ee5 WP-10c 2026-10-22] motivo do genérico vai no beacon fg_push_ws (why=e2e_<código>), só código.
+        if (!e5.isOn()) _e2eWhy = 'off';
+        else if (String(data.e2e_np) !== '0') _e2eWhy = 'np';
+        else if (String(data.locked) === '1') _e2eWhy = 'locked';
+        else if (typeof data.e2e_c === 'string' && data.e2e_c) {
           const conv = data.e2e_conv || data.conversation_id;
           const row = { id: data.e2e_mid || data.message_id, conversation_id: conv, client_message_id: data.e2e_cmid || '', content: data.e2e_c, _senderUid: data.e2e_sender_uid, sender_email: data.sender_email || '' };
-          const r = await Promise.race([e5.decryptRow(row, conv).catch(() => null), new Promise((res) => setTimeout(() => res(null), 600))]);
-          if (r && !r.error) txt = String(e5.previewText(row, null, conv) || '');
+          const _t0 = Date.now();
+          // a bolha (WS chat_message) costuma chegar antes e já decifrou → cache; senão espera até 1,2 s
+          const r = await Promise.race([e5.decryptRow(row, conv).catch(() => null), new Promise((res) => setTimeout(() => res(null), 1200))]);
+          if (r && !r.error) { txt = String(e5.previewText(row, null, conv) || ''); _e2eWhy = txt ? 'ok' : 'empty'; }
+          else _e2eWhy = r ? ('err_' + String(r.error || 'x').replace(/[^a-z0-9_]/gi, '').slice(0, 24)) : 'timeout';
+          _e2eWhy += '_' + Math.min(9999, Date.now() - _t0);
+        } else {
+          // envelope grande (e2e_fetch): espera a bolha decifrar pelo caminho normal (cache por mid)
+          const mid0 = String(data.e2e_mid || data.message_id || '');
+          const until = Date.now() + 1200;
+          let pe = e5.peekByMid ? e5.peekByMid(mid0) : null;
+          while (!pe && Date.now() < until) { await new Promise((res) => setTimeout(res, 100)); pe = e5.peekByMid ? e5.peekByMid(mid0) : null; }
+          if (pe && typeof pe.text === 'string') {
+            const pt = pe.payload && pe.payload.t ? String(pe.payload.t) : 'text';
+            if (pt === 'text' || pt === 'edit') txt = pe.text;
+            else { try { txt = require('./e2ee/payload').previewOf(pe.payload, null) || ''; } catch { txt = ''; } }
+          }
+          _e2eWhy = txt ? 'ok_fetch' : 'fetch_miss';
         }
-      } catch {}
+      } catch { _e2eWhy = 'exc'; }
       if (!txt || txt === '...') { try { txt = (await _notifActionLabels()).newMessage || 'Nova mensagem'; } catch { txt = 'Nova mensagem'; } }
       const _pfx = /^([^:\n]{1,60}): /.exec(body); // grupo: "Fulano: …" do servidor
       body = _pfx && data.conversation_type === 'group' ? _pfx[1] + ': ' + txt : txt;
@@ -698,7 +720,7 @@ async function _onWsPushPreview(p) {
       body,
       data: sysSound ? { ...data, __sysSound: 1 } : data,
     });
-    _fgPushBeacon(data, 'ws', 'active', AppState.currentState, sysSound);
+    _fgPushBeacon(data, 'ws', _e2eWhy ? 'active_e2e_' + _e2eWhy : 'active', AppState.currentState, sysSound);
   } catch {}
 }
 let _wsPreviewUnsub = null;

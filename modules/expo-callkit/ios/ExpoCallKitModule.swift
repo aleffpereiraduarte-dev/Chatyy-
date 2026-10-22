@@ -1970,6 +1970,19 @@ public class ExpoCallKitModule: Module {
       ChatBgJournal.clear()
     }
 
+    // [e2ee5 WP-10c 2026-10-22] métricas da NSE (push E2EE com o app fechado) no App Group: lê e ZERA.
+    // JSON {"counts":{código:n},"ms":[…]} — só códigos e milissegundos, nunca conteúdo.
+    Function("e2ee5PushMetricsTake") { () -> String in
+      guard let d = UserDefaults(suiteName: "group.com.onemundo.mail") else { return "{}" }
+      let counts = d.dictionary(forKey: "chatyy.e2ee5.nse.counts") as? [String: Int] ?? [:]
+      let ms = d.array(forKey: "chatyy.e2ee5.nse.ms") as? [Int] ?? []
+      d.removeObject(forKey: "chatyy.e2ee5.nse.counts")
+      d.removeObject(forKey: "chatyy.e2ee5.nse.ms")
+      let obj: [String: Any] = ["counts": counts, "ms": ms]
+      guard let data = try? JSONSerialization.data(withJSONObject: obj), let str = String(data: data, encoding: .utf8) else { return "{}" }
+      return str
+    }
+
     AsyncFunction("bgSyncConfigure") { (cfgJson: String) -> Void in
       ChatBgJournal.configure(cfgJson)
     }

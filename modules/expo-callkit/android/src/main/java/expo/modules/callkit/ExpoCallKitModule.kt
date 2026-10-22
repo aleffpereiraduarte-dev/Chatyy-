@@ -811,6 +811,12 @@ class ExpoCallKitModule : Module() {
       try { ChatBgJournal.clear(context); ChatBgSyncWorker.clear(context) } catch (_: Throwable) {}
     }
 
+    // [e2ee5 WP-10c 2026-10-22] métricas do push E2EE (serviço FCM com o app fechado): lê e ZERA.
+    // JSON {"counts":{código:n},"ms":[…]} — só códigos e milissegundos, nunca conteúdo.
+    Function("e2ee5PushMetricsTake") {
+      try { ChatPushE2EE.takeMetrics(context) } catch (_: Throwable) { "{}" }
+    }
+
     AsyncFunction("bgSyncConfigure") { cfgJson: String ->
       try { ChatBgSyncWorker.configure(context, cfgJson) } catch (t: Throwable) {
         Log.w(TAG, "bgSyncConfigure failed: ${t.message}")

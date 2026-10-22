@@ -59,29 +59,48 @@ enum ChatyyNSEE2EE {
   private static var ud: UserDefaults? { return UserDefaults(suiteName: ChatyyCryptoConst.appGroup) }
 
   /// uid do destinatário se ESTE push pode ser decifrado aqui (sem rede); nil = genérico.
+  /// [WP-10c] push e2e=5 que cai no genérico conta o motivo (`skip_<código>`) nas métricas.
   static func candidateUid(_ p: [String: Any], type: String) -> String? {
     guard s(p, "e2e") == "5", pushTypes.contains(type) else { return nil }
-    guard s(p, "locked") != "1", s(p, "e2e_np") == "0" else { return nil }
-    guard isDec(conv(p)), isDec(s(p, "e2e_mid")), ChatyyCryptoStore.isValidUid(s(p, "e2e_sender_uid")) else { return nil }
+    switch eligibility(p) {
+    case .success(let uid): return uid
+    case .failure(let why): recordSkip(why.code); return nil
+    }
+  }
+
+  /// errSecInteractionNotAllowed (Keychain antes do 1º desbloqueio).
+  private static let kcLocked: OSStatus = -25308
+
+  private struct Skip: Error { let code: String; init(_ c: String) { code = c } }
+
+  private static func eligibility(_ p: [String: Any]) -> Result<String, Skip> {
+    if s(p, "locked") == "1" { return .failure(Skip("locked")) }
+    if s(p, "e2e_np") != "0" { return .failure(Skip("np")) }
+    guard isDec(conv(p)), isDec(s(p, "e2e_mid")), ChatyyCryptoStore.isValidUid(s(p, "e2e_sender_uid")) else { return .failure(Skip("ids")) }
     let env = s(p, "e2e_c")
-    guard env.hasPrefix("{\"e2e\":5") || s(p, "e2e_fetch") == "1" else { return nil }
-    guard ChatyyCryptoStore.root() != nil, let d = ud else { return nil }
+    guard env.hasPrefix("{\"e2e\":5") || s(p, "e2e_fetch") == "1" else { return .failure(Skip("no_env")) }
+    guard ChatyyCryptoStore.root() != nil, let d = ud else { return .failure(Skip("no_app_group")) }
     let acct = ChatyyCryptoAuth.normAccount(s(p, "recipient_email"))
     let uid: String
     if !acct.isEmpty {
-      guard let u = ChatyyCryptoFlags.uid(forAccount: acct) else { return nil }
+      guard let u = ChatyyCryptoFlags.uid(forAccount: acct) else { return .failure(Skip("no_uid_acct")) }
       uid = u
     } else {
-      guard let u = d.string(forKey: "chatyy.e2ee5.lastUid"), !u.isEmpty else { return nil }
+      guard let u = d.string(forKey: "chatyy.e2ee5.lastUid"), !u.isEmpty else { return .failure(Skip("no_uid")) }
       uid = u
     }
-    guard ChatyyCryptoStore.isValidUid(uid), !d.bool(forKey: killKey), d.bool(forKey: flagPrefix + uid),
-          ChatyyCryptoFlags.native(uid: uid), ChatyyCryptoStore.exists(uid: uid) else { return nil }
+    guard ChatyyCryptoStore.isValidUid(uid) else { return .failure(Skip("bad_uid")) }
+    if d.bool(forKey: killKey) { return .failure(Skip("kill")) }
+    if !d.bool(forKey: flagPrefix + uid) { return .failure(Skip("flag_off")) }
+    if !ChatyyCryptoFlags.native(uid: uid) { return .failure(Skip("native_off")) }
+    if !ChatyyCryptoStore.exists(uid: uid) { return .failure(Skip("no_store")) }
     // Só abre um store que já existe com os DOIS segredos legíveis agora: `secrets()` do host criaria
     // aparelho novo (ou apagaria o store órfão) — isso é coisa do app, nunca da NSE.
-    guard ChatyyCryptoKeychain.lookup("pass." + uid).status == errSecSuccess,
-          ChatyyCryptoKeychain.lookup("dev." + uid).status == errSecSuccess else { return nil }
-    return uid
+    let kp = ChatyyCryptoKeychain.lookup("pass." + uid).status
+    if kp != errSecSuccess { return .failure(Skip(kp == errSecItemNotFound ? "kc_pass_missing" : (kp == kcLocked ? "kc_locked" : "kc_pass_err"))) }
+    let kd = ChatyyCryptoKeychain.lookup("dev." + uid).status
+    if kd != errSecSuccess { return .failure(Skip(kd == errSecItemNotFound ? "kc_dev_missing" : (kd == kcLocked ? "kc_locked" : "kc_dev_err"))) }
+    return .success(uid)
   }
 
   private static func conv(_ p: [String: Any]) -> String {
@@ -272,6 +291,17 @@ enum ChatyyNSEE2EE {
 
   private static let metricsLock = NSLock()
 
+  /// [WP-10c] a NSE entregou o genérico porque a decifragem passou do teto.
+  static func noteDeadline() { recordSkip("deadline") }
+
+  private static func recordSkip(_ code: String) {
+    guard let d = ud else { return }
+    metricsLock.lock(); defer { metricsLock.unlock() }
+    var counts = d.dictionary(forKey: "chatyy.e2ee5.nse.counts") as? [String: Int] ?? [:]
+    let key = "skip_" + String(code.prefix(30))
+    if counts[key] != nil || counts.count < 40 { counts[key] = (counts[key] ?? 0) + 1; d.set(counts, forKey: "chatyy.e2ee5.nse.counts") }
+  }
+
   private static func record(_ outcome: String, ms: Int) {
     guard let d = ud else { return }
     metricsLock.lock(); defer { metricsLock.unlock() }
@@ -291,8 +321,17 @@ enum ChatyyNSEE2EE {
 /// Binário sem o núcleo (build normal): a NSE se comporta exatamente como antes.
 enum ChatyyNSEE2EE {
   static let deadline: TimeInterval = 0
-  static func candidateUid(_ p: [String: Any], type: String) -> String? { return nil }
+  static func candidateUid(_ p: [String: Any], type: String) -> String? {
+    // [WP-10c] binário sem o núcleo na NSE: conta o push cifrado que caiu no genérico (o app sobe no boot).
+    let e = (p["e2e"] as? String) ?? (p["e2e"] as? NSNumber)?.stringValue ?? ""
+    if e == "5", let d = UserDefaults(suiteName: "group.com.onemundo.mail") {
+      var counts = d.dictionary(forKey: "chatyy.e2ee5.nse.counts") as? [String: Int] ?? [:]
+      if counts["skip_no_core"] != nil || counts.count < 40 { counts["skip_no_core"] = (counts["skip_no_core"] ?? 0) + 1; d.set(counts, forKey: "chatyy.e2ee5.nse.counts") }
+    }
+    return nil
+  }
   static func preview(_ p: [String: Any], uid: String, completion: @escaping (String?) -> Void) { completion(nil) }
+  static func noteDeadline() {}
 }
 
 #endif

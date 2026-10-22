@@ -16,7 +16,9 @@ package expo.modules.callkit
 import android.content.Context
 import android.os.Looper
 import expo.modules.chatyycrypto.ChatyyCryptoAuth
+import expo.modules.chatyycrypto.ChatyyCryptoFlags
 import expo.modules.chatyycrypto.ChatyyCryptoPush
+import expo.modules.chatyycrypto.ChatyyCryptoSecrets
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -47,17 +49,58 @@ object ChatPushE2EE {
 
     private fun conv(d: Map<String, String>) = d["e2e_conv"].orEmpty().ifEmpty { d["conversation_id"].orEmpty() }
 
-    /** uid do destinatário se ESTE push pode ser decifrado aqui (sem rede); null = genérico. */
+    /** uid do destinatário se ESTE push pode ser decifrado aqui (sem rede); null = genérico.
+     *  [WP-10c 2026-10-22] push e2e=5 que cai no genérico conta o motivo (`skip_<código>`). */
     fun candidateUid(ctx: Context, d: Map<String, String>): String? {
         if (d["e2e"] != "5" || d["type"] !in PUSH_TYPES) return null
-        if (d["locked"] == "1" || d["e2e_np"] != "0") return null
-        if (!isDec(conv(d)) || !isDec(d["e2e_mid"].orEmpty()) || !isDec(d["e2e_sender_uid"].orEmpty())) return null
-        val env = d["e2e_c"].orEmpty()
-        if (!env.startsWith("{\"e2e\":5") && d["e2e_fetch"] != "1") return null
-        val acct = d["recipient_email"].orEmpty().trim().lowercase()
-        if (acct.isEmpty()) return null
-        val uid = try { ChatyyCryptoPush.uidForAccount(ctx, acct) } catch (_: Throwable) { null } ?: return null
-        return if (try { ChatyyCryptoPush.eligible(ctx, uid) } catch (_: Throwable) { false }) uid else null
+        val why: String = run {
+            if (!ChatyyCryptoPush.CORE_LINKED) return@run "no_core"
+            if (d["locked"] == "1") return@run "locked"
+            if (d["e2e_np"] != "0") return@run "np"
+            if (!isDec(conv(d)) || !isDec(d["e2e_mid"].orEmpty()) || !isDec(d["e2e_sender_uid"].orEmpty())) return@run "ids"
+            val env = d["e2e_c"].orEmpty()
+            if (!env.startsWith("{\"e2e\":5") && d["e2e_fetch"] != "1") return@run "no_env"
+            val acct = d["recipient_email"].orEmpty().trim().lowercase()
+            if (acct.isEmpty()) return@run "no_acct"
+            val uid = try { ChatyyCryptoPush.uidForAccount(ctx, acct) } catch (_: Throwable) { null } ?: return@run "no_uid_acct"
+            if (try { ChatyyCryptoPush.eligible(ctx, uid) } catch (_: Throwable) { false }) return uid
+            // motivo fino (só leitura de flags/arquivos, sem rede)
+            try {
+                when {
+                    !ChatyyCryptoFlags.native(ctx, uid) -> "native_off"
+                    !ChatyyCryptoFlags.pushDecrypt(ctx, uid) -> "flag_off"
+                    !ChatyyCryptoSecrets.exists(ctx, uid) -> "no_store"
+                    else -> "ineligible"
+                }
+            } catch (_: Throwable) { "ineligible" }
+        }
+        recordSkip(ctx, why)
+        return null
+    }
+
+    /** [WP-10c] o handler entregou o genérico porque a decifragem passou do teto / falhou antes do núcleo. */
+    @Synchronized
+    fun recordSkip(ctx: Context, code: String) {
+        try {
+            val sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val counts = try { JSONObject(sp.getString("counts", "{}") ?: "{}") } catch (_: Throwable) { JSONObject() }
+            val k = "skip_" + code.take(30)
+            if (counts.has(k) || counts.length() < 40) counts.put(k, counts.optInt(k, 0) + 1)
+            sp.edit().putString("counts", counts.toString()).apply()
+        } catch (_: Throwable) {}
+    }
+
+    /** [WP-10c] Lê e ZERA as métricas (o app sobe no boot via e2ee5_metrics). {"counts":{…},"ms":[…]} */
+    @Synchronized
+    fun takeMetrics(ctx: Context): String {
+        return try {
+            val sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val out = JSONObject()
+                .put("counts", try { JSONObject(sp.getString("counts", "{}") ?: "{}") } catch (_: Throwable) { JSONObject() })
+                .put("ms", try { JSONArray(sp.getString("ms", "[]") ?: "[]") } catch (_: Throwable) { JSONArray() })
+            sp.edit().remove("counts").remove("ms").apply()
+            out.toString()
+        } catch (_: Throwable) { "{}" }
     }
 
     /** Texto da prévia decifrada (só memória) ou null. `lang` = d["lang"] do servidor. */
