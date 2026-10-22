@@ -403,6 +403,13 @@ async function _db_or_null() {
 // [2026-10-22 e2ee5 nunca-perder] envelope v5 ↔ linha do outbox
 // ---------------------------------------------------------------------------
 function _lock() { return require('./e2ee/outboxLock'); }
+// legenda de mídia E2EE (e2e_draft.caption criado pelo outboxScrub) → cofre local; nunca em claro no SQLite
+async function _sealDraftCaption(p, cmi) {
+  const d = p && p.e2e_draft;
+  if (!d || typeof d !== 'object' || typeof d.caption !== 'string' || !d.caption) return p;
+  try { return { ...p, e2e_draft: await _lock().sealDraft(d, cmi) }; }
+  catch { return { ...p, e2e_draft: { ...d, caption: '' }, _e2e_caption_lost: true }; }
+}
 const _envByCmi = new Map(); // cmi → envelope v5 cifrado nesta sessão (só envelope; nunca texto)
 function _isEnv(c) { try { return require('./e2ee/e2ee5').isEnvelope(c); } catch { return false; } }
 async function _persistEnvelope(cmi, env) {
@@ -537,6 +544,7 @@ export async function enqueue(payload, opts = null) {
       try { const _lk = await _lock().lock(_lockText, payload.client_message_id); if (_lk) payload = { ...payload, e2e_lock: _lk }; } catch {}
       _lockText = null;
     }
+    payload = await _sealDraftCaption(payload, payload.client_message_id);
     const r = await _enqueueInner(payload, initialState, lane);
     // envelope chegou enquanto a linha era gravada → persiste já (update antes do INSERT não achava a linha)
     try {
@@ -984,6 +992,7 @@ export async function updatePayload(cmi, patch) {
     try { p = JSON.parse(row.payload) || {}; } catch {}
     let next = { ...p, ...patch };
     try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn()) next = _e5.outboxScrub(next); } catch {} // [e2ee5 WP-08c] sem display_content em claro
+    next = await _sealDraftCaption(next, cmi); // [2026-10-22] legenda de mídia E2EE só no cofre
     if ('e2e_lock' in next && (next.e2e_lock == null || _isEnv(next.content) || next._e2eWanted === false)) delete next.e2e_lock; // [nunca-perder] envelope gravado → cofre fora
     await db.runAsync('UPDATE outbox SET payload = ?, updated_at = ? WHERE client_message_id = ?',
       JSON.stringify(next), Date.now(), String(cmi));

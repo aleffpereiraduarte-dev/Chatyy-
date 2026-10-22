@@ -97,10 +97,46 @@ export async function unlock(blob, cmid) {
   } catch (_) { return null; }
 }
 
+// ── [2026-10-22] legenda de mídia E2EE (e2e_draft.caption) no mesmo cofre ──────────────────────
+// A linha guarda e2e_draft = { caption: '', caption_lock: {cofre}, reply_to_id } até o upload cifrado
+// selar o envelope. Sem chave (Keychain indisponível): a legenda fica SÓ na memória deste processo
+// (caption_mem) — nunca em claro no SQLite.
+const _capMem = new Map(); // cmi → legenda (fallback sem chave)
+function _capId(cmid) { return 'cap|' + String(cmid || ''); }
+
+/** Fecha a legenda do rascunho de mídia. Devolve o rascunho sem texto em claro. */
+export async function sealDraft(draft, cmid) {
+  if (!draft || typeof draft !== 'object') return draft;
+  const cap = typeof draft.caption === 'string' ? draft.caption : '';
+  if (!cap) return draft;
+  const out = { ...draft, caption: '' };
+  const lk = await lock(cap, _capId(cmid));
+  if (lk) { out.caption_lock = lk; delete out.caption_mem; }
+  else { _capMem.set(String(cmid), cap); if (_capMem.size > 200) _capMem.delete(_capMem.keys().next().value); out.caption_mem = true; delete out.caption_lock; }
+  return out;
+}
+
+/** Abre o rascunho: { caption, reply_to_id } em memória. null = legenda irrecuperável. */
+export async function openDraft(draft, cmid) {
+  if (!draft || typeof draft !== 'object') return draft;
+  const out = { ...draft };
+  delete out.caption_lock; delete out.caption_mem;
+  if (draft.caption_lock) {
+    const t = await unlock(draft.caption_lock, _capId(cmid));
+    if (typeof t !== 'string') return null;
+    out.caption = t;
+  } else if (draft.caption_mem) {
+    const t = _capMem.get(String(cmid));
+    if (typeof t !== 'string') return null;
+    out.caption = t;
+  }
+  return out;
+}
+
 /** Testes: zera o cache em memória (simula processo novo). */
-export function _resetForTest() { _key = null; _keyP = null; }
+export function _resetForTest() { _key = null; _keyP = null; _capMem.clear(); }
 
 // aquece a chave cedo (o 1º envio já sai com cofre síncrono)
 try { if (Platform.OS !== 'web') setTimeout(() => { loadKey().catch(() => {}); }, 0); } catch (_) {}
 
-export default { loadKey, keyReadySync, lockSync, lock, unlock };
+export default { loadKey, keyReadySync, lockSync, lock, unlock, sealDraft, openDraft };

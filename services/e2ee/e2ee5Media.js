@@ -551,18 +551,24 @@ export async function queueStep(row, p, file, h) {
     const pr = await h.promoteReady(conv); if (pr && pr.length) h.poke();
     return true;
   }
+  // [2026-10-22 e2ee5 nunca-perder] a legenda do rascunho mora no cofre local (outboxLock): abre só em memória
+  let _draft = p.e2e_draft || null;
+  if (_draft) {
+    try { _draft = await require('./outboxLock').openDraft(_draft, cmi); } catch (_) { _draft = null; }
+    if (!_draft) { await h.markFailed(cmi, 'e2ee_not_encrypted', { kind: 'hard' }); return true; }
+  }
   const st = await e5.convState(conv).catch(() => null);
   if (!st || st.mode !== 1) {
-    if (st && st.mode === 0 && p.e2e_draft) {
+    if (st && st.mode === 0 && _draft) {
       // a conversa deixou de ser protegida antes do envio: volta ao caminho de hoje com a legenda
-      await h.updatePayload(cmi, { caption: p.e2e_draft.caption || '', content: p.e2e_draft.caption || '', e2e_draft: null, _e2eWanted: false, _e2e: false });
+      await h.updatePayload(cmi, { caption: _draft.caption || '', content: _draft.caption || '', e2e_draft: null, _e2eWanted: false, _e2e: false });
       return false;
     }
     await h.markFailed(cmi, 'e2ee5_state_unknown', { kind: 'transient' });
     return true;
   }
   if (p.view_once) { await h.markFailed(cmi, 'e2ee5_unsupported_type', { kind: 'hard' }); return true; }
-  const draft = p.e2e_draft || { caption: p.caption || p.content || '', reply_to_id: p.reply_to_id || null };
+  const draft = _draft || { caption: p.caption || p.content || '', reply_to_id: p.reply_to_id || null };
   const kind = kindOfAppType(p.type, p.file_name, p.mime_type);
   try {
     h.emit(0);
