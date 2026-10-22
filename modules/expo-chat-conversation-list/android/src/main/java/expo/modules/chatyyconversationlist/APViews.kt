@@ -207,6 +207,11 @@ internal class APTileView(ctx: Context) : FrameLayout(ctx) {
     fill.setStroke(1, theme.tileBorder)
     iconBox.background = fill
     iconBox.elevation = if (theme.dark) 0f else apDp(this, 1.5f).toFloat()
+    // [2026-10-22 apps-badge-clip] No Android a elevação do ladrilho desenha POR CIMA
+    // de irmãos sem elevação → o badge (que avança -5/-8 dp sobre o canto) saía cortado.
+    // Badge/marca sempre acima do ladrilho.
+    badge.elevation = iconBox.elevation + apDp(this, 1f).toFloat()
+    mark.elevation = badge.elevation
     val gl = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(theme.gloss, Color.TRANSPARENT))
     gl.cornerRadii = floatArrayOf(r - 1f, r - 1f, r - 1f, r - 1f, 0f, 0f, 0f, 0f)
     gloss.background = gl

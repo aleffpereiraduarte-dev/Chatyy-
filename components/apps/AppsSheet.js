@@ -535,6 +535,9 @@ const st = StyleSheet.create({
     minWidth: 18, height: 18, paddingHorizontal: 5,
     borderRadius: 9, borderWidth: 1.5,
     alignItems: 'center', justifyContent: 'center',
+    // [2026-10-22 apps-badge-clip] Android: o ladrilho tem elevation 1 (claro) e desenha
+    // por cima de irmãos sem elevação → badge cortado. Badge acima (zIndex não basta).
+    ...(Platform.OS === 'android' ? { elevation: 3, zIndex: 2 } : null),
   },
   label: { width: '100%', fontSize: 12, lineHeight: 15, fontWeight: '500', textAlign: 'center', marginTop: 6, paddingHorizontal: 2, letterSpacing: -0.1 },
 });

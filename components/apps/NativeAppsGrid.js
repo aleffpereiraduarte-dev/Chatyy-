@@ -28,6 +28,8 @@ export function nativeAppsEnabled() {
     if (globalThis[KILL] === false) return false;
     if (globalThis[`${KILL}_failed`]) return false;
     if (appsGridApiVersion() < 2) return false; // api 1 = layout antigo (Bia/Recentes) → JS
+    // [2026-10-22 apps-badge-clip] Android api 2 = badge cortado pela elevação do ladrilho → grade JS até o binário api 3.
+    if (Platform.OS === 'android' && appsGridApiVersion() < 3) return false;
     return !!getNativeAppsGridView();
   } catch { return false; }
 }

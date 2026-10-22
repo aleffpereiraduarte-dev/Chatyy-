@@ -13,7 +13,7 @@ class ChatyyAppsGridModule : Module() {
 
     // 2 = [2026-10-18 apps-compact] grade única compacta estilo Outlook (sem Bia hero,
     //     sem Recentes/fixados/editar; cabeçalho só se a seção tiver título).
-    Function("apiVersion") { 2 }
+    Function("apiVersion") { 3 } // 3 = [2026-10-22] badge acima da elevação do ladrilho
 
     View(ChatyyAppsGridView::class) {
       Events(
