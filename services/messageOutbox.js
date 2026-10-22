@@ -400,6 +400,78 @@ async function _db_or_null() {
 }
 
 // ---------------------------------------------------------------------------
+// [2026-10-22 e2ee5 nunca-perder] envelope v5 ↔ linha do outbox
+// ---------------------------------------------------------------------------
+function _lock() { return require('./e2ee/outboxLock'); }
+const _envByCmi = new Map(); // cmi → envelope v5 cifrado nesta sessão (só envelope; nunca texto)
+function _isEnv(c) { try { return require('./e2ee/e2ee5').isEnvelope(c); } catch { return false; } }
+async function _persistEnvelope(cmi, env) {
+  const db = await _db_or_null();
+  if (!db) return false;
+  try {
+    const row = await db.getFirstAsync('SELECT payload FROM outbox WHERE client_message_id = ?', String(cmi));
+    if (!row) return false;
+    let p = {};
+    try { p = JSON.parse(row.payload) || {}; } catch {}
+    if ((p.type || 'text') !== 'text') return false; // mídia: e2e_env é do e2ee5Media
+    if (_isEnv(p.content)) return true;
+    const patch = { content: env, _e2e: true, e2e_lock: null };
+    // citação em claro nunca acompanha o envelope (o api.chatSend já descarta; a fila nativa não)
+    if (p.opts && (p.opts.replyQuoteText || p.opts.replyExt)) { const o = { ...p.opts }; delete o.replyQuoteText; delete o.replyExt; patch.opts = o; }
+    if (p.reply_quote_text) patch.reply_quote_text = null;
+    return await updatePayload(cmi, patch);
+  } catch { return false; }
+}
+/**
+ * api.chatSend acabou de cifrar `cmi` (conversa E2EE v5): o envelope vai para a linha do outbox (se
+ * existir) e o cofre do texto some. Se a linha ainda está sendo gravada, enqueue() usa o envelope.
+ */
+export async function noteEnvelope(cmi, env) {
+  if (!cmi || !_isEnv(env)) return false;
+  const k = String(cmi);
+  _envByCmi.set(k, env);
+  if (_envByCmi.size > 300) _envByCmi.delete(_envByCmi.keys().next().value);
+  return _persistEnvelope(k, env);
+}
+/** A linha `cmi` já tem o envelope gravado (true) — grava `env` se faltar. false = sem linha/falhou. */
+export async function ensureEnvelope(cmi, env) {
+  if (!cmi) return false;
+  if (env && _isEnv(env)) { _envByCmi.set(String(cmi), env); if (await _persistEnvelope(String(cmi), env)) return true; }
+  try { const st = await getStatus(cmi); return !!(st && st.payload && _isEnv(st.payload.content)); } catch { return false; }
+}
+
+/**
+ * [2026-10-22 reload-drena] Antes de recarregar o JS (OTA/banner/ajuda/erro): espera a fila de envio
+ * assentar por até `maxMs` — nenhum enqueue em voo e nenhuma linha 'sending' do JS / 'queued' vencida.
+ * Linhas possuídas pela fila nativa e linhas em espera (backoff/offline) não seguram o reload: estão
+ * persistidas (texto E2EE no cofre ou envelope) e saem no próximo processo.
+ */
+export async function waitDrained(maxMs = 3000) {
+  if (_PlatformV2.OS === 'web') return true;
+  const t0 = Date.now();
+  try { require('./sendWorker').poke?.(); } catch {}
+  for (;;) {
+    let busy = _enqueuing.size > 0;
+    if (!busy) {
+      try {
+        const rows = await getPending(null, { lane: 'msg', allAccounts: true });
+        const now = Date.now();
+        let no = null;
+        try { no = require('./nativeOutbox'); } catch {}
+        busy = (rows || []).some((r) => {
+          if (r.state === 'sending') return !(no && no.isNativeOwned && no.isNativeOwned(r.client_message_id));
+          if (r.state === 'queued') return !(r.next_retry_at > now);
+          return false;
+        });
+      } catch { busy = false; }
+    }
+    if (!busy) return true;
+    if (Date.now() - t0 >= maxMs) return false;
+    await new Promise((res) => setTimeout(res, 120));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -434,14 +506,43 @@ export async function enqueue(payload, opts = null) {
   if (!payload || !payload.client_message_id || !payload.conversation_id) return null;
   // [e2ee5 WP-08c] Conversa E2EE v5: a linha guarda SÓ o envelope (ou nada até a cifra terminar;
   // `_e2eWanted` sem `_e2e` → o worker marca "não enviada", nunca reenvia texto puro).
-  try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn()) payload = _e5.outboxScrub(payload); } catch {}
+  // [2026-10-22 e2ee5 nunca-perder] antes do scrub apagar o texto: se o envelope desta mensagem já
+  // existe (api.chatSend cifrou primeiro) a linha nasce com ele; senão o texto vai CIFRADO em repouso
+  // no cofre local (e2e_lock, chave do Keychain) até o envelope ser persistido — reload no meio do
+  // envio não perde mais a mensagem (o worker reabre, cifra com a sessão E2EE e reenvia).
+  let _lockText = null;
+  try {
+    const _e5 = require('./e2ee/e2ee5');
+    if (_e5.isOn()) {
+      const _pre = payload;
+      const _env0 = _envByCmi.get(String(payload.client_message_id));
+      if (_env0 && (payload.type || 'text') === 'text' && !_e5.isEnvelope(payload.content)) payload = { ...payload, content: _env0 };
+      payload = _e5.outboxScrub(payload);
+      if (payload !== _pre && payload._e2eWanted && !payload._e2e && !payload.e2e_lock && (payload.type || 'text') === 'text'
+          && typeof _pre.content === 'string' && _pre.content && !_e5.isEnvelope(_pre.content)) {
+        _lockText = _pre.content;
+        const _lk = _lock().lockSync(_lockText, payload.client_message_id);
+        if (_lk) { payload = { ...payload, e2e_lock: _lk }; _lockText = null; }
+      }
+    }
+  } catch {}
   // [2026-10-21 troca-conta] carimba a conta dona da linha (ver rowOwner)
   try { if (payload && !payload._owner) { const _o = _activeOwner(); if (_o) payload = { ...payload, _owner: _o }; } } catch {}
   // [2026-10-15 ordem-rico] Ver _enqueuing acima: síncrono, antes do 1º await.
   const _trackConv = (initialState === 'queued' && lane === 'msg') ? Number(payload.conversation_id) : 0;
   if (_trackConv) _enqueuing.set(_trackConv, (_enqueuing.get(_trackConv) || 0) + 1);
   try {
+    // chave ainda não carregada (1º envio do processo): cofre assíncrono (~ms, Keychain)
+    if (_lockText) {
+      try { const _lk = await _lock().lock(_lockText, payload.client_message_id); if (_lk) payload = { ...payload, e2e_lock: _lk }; } catch {}
+      _lockText = null;
+    }
     const r = await _enqueueInner(payload, initialState, lane);
+    // envelope chegou enquanto a linha era gravada → persiste já (update antes do INSERT não achava a linha)
+    try {
+      const _envL = _envByCmi.get(String(payload.client_message_id));
+      if (r && _envL && payload.content !== _envL) await _persistEnvelope(String(payload.client_message_id), _envL);
+    } catch {}
     // Linha nova na fila do worker → a conversa segue "ocupada" até o worker
     // drená-la (refreshBacklog recalcula do SQLite após cada drenagem).
     if (_trackConv && r && !r.existed) _backlog.add(_trackConv);
@@ -883,6 +984,7 @@ export async function updatePayload(cmi, patch) {
     try { p = JSON.parse(row.payload) || {}; } catch {}
     let next = { ...p, ...patch };
     try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn()) next = _e5.outboxScrub(next); } catch {} // [e2ee5 WP-08c] sem display_content em claro
+    if ('e2e_lock' in next && (next.e2e_lock == null || _isEnv(next.content) || next._e2eWanted === false)) delete next.e2e_lock; // [nunca-perder] envelope gravado → cofre fora
     await db.runAsync('UPDATE outbox SET payload = ?, updated_at = ? WHERE client_message_id = ?',
       JSON.stringify(next), Date.now(), String(cmi));
     return true;
@@ -1258,6 +1360,9 @@ function _hydrate(row) {
 
 export default {
   enqueue,
+  noteEnvelope,
+  ensureEnvelope,
+  waitDrained,
   dequeueNext,
   markSending,
   markSent,

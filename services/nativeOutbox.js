@@ -168,10 +168,12 @@ function _textBody(p) {
   if (effect) b.effect = String(effect).toLowerCase();
   if (p.silent || o.silent) b.silent = true;
   const rq = p.reply_quote_text || o.replyQuoteText;
-  if (rq && b.reply_to_id) b.reply_quote_text = String(rq).slice(0, 240);
+  if (rq && b.reply_to_id && !_isE5Env(b.content)) b.reply_quote_text = String(rq).slice(0, 240); // [e2ee5] citação em claro nunca vai com envelope
   if (p.sealed || o.sealed) b.sealed = true;
   return b;
 }
+
+function _isE5Env(c) { try { return require('./e2ee/e2ee5').isEnvelope(c); } catch { return false; } }
 
 function _textFrame(b) {
   const f = { type: 'chat_send', conversation_id: b.conversation_id, client_message_id: b.client_message_id, msg_type: 'text', content: b.content };
@@ -212,6 +214,12 @@ async function _submit(item) {
   _ensureSub();
   const cmi = String(item.cmi);
   _owned.set(cmi, { conv: String(item.conv), at: Date.now() });
+  // [2026-10-22 e2ee5 nunca-perder] o vigia só pode tirar do nativo um item E2EE cujo envelope já
+  // está gravado na linha JS — guarda o envelope (só ciphertext) p/ conferir/gravar no resgate.
+  if (item.kind === 'text' && item.body && _isE5Env(item.body.content)) {
+    _e5Env.set(cmi, item.body.content);
+    if (_e5Env.size > 200) _e5Env.delete(_e5Env.keys().next().value);
+  }
   let st = '';
   // [conectando 2026-10-20] outboxSubmit é AsyncFunction (fila do módulo): se a
   // fila nativa travar, o await nunca voltava e o envio ficava pendurado sem
@@ -434,6 +442,7 @@ const STALL_RESCUE_MS = 12000;
 const STALL_MAX_AGE_MS = 25000;
 const RESCUED_TTL_MS = 10 * 60 * 1000;
 const _watch = new Map(); // cmi → { at, last, kicked, conv, acct, st }
+const _e5Env = new Map(); // cmi → envelope v5 entregue ao nativo (ciphertext)
 const _rescued = new Map(); // cmi → ts
 let _watchTimer = null;
 let _watchAppSub = null;
@@ -464,7 +473,7 @@ function _watchTouch(cmi, st) {
   const w = _watch.get(String(cmi));
   if (w) { w.last = Date.now(); if (st) w.st = st; }
 }
-function _watchDone(cmi) { _watch.delete(String(cmi)); }
+function _watchDone(cmi) { _watch.delete(String(cmi)); _e5Env.delete(String(cmi)); }
 function _armWatch() {
   if (!_watchAppSub) {
     try {
@@ -520,6 +529,28 @@ async function _rescue(cmi, w, idle, age) {
     _watchDone(cmi);
     _onEvent({ cmi: it.cmi, conv: it.conv, state: it.state, server: it.server, err: it.err, via: 'stall_reconcile' });
     return;
+  }
+  // [2026-10-22 e2ee5 nunca-perder] item E2EE v5: o envelope pode existir SÓ no nativo (a linha JS
+  // nasceu sem texto). Cancelar aqui = "não enviada" de uma msg que o nativo ainda mandaria. Só resgata
+  // com o envelope gravado na linha JS (grava agora se faltar); senão deixa o nativo com ela.
+  const _env = _e5Env.get(cmi) || (it && it.body && _isE5Env(it.body.content) ? it.body.content : null);
+  let _e5c = !!_env;
+  if (!_e5c) { try { _e5c = require('./e2ee/e2ee5').isConvE2eeSync(w.conv); } catch { _e5c = false; } }
+  if (_e5c) {
+    let ok = false;
+    try {
+      ok = !!(await Promise.race([
+        require('./messageOutbox').ensureEnvelope(cmi, _env),
+        new Promise((r) => setTimeout(() => r(false), 1500)),
+      ]));
+    } catch { ok = false; }
+    if (!_watch.has(cmi)) return;
+    if (!ok) {
+      w.last = Date.now(); w.kicked = false;
+      _stallBeacon('rescue_skip_e5', cmi, { idle, age, it, st: w.st });
+      try { m?.outboxKick?.('js_stall_e5'); } catch {}
+      return;
+    }
   }
   _watchDone(cmi);
   _markRescued(cmi);
@@ -783,7 +814,7 @@ export function bootNativeOutbox() {
 /** Logout / troca de conta: credenciais fora (a tabela some com o wipe do store). */
 export function forgetNativeOutbox() {
   _owned.clear(); _waiters.clear(); _mediaCtx.clear(); _cfgKey = ''; _booted = false;
-  _watch.clear(); _rescued.clear();
+  _watch.clear(); _rescued.clear(); _e5Env.clear();
   const m = _resolve();
   try { m?.outboxForget?.(); } catch {}
 }

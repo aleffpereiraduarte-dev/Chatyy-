@@ -680,6 +680,19 @@ export async function reloadWithReason(reason) {
     // 1,5 s p/ o fim da ligação (CallKit/LiveKit) assentar antes do reload.
     await new Promise((res) => setTimeout(res, 1500));
   }
+  // [2026-10-22 e2ee5 nunca-perder] mensagem no meio do envio (cifra/gravação/HTTP): espera a fila
+  // assentar até ~3 s antes de matar o JS (banner OTA, ajuda, erro). Kill: __chatyy_reload_drain=false.
+  try {
+    if (globalThis.__chatyy_reload_drain !== false) {
+      const mo = require('./messageOutbox');
+      if (mo && typeof mo.waitDrained === 'function') {
+        const t0 = Date.now();
+        const ok = await Promise.race([mo.waitDrained(3000).catch(() => false), new Promise((res) => setTimeout(() => res(false), 3300))]);
+        const ms = Date.now() - t0;
+        if (!ok || ms > 300) { try { reportStep('reload_drain', `ok=${ok ? 1 : 0} ms=${ms}`); } catch {} }
+      }
+    }
+  } catch {}
   try {
     const AS = _lazyAsyncStorage();
     const from = U.updateId ? String(U.updateId).slice(0, 8) : (U.isEmbeddedLaunch ? 'embedded' : '?');

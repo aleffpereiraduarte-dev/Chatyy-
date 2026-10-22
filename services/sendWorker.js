@@ -394,15 +394,20 @@ async function _processRow(row) {
   const claimed = await markSending(cmi);
   if (!claimed) return; // someone else got it (boot race)
 
-  const payload = row.payload || {};
+  let payload = row.payload || {};
   const ptype = payload.type || 'text';
 
   // [2026-10-12 confiabilidade] Conversa E2E: a linha nasce com texto puro e só
   // vira envelope depois da criptografia. Se o app morreu nesse intervalo, NUNCA
-  // reenviar o texto puro ao servidor — vira "não enviada".
+  // reenviar o texto puro ao servidor.
+  // [2026-10-22 e2ee5 nunca-perder] E2EE v5: a linha traz o texto no cofre local (e2e_lock) →
+  // abre, CIFRA com a sessão E2EE e segue com o envelope (mesmo cmid). Sem cofre (linha antiga /
+  // E2E legado) = "não enviada" como antes.
   if (payload._e2eWanted && !payload._e2e) {
-    await markFailed(cmi, 'e2ee_not_encrypted', { kind: 'hard' });
-    return;
+    const rec = await _recoverE2eeLocked(row);
+    if (!rec) return;
+    row = rec;
+    payload = rec.payload;
   }
 
   // [2026-10-15 fase 4] FILA NATIVA: texto e commit de mídia (bytes já no CDN)
@@ -454,6 +459,60 @@ async function _processRow(row) {
   }
 
   await _httpSend(row);
+}
+
+// [2026-10-22 e2ee5 nunca-perder] Linha E2EE v5 sem envelope: cofre local → envelope.
+// Devolve a linha pronta (content = envelope, ou texto se a conversa foi CONFIRMADAMENTE rebaixada
+// pelo servidor) ou null (já marcou: falha definitiva sem cofre / re-tentativa se a sessão ou o estado
+// ainda não estão disponíveis — nunca texto em claro numa conversa e2ee_mode=1).
+const E5_SEAL_HARD = new Set(['too_large', 'e2ee5_unsupported_type', 'e2ee_unsupported']);
+async function _recoverE2eeLocked(row) {
+  const cmi = row.client_message_id;
+  const p = row.payload || {};
+  if (!p.e2e_lock || (p.type || 'text') !== 'text') {
+    await markFailed(cmi, 'e2ee_not_encrypted', { kind: 'hard' });
+    return null;
+  }
+  let text = null;
+  try { text = await require('./e2ee/outboxLock').unlock(p.e2e_lock, cmi); } catch { text = null; }
+  if (typeof text !== 'string' || !text) {
+    // chave do aparelho ausente/cofre ilegível: não há como recuperar (nada sai em claro)
+    await markFailed(cmi, 'e2ee_not_encrypted', { kind: 'hard' });
+    return null;
+  }
+  const conv = p.conversation_id ?? row.conversation_id;
+  let e5 = null;
+  try { e5 = require('./e2ee/e2ee5'); } catch { e5 = null; }
+  if (!e5 || !e5.isOn()) { await markFailed(cmi, 'e2ee_seal_pending:off', { kind: 'transient' }); return null; }
+  let st = null;
+  try { st = await e5.convState(conv); } catch { st = null; }
+  if (st && st.mode !== 1) { try { st = await e5.convState(conv, { force: true }); } catch { st = null; } }
+  if (!st || (st.mode !== 1 && (st.mode !== 0 || st.disabled || st.blocked === 'public'))) { await markFailed(cmi, 'e2ee_seal_pending:state', { kind: 'transient' }); return null; }
+  let patch;
+  if (st.mode === 1) {
+    let r = null;
+    const reply = p.reply_to_id ? { id: p.reply_to_id } : null;
+    try { r = await e5.sealForSend(conv, text, 'text', null, cmi, { reply }); } catch (e) { r = { refuse: { code: (e && e.code) || 'encrypt_failed' } }; }
+    const env = r && typeof r.content === 'string' && !r.downgraded && e5.isEnvelope(r.content) ? r.content : null;
+    if (!env) {
+      const code = String((r && r.refuse && r.refuse.code) || 'encrypt_failed');
+      await markFailed(cmi, 'e2ee_seal_pending:' + code, { kind: E5_SEAL_HARD.has(code) ? 'hard' : 'transient' });
+      return null;
+    }
+    patch = { content: env, _e2e: true, e2e_lock: null };
+    if (p.opts && (p.opts.replyQuoteText || p.opts.replyExt)) { const o = { ...p.opts }; delete o.replyQuoteText; delete o.replyExt; patch.opts = o; }
+    if (p.reply_quote_text) patch.reply_quote_text = null;
+  } else {
+    // conversa deixou de ser protegida (estado confirmado pelo servidor agora): sai como mensagem
+    // comum, igual ao reenvio de recusa §5.4 (_onRejectedE5).
+    patch = { content: text, _e2eWanted: false, _e2e: false, e2e_lock: null };
+  }
+  try { await messageOutbox.updatePayload(cmi, patch); } catch {}
+  const np = { ...p, ...patch };
+  delete np.e2e_lock;
+  if (np.reply_quote_text === null) delete np.reply_quote_text;
+  try { require('./crashReporter').reportStep('outbox_e5_recover', `m=${st.mode}`); } catch {}
+  return { ...row, payload: np };
 }
 
 // [2026-10-15 fase 4] Resultado da fila nativa → mesma conciliação do HTTP JS.

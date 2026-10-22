@@ -6564,6 +6564,13 @@ async function _chatSendInner(conversationId, content, type = 'text', replyToId 
   }
   if (_e5 && typeof _e5.content === 'string') content = _e5.content;
   const _e5Env = !!(_e5 && !_e5.downgraded);
+  // [2026-10-22 e2ee5 nunca-perder] envelope pronto → grava na linha do outbox ANTES de qualquer
+  // transporte (a linha nasceu sem texto/só com o cofre local): reload no meio do envio reenvia ESTE
+  // envelope (mesmo cmid) em vez de recifrar do cofre. Sem await (latência do envio intacta): até
+  // gravar, a linha tem o cofre local e o vigia nativo não cancela sem o envelope persistido.
+  if (_e5Env && Platform.OS !== 'web' && (type || 'text') === 'text' && !fileUrl && typeof content === 'string') {
+    try { require('./messageOutbox').noteEnvelope?.(stableCMI, content)?.catch?.(() => {}); } catch {}
+  }
   const _localWritePromise = _localOptimisticSend({
     tempId: localTempId,
     conversationId,
