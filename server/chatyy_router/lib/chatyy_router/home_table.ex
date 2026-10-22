@@ -206,13 +206,12 @@ defmodule ChatyyRouter.HomeTable do
   pela maioria. Compatível com a API antiga (o 3º argumento é o epoch mínimo).
   """
   def assign(cid, region, min_epoch) do
-    seen =
-      case resolve(cid) do
-        {:ok, _r, e} -> e
-        _ -> 0
+    # 1 rodada no caso comum: propõe direto; quem já viu igual/maior recusa e diz o quê → +1
+    e =
+      case :ets.lookup(@ets, cid) do
+        [{_, _r, e0}] -> max(min_epoch, e0 + 1)
+        [] -> min_epoch
       end
-
-    e = max(min_epoch, seen + 1)
 
     case propose(cid, region, e) do
       {:conflict, _r, e2} when e2 >= e -> propose(cid, region, e2 + 1)
@@ -221,34 +220,33 @@ defmodule ChatyyRouter.HomeTable do
   end
 
   @doc """
-  Conversa nova: só cria (epoch 1) se ninguém tem nada. {:ok, região, epoch} com a
-  casa que valer (minha ou de outro) | {:error, motivo}.
+  Conversa nova: propõe epoch 1 direto (1 rodada). É seguro sem consultar antes:
+  um registro que já exista está numa maioria, e duas maiorias se cruzam, então
+  alguém recusa e a proposta não passa. Recusada → adota o que a maioria tem.
+  {:ok, região, epoch} com a casa que valer (minha ou de outro) | {:error, motivo}.
   """
   def claim(cid, region) do
-    case resolve(cid) do
-      {:ok, r, e} ->
+    case :ets.lookup(@ets, cid) do
+      [{_, r, e}] ->
         {:ok, r, e}
 
-      :none ->
+      [] ->
         case propose(cid, region, 1) do
           :ok ->
             {:ok, region, 1}
 
-          {:conflict, r, e} ->
-            # outra proposta concorrente: espera um pouco e reconsulta (sem atropelar)
-            Process.sleep(50 + :rand.uniform(150))
+          {:conflict, _r, _e} ->
+            # já existe (ou outra proposta concorrente): adota o que a maioria tiver, sem atropelar
+            Process.sleep(20 + :rand.uniform(80))
 
             case resolve(cid) do
               {:ok, r2, e2} -> {:ok, r2, e2}
-              _ -> {:error, {:contended, r, e}}
+              other -> {:error, {:contended, other}}
             end
 
           err ->
             err
         end
-
-      err ->
-        err
     end
   end
 
