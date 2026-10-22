@@ -160,6 +160,8 @@ defmodule ChatyyRouter.Fanout do
         from_device: req[:from_device],
         cmi: req[:cmi],
         body: req[:body],
+        frame: req[:frame],
+        msg_id: req.seq,
         ts: req[:ts] || ChatyyRouter.Clock.now_ms(),
         meta: req[:meta] || %{}
       }

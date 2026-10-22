@@ -162,6 +162,8 @@ defmodule ChatyyRouter.Control do
       cmi: p["cmi"],
       ts: p["ts"],
       body: Base.decode64!(p["body_b64"] || ""),
+      # frame WS pronto (montado pelo leaf de origem, sem conv_pts) → /rt/deliver do leaf de destino
+      frame: p["frame_b64"] && Base.decode64!(p["frame_b64"]),
       devices: p["devices"] && Enum.map(p["devices"], fn [d, r] -> {d, r} end)
     }
 

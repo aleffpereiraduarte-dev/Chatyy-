@@ -76,13 +76,14 @@ defmodule ChatyyRouter.DurabilityFanoutTest do
     test "entrega por região sem casa no cluster; ack apaga a inbox e não vai a casa nenhuma", %{c: c} do
       on(c, "b", TestProbe, :start, ["fb", false])
       on(c, "c", TestProbe, :start, ["fc", false])
-      req = %{cid: "us-1033", seq: 900_001, home: "us", from: "x@chatyy", from_device: "dx", body: "cifrado",
+      req = %{cid: "us-1033", seq: 900_001, home: "us", from: "x@chatyy", from_device: "dx", body: "cifrado", frame: ~s({"type":"chat_message"}),
               devices: [{"fb", "b"}, {"fc", "c"}, {"fus", "us"}]}
       {:ok, r} = on(c, "a", ChatyyRouter.Fanout, :fanout, [req])
       assert r.regions == 2 and r.devices == 2 and r.outside == 1
       eventually(fn -> on(c, "b", TestProbe, :seqs, ["fb"]) == [900_001] and on(c, "c", TestProbe, :seqs, ["fc"]) == [900_001] end)
       eventually(fn -> on(c, "a", ChatyyRouter.Fanout, :pending, []) == 0 end)
-      assert [{"us-1033", 900_001, {%{body: "cifrado"}, _}}] = on(c, "b", Store, :inbox, ["fb"])
+      assert [{"us-1033", 900_001, {%{body: "cifrado", frame: ~s({"type":"chat_message"}), msg_id: 900_001}, _}}] =
+               on(c, "b", Store, :inbox, ["fb"])
       :ok = on(c, "b", Router, :ack, ["fb", "us-1033", 900_001])
       assert on(c, "b", Store, :inbox, ["fb"]) == []
       assert on(c, "b", ChatyyRouter.AckOutbox, :pending, []) == 0
