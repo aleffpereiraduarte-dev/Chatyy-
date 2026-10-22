@@ -19,6 +19,8 @@ import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { isE2eeUiEnabled, safetyDigitGroups, safetyDigitsText, ShieldGlyph, LockGlyph, tx } from './e2eeUi';
 import E2eeInfoSheet from './E2eeInfoSheet';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { IconX } from '../Icons';
 
 let QRCode = null;
 try { QRCode = require('react-native-qrcode-svg').default; } catch {}
@@ -62,6 +64,8 @@ function Scanner({ onScanned, onCancel, t, colors }) {
 
 export default function SafetyNumberScreen({ visible, onClose, peerName = '', load, digits: digitsProp, qrPayload: qrProp, verified: verifiedProp, onVerifyScanned, onMarkVerified }) {
   const { colors, isDark } = useTheme();
+  // [2026-10-22 android-topo] Android edge-to-edge: o Modal desenha sob a barra de status (X e título cortados).
+  const insets = useSafeAreaInsets();
   const { t } = useLanguage();
   const [data, setData] = useState(null);       // { digits, qr_payload, verified }
   const [loading, setLoading] = useState(false);
@@ -121,9 +125,9 @@ export default function SafetyNumberScreen({ visible, onClose, peerName = '', lo
   return (
     <Modal visible animationType="slide" presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : undefined} onRequestClose={close}>
       <View style={[st.screen, { backgroundColor: colors.background }]}>
-        <View style={[st.header, { borderBottomColor: colors.divider || colors.border }]}>
+        <View style={[st.header, { borderBottomColor: colors.divider || colors.border }, Platform.OS === 'android' ? { paddingTop: Math.max(12, (insets && insets.top) || 0) + 6 } : null]}>
           <Pressable onPress={close} hitSlop={12} accessibilityRole="button" accessibilityLabel={tx(t, 'e2ee5.common.close', 'Fechar')} style={st.headerBtn}>
-            <Text style={[st.headerX, { color: colors.text }]}>{'×'}</Text>
+            <IconX size={22} color={colors.text} />
           </Pressable>
           <Text style={[st.headerTitle, { color: colors.text }]} accessibilityRole="header" numberOfLines={1}>{tx(t, 'e2ee5.safety.title', 'Código de segurança')}</Text>
           <View style={st.headerBtn} />
