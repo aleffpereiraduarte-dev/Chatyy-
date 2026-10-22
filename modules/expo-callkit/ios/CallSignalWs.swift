@@ -857,6 +857,21 @@ final class CallSignalWs: NSObject {
                 userInfo: ["callId": callId, "reason": reason]
             )
 
+            // [2026-10-22 recusada] Ligação NOSSA recusada antes de conectar (declined/busy/
+            // unavailable): o CallViewController mostra "Recusada"/"Ocupado"/"Indisponível" ~1,5 s
+            // com o tom de ocupado e fecha sozinho. Antes, os passos 2-5 abaixo (CallKit ended +
+            // dismiss forçado) fechavam a tela no MESMO ms (call_1792647005632: remote_refusal e
+            // dismiss_surface em 12.889) → o founder só via "parar de chamar". Agora esperam 1,8 s.
+            if !reason.isEmpty && CallViewController.handleRemoteRefusalIfOutgoing(callId: callId, reason: reason) {
+                nativeCallDiag("ws_call_end_refusal_deferred", callId, "reason=\(reason)")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                    ExpoCallKitModule.dismissActiveCallSurfacesFromVC(reason: "ws_call_end_refusal_\(callId)", forCallId: callId)
+                    ExpoCallKitModule.ensureCallKitEnded(callId: callId, reason: .remoteEnded, src: "ws_call_end_refusal")
+                    NativeCallRoom.shared.teardownUnansweredPreconnect(callId: callId, reason: "ws_call_end")
+                }
+                return
+            }
+
             // 2. If CallKit is currently showing this call (incoming RING
             //    that the user hasn't answered yet, or active call), report
             //    the remote end so the system UI dismisses.

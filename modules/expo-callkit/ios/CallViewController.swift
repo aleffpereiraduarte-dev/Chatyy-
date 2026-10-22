@@ -4752,7 +4752,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// does the same (handleRemoteEnd).
     static func handleRemoteRefusalIfOutgoing(callId: String, reason: String) -> Bool {
         guard let vc = ongoingVC(), vc.callId == callId else { return false }
-        guard vc.isOutgoing, vc.callConnectedAt == nil, !vc.remoteRefusalActive else { return false }
+        // [2026-10-22 recusada] já mostrando "Recusada": quem chegar depois (WS nativo, módulo)
+        // também NÃO fecha agora — o VC fecha sozinho em 1,5 s.
+        if vc.remoteRefusalActive { return true }
+        guard vc.isOutgoing, vc.callConnectedAt == nil else { return false }
         let r = reason.lowercased()
         let label: String
         if r.contains("busy") { label = CallStrings.s("busy") }
