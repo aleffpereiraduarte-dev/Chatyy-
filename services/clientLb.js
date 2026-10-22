@@ -52,7 +52,7 @@ export const BUILTIN_REGIONS = [
   R('scl', -33.4, -70.7, [['scl', 'https://api-scl.chatyy.com.br']], 'wss://api-scl.chatyy.com.br/ws', false),
 ];
 
-export const DEFAULT_CFG = { switch_ratio: 0.25, switch_ms: 30, confirm: 2, min_gap_s: 900, beacon: true };
+export const DEFAULT_CFG = { switch_ratio: 0.25, switch_ms: 30, confirm: 2, min_gap_s: 900, beacon: true, ws_weight: 0.3 };
 export const PIN_MIN_GAP_MS = 30 * 60 * 1000;   // entre 2 trocas voluntárias na mesma sessão
 export const PIN_MAX_VOLUNTARY = 2;             // trocas voluntárias por sessão (rede)
 
@@ -94,8 +94,33 @@ export function validateList(j) {
       confirm: Math.round(_clamp(Number(c.confirm), 1, 4, DEFAULT_CFG.confirm)),
       min_gap_s: _clamp(Number(c.min_gap_s), 300, 7200, DEFAULT_CFG.min_gap_s),
       beacon: c.beacon !== false,
+      // [client-lb 2026-10-22] peso do RTT do WS (ping/pong) no placar da região (0 = só /health).
+      ws_weight: _clamp(Number(c.ws_weight), 0, 1, DEFAULT_CFG.ws_weight),
     },
+    // [client-lb 2026-10-22] rede vista pelo servidor: hash do IP /24 (v6 /48) e /16 (v6 /32) + ASN
+    // (quando o servidor souber). Só hashes — o app usa como chave de "melhor edge POR rede".
+    net: _validNet(j.net),
+    // [client-lb 2026-10-22] WS no leaf (hub regional) p/ contas da lista (hash FNV-1a do e-mail)
+    // mesmo em binário cujo nativo só conhece br/eu. Kill remoto: tirar do JSON / "ws_leaf":false.
+    wsLeaf: _validWsLeaf(j.ws_leaf),
   };
+}
+const HEX_RE = /^[0-9a-f]{8,16}$/;
+function _validNet(n) {
+  if (!n || typeof n !== 'object') return null;
+  const p = typeof n.p === 'string' && HEX_RE.test(n.p) ? n.p : null;
+  if (!p) return null;
+  return {
+    p,
+    p16: typeof n.p16 === 'string' && HEX_RE.test(n.p16) ? n.p16 : null,
+    asn: (typeof n.asn === 'number' && n.asn > 0 && n.asn < 4294967296) ? Math.floor(n.asn) : null,
+  };
+}
+function _validWsLeaf(w) {
+  if (!w || typeof w !== 'object') return null;
+  const acc = (Array.isArray(w.acc) ? w.acc : []).filter((x) => typeof x === 'string' && /^[0-9a-f]{8}$/.test(x)).slice(0, 64);
+  if (!acc.length && w.all !== true) return null;
+  return { all: w.all === true, acc };
 }
 
 // ── Estado da lista ────────────────────────────────────────────────────────
@@ -109,8 +134,8 @@ function _loadList() {
     const raw = _mm()?.getString(LIST_KEY);
     if (raw) {
       const p = JSON.parse(raw);
-      const v = p && p.data ? validateList({ success: true, ...p.data }) : null;
-      if (v) { _list = { ...v, ttlMs: p.ttlMs || v.ttlMs, fetchedAt: Number(p.fetchedAt) || 0, src: 'cache' }; _listLoaded = true; }
+      const v = p && p.data ? validateList({ success: true, ...p.data, ws_leaf: p.data.ws_leaf || p.data.wsLeaf }) : null;
+      if (v) { _list = { ...v, ttlMs: p.ttlMs || v.ttlMs, fetchedAt: Number(p.fetchedAt) || 0, src: 'cache', sig: typeof p.sig === 'string' ? p.sig : null }; _listLoaded = true; }
     }
   } catch {}
   return _list;
@@ -162,11 +187,12 @@ export function refreshList({ force = false, altBase = null } = {}) {
           if (o && r.health === 'unknown' && o.health === 'down') r.health = 'down';
         }
       }
-      _list = { ...v, fetchedAt: Date.now(), src };
+      // net (hash do IP) só vale p/ a rede em que a lista foi buscada: carimba a assinatura local.
+      _list = { ...v, fetchedAt: Date.now(), src, sig: netSignature() };
       _listLoaded = true;
       try {
-        const { ttlMs, fetchedAt, src: _s, ...data } = _list;
-        _mm()?.setString(LIST_KEY, JSON.stringify({ data: { ...data, ttl: Math.round(ttlMs / 1000) }, ttlMs, fetchedAt }));
+        const { ttlMs, fetchedAt, src: _s, sig, ...data } = _list;
+        _mm()?.setString(LIST_KEY, JSON.stringify({ data: { ...data, ttl: Math.round(ttlMs / 1000) }, ttlMs, fetchedAt, sig }));
       } catch {}
       return _list;
     } catch { return _list; } finally { _fetching = null; }
@@ -221,15 +247,21 @@ export function deviceTz() {
  * Candidatas a medir (exportada p/ teste): 2 mais prováveis (near do servidor, senão fuso)
  * + a atual + a última boa + US. Só utilizáveis; no máx. `max` (US conta).
  */
-export function pickCandidates({ list, near, tz, current, lastGood, max = 4 } = {}) {
+export function pickCandidates({ list, near, tz, current, lastGood, max = 4, remembered = null, geoBad = false } = {}) {
   const L = list || getList();
   const ok = (id) => isUsable(regionById(id, L));
   const out = [];
   const add = (id) => { if (id && !out.includes(id) && ok(id) && out.length < max) out.push(id); };
+  // [client-lb 2026-10-22] melhor edge JÁ medido nesta rede vem primeiro.
+  add(remembered);
   // País (CF) e fuso intercalados: VPN/roaming fazem um dos dois mentir — medir resolve.
+  // Rede onde a medição já contradisse o geo do CF (roaming c/ home routing): o geo não
+  // ocupa vaga na frente — entra a vizinha mais próxima da que ganhou (explorar ao redor).
   const n = (near || []).filter(ok);
   const z = tzGuess(tz).filter(ok);
-  const guess = [n[0], z[0], n[1], z[1]].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i);
+  const guess = geoBad
+    ? [nearestTo(remembered, L, out), z[0], n[0]].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i)
+    : [n[0], z[0], n[1], z[1]].filter(Boolean).filter((x, i, a) => a.indexOf(x) === i);
   add(guess[0]);
   add(guess[1]);
   add(current);
@@ -238,7 +270,22 @@ export function pickCandidates({ list, near, tz, current, lastGood, max = 4 } = 
   return out;
 }
 
-const _beats = (cand, cur, cfg) =>
+/** Região utilizável mais próxima (lat/lon do servidor) de `id`, fora de `skip`. */
+export function nearestTo(id, list, skip) {
+  const L = list || getList();
+  const r0 = id ? regionById(id, L) : null;
+  if (!r0) return null;
+  let best = null, bd = Infinity;
+  for (const r of usableRegions(L)) {
+    if (r.id === id || r.id === 'us' || (skip && skip.includes(r.id))) continue;
+    const dl = r.lat - r0.lat, dn = (r.lon - r0.lon) * Math.cos(((r.lat + r0.lat) / 2) * Math.PI / 180);
+    const d = dl * dl + dn * dn;
+    if (d < bd) { bd = d; best = r.id; }
+  }
+  return best;
+}
+
+export const _beats = (cand, cur, cfg) =>
   cand < cur * (1 - cfg.switch_ratio) && (cur - cand) > cfg.switch_ms;
 
 /**
@@ -296,6 +343,136 @@ export function loadState() {
 }
 export function saveState(st) { try { _mm()?.setString(STATE_KEY, JSON.stringify(st)); } catch {} }
 
+// ── [client-lb 2026-10-22] Rede: assinatura local, chave e memória por rede ─
+// Assinatura LOCAL (sem servidor, sem permissão extra): tipo + SSID/BSSID (só se o SO já
+// entregar — iOS só com localização, Android idem → normalmente ausente) + IP local/sub-rede
+// + operadora. Serve p/ DETECTAR troca de rede (Wi-Fi↔Wi-Fi, celular com IP novo).
+// Chave da MEMÓRIA (estável entre sessões): tipo + hash SSID/BSSID; sem isso, tipo + hash do
+// IP público /24 (servidor) [+ ASN]; chave grossa = tipo + /16 (ou ASN) p/ CGNAT que gira o /24.
+export function fnv1a(str) {
+  let h = 0x811c9dc5;
+  const s = String(str || '');
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return ('0000000' + h.toString(16)).slice(-8);
+}
+function _netState() { try { return require('./networkInfo').getNetworkState() || null; } catch { return null; } }
+const _BAD_SSID = /^(<unknown ssid>|unknown|0x|)$/i;
+const _BAD_BSSID = /^(02:00:00:00:00:00|00:00:00:00:00:00|)$/;
+function _wifiId(st) {
+  if (!st) return null;
+  const ss = typeof st.ssid === 'string' && !_BAD_SSID.test(st.ssid.trim()) ? st.ssid.trim() : '';
+  const bs = typeof st.bssid === 'string' && !_BAD_BSSID.test(st.bssid.trim()) ? st.bssid.trim().toLowerCase() : '';
+  return (ss || bs) ? fnv1a(ss + '|' + bs) : null;
+}
+export function netSignature(stIn) {
+  const st = stIn || _netState();
+  if (!st || st.isConnected === false) return null;
+  const t = st.type && st.type !== 'unknown' && st.type !== 'none' ? String(st.type) : null;
+  if (!t) return null;
+  return [t, _wifiId(st) || '', st.ipAddress || '', st.subnet || '', st.carrier || ''].join('|');
+}
+/** → { key, coarse, src } | null. key null = rede conhecida só pelo tipo (lista ainda de outra rede). */
+export function netKeys(stIn, listIn) {
+  const st = stIn || _netState();
+  const sig = netSignature(st);
+  if (!sig) return null;
+  const t = sig.split('|')[0];
+  const w = _wifiId(st);
+  if (w) return { key: t + ':w' + w, coarse: null, src: 'wifi', type: t };
+  const L = listIn || _loadList();
+  const n = L && L.net && L.sig === sig ? L.net : null;
+  if (!n) return { key: null, coarse: null, src: 'type', type: t };
+  return {
+    key: t + ':p' + n.p + (n.asn ? ':a' + n.asn : ''),
+    coarse: n.asn ? t + ':a' + n.asn : (n.p16 ? t + ':q' + n.p16 : null),
+    src: 'ip', type: t,
+  };
+}
+/** Lista buscada em OUTRA rede (hash do IP não vale aqui) → o api.js força o refresh. */
+export function listNetStale() {
+  const L = _loadList();
+  if (!L) return true;
+  const sig = netSignature();
+  return !!sig && L.sig !== sig;
+}
+
+const NETMEM_KEY = 'client_lb_netmem_v1';
+const NETMEM_MAX = 32;
+const NETMEM_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+let _netMem = null;
+function _nm() {
+  if (_netMem) return _netMem;
+  try { const raw = _mm()?.getString(NETMEM_KEY); const p = raw ? JSON.parse(raw) : null; _netMem = p && typeof p === 'object' ? p : {}; } catch { _netMem = {}; }
+  return _netMem;
+}
+/** Melhor edge lembrado p/ esta rede (chave exata, senão a grossa). → { reg, rtt, at, geoBad, ws, hit } | null */
+export function netMemGet(keys) {
+  if (!keys) return null;
+  const m = _nm();
+  const now = Date.now();
+  for (const [k, hit] of [[keys.key, 'key'], [keys.coarse, 'coarse']]) {
+    const e = k && m[k];
+    if (e && typeof e.reg === 'string' && ID_RE.test(e.reg) && now - (Number(e.at) || 0) < NETMEM_TTL_MS) return { ...e, hit };
+  }
+  return null;
+}
+export function netMemPut(keys, rec) {
+  if (!keys || !rec || !rec.reg) return;
+  const m = _nm();
+  const e = { reg: rec.reg, at: Date.now(), geoBad: !!rec.geoBad, rtt: rec.rtt || null, ws: rec.ws || null };
+  if (keys.key) m[keys.key] = e;
+  if (keys.coarse) m[keys.coarse] = { ...e, coarse: 1 };
+  const ks = Object.keys(m);
+  if (ks.length > NETMEM_MAX) ks.sort((a, b) => (m[a].at || 0) - (m[b].at || 0)).slice(0, ks.length - NETMEM_MAX).forEach((k) => { delete m[k]; });
+  try { _mm()?.setString(NETMEM_KEY, JSON.stringify(m)); } catch {}
+}
+
+// ── [client-lb 2026-10-22] RTT do WS (ping/pong) por região, por rede ──────
+// Alimentado pelo websocket.js (pong limpo, app visível). Guarda as últimas amostras da
+// região em que o socket está DE FATO (o nativo antigo pode ir ao US mesmo com HTTP regional).
+const _wsRtt = {}; // `${netKey}|${region}` → { s: [ms…], at }
+const WS_RTT_FRESH_MS = 10 * 60 * 1000;
+export function noteWsRtt(netKey, region, ms) {
+  if (!region || !ID_RE.test(region) || !(ms > 0) || ms > 5000) return;
+  const k = (netKey || '-') + '|' + region;
+  const e = _wsRtt[k] || (_wsRtt[k] = { s: [], at: 0 });
+  e.s.push(Math.round(ms));
+  if (e.s.length > 7) e.s.shift();
+  e.at = Date.now();
+}
+/** Mediana das amostras frescas (≥3) da região nesta rede, ou null. */
+export function wsRttFor(netKey, region) {
+  const e = _wsRtt[(netKey || '-') + '|' + region];
+  if (!e || e.s.length < 3 || Date.now() - e.at > WS_RTT_FRESH_MS) return null;
+  const a = [...e.s].sort((x, y) => x - y);
+  return a[Math.floor(a.length / 2)];
+}
+/** Placar = /health misturado com o RTT do WS (peso cfg.ws_weight) onde houver amostra. */
+export function blendScores(results, netKey, weight) {
+  const w = _clamp(Number(weight), 0, 1, DEFAULT_CFG.ws_weight);
+  const out = {}; const ws = {};
+  for (const id of Object.keys(results || {})) {
+    const h = results[id];
+    const r = wsRttFor(netKey, id);
+    if (r != null) ws[id] = r;
+    out[id] = (typeof h === 'number' && r != null && w > 0) ? Math.max(1, Math.round((1 - w) * h + w * r)) : h;
+  }
+  return { scores: out, ws };
+}
+
+/** Conta liberada p/ WS no leaf mesmo com nativo antigo (lista do servidor). */
+export function wsLeafFor(email) {
+  try {
+    if (globalThis.__chatyy_ws_leaf_first === false) return false;
+    if (globalThis.__chatyy_ws_leaf_first === true) return true;
+  } catch {}
+  const w = getList().wsLeaf;
+  if (!w) return false;
+  if (w.all) return true;
+  const e = String(email || '').trim().toLowerCase();
+  return !!e && w.acc.includes(fnv1a(e));
+}
+
 // ── Economia de bateria/dados ──────────────────────────────────────────────
 export function isEconomy() {
   try { if (require('./liveLocTickGate').isLowBatteryNow?.()) return true; } catch {}
@@ -345,4 +522,5 @@ export function beacon(ev, data = {}) {
 export default {
   getList, refreshList, isClientLbOn, isUsable, usableRegions, regionById, pickCandidates, decide,
   rankRegions, loadState, saveState, isEconomy, beacon, tzGuess, deviceTz, validateList,
+  netSignature, netKeys, listNetStale, netMemGet, netMemPut, noteWsRtt, wsRttFor, blendScores, wsLeafFor, fnv1a, nearestTo,
 };

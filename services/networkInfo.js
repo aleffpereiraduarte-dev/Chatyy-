@@ -41,6 +41,14 @@ function _normalize(s) {
     // [2026-10-09 net-resilience] antes era descartado → o perfil de imagem
     // 2G/3G do mediaSendQueue (e qualquer timeout adaptativo) nunca ativava.
     cellularGeneration: (s.details && s.details.cellularGeneration) || null,
+    // [client-lb 2026-10-22] identidade da rede p/ o balanceamento (services/clientLb.js
+    // netSignature): SSID/BSSID só se o SO já entregar (sem pedir permissão), IP local,
+    // sub-rede e operadora — troca de qualquer um = rede nova → remede o edge.
+    ssid: (s.details && typeof s.details.ssid === 'string') ? s.details.ssid : null,
+    bssid: (s.details && typeof s.details.bssid === 'string') ? s.details.bssid : null,
+    ipAddress: (s.details && typeof s.details.ipAddress === 'string') ? s.details.ipAddress : null,
+    subnet: (s.details && typeof s.details.subnet === 'string') ? s.details.subnet : null,
+    carrier: (s.details && typeof s.details.carrier === 'string') ? s.details.carrier : null,
   };
 }
 

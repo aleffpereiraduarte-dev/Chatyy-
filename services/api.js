@@ -688,15 +688,33 @@ async function _lbDetect(opts) {
       }
     } catch {}
     const st = _lbS();
-    const net = _edgeNetKey();
-    if (!st.session || (net && st.session.net && st.session.net !== net)) st.session = { net, voluntary: 0, lastSwitchAt: 0, picked: false };
-    else if (net && !st.session.net) st.session.net = net;
-    await L.refreshList({ force: why === 'net' && L.listAgeMs() > _LB_NET_REMEASURE_MS, altBase: _bestServer && _bestServer.region !== 'us' ? _bestServer.base : null });
+    // [client-lb 2026-10-22] lista buscada em OUTRA rede → o hash do IP dela não vale aqui: força.
+    const listStale = !!(L.listNetStale && L.listNetStale());
+    await L.refreshList({ force: listStale || (why === 'net' && L.listAgeMs() > _LB_NET_REMEASURE_MS), altBase: _bestServer && _bestServer.region !== 'us' ? _bestServer.base : null });
     if (!L.isClientLbOn()) { legacy = true; return; }
     _lbSyncExtras();
+    // [client-lb 2026-10-22] chave da rede = tipo + SSID/BSSID (se o SO der) ou hash do IP público
+    // /24 (+ASN) visto pelo servidor; memória do melhor edge POR rede.
+    const nk = L.netKeys ? L.netKeys() : null;
+    const net = (nk && (nk.key || nk.type)) || _edgeNetKey();
+    const mem0 = nk && nk.key && L.netMemGet ? L.netMemGet(nk) : null;
+    const netChanged = !!(net && st.measuredNet && st.measuredNet !== net);
+    if (!st.session || (net && st.session.net && st.session.net !== net)) st.session = { net, voluntary: 0, lastSwitchAt: 0, picked: false, fresh: true };
+    else if (net && !st.session.net) st.session.net = net;
     const list = L.getList();
     const cfg = list.cfg || {};
     const eco = L.isEconomy();
+    const mem = mem0 && L.isUsable(L.regionById(mem0.reg, list)) ? mem0 : null;
+    // Rede nova com edge lembrado → volta a ele JÁ (a medição abaixo confirma/corrige).
+    if (mem && (netChanged || st.session.fresh) && (!_bestServer || _bestServer.region !== mem.reg)) {
+      const ms = _lbServerFor(mem.reg);
+      if (ms) {
+        const prevR = _bestServer ? _bestServer.region : '';
+        _bestServer = { ...ms, latency: (mem.rtt && mem.rtt[mem.reg]) || null, ts: 0, net, src: 'lb-netmem' };
+        _applySelectedServer(ms);
+        try { L.beacon('netmem', { reg: ms.region, org: _originOf(ms), prev: prevR, why: 'netmem_' + mem.hit, rtt: mem.rtt || {}, net: (nk && nk.type) || '', nm: mem.hit, gb: mem.geoBad ? 1 : 0 }); } catch {}
+      }
+    }
     // Instalação sem escolha ainda: aplica a dica do servidor (país CF) JÁ; a medição corrige.
     if (!_bestServer && Array.isArray(list.near) && list.near[0] && list.near[0] !== 'us' && L.isUsable(L.regionById(list.near[0], list))) {
       const hs = _lbServerFor(list.near[0]);
@@ -711,7 +729,8 @@ async function _lbDetect(opts) {
     if (!st.measuredAt || !sameNet || !curUsable) need = true;
     else if (why === 'confirm') need = !!st.pending;
     else if (why === 'boot') need = age > _LB_BOOT_REMEASURE_MS;
-    else if (why === 'net') need = age > _LB_NET_REMEASURE_MS;
+    // [client-lb 2026-10-22] troca de rede (tipo, IP, SSID…) SEMPRE remede (só não repete <15 s).
+    else if (why === 'net') need = age > 15000;
     else need = !eco && age >= (cfg.min_gap_s || 900) * 1000;
     if (need && !_lbActive()) need = false; // 2º plano: rádio/timers congelados → não mede
     if (!need) {
@@ -731,7 +750,7 @@ async function _lbDetect(opts) {
       return;
     }
     const near = Array.isArray(list.near) && list.near.length ? list.near : null;
-    const cands = L.pickCandidates({ list, near, tz: L.deviceTz(), current: curUsable ? cur : null, lastGood: st.lastGood, max: eco ? 3 : 4 });
+    const cands = L.pickCandidates({ list, near, tz: L.deviceTz(), current: curUsable ? cur : null, lastGood: st.lastGood, max: eco ? 3 : 4, remembered: mem ? mem.reg : null, geoBad: !!(mem && mem.geoBad) });
     const results = await _lbMeasure(cands, eco ? 1 : 2);
     if (!_lbActive()) return; // [2026-10-21 lb-freeze] foi p/ 2º plano no meio da medição → não decide com ela
     const anyOk = Object.keys(results).some(k => typeof results[k] === 'number');
@@ -739,10 +758,18 @@ async function _lbDetect(opts) {
     st.results = { ...results };
     st.measuredAt = Date.now();
     st.measuredNet = net;
+    // [client-lb 2026-10-22] placar = /health + RTT do WS (ping/pong) da região onde há amostra.
+    const bl = L.blendScores ? L.blendScores(results, net, cfg.ws_weight) : { scores: results, ws: {} };
+    const scores = bl.scores;
     // 1ª escolha da instalação (só dica/legado ainda) = melhor medida direto.
-    const decCur = (!st.session.picked && (!_bestServer || _bestServer.src === 'hint' || !_bestServer.src)) ? null : (curUsable ? cur : (cur || null));
-    const guess = (near || L.tzGuess(L.deviceTz())).find(id => L.isUsable(L.regionById(id, list))) || 'us';
-    const d = L.decide({ results, current: decCur, pending: st.pending, session: st.session, cfg, list, base: guess });
+    // [client-lb 2026-10-22] 1ª medição numa rede NOVA também: sem histerese/confirmação (a base é
+    // o edge lembrado desta rede, senão o palpite geo — e o geo perde se a medição contradiz).
+    const freshNet = !!st.session.fresh;
+    const decCur = (freshNet || (!st.session.picked && (!_bestServer || _bestServer.src === 'hint' || !_bestServer.src))) ? null : (curUsable ? cur : (cur || null));
+    const geoGuess = (near || L.tzGuess(L.deviceTz())).find(id => L.isUsable(L.regionById(id, list))) || 'us';
+    const guess = mem ? mem.reg : geoGuess;
+    const d = L.decide({ results: scores, current: decCur, pending: freshNet ? null : st.pending, session: st.session, cfg, list, base: guess });
+    st.session.fresh = false;
     st.pending = d.pending;
     if (d.pending && !st.confirmTimer) {
       st.confirmTimer = setTimeout(() => { st.confirmTimer = null; detectFastestServer({ why: 'confirm' }); }, _LB_CONFIRM_MS);
@@ -754,10 +781,22 @@ async function _lbDetect(opts) {
     if (changed) _applySelectedServer(pickSrv);
     if (d.kind === 'switch') { st.session.voluntary++; st.session.lastSwitchAt = Date.now(); st.switches++; }
     if (typeof results[pickSrv.region] === 'number') st.lastGood = pickSrv.region;
+    // [client-lb 2026-10-22] geo do CF contradito pela medição (roaming c/ home routing, VPN):
+    // a região "perto" do país perdeu pela margem → esta rede não confia mais no geo.
+    let geoBad = !!(mem && mem.geoBad);
+    try {
+      const g0 = near && near[0];
+      if (g0 && typeof scores[g0] === 'number' && typeof scores[pickSrv.region] === 'number' && pickSrv.region !== g0) {
+        geoBad = !!(L._beats && L._beats(scores[pickSrv.region], scores[g0], { ...cfg, switch_ratio: cfg.switch_ratio || 0.25, switch_ms: cfg.switch_ms || 30 }));
+      } else if (g0 && pickSrv.region === g0) geoBad = false;
+    } catch {}
+    if (nk && nk.key && typeof results[pickSrv.region] === 'number' && L.netMemPut) {
+      try { L.netMemPut(nk, { reg: pickSrv.region, rtt: results, ws: bl.ws, geoBad }); } catch {}
+    }
     _persistBestServer();
     _lbPersist();
-    const bdata = { reg: pickSrv.region, org: _originOf(pickSrv), prev: prev || '', src: why, why: d.why, rtt: results, net: net || '', n: Object.keys(results).length, sw: st.switches };
-    if (!st.session.picked) { st.session.picked = true; L.beacon('pick', bdata); }
+    const bdata = { reg: pickSrv.region, org: _originOf(pickSrv), prev: prev || '', src: why, why: d.why, rtt: results, net: (nk && nk.type) || _edgeNetKey() || '', n: Object.keys(results).length, sw: st.switches, nm: mem ? mem.hit : '', gb: geoBad ? 1 : 0, wsr: bl.ws };
+    if (!st.session.picked || freshNet) { st.session.picked = true; L.beacon('pick', bdata); }
     else if (d.kind === 'switch' || d.kind === 'failover') L.beacon(d.kind, bdata);
     if (__DEV__) console.log('[API] LB ' + d.kind + ' ' + pickSrv.region + ' (' + d.why + ', ' + why + ') ' + cands.map(r => r + '=' + (results[r] ?? '-')).join(' '));
   } catch {} finally {
@@ -803,6 +842,28 @@ export function getRegionWsUrl(region) {
   } catch { return null; }
 }
 export function isClientLbActive() { return _lbOn(); }
+// [client-lb 2026-10-22] chave da rede atual (mesma do _lbDetect) p/ o RTT do WS.
+function _lbNetKeyNow() {
+  try { const L = _lb(); const nk = L && L.netKeys ? L.netKeys() : null; return (nk && (nk.key || nk.type)) || _edgeNetKey(); } catch { return _edgeNetKey(); }
+}
+// RTT do WS (pong limpo) da região onde o socket está DE FATO (websocket.js).
+export function lbNoteWsRtt(region, ms) {
+  try { if (!_lbOn()) return; _lb()?.noteWsRtt?.(_lbNetKeyNow(), region, ms); } catch {}
+}
+// [client-lb 2026-10-22] WS no leaf p/ contas liberadas quando o nativo do binário só aceita
+// algumas regiões (`supported`, ex. ['br','eu']): a melhor MEDIDA delas que esteja utilizável.
+// null = conta fora da lista / nada medido → o websocket.js segue a regra antiga (US).
+export function lbWsLeafRegion(email, supported) {
+  try {
+    if (!_lbOn()) return null;
+    const L = _lb();
+    if (!L || !L.wsLeafFor || !L.wsLeafFor(email)) return null;
+    const res = _lbS().results || {};
+    const ok = (supported || []).filter(id => id !== 'us' && typeof res[id] === 'number' && L.isUsable(L.regionById(id)) && _lbServerFor(id));
+    ok.sort((a, b) => res[a] - res[b]);
+    return ok[0] || null;
+  } catch { return null; }
+}
 // Diagnóstico (tela de debug / QA).
 export function getClientLbInfo() {
   try {
@@ -824,19 +885,36 @@ detectFastestServer({ why: 'boot' });
 let _edgeNetTimer = null;
 let _edgeLastNet;
 try {
+  let _edgeLastSig;
   require('./networkInfo').onNetworkChange((st) => {
     const key = (st && st.isConnected !== false && st.type && st.type !== 'unknown' && st.type !== 'none') ? String(st.type) : null;
     const prev = _edgeLastNet;
     _edgeLastNet = key;
+    // [client-lb 2026-10-22] com o LB ligado, troca de IP/SSID/operadora no MESMO tipo também é
+    // rede nova (Wi-Fi→outro Wi-Fi, celular com IP novo) → remede.
+    let sig = null;
+    try { sig = _lbOn() ? (_lb()?.netSignature?.(st) || null) : null; } catch {}
+    const prevSig = _edgeLastSig;
+    _edgeLastSig = sig;
+    if (key && prev && key === prev && sig && prevSig && sig !== prevSig) {
+      if (_edgeNetTimer) clearTimeout(_edgeNetTimer);
+      _edgeNetTimer = setTimeout(() => { _edgeNetTimer = null; detectFastestServer({ force: true, why: 'net' }); }, 3000);
+      return;
+    }
     if (prev === undefined || !key || key === prev) return; // 1º disparo / offline / mesma rede
     if (prev === null) {
       // 1ª rede conhecida após boot/offline: só reavalia se a escolha persistida
       // veio de OUTRA rede; se foi feita com rede desconhecida, carimba esta.
-      if (_bestServer && !_bestServer.net) { _bestServer.net = key; _persistBestServer(); return; }
-      if (!_bestServer || _bestServer.net === key) return;
+      if (_lbOn()) {
+        // [client-lb 2026-10-22] LB: mesma rede de antes (assinatura igual à da lista) → nada.
+        try { if (_bestServer && !_lb().listNetStale() && String(_bestServer.net || '').split(':')[0] === key) return; } catch {}
+      } else {
+        if (_bestServer && !_bestServer.net) { _bestServer.net = key; _persistBestServer(); return; }
+        if (!_bestServer || _bestServer.net === key) return;
+      }
     }
     if (_edgeNetTimer) clearTimeout(_edgeNetTimer);
-    _edgeNetTimer = setTimeout(() => { _edgeNetTimer = null; detectFastestServer({ force: true }); }, 3000);
+    _edgeNetTimer = setTimeout(() => { _edgeNetTimer = null; detectFastestServer({ force: true, why: 'net' }); }, 3000);
   });
 } catch {}
 

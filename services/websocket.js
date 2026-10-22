@@ -333,17 +333,51 @@ function _syncNativeWsRegion(region, info) {
     }
   } catch {}
 }
-function _pickWsUrl() {
+// [client-lb 2026-10-22] Regiões que o nativo da API 1 (binário iOS ≤ 762 / Android < ~750) aceita
+// em setWsRegion; qualquer outra (usw/sg/in/mia/mex/mad/scl) vira "us" lá dentro — o socket
+// nativo (ChatCoreSocket/CallSignalWs/RelayWake) IGNORA a URL do JS e usa ChatyyWsEndpoint.pick().
+const _NATIVE_API1_REGIONS = ['br', 'eu'];
+// 'any' = nativo aceita qualquer região (API ≥ 2) · 'api1' = só br/eu · 'none' = sem módulo nativo
+function _nativeWsMode() {
+  try {
+    const { requireOptionalNativeModule } = require('expo');
+    const m = requireOptionalNativeModule('ChatyyChatCore');
+    if (!m) return 'none';
+    return _nativeWsAnyRegionOn(m) ? 'any' : 'api1';
+  } catch { return 'none'; }
+}
+// Região em que o WS está DE FATO (p/ atribuir o RTT do ping/pong). Atualizada no connect e
+// no 'authed' do nativo (ev.url = URL física, quando o binário manda).
+let _wsEffRegion = 'us';
+function _regionOfAnyWsUrl(url) {
+  const u = String(url || '');
+  if (/^wss:\/\/ws\.chatyy\.com\.br\//.test(u)) return 'us';
+  return _regionOfWsUrl(u);
+}
+function _pickWsUrl(email) {
   try {
     if (Platform.OS === 'web') return US_WS_URL;
     const g = (typeof globalThis !== 'undefined') ? globalThis : {};
-    const info = require('./api').getEdgeInfo?.();
+    let info = require('./api').getEdgeInfo?.();
+    // [client-lb 2026-10-22] WS no LEAF p/ contas liberadas (lista do servidor `ws_leaf`; kill
+    // globalThis.__chatyy_ws_leaf_first = false): com nativo API 1 e região que ele não conhece,
+    // o socket iria ao hub US direto (leaf com conns=0). Usa a melhor MEDIDA entre br/eu.
+    let leafAlt = false;
+    const nmode = _nativeWsMode();
+    if (!g.__chatyyRegionalWsOff && info && info.region && info.region !== 'us' && !_NATIVE_API1_REGIONS.includes(info.region) && nmode === 'api1') {
+      const alt = _wsApi()?.lbWsLeafRegion?.(email, _NATIVE_API1_REGIONS);
+      if (alt && !_regionalBlocked(alt)) { info = { ...info, region: alt }; leafAlt = true; }
+    }
+    const r0 = (!g.__chatyyRegionalWsOff && info && info.region) ? info.region : 'us';
+    _wsEffRegion = (nmode === 'api1') ? (_NATIVE_API1_REGIONS.includes(r0) ? r0 : 'us') : r0;
+    if (leafAlt) { try { require('./crashReporter').reportStep?.('ws_leaf_alt', 'region=' + info.region); } catch {} }
     _syncNativeWsRegion((!g.__chatyyRegionalWsOff && info && REGIONAL_WS_URLS[info.region]) ? info.region : 'us', g.__chatyyRegionalWsOff ? null : (info || null));
-    if (g.__chatyyRegionalWsOff) return US_WS_URL;
-    if (_regionalWsFailPending || (info && _regionalBlocked(info.region))) return US_WS_URL;
+    if (g.__chatyyRegionalWsOff) { _wsEffRegion = 'us'; return US_WS_URL; }
+    if (_regionalWsFailPending || (info && _regionalBlocked(info.region))) { _wsEffRegion = 'us'; return US_WS_URL; }
     // [client-lb 2026-10-21] regiões novas (mia/mex/mad/scl…) → WS da lista do servidor.
     const url = info && (REGIONAL_WS_URLS[info.region] || _wsApi()?.getRegionWsUrl?.(info.region));
     if (url && url !== US_WS_URL) _lastRegionalWsUrl = url;
+    if (!url || url === US_WS_URL) _wsEffRegion = 'us';
     return url || US_WS_URL;
   } catch {
     return US_WS_URL;
@@ -718,6 +752,8 @@ class MailWebSocket {
         this._emit('connection', { status: 'connected', protocol: 'json', transport: 'native' });
         break;
       case 'authed':
+        // [client-lb 2026-10-22] URL física do nativo → região real do WS (RTT do pong).
+        try { if (typeof ev.url === 'string' && ev.url) { const rr = _regionOfAnyWsUrl(ev.url); if (rr) _wsEffRegion = rr; } else if (ev.regionalBlocked) _wsEffRegion = 'us'; } catch {}
         if (ev.regionalBlocked) {
           _blockRegionalWs(_lastRegionalWsUrl);
           try { this._logGhost?.('regional_ws_fallback', { native: true }); } catch {}
@@ -1176,7 +1212,7 @@ class MailWebSocket {
         if (_prevAttempt.regional) _regionalWsFailPending = true;
         else if (_regionalWsFailPending) _regionalWsFailPending = false; // US também falhou → rede, não o edge
       }
-      const wsUrl = _pickWsUrl();
+      const wsUrl = _pickWsUrl(this.email);
       this._wsAttempt = { url: wsUrl, regional: wsUrl !== US_WS_URL, authed: false };
       // CWP/1 subprotocol negotiation — feature-flagged (default OFF).
       // Server picks 'cwp.1' if it supports CWP, else 'json.legacy'.
@@ -1235,6 +1271,7 @@ class MailWebSocket {
           this.ws = null;
         }
       }
+      if (!this.ws) _wsEffRegion = _regionOfAnyWsUrl(wsUrl) || 'us'; // [client-lb 2026-10-22] socket JS honra a URL
       if (this.ws) {
         // nativo
       } else if (_cwpEnabled()) {
@@ -2863,6 +2900,7 @@ class MailWebSocket {
             this._latency = msg.rtt;
             if (!this._hidden && msg.rtt <= 3000) {
               try { require('./networkInfo').reportRtt(msg.rtt); } catch {}
+              try { _wsApi()?.lbNoteWsRtt?.(_wsEffRegion, msg.rtt); } catch {} // [client-lb 2026-10-22]
             }
           }
         // Measure latency
@@ -2876,6 +2914,7 @@ class MailWebSocket {
           // conversa 30s = mensagem "demorando" num socket half-open.
           if (!this._hidden && this._pingTs >= (this._rttEpoch || 0) + 3000 && this._latency <= 3000) {
             try { require('./networkInfo').reportRtt(this._latency); } catch {}
+            try { _wsApi()?.lbNoteWsRtt?.(_wsEffRegion, this._latency); } catch {} // [client-lb 2026-10-22]
           }
         }
         // Surface pong to listeners so ensureHealthy() can resolve early
