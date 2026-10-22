@@ -168,7 +168,7 @@ defmodule ChatyyRouter.Control do
       devices: p["devices"] && Enum.map(p["devices"], fn [d, r] -> {d, r} end)
     }
 
-    case ChatyyRouter.Fanout.fanout(req) do
+    case ChatyyRouter.Fanout.fanout_async(req) do
       {:ok, r} -> ok(Map.put(r, :ok, true))
       {:error, e} -> {503, "application/json", json(%{ok: false, error: e})}
     end

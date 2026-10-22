@@ -39,6 +39,10 @@ defmodule ChatyyRouter.HubHttpTest do
       cond do
         not String.contains?(head, "X-Rt-Key: k0123456789abcdef0123456789abcdef") -> {401, ~s({"ok":false})}
         String.starts_with?(head, "POST /rt/deliver") -> {200, ~s({"ok":true,"online":true,"delivered":1,"push":"none","echo":#{body}})}
+        String.starts_with?(head, "GET /rt/presence?email=sem%40chatyy.com.br") ->
+          {200, ~s({"ok":true,"devices":[{"device":"","email":"sem@chatyy.com.br","online":true,"region":"usw"}]})}
+        String.starts_with?(head, "GET /rt/presence?email=hub%40chatyy.com.br") ->
+          {200, ~s({"ok":true,"devices":[{"device":"?","online":true,"region":"usw"},{"device":"POUTRO","online":true,"region":"us"}]})}
         String.starts_with?(head, "GET /rt/presence?device=PONLINE") -> {200, ~s({"ok":true,"devices":[{"device":"PONLINE","online":true,"region":"mia"}]})}
         String.starts_with?(head, "GET /rt/presence") -> {200, ~s({"ok":true,"devices":[{"device":"X","online":false,"region":""}]})}
         true -> {404, "{}"}
@@ -91,6 +95,20 @@ defmodule ChatyyRouter.HubHttpTest do
     assert {:ok, ^me} = Http.region_of("PONLINE")
     refute_receive {:req, _}, 200
     assert {:error, :offline} = Http.region_of("POFFLINE")
+  end
+
+  test "local_online/2: app sem e2ee5_device no auth conta pelo e-mail; aparelho marcado diferente não" do
+    assert Http.local_online("PSEMTAG", "sem@chatyy.com.br") == true
+    assert_receive {:req, req}, 1_000
+    assert req =~ "GET /rt/presence?email=sem%40chatyy.com.br "
+    # nó us (hub): socket que veio pelo leaf usw não conta como "online no US"; o de outro aparelho também não
+    Application.put_env(:chatyy_router, :presence_own_region, "us")
+    on_exit(fn -> Application.delete_env(:chatyy_router, :presence_own_region) end)
+    assert Http.local_online("PX1", "hub@chatyy.com.br") == false
+    Application.put_env(:chatyy_router, :presence_own_region, "*")
+    assert Http.local_online("PX1", "hub@chatyy.com.br") == true
+    refute Http.present?(%{"device" => "POUTRO", "online" => true, "region" => "us"}, "PX1", nil)
+    assert Http.present?(%{"device" => "PX1", "online" => true, "region" => "us"}, "PX1", "us")
   end
 
   test "hub fora do ar: erro vira resultado, sem exceção no chamador" do

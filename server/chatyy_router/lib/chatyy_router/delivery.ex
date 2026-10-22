@@ -36,10 +36,15 @@ defmodule ChatyyRouter.Delivery do
     for {seq, _} <- rows, do: Store.delete(:rt_inbox, {device, cid, seq})
     regions = Config.region_names()
 
+    # casa "us" do R1 é EXTERNA (master PG), não casa do cluster — mesmo com o 11º nó us no anel:
+    # só vira casa do cluster se a HomeTable tiver registro explícito (senão o ack ia ao AckOutbox e
+    # morria em no_home → ack_outbox_dropped)
+    ext? = fn h -> h in Config.fanout_skip_regions() and not match?({^h, _, :explicit}, ChatyyRouter.HomeTable.lookup(cid)) end
+
     cluster_home? =
       case rows |> Enum.map(&elem(&1, 1)) |> Enum.uniq() do
         [] -> elem(ChatyyRouter.HomeTable.lookup(cid), 0) in regions
-        homes -> Enum.any?(homes, &(&1 in regions))
+        homes -> Enum.any?(homes, &(&1 in regions and not ext?.(&1)))
       end
 
     if cluster_home?, do: ChatyyRouter.AckOutbox.add(cid, device, upto)
@@ -122,6 +127,20 @@ defmodule ChatyyRouter.Fanout do
     end
   end
 
+  @doc """
+  Igual a `fanout/1`, mas não espera: o leaf e o hub chamam o /fanout com timeout de 300 ms e a resolução
+  de destinos (diretório + presença perguntada ao cluster, ~8×RTT no pior caso) passava disso → eles
+  contavam "fail" com a entrega feita. Ordem por conversa preservada (mesmo shard, fila do GenServer).
+  """
+  def fanout_async(req) do
+    if ChatyyRouter.Flags.fanout?() do
+      GenServer.cast(name(req.cid), {:fanout, req})
+      {:ok, %{queued: true}}
+    else
+      {:error, :disabled}
+    end
+  end
+
   def pending, do: Enum.sum(for i <- 0..(@shards - 1), do: GenServer.call(:"rt_fanout_#{i}", :pending))
 
   @impl true
@@ -133,7 +152,9 @@ defmodule ChatyyRouter.Fanout do
   @impl true
   def handle_call(:pending, _f, s), do: {:reply, map_size(s.pend), s}
 
-  def handle_call({:fanout, req}, _f, s) do
+  def handle_call({:fanout, req}, _f, s), do: run(req, s)
+
+  defp run(req, s) do
     t0 = System.monotonic_time(:microsecond)
     devs =
       case req[:devices] do
@@ -166,9 +187,9 @@ defmodule ChatyyRouter.Fanout do
         meta: req[:meta] || %{}
       }
 
-      regions = Config.region_names()
+      regions = Config.region_names() -- Config.fanout_skip_regions()
       {inside, outside} = Enum.split_with(devs, fn {_, r} -> r in regions end)
-      # aparelho fora do cluster (ex.: WS direto no US) fica no caminho de hoje
+      # aparelho fora do cluster ou em região pulada (WS direto no hub US) fica no caminho de hoje
       if outside != [], do: Telemetry.execute([:chatyy_router, :fanout, :outside], %{count: length(outside)})
       by_region = Enum.group_by(inside, &elem(&1, 1), &elem(&1, 0))
       for {r, ds} <- by_region, do: Net.cast(r, ChatyyRouter.Delivery.name(msg.cid), {:deliver, msg, ds})
@@ -181,6 +202,22 @@ defmodule ChatyyRouter.Fanout do
   end
 
   @impl true
+  def handle_cast({:fanout, req}, s) do
+    {:reply, res, s} =
+      try do
+        run(req, s)
+      rescue
+        _ -> {:reply, {:error, :crash}, s}
+      end
+
+    case res do
+      {:error, e} -> Telemetry.execute([:chatyy_router, :fanout, :async_error], %{count: 1}, %{error: e})
+      _ -> :ok
+    end
+
+    {:noreply, s}
+  end
+
   def handle_cast({:ext_stored, cid, seq, region}, s) do
     key = {cid, seq}
 

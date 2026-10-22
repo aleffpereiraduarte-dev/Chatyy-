@@ -18,6 +18,8 @@ defmodule ChatyyRouter.Config do
     ROUTER_LOG_MAX_MB  teto de disco POR tabela de log (padrão 20480) → put = {:error, :disk_full}
     ROUTER_HOT_MS    janela do cache quente de corpos recém-gravados (padrão 60000)
     ROUTER_FANOUT    1|0 — R1: aceita /fanout (entrega de mensagem cuja casa é externa, ex. US)
+    ROUTER_FANOUT_SKIP_REGIONS  regiões que o /fanout não entrega (padrão "us" = WS direto no hub US)
+    ROUTER_PRESENCE_OWN_REGION  presença local só conta socket com esta região (padrão "us" no nó us)
     ROUTER_CTL_PORT  porta HTTP de controle em 127.0.0.1 (padrão 4790)
     ROUTER_FLAGS_FILE  kill switch (RT_ROUTE=0 desliga)
     ROUTER_HUB_URL   presença/entrega do hub Go (stub; não chamado no protótipo)
@@ -69,6 +71,32 @@ defmodule ChatyyRouter.Config do
   def region, do: get(:region) || "local"
   def regions, do: get(:regions, [{region(), node()}])
   def region_names, do: Enum.map(regions(), &elem(&1, 0))
+
+  @doc """
+  Regiões que o R1 `/fanout` NÃO entrega (ROUTER_FANOUT_SKIP_REGIONS, padrão "us"): socket direto no hub US
+  já recebeu pelo broadcast do próprio hub (o rt_fanout_hub roda DEPOIS dele) e o hub não tem dedupe
+  fastIDs/rootIDs como o leaf — entregar de novo lá só duplicaria.
+  """
+  def fanout_skip_regions do
+    case get(:fanout_skip_regions, "us") do
+      l when is_list(l) -> l
+      s -> String.split(to_string(s), ",", trim: true)
+    end
+  end
+
+  @doc """
+  Presença local só conta socket desta origem (ROUTER_PRESENCE_OWN_REGION). No nó us o /rt/presence é o do
+  HUB, que enxerga TAMBÉM os sockets que chegam pelos leafs (região = a do leaf): sem o filtro o nó us
+  diria "online aqui" para todo mundo. Padrão: "us" no nó us; nos edges (leaf só vê os próprios) sem filtro.
+  """
+  def presence_own_region do
+    case get(:presence_own_region) do
+      nil -> if region() == "us", do: "us", else: nil
+      "" -> nil
+      "*" -> nil
+      v -> to_string(v)
+    end
+  end
   def sisters, do: get(:sisters, %{})
 
   @doc "Regiões que nunca servem de irmã/sucessora de outras (ROUTER_NEVER_SISTER=\"us\": o US só observa/recebe)."

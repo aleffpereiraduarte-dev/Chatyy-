@@ -145,19 +145,38 @@ defmodule ChatyyRouter.Hub.Http do
   # presença é por LEAF (cada leaf só conhece os próprios sockets): online aqui = esta região;
   # senão pergunta aos roteadores das outras regiões (ChatyyRouter.Presence), sem passar pelo US.
   defp fetch_region(d) do
-    case local_online(d) do
+    email = ChatyyRouter.Directory.email_of_device(d)
+
+    case local_online(d, email) do
       true -> {:ok, ChatyyRouter.Net.me()}
-      false -> ChatyyRouter.Presence.ask_cluster(d)
+      false -> ChatyyRouter.Presence.ask_cluster(d, email)
       err -> err
     end
   end
 
-  @doc "O aparelho tem socket no leaf DESTE edge? true | false | {:error, _}"
-  def local_online(d) do
-    case request("GET", "/rt/presence?device=" <> URI.encode_www_form(to_string(d)), "") do
+  @doc """
+  O aparelho tem socket no leaf DESTE edge? true | false | {:error, _}
+
+  Correção R1 (22/10): o app de hoje NÃO manda e2ee5_device no auth do WS → o socket fica sem aparelho
+  ("" no leaf, "?" no hub) e `?device=D` nunca casava → todo destino "offline" → região caía na do
+  próprio nó. Agora, com o e-mail do dono (diretório ou quem perguntou), consulta `?email=E` e conta o
+  socket do aparelho D OU sem aparelho dessa conta (o leaf entrega por e-mail a esse socket). Nunca conta
+  socket de outro aparelho marcado. Sem e-mail conhecido: `?device=D` como antes.
+  No nó us (hub) só conta socket cuja origem é o próprio US (`Config.presence_own_region/0`).
+  """
+  def local_online(d, email \\ nil) do
+    d = to_string(d)
+    email = email || ChatyyRouter.Directory.email_of_device(d)
+
+    path =
+      if is_binary(email) and email != "",
+        do: "/rt/presence?email=" <> URI.encode_www_form(email),
+        else: "/rt/presence?device=" <> URI.encode_www_form(d)
+
+    case request("GET", path, "") do
       {:ok, 200, resp} ->
         devs = Map.get(decode(resp) || %{}, "devices", [])
-        Enum.any?(devs, &(&1["online"] == true))
+        Enum.any?(devs, &present?(&1, d, Config.presence_own_region()))
 
       {:ok, code, _} ->
         Telemetry.execute([:chatyy_router, :hub, :presence_error], %{count: 1}, %{http: code})
@@ -168,6 +187,13 @@ defmodule ChatyyRouter.Hub.Http do
         {:error, e}
     end
   end
+
+  @doc false
+  def present?(e, d, own) when is_map(e) do
+    e["online"] == true and e["device"] in [d, "", "?", nil] and (own == nil or e["region"] == own)
+  end
+
+  def present?(_, _, _), do: false
 
   defp prune(now) do
     :ets.select_delete(@cache, [{{:_, :_, :"$1"}, [{:<, :"$1", now - @ttl_ms}], [true]}])

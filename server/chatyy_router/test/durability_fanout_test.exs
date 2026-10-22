@@ -102,6 +102,21 @@ defmodule ChatyyRouter.DurabilityFanoutTest do
       eventually(fn -> on(c, "a", ChatyyRouter.Fanout, :pending, []) == 0 end)
     end
 
+    test "fanout_async (POST /fanout) volta na hora e entrega; região pulada (WS direto no hub US) fica fora", %{c: c} do
+      on(c, "b", TestProbe, :start, ["fa1", false])
+      on(c, "c", TestProbe, :start, ["fa2", false])
+      on(c, "a", Application, :put_env, [:chatyy_router, :fanout_skip_regions, ["c"]])
+      req = %{cid: "us-3", seq: 11, home: "us", devices: [{"fa1", "b"}, {"fa2", "c"}], body: "z"}
+      assert {:ok, %{queued: true}} = on(c, "a", ChatyyRouter.Fanout, :fanout_async, [req])
+      eventually(fn -> on(c, "b", TestProbe, :seqs, ["fa1"]) == [11] end)
+      eventually(fn -> on(c, "a", ChatyyRouter.Fanout, :pending, []) == 0 end)
+      Process.sleep(200)
+      assert on(c, "c", TestProbe, :seqs, ["fa2"]) == []
+      on(c, "a", Application, :delete_env, [:chatyy_router, :fanout_skip_regions])
+      on(c, "a", ChatyyRouter.Flags, :override, [:fanout, false])
+      assert {:error, :disabled} = on(c, "a", ChatyyRouter.Fanout, :fanout_async, [req])
+    end
+
     test "kill switch RT_FANOUT=0 → disabled", %{c: c} do
       on(c, "a", ChatyyRouter.Flags, :override, [:fanout, false])
       assert {:error, :disabled} = on(c, "a", ChatyyRouter.Fanout, :fanout, [%{cid: "k", seq: 1, devices: [{"z", "b"}]}])
