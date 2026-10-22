@@ -37,9 +37,9 @@ pub use crate::metrics::MetricsSnapshot;
 pub use crate::transport::{actions, HttpResponse, HttpTransport, TransportError};
 
 /// Versão do contrato que este núcleo implementa (CONTRATO, cabeçalho).
-pub const CONTRACT_VERSION: &str = "e2ee5-contrato/1.5";
+pub const CONTRACT_VERSION: &str = "e2ee5-contrato/1.6";
 
-/// `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.5; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"`.
+/// `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.6; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"`.
 #[cfg_attr(feature = "uniffi", uniffi::export)]
 pub fn core_version() -> String {
     format!(

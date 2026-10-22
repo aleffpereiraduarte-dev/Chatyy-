@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Versão** | `e2ee5-contrato/1.5` (1.5.0) — 21/10/2026 (1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n; 1.3: códigos/campos do WP-07, `e2e_np` e flag NSE do WP-10, fila NSE→app do núcleo; 1.4: §2.8 tipos ricos e mídia cifrada do WP-09/WP-11; 1.5: §0.3bis privada inteira, §4.6 `e2ee5x_*` e denúncia do WP-16) |
+| **Versão** | `e2ee5-contrato/1.6` (1.6.0) — 21/10/2026 (1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n; 1.3: códigos/campos do WP-07, `e2e_np` e flag NSE do WP-10, fila NSE→app do núcleo; 1.4: §2.8 tipos ricos e mídia cifrada do WP-09/WP-11; 1.5: §0.3bis privada inteira, §4.6 `e2ee5x_*` e denúncia do WP-16; 1.6: `sender_uid`, `members[].email`, códigos `{"sys"}`, leaf/`chat_send_rejected`, `gen` do `call_sdp`) |
 | **Dono** | WP-00 (líder/arquiteto). Mudanças só por PR neste arquivo + entrada em `CHANGELOG.md`. |
 | **Implementação de referência** | `native/chatyy-crypto` (WP-01) e o servidor falso dos testes `native/chatyy-crypto/tests/common/fake_server.rs` (conformidade do WP-05). |
 | **Base** | `/root/e2ee-2026-10-21/PLANO.md` + DECISÕES DO FOUNDER (21/10: todas as recomendações aprovadas, "nível WhatsApp"). |
@@ -186,6 +186,7 @@ Opcionais comuns (qualquer `t`):
 | `edit_of` | mid editada (linha de edição) | versões/ordem |
 | `deleted_for_all`, `pinned`, `starred`, recibos, reações (alvo) | como hoje | estado de metadado |
 | tamanho do envelope, hora do servidor, remetente | como hoje | — |
+| `sender_uid` (string) | uid do remetente (`e2ee5_uid`) em **toda linha cifrada**: `chat_messages`, `chat_load_around`, `chat_sync`, `chat_list.last_message`, frames WS `chat_message`/`chat_summary`, eco/`chat_send_ack` (PHP, hub e leaf) e Rust `/messages`/`/sync`. Conversa normal: ausente | o cliente passa este valor como `DecryptInput.sender_uid` (não deriva do e-mail) |
 
 **Nunca** em claro: texto, legenda, citação, nome de arquivo, URL de prévia, blurhash,
 miniatura (`thumb_b64`), transcrição, tradução, coordenadas, opções de enquete, emoji de reação
@@ -209,6 +210,21 @@ miniatura (`thumb_b64`), transcrição, tradução, coordenadas, opções de enq
 | `e2ee_off` | `by_uid`, `reason` (`user`/`admin`/`kill`) | servidor, rebaixamento explícito |
 | `e2ee_member_update` | `uid` | servidor ("Fulano precisa atualizar") — opcional |
 | `call_card`, `game`, `watch_session`, `gift` | ids e números, sem texto livre (D7) | servidor/WP-16 |
+| `member_added`, `member_removed`, `member_left` | `by_uid`, `member_uid` | chat.php |
+| `member_joined` | `member_uid`, `via`: `approval`\|`link`\|`invite` | chat.php |
+| `admin_set` / `owner_transfer` | `by_uid`, `member_uid`, `on` | chat.php |
+| `group_updated` | `by_uid`, `field`: `name`\|`description`\|`avatar` (o valor novo NÃO vai; o cliente lê do perfil do grupo) | chat.php |
+| `pin` | `by_uid`, `mid`, `on` | chat.php |
+| `disappearing` / `slow_mode` | `by_uid`, `seconds` | chat.php |
+| `admin_only`, `screenshot_alerts`, `adv_privacy`, `vanish`, `forwarding_admins`, `members_edit_info`, `hide_members`, `join_approval` | `by_uid`, `on` | chat.php |
+| `screenshot` | `by_uid`, `blocked`, `view_once` | chat.php |
+| `meetup_update` | `by_uid`, `mid`, `cancel` | chat.php |
+| `call_scheduled` / `call_schedule_cancelled` | `by_uid`, ids (o `meta` ainda leva o título em claro: pendência WP-13/16) | chat.php |
+
+Regra (WP-07, DDL 008): em conversa cifrada o banco **recusa** `type='system'` cujo `content` não
+comece com `{"sys":"` (erro P0E51). Campos de pessoa são sempre `*_uid`, nunca `*_email`.
+Criação de grupo/canal fica fora (a conversa nasce em modo 0); canal e bot nunca cifram.
+Cliente: `{"sys":<código desconhecido>}` mostra texto genérico, nunca JSON cru.
 
 "O código de segurança de X mudou" e "aparelho novo de X" são **locais** (gerados pelo cliente
 a partir de `SyncResult.identity_changed_uids`), não vão ao servidor.
@@ -269,7 +285,7 @@ Todos têm `v:1`. Evento em claro com tipo `chatyy.*` é **descartado**.
 | Tipo | Conteúdo | Uso / fase |
 |---|---|---|
 | `chatyy.call_key` | `{v, call_id, conv_id, key (b64 32 B), index (u32), ts}` | chave LiveKit E2EE por ligação; rotação = `index+1` (F5) |
-| `chatyy.call_sdp` | `{v, call_id, kind: "offer"\|"answer"\|"candidate"\|"bye", sdp?, candidate?, mid?, mline?}` | P2P 1:1 DTLS-SRTP autenticado (F5) |
+| `chatyy.call_sdp` | `{v, call_id, kind: "offer"\|"answer"\|"candidate"\|"bye", gen, sdp?, candidate?, mid?, mline?}` — `gen` (int, 0 = 1ª negociação) = geração da negociação (ICE restart), igual ao `call_p2p_*` do hub; o receptor casa por `(call_id, kind, gen)` | P2P 1:1 DTLS-SRTP autenticado (F5) |
 | `chatyy.draft` | `{v, conv_id, text, ts}` | sync de rascunho entre MEUS aparelhos (opcional) |
 | `chatyy.decrypt_report` | `{v, conv_id, mid, session_id, reason, ts}` | "não consegui decifrar" → remetente reenvia chave (`rotate_conversation` + reenvio) |
 | `chatyy.key_resend` | `{v, conv_id, session_id}` | pedido de reenvio de chave a outro membro (a biblioteca já pede aos MEUS aparelhos) |
@@ -304,7 +320,7 @@ O aparelho atual nunca recebe o próprio evento.
 ### 4.2 Ações
 
 **4.2.1 `e2ee5_status`** — sempre disponível.
-Req `{}` → `{"uid":"42","user_id":"@u42:chatyy","contract":"e2ee5-contrato/1.5","enabled":true,
+Req `{}` → `{"uid":"42","user_id":"@u42:chatyy","contract":"e2ee5-contrato/1.6","enabled":true,
 "kill":false,"flags":{"e2ee5_native":true,"e2ee5_media":false,"e2ee5_calls":false,
 "e2ee5_link":false,"e2ee5_backup":false,"e2ee5_push_decrypt":false},"device_limit":5,
 "devices":[{"device_id":"P…","kind":"P","last_seen":1729500000000,"signed":true}],
@@ -426,10 +442,12 @@ Rate limit: 10/h por uid (tentativas de restauração).
   device_id`, sem `password_enc`), pré-registra o device_id para o uid e conta no limite.
 
 **4.2.19 `e2ee5_conversation_state`** Req `{"conv_id":"971"}` → `{"conv_id":"971",
-"e2ee_mode":1,"since_pts":12345,"members":[{"uid":"7","capable":true},{"uid":"42","capable":true}],
+"e2ee_mode":1,"since_pts":12345,"members":[{"uid":"7","capable":true,"email":"a@chatyy.com.br"},{"uid":"42","capable":true,"email":"b@chatyy.com.br"}],
 "can_enable":true,"blocked_reason":null}`. `blocked_reason` ∈ `member_needs_update`,
 `not_allowed`, `kill`, `kids`, `bot`, `public`. Também: `{"conv_id","set":1}` liga (se
 `can_enable`) e `{"conv_id","set":0,"confirm":true}` rebaixa com mensagem `e2ee_off`.
+`members[].email` é o e-mail **canônico** (§1.1); as linhas de mensagem podem trazer
+`sender_email` com `@onemundo.com.br` — canonicalizar antes de comparar, ou usar `sender_uid`.
 
 **4.2.20 `e2ee5_metrics`** Req `MetricsSnapshot` do núcleo (§6.9) + `{"platform","app_version"}`
 → `{}`. Agrega por dia/plataforma em `e2ee5_metrics`. Nunca ids de mensagem.
@@ -557,6 +575,19 @@ conteúdo): marca a mensagem como falha e, em `e2ee5_not_e2ee`/`plaintext_refuse
 estado da conversa e recifra/reenvia se fizer sentido. Flag do hub desligada ou conta fora da
 allowlist ⇒ `chat_send_fallback` com `reason: "e2ee5_off"` (o cliente usa o HTTP, que impõe a mesma regra).
 
+### 5.4bis Leaf regional e aceite regional (WP-06b)
+- `LEAF_E2EE5_LOCAL=1` (arquivo de flags do edge, junto com `HUB_E2EE5=1` e a conta em
+  `HUB_E2EE5_ALLOW`): envelope `{"e2e":5…}` válido, com a réplica mostrando `e2ee_mode=1`, é
+  aceito **no edge** pelo mesmo caminho do texto (sem RTT ao US), sem ler conteúdo, com
+  `reply_to {id}` e `sender_uid` no ack/frames. Todo o resto sobe ao US, que é a autoridade da
+  recusa. O banco transforma em tombstone (`content ''`) qualquer lote com descompasso de modo.
+- `REGIONAL_ACCEPT_E2EE=on` / `REGIONAL_ACCEPT_E2EE_MEDIA=on` (F3): o `regional-accept.php`
+  passa envelope (e mídia cifrada sem nenhum campo de mídia em claro) ao spool do edge.
+- **`chat_send_rejected`** (rejeição tardia do dreno do aceite regional, frame já existente)
+  passa a levar **`data.code`** com os mesmos códigos do §5.4 (`e2ee5_plaintext_refused`,
+  `e2ee5_not_e2ee`, `e2ee5_bad_request`…). Cliente: em `e2ee5_*`, atualizar
+  `conversation_state` e recifrar/reenviar.
+
 ### 5.5 Canal de entrega dos avisos
 O PHP publica `e2ee5_td`/`e2ee5_devices`/`conv_e2ee` em `chat_user_<e-mail canônico>` (§1.1).
 O hub entrega no canal canônico **e** no alias `@onemundo.com.br` correspondente (o socket pode
@@ -598,7 +629,7 @@ Timeout recomendado: 15 s (NSE: 5 s).
 ### 6.3 Funções livres
 | Função | Retorno |
 |---|---|
-| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.5; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
+| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.6; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
 | `new_device_id(prefix: "P"\|"W"\|"T"\|"X")` | `String` |
 | `envelope_version(content)` | `Option<u64>` (5, ou outro N → placeholder "Atualize") |
 | `encrypt_bytes(plain: bytes) / decrypt_bytes(data: bytes, info_json)` | `EncryptedBytes{data, info_json}` / bytes |

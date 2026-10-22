@@ -1,5 +1,14 @@
 # Contrato E2EE v5 — histórico
 
+## e2ee5-contrato/1.6 — 21/10/2026 (WP-00, pedidos WP-07/WP-06b/WP-13)
+- §2.5 `sender_uid` em toda linha/frame cifrado (PHP, hub, leaf, Rust); o cliente o usa no decrypt.
+- §2.7 códigos `{"sys":…}` estruturados (member_*, admin_set, owner_transfer, group_updated, pin,
+  disappearing, slow_mode, flags on/off, screenshot, meetup_update, call_scheduled…); campos de
+  pessoa `*_uid`; o banco recusa system sem `{"sys":"` em conversa cifrada (DDL 008, P0E51).
+- §4.2.19 `members[].email` (canônico).
+- §5.4bis leaf `LEAF_E2EE5_LOCAL`, `REGIONAL_ACCEPT_E2EE(_MEDIA)` e `chat_send_rejected.data.code`.
+- §3 `chatyy.call_sdp.gen` (geração da negociação / ICE restart).
+
 ## e2ee5-contrato/1.5 — 21/10/2026 (WP-00, a pedido do WP-16)
 - §0.3bis: conversa `e2ee_mode=1` é privada INTEIRA para leitores do servidor (inclusive o texto
   antigo antes de `e2ee_since_pts`); resposta `e2ee5_server_read_refused` / frase da Bia.
