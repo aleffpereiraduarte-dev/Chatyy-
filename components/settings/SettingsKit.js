@@ -488,7 +488,12 @@ export function SettingsScreen({ title, children, headerRight, onBack, contentSt
           // [2026-10-22] largeTitle=false: tela que já tem o título grande no próprio cartão (plano).
           largeTitle: largeTitle !== false,
           contentStyle: { backgroundColor: g.pageBg },
+          // [2026-10-22 plano-titulo] largeTitle=false precisa DESLIGAR explicitamente (a rota pode nascer com headerLargeTitle).
+          ...(largeTitle === false && Platform.OS === 'ios' ? { headerLargeTitle: false } : {}),
           ...(opaqueHeader ? {
+            // [2026-10-22 plano-titulo] sólido de verdade mesmo se a rota nasceu com vidro (_NATIVE_HDR_GLASS).
+            headerTransparent: false,
+            headerBlurEffect: undefined,
             headerStyle: { backgroundColor: g.pageBg },
             headerShadowVisible: false,
             ...(Platform.OS === 'ios' ? { headerLargeStyle: { backgroundColor: g.pageBg } } : {}),

@@ -17,9 +17,12 @@ export default function SettingsOneScreen() {
   const { plan } = usePlanState();
   const title = plan && plan.isPaid && plan.planId !== 'free' ? planDisplayName(plan.planId, t) : (t('chatyyOne.title') || PLAN_NAME);
   return (
-    // [2026-10-22] título pequeno: o cartão do plano já mostra 'Chatyy Pro' grande (o título grande
-    // ficava preso sobre o cartão ao rolar, print 20261022-075733).
-    <SettingsScreen title={title} largeTitle={false} contentStyle={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
+    // [2026-10-22 plano-titulo] padrão Ajustes do iPhone: título grande que ROLA com o conteúdo e
+    // colapsa no título pequeno centralizado da barra. Barra SÓLIDA (opaqueHeader, = manage-storage):
+    // no vidro transparente o título grande ficava fixo e o cartão passava por baixo
+    // (prints 20261022-075733 e 20261022-213156; o largeTitle={false} anterior não pegava porque
+    // a rota no _layout já nascia com headerLargeTitle).
+    <SettingsScreen title={title} opaqueHeader contentStyle={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
       <ChatyyOnePanel />
     </SettingsScreen>
   );
