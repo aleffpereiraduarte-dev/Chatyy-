@@ -188,7 +188,12 @@ defmodule ChatyyRouter.Fanout do
       }
 
       regions = Config.region_names() -- Config.fanout_skip_regions()
-      {inside, outside} = Enum.split_with(devs, fn {_, r} -> r in regions end)
+      # RT_OFFLINE=skip: aparelho sem presença em NENHUMA região (região = fallback deste nó) não é guardado
+      # aqui — ele vai reconectar noutro edge e esta inbox nunca seria lida; fica no caminho de hoje (root+push)
+      skip_off? = ChatyyRouter.Flags.get(:offline_skip) == true and req[:devices] == nil
+      {inside, outside} =
+        Enum.split_with(devs, fn {d, r} -> r in regions and not (skip_off? and Directory.fallback?(d)) end)
+      if skip_off? and outside != [], do: ChatyyRouter.Metrics.inc(:fanout_offline_skip, Enum.count(outside, fn {d, _} -> Directory.fallback?(d) end))
       # aparelho fora do cluster ou em região pulada (WS direto no hub US) fica no caminho de hoje
       if outside != [], do: Telemetry.execute([:chatyy_router, :fanout, :outside], %{count: length(outside)})
       by_region = Enum.group_by(inside, &elem(&1, 1), &elem(&1, 0))

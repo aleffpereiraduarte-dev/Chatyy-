@@ -8,12 +8,16 @@ defmodule ChatyyRouter.Flags do
                    PADRÃO 0 — R1 só liga explicitamente.
     RT_HUB=http    entrega pelo hub/leaf real (POST /rt/deliver em ROUTER_HUB_URL);
                    sem isso, ROUTER_HUB_MODULE (padrão Stub = não entrega).
+    RT_OFFLINE=skip  R1 (22/10): aparelho SEM presença em nenhuma região e sem região real
+                   conhecida NÃO é guardado/entregue no nó do remetente (que não é onde ele
+                   vai reconectar): fica no caminho de hoje (root + push + sync). Padrão: desligado
+                   (comportamento antigo = região deste nó).
   `override/2` (Control POST /flags?route=&fanout=) vale até o restart.
   """
   use GenServer
   require Logger
 
-  @defaults %{route: true, fanout: false, hub_http: false}
+  @defaults %{route: true, fanout: false, hub_http: false, offline_skip: false}
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -22,7 +26,7 @@ defmodule ChatyyRouter.Flags do
   def get(k), do: :persistent_term.get({__MODULE__, k}, @defaults[k])
 
   def override(v) when is_boolean(v), do: override(:route, v)
-  def override(k, v) when k in [:route, :fanout, :hub_http] and is_boolean(v), do: GenServer.call(__MODULE__, {:override, k, v})
+  def override(k, v) when k in [:route, :fanout, :hub_http, :offline_skip] and is_boolean(v), do: GenServer.call(__MODULE__, {:override, k, v})
 
   @impl true
   def init(_) do
@@ -45,10 +49,12 @@ defmodule ChatyyRouter.Flags do
         _ -> ""
       end
 
-    for {k, var} <- [route: "RT_ROUTE", fanout: "RT_FANOUT", hub_http: "RT_HUB"], not Map.has_key?(s.override, k) do
+    for {k, var} <- [route: "RT_ROUTE", fanout: "RT_FANOUT", hub_http: "RT_HUB", offline_skip: "RT_OFFLINE"],
+        not Map.has_key?(s.override, k) do
       v =
         cond do
           k == :hub_http -> String.contains?(body, "RT_HUB=http")
+          k == :offline_skip -> String.contains?(body, "RT_OFFLINE=skip")
           String.contains?(body, var <> "=0") -> false
           String.contains?(body, var <> "=1") -> true
           true -> @defaults[k]

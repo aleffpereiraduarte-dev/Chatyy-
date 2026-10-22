@@ -139,23 +139,50 @@ defmodule ChatyyRouter.Directory do
   end
 
   @doc "Região atual do aparelho (presença do hub, com cache curto e fallback)."
-  def region(device) do
+  def region(device), do: elem(region_info(device), 0)
+
+  @doc """
+  {região, origem}: origem `:live` (presença agora), `:last` (última região REAL vista) ou
+  `:fallback` (nunca visto online: região deste nó). Correção 22/10: o fallback não vira
+  "última região conhecida" (antes, 1 consulta offline grudava o aparelho no nó do remetente).
+  """
+  def region_info(device) do
     now = System.monotonic_time(:millisecond)
 
     case :ets.lookup(@rcache, device) do
-      [{_, r, exp}] when exp > now ->
-        r
+      [{_, r, exp, src}] when exp > now ->
+        {r, src}
 
       cached ->
-        r =
+        live =
           case safe_region_of(device) do
             {:ok, r} when is_binary(r) -> if r in Config.region_names(), do: r, else: nil
             _ -> nil
           end
 
-        r = r || (match?([{_, _, _}], cached) && elem(hd(cached), 1)) || Net.me()
-        :ets.insert(@rcache, {device, r, now + presence_ttl()})
-        r
+        last =
+          case cached do
+            [{_, r, _, src}] when src != :fallback and is_binary(r) -> r
+            _ -> nil
+          end
+
+        {r, src} =
+          cond do
+            live -> {live, :live}
+            last -> {last, :last}
+            true -> {Net.me(), :fallback}
+          end
+
+        :ets.insert(@rcache, {device, r, now + presence_ttl(), src})
+        {r, src}
+    end
+  end
+
+  @doc "true se a região do aparelho no cache é só o fallback (sem presença em lugar nenhum)."
+  def fallback?(device) do
+    case safe_lookup(@rcache, device) do
+      [{_, _, _, :fallback}] -> true
+      _ -> false
     end
   end
 
