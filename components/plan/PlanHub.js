@@ -520,7 +520,7 @@ export default function PlanHub() {
     { ok: true, txt: t('planHub.fFile', { size: fileOf(id) }) },
     { ok: true, txt: t('planHub.fBackup', { n: backupOf(id) }) },
     membersOf(id) > 1 ? { ok: true, txt: t('planHub.fFamily', { n: membersOf(id) }) } : { ok: false, txt: t('planHub.fFamilyNo') },
-    { ok: id !== 'free', txt: t('planHub.fStickers') },
+    // [2026-10-22 founder] reagir com figurinha é de TODOS agora (plano cobra só nuvem) → fora da comparação.
   ];
   const cta = (id) => {
     const curRank = PLAN_RANK[planId] || 0; const r = PLAN_RANK[id] || 0;
@@ -650,7 +650,6 @@ export default function PlanHub() {
       {isFamilyMember ? (
         <SettingsRow icon={IconUsers} title={t('planHub.iFamilyMember')} subtitle={plan.familyAdmin} />
       ) : null}
-      {isPaid ? <SettingsRow icon={IconSmile} title={t('planHub.iStickers')} subtitle={t('planHub.iStickersSub')} value={t('planHub.included')} /> : null}
     </SettingsGroup>
   );
 
