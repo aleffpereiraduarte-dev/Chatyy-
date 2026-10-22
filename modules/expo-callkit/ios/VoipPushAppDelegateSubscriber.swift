@@ -865,6 +865,8 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 // (see provider:perform handlers below) so the timer only
                 // fires on a genuine no-answer.
                 VoipPushAppDelegateSubscriber.scheduleRingTimeout(uuid: uuid, callId: callId, provider: provider)
+                // [2026-10-22 stalecall] vigia do toque pelo servidor (fim perdido em rede ruim).
+                VoipPushAppDelegateSubscriber.startServerRingWatch(uuid: uuid, callId: callId, provider: provider)
             }
             self?.persistPendingCall(
                 callId: callId,
@@ -1215,6 +1217,114 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         let t = kRingTimers.removeValue(forKey: uuid)
         kRingTimersLock.unlock()
         t?.cancel()
+    }
+
+    // ─── [2026-10-22 stalecall] Vigia do toque pelo SERVIDOR ─────────────────
+    // call_1792672771124_ah9s2jvah ("tocou sem parar", rede ruim): o fim da ligação
+    // não chegou por WS nem por push de cancelamento e o CallKit seguiu tocando uma
+    // ligação morta até o usuário atender. WhatsApp-level: enquanto um convite toca
+    // (sem atender), pergunta ao servidor aos 10/18/26/34 s (call_status status=query,
+    // só leitura, ~0,2 s). Terminal (cancelada/perdida/encerrada/recusada/ocupado) ⇒
+    // encerra o CallKit como fim remoto (mesmo caminho de um call_end do WS). Para
+    // sozinha ao atender/encerrar. Kill: App Group bool "ring_watch_off".
+    private static let kRingWatchDelays: [Double] = [10, 18, 26, 34]
+    private static var kRingWatchActive = Set<String>()
+    private static let kRingWatchLock = NSLock()
+
+    static func startServerRingWatch(uuid: UUID, callId: String, provider: CXProvider?) {
+        guard !callId.isEmpty, callId.hasPrefix("call_") else { return }
+        if UserDefaults(suiteName: kAppGroupId)?.bool(forKey: "ring_watch_off") == true { return }
+        kRingWatchLock.lock()
+        if kRingWatchActive.contains(callId) { kRingWatchLock.unlock(); return }
+        kRingWatchActive.insert(callId)
+        kRingWatchLock.unlock()
+        VoipPushAppDelegateSubscriber.ringWatchTick(uuid: uuid, callId: callId, provider: provider, step: 0)
+    }
+
+    private static func ringWatchStop(_ callId: String) {
+        kRingWatchLock.lock()
+        kRingWatchActive.remove(callId)
+        kRingWatchLock.unlock()
+    }
+
+    private static func ringWatchTick(uuid: UUID, callId: String, provider: CXProvider?, step: Int) {
+        guard step < kRingWatchDelays.count else { VoipPushAppDelegateSubscriber.ringWatchStop(callId); return }
+        let prev: Double = step == 0 ? 0 : kRingWatchDelays[step - 1]
+        let wait = max(1.0, kRingWatchDelays[step] - prev)
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+            if voipCallIdRecentlyEnded(callId) { VoipPushAppDelegateSubscriber.ringWatchStop(callId); return }
+            guard let call = CXCallObserver().calls.first(where: { $0.uuid == uuid }),
+                  !call.hasEnded, !call.hasConnected, !call.isOutgoing else {
+                VoipPushAppDelegateSubscriber.ringWatchStop(callId)
+                return
+            }
+            VoipPushAppDelegateSubscriber.queryServerCallState(callId: callId) { terminal, answered, state in
+                DispatchQueue.main.async {
+                    if terminal {
+                        // Ainda tocando? (pode ter sido atendida/encerrada durante a ida ao servidor)
+                        let still = CXCallObserver().calls.contains(where: { $0.uuid == uuid && !$0.hasEnded && !$0.hasConnected })
+                        VoipPushAppDelegateSubscriber.ringWatchStop(callId)
+                        guard still, !voipCallIdRecentlyEnded(callId) else { return }
+                        nativeCallDiag("ring_watch_server_end", callId, "state=\(state) step=\(step)")
+                        VoipPushAppDelegateSubscriber.cancelRingTimeout(uuid: uuid)
+                        voipNoteCallIdEnded(callId, reason: "server_\(state)")
+                        kPendingAnswerPayloadsLock.lock()
+                        kPendingAnswerPayloads.removeValue(forKey: uuid)
+                        kPendingAnswerPayloadsLock.unlock()
+                        let p = provider ?? VoipPushAppDelegateSubscriber.earlyProvider
+                        p?.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+                        NativeCallRoom.shared.teardownUnansweredPreconnect(callId: callId, reason: "server_ended")
+                        // Mesmo desmonte de um call_end vindo do WS (UI nativa, mapas, filtro).
+                        CallSignalWs.shared.handleServerCallEnded(callId: callId, reason: "server_\(state)")
+                        kCallIdToUUIDLock.lock()
+                        kCallIdToUUID.removeValue(forKey: callId)
+                        kCallIdToUUIDLock.unlock()
+                        return
+                    }
+                    if answered { VoipPushAppDelegateSubscriber.ringWatchStop(callId); return }
+                    VoipPushAppDelegateSubscriber.ringWatchTick(uuid: uuid, callId: callId, provider: provider, step: step + 1)
+                }
+            }
+        }
+    }
+
+    /// call_status status=query (só leitura). done(terminal, answered, state); falha = (false, false, "err").
+    private static func queryServerCallState(callId: String, done: @escaping (Bool, Bool, String) -> Void) {
+        guard let ud = UserDefaults(suiteName: kAppGroupId),
+              let tok = ud.string(forKey: "auth_token"), !tok.isEmpty,
+              let base0 = ud.string(forKey: "api_base"), !base0.isEmpty else {
+            done(false, false, "no_auth")
+            return
+        }
+        let base = base0.hasSuffix("/") ? String(base0.dropLast()) : base0
+        guard let url = URL(string: "\(base)/api/email.php?action=call_status") else {
+            done(false, false, "bad_url")
+            return
+        }
+        var req = URLRequest(url: url, timeoutInterval: 4.0)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "action": "call_status", "call_id": callId, "status": "query",
+        ])
+        let box = RingWatchBgTaskBox()
+        box.id = UIApplication.shared.beginBackgroundTask(withName: "chatyy_ring_watch") { box.end() }
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            var terminal = false
+            var answered = false
+            var state = "err"
+            if let data = data,
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let d = obj["data"] as? [String: Any] {
+                terminal = (d["terminal"] as? Bool) ?? false
+                answered = (d["answered"] as? Bool) ?? false
+                state = (d["state"] as? String) ?? "unknown"
+            }
+            done(terminal, answered, state)
+            DispatchQueue.main.async { box.end() }
+        }.resume()
     }
 
     /// [phantom-ring cancel fix 2026-05-26 P0] Reverse-lookup + remove a
@@ -2041,5 +2151,15 @@ extension VoipPushAppDelegateSubscriber {
                 UserDefaults(suiteName: kAppGroupId)?.set(token, forKey: "voipTokenSent")
             }
         }.resume()
+    }
+}
+
+/// [2026-10-22 stalecall] background task da consulta do vigia do toque.
+private final class RingWatchBgTaskBox {
+    var id: UIBackgroundTaskIdentifier = .invalid
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }

@@ -452,6 +452,109 @@ object IncomingCallRegistry {
         }
     }
 
+    // ─────────── [2026-10-22 stalecall] convite velho nunca toca ───────────
+    // "" = pode tocar; senão o motivo. replay_age_ms (hub) > 45 s; server_ts (hub) ou
+    // sentTime (FCM, relógio do Google) > 60 s — e o relógio do caller (epoch no call_id)
+    // tem que concordar (> 45 s), p/ um relógio local adiantado não derrubar convite novo.
+    // > 6 h = relógio quebrado → ignora. Kill: prefs "stale_invite_off" = true.
+    fun inviteStaleWhy(ctx: Context?, callId: String, replayAgeMs: Long, serverTs: Long, fcmSentTime: Long): String {
+        try {
+            val sp = ctx?.applicationContext?.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+            if (sp?.getBoolean("stale_invite_off", false) == true) return ""
+        } catch (_: Throwable) {}
+        if (replayAgeMs > 45_000L) return "replay_age"
+        val now = System.currentTimeMillis()
+        var cidAge = -1L
+        try {
+            val m = Regex("^call_(\\d{13})_").find(callId)
+            if (m != null) cidAge = now - m.groupValues[1].toLong()
+        } catch (_: Throwable) {}
+        val callerAgrees = cidAge < 0L || cidAge > 45_000L
+        if (serverTs > 0L) {
+            val a = now - serverTs
+            if (a > 60_000L && a < 6L * 3600_000L && callerAgrees) return "server_ts"
+        }
+        if (fcmSentTime > 0L) {
+            val a = now - fcmSentTime
+            if (a > 60_000L && a < 6L * 3600_000L && callerAgrees) return "fcm_sent"
+        }
+        return ""
+    }
+
+    // ─────────── [2026-10-22 stalecall] vigia do toque pelo servidor ───────────
+    // call_1792672771124_ah9s2jvah ("tocou sem parar", rede ruim): o fim da ligação não
+    // chegou por WS nem por FCM e o aparelho seguiu tocando uma ligação morta. Enquanto
+    // ESTA ligação toca (CallRingingService.ringingCallIds), pergunta ao servidor aos
+    // 10/18/26/34 s (call_status status=query, só leitura). Terminal ⇒ dismissIncoming
+    // (mesmo desmonte de um cancel). Para ao atender/encerrar. Kill: prefs
+    // expo_callkit_prefs "ring_watch_off" = true.
+    private val ringWatchActive: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val RING_WATCH_AT_MS = longArrayOf(10_000L, 18_000L, 26_000L, 34_000L)
+
+    fun startServerRingWatch(ctx: Context, callId: String) {
+        if (callId.isEmpty() || !callId.startsWith("call_")) return
+        val app = ctx.applicationContext
+        try {
+            val sp = app.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+            if (sp.getBoolean("ring_watch_off", false)) return
+        } catch (_: Throwable) {}
+        if (!ringWatchActive.add(callId)) return
+        Thread {
+            try {
+                val t0 = System.currentTimeMillis()
+                for ((step, at) in RING_WATCH_AT_MS.withIndex()) {
+                    val sleepMs = at - (System.currentTimeMillis() - t0)
+                    if (sleepMs > 0) Thread.sleep(sleepMs)
+                    if (!CallRingingService.ringingCallIds.contains(callId)) return@Thread
+                    if (isEnded(app, callId) || isAcceptedHere(app, callId)) return@Thread
+                    val st = queryServerCallState(app, callId) ?: continue
+                    if (st.first) {
+                        if (!CallRingingService.ringingCallIds.contains(callId) || isAcceptedHere(app, callId)) return@Thread
+                        CallDiag.log("ring_watch_server_end", callId, "state=${st.third} step=$step", app)
+                        Handler(Looper.getMainLooper()).post {
+                            try { dismissIncoming(app, callId, "server_${st.third}", DisconnectCause.REMOTE, "ring_watch") } catch (_: Throwable) {}
+                        }
+                        return@Thread
+                    }
+                    if (st.second) return@Thread // atendida (aqui ou em outro aparelho)
+                }
+            } catch (_: Throwable) {
+            } finally {
+                ringWatchActive.remove(callId)
+            }
+        }.apply { isDaemon = true; name = "chatyy-ring-watch" }.start()
+    }
+
+    /** call_status status=query → (terminal, answered, state) ou null (sem resposta/erro). */
+    private fun queryServerCallState(app: Context, callId: String): Triple<Boolean, Boolean, String>? {
+        return try {
+            val sp = app.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+            val token = sp.getString("auth_token", "") ?: ""
+            val apiBase = sp.getString("api_base", "") ?: ""
+            if (token.isEmpty() || apiBase.isEmpty()) return null
+            val base = if (apiBase.endsWith("/")) apiBase.dropLast(1) else apiBase
+            val conn = (java.net.URL("$base/api/email.php?action=call_status").openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Accept", "application/json")
+                doOutput = true
+                connectTimeout = 4000
+                readTimeout = 4000
+            }
+            val body = org.json.JSONObject().apply {
+                put("action", "call_status"); put("call_id", callId); put("status", "query")
+            }.toString()
+            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            val code = conn.responseCode
+            if (code != 200) { try { conn.errorStream?.close() } catch (_: Throwable) {}; return null }
+            val txt = conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+            val d = org.json.JSONObject(txt).optJSONObject("data") ?: return null
+            if (!d.has("terminal")) return null
+            Triple(d.optBoolean("terminal", false), d.optBoolean("answered", false), d.optString("state", "unknown"))
+        } catch (_: Throwable) { null }
+    }
+
     // ───────────────────────── internals ─────────────────────────
 
     /** Drop TTL-expired bookkeeping. Cheap (maps hold a handful of entries). */

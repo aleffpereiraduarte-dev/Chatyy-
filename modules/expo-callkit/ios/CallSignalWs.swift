@@ -373,6 +373,15 @@ final class CallSignalWs: NSObject {
         }
     }
 
+    /// [2026-10-22 stalecall] O servidor (vigia do toque, call_status query) diz que a
+    /// ligação já terminou: mesmo desmonte de um `call_end` recebido pelo WS.
+    func handleServerCallEnded(callId: String, reason: String) {
+        guard !callId.isEmpty else { return }
+        queue.async { [weak self] in
+            self?.handleIncomingCallEndLocked(["call_id": callId, "reason": reason])
+        }
+    }
+
     /// [P0 2026-05-18 #1132] Open the WS now (if not already open) and keep it
     /// open across reconnects so inbound `call_invite` frames can ring CallKit.
     /// JS should call this after login + on app foreground. Idempotent.
@@ -981,6 +990,37 @@ final class CallSignalWs: NSObject {
             nativeCallDiag("ws_invite_skip_ended", callId)
             return
         }
+        // [2026-10-22 stalecall] Convite VELHO (rede ruim / replay / ponte JS atrasada) nunca
+        // toca: replay_age_ms (calculado no hub) > 45 s, ou server_ts (relógio do servidor) com
+        // > 60 s (45 s + 15 s de relógio torto; > 6 h = relógio quebrado → ignora). Marca como
+        // encerrada p/ o push VoIP atrasado da mesma ligação também não tocar.
+        do {
+            var ageMs: Double = -1
+            var src = ""
+            if let r = (obj["replay_age_ms"] as? NSNumber)?.doubleValue, r > 45_000 {
+                ageMs = r; src = "replay_age"
+            } else if let st = (obj["server_ts"] as? NSNumber)?.doubleValue, st > 0 {
+                // Desconta o relógio torto deste aparelho: menor atraso dos últimos pushes VoIP
+                // (mesma base do voip_stale_s do caminho PushKit).
+                let hist = (UserDefaults(suiteName: kAppGroupId)?.array(forKey: "voip_lag_hist") as? [NSNumber])?.map { $0.doubleValue } ?? []
+                let skew = max(0, hist.min() ?? 0)
+                let a = Date().timeIntervalSince1970 * 1000 - st - skew
+                // 2º relógio (o do caller, no call_id `call_<ms>_…`) tem que concordar — um
+                // relógio deste aparelho adiantado sozinho não derruba convite novo.
+                var cidAge: Double = -1
+                let parts = callId.split(separator: "_")
+                if parts.count >= 3, parts[0] == "call", parts[1].count == 13, let ms = Double(parts[1]) {
+                    cidAge = Date().timeIntervalSince1970 * 1000 - ms
+                }
+                if a > 60_000 && a < 6 * 3600 * 1000 && (cidAge < 0 || cidAge > 45_000) { ageMs = a; src = "server_ts" }
+            }
+            if ageMs > 0 {
+                NSLog("[CallSignalWs] call_invite \(callId): stale (\(src) \(Int(ageMs)) ms) — not ringing")
+                voipNoteCallIdEnded(callId, reason: "stale_ws_invite")
+                nativeCallDiag("ws_invite_skip_stale", callId, "src=\(src) age_ms=\(Int(ageMs))")
+                return
+            }
+        }
 
         let callerEmail = (obj["caller_email"] as? String) ?? ""
         // [2026-10-20 caller-name] "" no frame NÃO caía no fallback (`??` só
@@ -1336,6 +1376,8 @@ final class CallSignalWs: NSObject {
                     // callee joining the room is what flips the caller to
                     // "Tocando…", and makes the answer instant.
                     VoipPushAppDelegateSubscriber.kickRingWindowPreconnect(callId: callId, dict: preconnectDict)
+                    // [2026-10-22 stalecall] vigia do toque pelo servidor (fim perdido em rede ruim).
+                    VoipPushAppDelegateSubscriber.startServerRingWatch(uuid: uuid, callId: callId, provider: provider)
                 }
             }
 

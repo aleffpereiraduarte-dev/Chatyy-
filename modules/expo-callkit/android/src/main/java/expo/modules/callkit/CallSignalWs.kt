@@ -782,6 +782,15 @@ object CallSignalWs {
             CallDiag.log("dedupe_skip", callId, "src=ws reason=accepted", ctx)
             return
         }
+        // [2026-10-22 stalecall] Convite velho (replay / rede ruim) nunca toca.
+        val staleWhy = IncomingCallRegistry.inviteStaleWhy(ctx, callId,
+            obj.optLong("replay_age_ms", 0L), obj.optLong("server_ts", 0L), 0L)
+        if (staleWhy.isNotEmpty()) {
+            Log.i(TAG, "call_invite $callId: stale ($staleWhy) — not ringing")
+            IncomingCallRegistry.markEnded(ctx, callId, "stale_$staleWhy")
+            CallDiag.log("dedupe_skip", callId, "src=ws reason=stale_$staleWhy", ctx)
+            return
+        }
         val alreadyRinging = IncomingCallRegistry.isRinging(callId)
         if (!IncomingCallRegistry.markInviteSeen(callId, "ws")) {
             Log.d(TAG, "call_invite $callId: already surfaced (ws dup), skipping")

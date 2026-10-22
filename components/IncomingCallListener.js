@@ -319,6 +319,7 @@ function isNativeRingingActive() {
 // rules-of-hooks invariant holds — the inner component (the one with hooks +
 // modal + ringtone wiring) only ever mounts on web.
 export default function IncomingCallListener() {
+  try { _sg.subscribeWsCallEnds(); } catch {} // [2026-10-22 stalecall] idempotente
   if (Platform.OS === 'ios') {
     // [WAVE 141] WhatsApp arch: native owns call UI, no JS modal on mobile.
     // [2026-10-12 ring-first-try] …but the JS socket's copy of `call_invite`
@@ -340,20 +341,14 @@ export default function IncomingCallListener() {
 // ring waited ~22s for a late VoIP push. Forward the JS copy to the native
 // CallKit path (ExpoCallKit.handleJsCallInvite, binaries >= 2026-10-12; no-op
 // before). Native de-dupes by call_id against its own frame and the push.
-const _MAX_INVITE_AGE_MS = 90 * 1000;
+// [2026-10-22 stalecall] idade/ended-cache/dedupe vivem em services/callStaleGuard (trava
+// única p/ todo caminho de convite do JS); estes nomes ficam como fachada.
+const _sg = require('../services/callStaleGuard');
 function _inviteAgeMs(callId) {
   // call ids are `call_<epoch ms>_<rand>` (caller clock) — skip replays.
-  const m = /^call_(\d{13})_/.exec(String(callId || ''));
-  if (!m) return 0;
-  const age = Date.now() - Number(m[1]);
-  return Number.isFinite(age) ? age : 0;
+  return _sg.callIdAgeMs(callId);
 }
 
-// [2026-10-16 call-state] "Atendi no celular e ao abrir a web aparece TOCANDO".
-// O hub agora só re-entrega convite que ainda toca; aqui é a 2ª trava: convite
-// com idade conhecida > 45 s nunca toca. Ordem de confiança: replay_age_ms
-// (calculado no servidor) → server_ts (relógio do servidor, tolera 60 s de
-// relógio torto) → call_id (relógio do CALLER, só > 90 s).
 const _INVITE_RING_MAX_MS = 45 * 1000;
 // [e2ee5 WP-07/WP-13 2026-10-22] call_invite/push com "e2ee":"5" (conversa e2ee_mode=1): marca a
 // ligação como EXIGIDA no JS + nativo antes de qualquer Room (sem chave = sem mídia). Sem o campo = no-op.
@@ -372,14 +367,12 @@ function _e5NoteInvite(data) {
 }
 
 function _inviteStaleReason(data) {
+  // [2026-10-22 stalecall] + ligação já encerrada neste aparelho (cache local) = nunca toca.
   try {
-    const r = Number(data?.replay_age_ms);
-    if (Number.isFinite(r) && r > _INVITE_RING_MAX_MS) return 'replay_age';
-    const st = Number(data?.server_ts);
-    if (Number.isFinite(st) && st > 0 && Date.now() - st > _INVITE_RING_MAX_MS + 15000) return 'server_ts';
-    if (_inviteAgeMs(data?.call_id || data?.room_id) > _MAX_INVITE_AGE_MS) return 'call_id_age';
+    const id = data?.call_id || data?.room_id;
+    if (id && _sg.isCallEnded(id)) return 'ended_local';
   } catch {}
-  return '';
+  return _sg.inviteStaleReason(data);
 }
 const _ELSEWHERE_TXT = {
   pt: { accepted: 'Atendida em outro aparelho', declined: 'Recusada em outro aparelho' },
@@ -392,6 +385,13 @@ function _elsewhereText(lang, state) {
   return tbl[state] || '';
 }
 
+// [2026-10-22 stalecall] call_1792672771124_ah9s2jvah: o mesmo convite chegou 2× ao JS
+// (frame do hub via CallSignalWs do caller + broadcast do chat_call_invite_v2 PHP, ~2 s
+// depois) e os dois iam ao nativo (2× js_invite_bridged). O nativo deduplica, mas a ponte
+// agora é a 1ª trava: (1) cache local de encerradas (WS call_end/cancel/…, fim no CallKit);
+// (2) idade > 45 s = nunca; (3) 1 ponte por call_id (2º frame só se trouxer o nome que
+// faltou); (4) app em 2º plano + convite com > 15 s → pergunta ao servidor (call_status
+// query, 2,5 s) e não toca se a ligação já terminou. Sem resposta ⇒ segue (≤ 45 s).
 function IosCallInviteBridge() {
   const { user } = useAuth();
   const myEmail = (user?.email || '').toLowerCase();
@@ -400,10 +400,41 @@ function IosCallInviteBridge() {
     let ck = null;
     try { ck = require('../modules/expo-callkit'); } catch { ck = null; }
     if (!ck || typeof ck.handleJsCallInvite !== 'function') return undefined;
-    let unsub = null;
+    try { _sg.loadEndedCache(); _sg.subscribeWsCallEnds(); } catch {}
+    const unsubs = [];
+    // Fim local (recusou/desligou/expirou no CallKit) também entra no cache.
+    try {
+      if (typeof ck.onCallEnded === 'function') {
+        unsubs.push(ck.onCallEnded((d) => {
+          try { if (d && d.held) return; const id = d?.callId || d?.call_id; if (id) _sg.noteCallEnded(id, 'native_' + String(d?.reason || 'ended')); } catch {}
+        }));
+      }
+    } catch {}
+    const forward = (callId, caller, data, why) => {
+      // Re-checa depois de qualquer espera (o JS pode ter ficado suspenso).
+      if (_sg.isCallEnded(callId)) { voipDiag('js_invite_bridge_skip_ended', callId, { why }); return; }
+      const st2 = _inviteStaleReason(data);
+      if (st2) { voipDiag('js_invite_bridge_skip_stale', callId, { age_ms: _inviteAgeMs(callId), why: st2, after: why }); return; }
+      const payload = {
+        call_id: callId,
+        room_id: String(data?.room_id || callId),
+        caller_email: caller,
+        caller_name: String(data?.caller_name || ''),
+        conversation_id: String(data?.conversation_id ?? ''),
+        video: _isVideoFlag(data?.video) ? '1' : '0',
+      };
+      if (typeof data?.lk_token === 'string' && data.lk_token) payload.lk_token = data.lk_token;
+      if (typeof data?.lk_url === 'string' && data.lk_url) payload.lk_url = data.lk_url;
+      if (data?.e2ee != null && data.e2ee !== '') payload.e2ee = String(data.e2ee); // [e2ee5 WP-07 2026-10-22] CallSignalWs nativo lê
+      // [2026-10-22 stalecall] idade p/ o nativo (builds novos descartam convite velho).
+      if (Number.isFinite(Number(data?.server_ts)) && Number(data.server_ts) > 0) payload.server_ts = Number(data.server_ts);
+      if (Number.isFinite(Number(data?.replay_age_ms)) && Number(data.replay_age_ms) > 0) payload.replay_age_ms = Number(data.replay_age_ms);
+      const ok = ck.handleJsCallInvite(payload);
+      voipDiag('js_invite_bridged', callId, { ok: !!ok, app: AppState.currentState, age_ms: _sg.inviteAge(data).ms, via: why });
+    };
     try {
       const mailWs = require('../services/websocket').default;
-      unsub = mailWs.on('call_invite', (data) => {
+      unsubs.push(mailWs.on('call_invite', (data) => {
         try {
           const callId = String(data?.call_id || data?.room_id || '');
           if (!callId) return;
@@ -415,23 +446,29 @@ function IosCallInviteBridge() {
             voipDiag('js_invite_bridge_skip_stale', callId, { age_ms: _inviteAgeMs(callId), why: _stale });
             return;
           }
-          const payload = {
-            call_id: callId,
-            room_id: String(data?.room_id || callId),
-            caller_email: caller,
-            caller_name: String(data?.caller_name || ''),
-            conversation_id: String(data?.conversation_id ?? ''),
-            video: _isVideoFlag(data?.video) ? '1' : '0',
-          };
-          if (typeof data?.lk_token === 'string' && data.lk_token) payload.lk_token = data.lk_token;
-          if (typeof data?.lk_url === 'string' && data.lk_url) payload.lk_url = data.lk_url;
-          if (data?.e2ee != null && data.e2ee !== '') payload.e2ee = String(data.e2ee); // [e2ee5 WP-07 2026-10-22] CallSignalWs nativo lê
-          const ok = ck.handleJsCallInvite(payload);
-          voipDiag('js_invite_bridged', callId, { ok: !!ok, app: AppState.currentState });
+          const hasName = !!String(data?.caller_name || '').trim();
+          if (!_sg.claimBridge(callId, hasName)) {
+            voipDiag('js_invite_bridge_dup', callId, { app: AppState.currentState });
+            return;
+          }
+          const age = _sg.inviteAge(data);
+          const bg = AppState.currentState !== 'active';
+          if (bg && age.ms > _sg.INVITE_CHECK_SERVER_MS && !_sg.staleGuardOff()) {
+            _sg.serverCallState(callId, 2500).then((st) => {
+              if (st && (st.terminal || st.answered)) {
+                _sg.noteCallEnded(callId, 'server_' + (st.state || 'terminal'));
+                voipDiag('js_invite_bridge_skip_server', callId, { age_ms: age.ms, src: age.src, state: st.state, answered: !!st.answered });
+                return;
+              }
+              forward(callId, caller, data, st ? 'server_ok' : 'server_unknown');
+            });
+            return;
+          }
+          forward(callId, caller, data, 'direct');
         } catch {}
-      });
+      }));
     } catch {}
-    return () => { try { if (typeof unsub === 'function') unsub(); } catch {} };
+    return () => { for (const u of unsubs) { try { if (typeof u === 'function') u(); } catch {} } };
   }, [myEmail]);
   return null;
 }

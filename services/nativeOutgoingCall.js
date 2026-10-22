@@ -175,6 +175,29 @@ export function track(p) {
     if (s.ended) return;
     s.ended = true;
     _diag('ended', callId, { why, reason: reason || '', connected: !!s.connectedAt });
+    try { require('./callStaleGuard').noteCallEnded(callId, 'out_' + why); } catch {}
+    // [2026-10-22 stalecall] call_1792672771124_ah9s2jvah: o caller (Android, rede ruim)
+    // desligou e o call_end do CallSignalWs NATIVO nunca chegou ao hub (socket meio-morto);
+    // o call_status=cancelled HTTP só chegou 24 s depois → o callee tocou esse tempo todo.
+    // O socket JS estava vivo (presença 1 s depois). Gêmeo do fim pelo WS JS, NA HORA (o hub
+    // já tem o estado pelo convite nativo; fim repetido = DUP-DROP lá). Só quando o fim é
+    // nosso (não ecoa um fim que veio do outro lado). Kill: __chatyy_out_end_twin_off.
+    if ((why === 'native_call_ended' || why === 'safety_90s') && !globalThis.__chatyy_out_end_twin_off) {
+      try {
+        const mailWs = require('./websocket').default;
+        const r = String(reason || '').toLowerCase();
+        if (mailWs?.send && !/declin|reject|busy|remote/.test(r)) {
+          mailWs.send({
+            type: 'call_end',
+            call_id: callId,
+            ...(s.conversationId ? { conversation_id: s.conversationId } : {}),
+            ...(s.calleeEmail ? { target_email: s.calleeEmail.toLowerCase() } : {}),
+            reason: reason || (s.connectedAt ? 'hangup' : 'cancelled'),
+          });
+          _diag('end_twin_ws', callId, { connected: !!s.connectedAt });
+        }
+      } catch {}
+    }
     _finish(s, reason);
   };
 

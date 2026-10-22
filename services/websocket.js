@@ -1941,6 +1941,8 @@ class MailWebSocket {
       // when WS is not open.
       if (this._messageQueue.length < MAX_QUEUE_SIZE) {
         this._messageQueue.push(data);
+        // [2026-10-22 stalecall] hora da fila p/ não reenviar convite velho no flush.
+        try { if (data.type === 'call_invite') { if (!this._qAt) this._qAt = new WeakMap(); this._qAt.set(data, Date.now()); } } catch {}
         if (data.type === 'call_invite' || data.type === 'call_end' ||
             data.type === 'call_answer' || data.type === 'call_reject') {
           try {
@@ -3759,8 +3761,29 @@ class MailWebSocket {
     if (totalCount > 0) {
       this._emit('queue_flush', { count: totalCount });
     }
+    // [2026-10-22 stalecall] Um call_invite que ficou na fila offline NÃO sai se a mesma
+    // ligação já terminou (call_end na fila / cache local de encerradas) ou se esperou
+    // > 30 s — reconectar não pode fazer tocar uma ligação morta no outro lado.
+    let _endedInQueue = null;
+    try {
+      _endedInQueue = new Set(queued.filter((q) => q && q.type === 'call_end' && q.call_id).map((q) => String(q.call_id)));
+    } catch { _endedInQueue = null; }
     for (const msg of queued) {
       if (msg && msg.msg_id && pendingMsgIds.has(msg.msg_id)) continue;
+      if (msg && msg.type === 'call_invite') {
+        try {
+          const cid = String(msg.call_id || msg.room_id || '');
+          const qAt = this._qAt ? this._qAt.get(msg) : 0;
+          const sg = require('./callStaleGuard');
+          const why = (_endedInQueue && _endedInQueue.has(cid)) ? 'end_queued'
+            : (cid && sg.isCallEnded(cid)) ? 'ended'
+            : (qAt && Date.now() - qAt > 30000) ? 'queued_too_long' : '';
+          if (why) {
+            try { require('./voipDiag').voipDiag('js_ws_invite_flush_drop', cid, { why, queued_ms: qAt ? Date.now() - qAt : -1 }); } catch {}
+            continue;
+          }
+        } catch {}
+      }
       this._send(msg);
     }
 

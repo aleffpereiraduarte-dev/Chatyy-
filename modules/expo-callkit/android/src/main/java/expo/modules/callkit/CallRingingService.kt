@@ -267,6 +267,10 @@ class CallRingingService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
+            // [2026-10-22 stalecall] vigia do toque pelo servidor (fim perdido em rede ruim).
+            if (!alreadyRinging) {
+                try { IncomingCallRegistry.startServerRingWatch(applicationContext, safeCallId) } catch (_: Throwable) {}
+            }
 
             // Async fetch + re-emit notification with real avatar Bitmap so the
             // heads-up & full-screen renderiza a foto do caller em vez da

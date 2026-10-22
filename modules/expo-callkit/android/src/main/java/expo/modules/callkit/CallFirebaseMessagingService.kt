@@ -319,6 +319,16 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 CallDiag.log("dedupe_skip", callId, "src=fcm reason=accepted retry=$ringRetry", applicationContext)
                 return
             }
+            // [2026-10-22 stalecall] Push de toque entregue tarde (rede ruim / aparelho
+            // offline) para uma ligação velha: nunca toca (sentTime = relógio do FCM).
+            val staleWhy = IncomingCallRegistry.inviteStaleWhy(applicationContext, callId,
+                0L, (data["server_ts"] ?: "").toLongOrNull() ?: 0L, message.sentTime)
+            if (staleWhy.isNotEmpty()) {
+                Log.i(TAG, "incoming_call callId=$callId: stale ($staleWhy) — not ringing")
+                IncomingCallRegistry.markEnded(applicationContext, callId, "stale_$staleWhy")
+                CallDiag.log("dedupe_skip", callId, "src=fcm reason=stale_$staleWhy retry=$ringRetry", applicationContext)
+                return
+            }
             val alreadyRinging = IncomingCallRegistry.isRinging(callId)
             if (!IncomingCallRegistry.markInviteSeen(callId, "fcm")) {
                 Log.i(TAG, "incoming_call callId=$callId: duplicate FCM — skipping")
