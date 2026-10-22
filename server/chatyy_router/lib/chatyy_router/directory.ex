@@ -33,9 +33,22 @@ defmodule ChatyyRouter.Directory do
   @mcache :rt_dir_members
   @dcache :rt_dir_devices
   @rcache :rt_dir_region
+  @uemail :rt_dir_uid_email
+  @devuid :rt_dir_dev_uid
+
+  @doc "E-mail (canônico) do dono do aparelho, se o diretório já o viu."
+  def email_of_device(d) do
+    with [{_, u}] <- safe_lookup(@devuid, to_string(d)), [{_, e}] <- safe_lookup(@uemail, u) do
+      e
+    else
+      _ -> nil
+    end
+  end
+
+  defp safe_lookup(t, k), do: if(:ets.whereis(t) == :undefined, do: [], else: :ets.lookup(t, k))
 
   @q_members """
-  SELECT DISTINCT u.uid::text
+  SELECT DISTINCT u.uid::text, u.email_canon
     FROM chat_conversation_members cm
     JOIN e2ee5_uid u
       ON u.email_canon = regexp_replace(lower(btrim(cm.email)), '@onemundo\\.com\\.br$', '@chatyy.com.br')
@@ -198,7 +211,11 @@ defmodule ChatyyRouter.Directory do
   defp pg_members(cid) do
     case to_bigint(cid) do
       {:ok, i} ->
-        with {:ok, %{rows: rows}} <- Conn.query(:replica, @q_members, [i]), do: {:ok, Enum.map(rows, &hd/1)}
+        with {:ok, %{rows: rows}} <- Conn.query(:replica, @q_members, [i]) do
+          # uid → e-mail: o leaf entrega por e-mail ao socket de app que não manda e2ee5_device no auth
+          for [u, e | _] <- rows, e != nil, do: :ets.insert(@uemail, {u, e})
+          {:ok, Enum.map(rows, &hd/1)}
+        end
 
       :error ->
         {:ok, []}
@@ -208,8 +225,11 @@ defmodule ChatyyRouter.Directory do
   defp pg_devices(uid) do
     case to_bigint(uid) do
       {:ok, i} ->
-        with {:ok, %{rows: rows}} <- Conn.query(:replica, @q_devices, [i, max_age_days()]),
-             do: {:ok, Enum.map(rows, &hd/1)}
+        with {:ok, %{rows: rows}} <- Conn.query(:replica, @q_devices, [i, max_age_days()]) do
+          ids = Enum.map(rows, &hd/1)
+          for d <- ids, do: :ets.insert(@devuid, {d, to_string(uid)})
+          {:ok, ids}
+        end
 
       :error ->
         {:ok, []}
@@ -235,7 +255,7 @@ defmodule ChatyyRouter.Directory do
 
   @impl true
   def init(_) do
-    for t <- [@members, @devices, @mcache, @dcache, @rcache], :ets.whereis(t) == :undefined do
+    for t <- [@members, @devices, @mcache, @dcache, @rcache, @uemail, @devuid], :ets.whereis(t) == :undefined do
       :ets.new(t, [:named_table, :public, :set, read_concurrency: true, write_concurrency: true])
     end
 

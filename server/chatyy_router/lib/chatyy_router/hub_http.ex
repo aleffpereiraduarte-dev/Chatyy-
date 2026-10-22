@@ -72,7 +72,7 @@ defmodule ChatyyRouter.Hub.Http do
     %{
       "device" => to_string(device),
       "uid" => Map.get(msg, :uid) || Map.get(meta, :uid),
-      "email" => Map.get(msg, :email) || Map.get(meta, :email),
+      "email" => Map.get(msg, :email) || Map.get(meta, :email) || ChatyyRouter.Directory.email_of_device(device),
       "cid" => Map.get(msg, :cid),
       "seq" => Map.get(msg, :seq),
       "msg_id" => Map.get(msg, :msg_id) || Map.get(meta, :msg_id) || Map.get(msg, :seq),
