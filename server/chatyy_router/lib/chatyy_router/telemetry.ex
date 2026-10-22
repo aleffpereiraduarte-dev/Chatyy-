@@ -152,6 +152,7 @@ defmodule ChatyyRouter.Metrics do
       "chatyy_router_failed_regions #{safe.(fn -> MapSet.size(ChatyyRouter.HomeTable.failed()) end) || 0}\n",
       "chatyy_router_route_enabled #{b.(ChatyyRouter.Flags.route?())}\n",
       "chatyy_router_fanout_enabled #{b.(ChatyyRouter.Flags.fanout?())}\n",
+      "chatyy_router_hub_http_enabled #{b.(ChatyyRouter.Flags.get(:hub_http))}\n",
       "chatyy_router_ack_mode_sister #{b.(Config.ack_mode() == "sister")}\n",
       "chatyy_router_ack_outbox #{safe.(fn -> ChatyyRouter.AckOutbox.pending() end) || 0}\n",
       "chatyy_router_ack_outbox_stuck #{safe.(fn -> ChatyyRouter.AckOutbox.stuck() end) || 0}\n",

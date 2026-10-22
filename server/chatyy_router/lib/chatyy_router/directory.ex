@@ -316,8 +316,16 @@ defmodule ChatyyRouter.Hub do
   @callback push(device :: term, msg :: map) :: :ok
   @callback region_of(device :: term) :: {:ok, String.t()} | {:error, term}
 
-  def impl, do: ChatyyRouter.Config.hub_module()
-  def push(device, msg), do: impl().push(device, msg)
+  # RT_HUB=http no arquivo de flags (sem restart) liga o adaptador real; aparelhos
+  # sintéticos inscritos no Stub (bench/testes) continuam no Stub.
+  def impl do
+    if ChatyyRouter.Flags.get(:hub_http), do: ChatyyRouter.Hub.Http, else: ChatyyRouter.Config.hub_module()
+  end
+
+  def push(device, msg) do
+    if ChatyyRouter.Hub.Stub.subscribed?(device), do: ChatyyRouter.Hub.Stub.push(device, msg), else: impl().push(device, msg)
+  end
+
   def region_of(device), do: impl().region_of(device)
 end
 
@@ -335,6 +343,7 @@ defmodule ChatyyRouter.Hub.Stub do
 
   @doc "opts: auto_ack: bool, pid: quem recebe {:rt_frame, device, msg}"
   def subscribe(device, opts), do: GenServer.call(__MODULE__, {:subscribe, device, opts})
+  def subscribed?(device), do: :ets.whereis(@subs) != :undefined and :ets.member(@subs, device)
   def unsubscribe(device), do: GenServer.call(__MODULE__, {:unsubscribe, device})
 
   @impl ChatyyRouter.Hub

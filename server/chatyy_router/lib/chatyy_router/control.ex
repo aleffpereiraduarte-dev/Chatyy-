@@ -109,7 +109,8 @@ defmodule ChatyyRouter.Control do
       down: Config.region_names() -- alive,
       quorum: Net.quorum?(),
       route: ChatyyRouter.Flags.route?(),
-      fanout: ChatyyRouter.Flags.fanout?()
+      fanout: ChatyyRouter.Flags.fanout?(),
+      hub: inspect(ChatyyRouter.Hub.impl())
     })
   end
 

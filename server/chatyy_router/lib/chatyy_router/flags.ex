@@ -6,12 +6,14 @@ defmodule ChatyyRouter.Flags do
     RT_FANOUT=0|1  R1: `/fanout` (entrega de mensagem com casa externa)
                    responde `disabled` e o leaf usa o broadcast de hoje.
                    PADRÃO 0 — R1 só liga explicitamente.
+    RT_HUB=http    entrega pelo hub/leaf real (POST /rt/deliver em ROUTER_HUB_URL);
+                   sem isso, ROUTER_HUB_MODULE (padrão Stub = não entrega).
   `override/2` (Control POST /flags?route=&fanout=) vale até o restart.
   """
   use GenServer
   require Logger
 
-  @defaults %{route: true, fanout: false}
+  @defaults %{route: true, fanout: false, hub_http: false}
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -20,7 +22,7 @@ defmodule ChatyyRouter.Flags do
   def get(k), do: :persistent_term.get({__MODULE__, k}, @defaults[k])
 
   def override(v) when is_boolean(v), do: override(:route, v)
-  def override(k, v) when k in [:route, :fanout] and is_boolean(v), do: GenServer.call(__MODULE__, {:override, k, v})
+  def override(k, v) when k in [:route, :fanout, :hub_http] and is_boolean(v), do: GenServer.call(__MODULE__, {:override, k, v})
 
   @impl true
   def init(_) do
@@ -43,9 +45,10 @@ defmodule ChatyyRouter.Flags do
         _ -> ""
       end
 
-    for {k, var} <- [route: "RT_ROUTE", fanout: "RT_FANOUT"], not Map.has_key?(s.override, k) do
+    for {k, var} <- [route: "RT_ROUTE", fanout: "RT_FANOUT", hub_http: "RT_HUB"], not Map.has_key?(s.override, k) do
       v =
         cond do
+          k == :hub_http -> String.contains?(body, "RT_HUB=http")
           String.contains?(body, var <> "=0") -> false
           String.contains?(body, var <> "=1") -> true
           true -> @defaults[k]
