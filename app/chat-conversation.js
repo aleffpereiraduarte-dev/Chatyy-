@@ -31584,7 +31584,8 @@ function ChatConversationInnerBody() {
                       // chatSend abaixo NÃO resolve — precisa re-enqueue do
                       // upload em si pra subir os bytes. Só consideramos
                       // "media com URL remota" quando o file_url já é http(s).
-                      const hasRemoteUrl = !!msg.file_url && /^https?:/i.test(msg.file_url);
+                      // [2026-10-22] GIF/figurinha guardam a URL no content (não no file_url) → também conta como remota.
+                      const hasRemoteUrl = (!!msg.file_url && /^https?:/i.test(msg.file_url)) || (['gif', 'sticker', 'lottie_sticker'].includes(msg.type) && /^https?:/i.test(String(msg.content || '')));
                       const isMediaWithUrl = isMediaType && hasRemoteUrl;
                       const isLocalMedia = isMediaType && !hasRemoteUrl && !!localUriRaw;
                       if (!isText && !isMediaWithUrl && !isLocalMedia) return;

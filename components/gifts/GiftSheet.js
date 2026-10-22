@@ -136,6 +136,10 @@ function GiftSheet({ visible, onClose, context, targetId, targetError = '', reci
   const ring = useRef(new Animated.Value(0)).current;
   const btnScale = useRef(new Animated.Value(1)).current;
   const sendingRef = useRef(false);
+  // [2026-10-22 presente-retry] Falha recuperável (rede/erro genérico) → "Tentar novamente" com o
+  // MESMO client_id: o servidor (diamond_gift_send) responde idempotente e NUNCA cobra 2x.
+  const lastFailRef = useRef(null);
+  const [canRetry, setCanRetry] = useState(false);
 
   const minor = isMinorAccount();
   const disabled = wallet.loaded && (!wallet.enabled || !wallet.giftingEnabled);
@@ -195,11 +199,14 @@ function GiftSheet({ visible, onClose, context, targetId, targetError = '', reci
     sendingRef.current = true;
     setSending(true);
     setNotice('');
-    const res = await sendGift({
-      context, targetId, sku: selected.sku, quantity: qty, comboId: c.id, comboCount, note: showNote ? note : '',
-    });
+    const _args = { context, targetId, sku: selected.sku, quantity: qty, comboId: c.id, comboCount, note: showNote ? note : '', clientId: newClientId() };
+    lastFailRef.current = null; setCanRetry(false);
+    const res = await sendGift(_args);
     sendingRef.current = false;
     setSending(false);
+    if (!res.ok && (res.code === 'network' || !['insufficient_diamonds', 'feature_disabled', 'minor_blocked', 'blocked', 'not_member', 'rate_limited'].includes(res.code))) {
+      lastFailRef.current = { args: _args, selected, qty }; setCanRetry(true);
+    }
     if (res.ok) {
       if (context === 'chat') celebrateGiftSent(); else haptic('success');
       onSent?.(res.data, selected, qty);
@@ -235,6 +242,29 @@ function GiftSheet({ visible, onClose, context, targetId, targetError = '', reci
         setNotice(tr(t, 'gifts.failed', 'Não foi possível enviar. Nada foi cobrado.'));
     }
   }, [selected, minor, disabled, canAfford, qty, context, targetId, onSent, keepOpen, close, resetCombo, ring, btnScale, t, note, showNote, total, balance, missingText]);
+
+  const retrySend = useCallback(async () => {
+    const f = lastFailRef.current;
+    if (!f || sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    setNotice('');
+    const res = await sendGift(f.args); // mesmo client_id → idempotente (nunca cobra 2x)
+    sendingRef.current = false;
+    setSending(false);
+    if (res.ok) {
+      lastFailRef.current = null; setCanRetry(false);
+      if (context === 'chat') celebrateGiftSent(); else haptic('success');
+      onSent?.(res.data, f.selected, f.qty);
+      setNote('');
+      if (!keepOpen) close();
+      return;
+    }
+    haptic('error');
+    if (res.code === 'network') setNotice(tr(t, 'gifts.network', 'Sem conexão. Nada foi cobrado.'));
+    else if (res.code === 'insufficient_diamonds') { lastFailRef.current = null; setCanRetry(false); setNeedTopUp(true); setNotice(missingText(total - (Number(balance) || 0))); }
+    else setNotice(tr(t, 'gifts.failed', 'Não foi possível enviar. Nada foi cobrado.'));
+  }, [context, onSent, keepOpen, close, t, missingText, total, balance]);
 
   const grid = useMemo(() => catalog, [catalog]);
   // [2026-10-17 drag-dismiss] arrastar de qualquer ponto p/ baixo fecha (mesmo <Modal>, sem aninhar).
@@ -301,6 +331,11 @@ function GiftSheet({ visible, onClose, context, targetId, targetError = '', reci
 
         {blockedText ? <Text style={styles.notice}>{blockedText}</Text> : null}
         {!blockedText && notice ? <Text style={styles.notice} accessibilityLiveRegion="polite">{notice}</Text> : null}
+        {!blockedText && notice && canRetry && !sending ? (
+          <TouchableOpacity onPress={retrySend} accessibilityRole="button" style={styles.retryBtn} hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}>
+            <Text style={styles.retryText}>{tr(t, 'chat.retry', 'Tentar novamente')}</Text>
+          </TouchableOpacity>
+        ) : null}
 
         <View style={styles.qtyRow}>
           {QUANTITIES.map((q) => {
@@ -417,6 +452,8 @@ const styles = StyleSheet.create({
   price: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   priceText: { color: 'rgba(255,255,255,0.75)', fontSize: 11, fontWeight: '700' },
   notice: { color: 'rgba(255,255,255,0.82)', fontSize: 12.5, textAlign: 'center', marginTop: 10, lineHeight: 17 },
+  retryBtn: { alignSelf: 'center', marginTop: 8, paddingHorizontal: 16, paddingVertical: 7, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.14)' },
+  retryText: { color: '#FFFFFF', fontSize: 13.5, fontWeight: '700' },
   qtyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
   qtyChip: {
     minWidth: 44, height: 32, borderRadius: 16, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center',
