@@ -310,6 +310,16 @@ class MediaViewerDialog(
         val p = position.coerceIn(-1f, 1f)
         val sx = if (!on || abs(p) < 0.002f) 0 else (p * page.width * 0.22f).toInt()
         if (pv.content.scrollX != sx) pv.content.scrollX = sx
+        // [2026-10-22 viewer-bleed] A página não recorta os filhos (clipChildren=false, p/ o arrasto de
+        // fechar): a vizinha deslocada pelo parallax desenhava ~22% da foto POR CIMA da página atual
+        // (visível nas faixas pretas do vídeo). Fora do centro a página recorta nos próprios limites
+        // (como o iOS: page.clipsToBounds = nx != 0); a atual fica sem recorte (arrasto intacto).
+        if (abs(p) >= 0.002f) {
+          val cb = pv.clipBounds
+          if (cb == null || cb.width() != page.width || cb.height() != page.height) pv.clipBounds = android.graphics.Rect(0, 0, page.width, page.height)
+        } else if (pv.clipBounds != null) {
+          pv.clipBounds = null
+        }
       }
     })
     pager.adapter = PageAdapter()

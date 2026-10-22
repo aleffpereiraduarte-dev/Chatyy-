@@ -40,12 +40,26 @@ function appReduce(): boolean {
   }
 }
 
+// [2026-10-22 viewer-bleed] Android: binário sem `parallaxClip` desenhava um pedaço da página vizinha
+// (ex.: a foto anterior do álbum) por cima da atual — parallax desligado até o build com o recorte.
+function androidNoClip(): boolean {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { Platform } = require('react-native');
+    if (Platform.OS !== 'android') return false;
+    if (_mod === undefined) _mod = requireOptionalNativeModule('ChatyyMediaViewer') || null;
+    return !(_mod && typeof _mod.parallaxClip === 'function');
+  } catch {
+    return true;
+  }
+}
+
 export function motionFlags(): MotionFlags {
   const all = off('__chatyy_motion') || appReduce();
   const media = all || off('__chatyy_motion_media');
   const story = all || off('__chatyy_motion_story');
   return {
-    parallax: !(media || off('__chatyy_motion_media_parallax')),
+    parallax: !(media || off('__chatyy_motion_media_parallax') || androidNoClip()),
     chromeSlide: !(media || off('__chatyy_motion_media_chrome')),
     flingSpring: !(media || off('__chatyy_motion_media_fling')),
     storyOrigin: !(story || off('__chatyy_motion_story_origin')),

@@ -37,6 +37,9 @@ class ChatyyMediaViewerModule : Module() {
 
     // [2026-10-16 motion] Kill switches globalThis.__chatyy_motion_* (viewer,
     // stories, grades). Chaves ausentes mantêm o valor atual (padrão: ligado).
+    // [2026-10-22 viewer-bleed] binário com o recorte da página vizinha no parallax (JS liga o parallax só com isto)
+    Function("parallaxClip") { true }
+
     Function("setMotion") { flags: Map<String, Any?> ->
       MVMotion.apply(flags)
       true
