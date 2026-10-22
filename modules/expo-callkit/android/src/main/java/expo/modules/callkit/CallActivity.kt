@@ -2850,7 +2850,7 @@ class CallActivity : ComponentActivity() {
     // same options the warm preconnect path uses. No key staged ⇒ null ⇒
     // plaintext, byte-for-byte the previous behaviour (zero prod change).
     val roomOptionsFinal = try {
-      val e2ee = NativeCallRoom.buildE2EEOptionsFor(callId)
+      val e2ee = NativeCallRoom.buildE2EEOptionsFor(callId, applicationContext)
       if (e2ee != null) {
         Log.i(TAG, "[CALL_E2EE] cold-launch applying E2EE for callId=$callId")
         roomOptions.copy(e2eeOptions = e2ee)
@@ -2859,6 +2859,7 @@ class CallActivity : ComponentActivity() {
       if (CallE2EE.isRequired(callId)) {
         // [e2ee5 WP-13] ligação cifrada: NUNCA conecta em claro
         Log.e(TAG, "[e2ee5] E2EE options failed (${t.javaClass.simpleName}) — NOT connecting plaintext callId=$callId")
+        try { CallDiag.log("e2ee5_room_blocked", callId, "err=${t.javaClass.simpleName} out=$isOutgoing", applicationContext) } catch (_: Throwable) {}
         state.status = CallE2EE.text(this, "nokey")
         return
       }

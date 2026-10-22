@@ -51,6 +51,25 @@ internal object CallE2EE {
 
   private val calls = ConcurrentHashMap<String, Entry>()
 
+  // [e2ee5 ligação-android 2026-10-22] BaseKeyProvider() chama JNI do libwebrtc
+  // (FrameCryptorFactory.nativeCreateFrameCryptorKeyProvider) NO CONSTRUTOR. Num processo onde
+  // nenhum LiveKit.create rodou ainda (toque pelo FCM com o app em 2º plano/morto), o
+  // liblkjingle_peerconnection_so ainda não foi carregado → UnsatisfiedLinkError → a ligação
+  // exigida "falha fechada" e o Android NUNCA abre o /rtc (22/10 23:11/23:13Z, conv 959: iPhone
+  // publicou, Android atendeu e ficou mudo). LiveKit.init = o mesmo init idempotente do LiveKit.create.
+  @Volatile private var appCtx: Context? = null
+
+  fun bindContext(ctx: Context?) {
+    if (ctx == null || appCtx != null) return
+    try { appCtx = ctx.applicationContext } catch (_: Throwable) {}
+  }
+
+  private fun ensureWebrtc(ctx: Context?) {
+    val c = (ctx ?: appCtx)?.applicationContext ?: return
+    bindContext(c)
+    try { io.livekit.android.LiveKit.init(c) } catch (t: Throwable) { Log.w(TAG, "LiveKit.init falhou: ${t.javaClass.simpleName}") }
+  }
+
   fun validKey(k: String?): Boolean {
     if (k == null || k.length != 44 || !k.endsWith("=")) return false
     return try { Base64.decode(k, Base64.NO_WRAP).size == 32 } catch (_: Throwable) { false }
@@ -89,10 +108,14 @@ internal object CallE2EE {
   fun hasKey(callId: String?): Boolean = !callId.isNullOrEmpty() && calls[callId]?.key != null
 
   /** Opções E2EE do Room desta ligação; null = ligação de hoje. Lança se exigida e o SDK falhar. */
-  fun optionsFor(callId: String?): E2EEOptions? {
+  fun optionsFor(callId: String?, ctx: Context? = null): E2EEOptions? {
     if (!isRequired(callId)) return null
     val e = entry(callId!!)
-    val p = BaseKeyProvider()
+    ensureWebrtc(ctx)
+    val p = try { BaseKeyProvider() } catch (t: Throwable) {
+      try { CallDiag.log("e2ee5_room_options_failed", callId, "err=${t.javaClass.simpleName}") } catch (_: Throwable) {}
+      throw t
+    }
     e.key?.let { p.setSharedKey(it, 0) }
     e.provider = p
     Log.i(TAG, "room e2ee call=$callId key=${if (e.key != null) 1 else 0}")
@@ -216,6 +239,7 @@ internal object CallE2EE {
   }
 
   fun setConvHint(ctx: Context, convId: String, peerEmail: String, on: Boolean) {
+    bindContext(ctx)
     if (convId.isEmpty()) return
     try {
       val sp = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -241,6 +265,7 @@ internal object CallE2EE {
    * local (vale também para o próximo toque com o app morto). O servidor só LIGA a exigência.
    */
   fun noteIncoming(ctx: Context, callId: String, convId: String, peerEmail: String, serverHint: Boolean = false) {
+    bindContext(ctx)
     if (callId.isEmpty()) return
     if (serverHint) {
       setRequired(callId, true)

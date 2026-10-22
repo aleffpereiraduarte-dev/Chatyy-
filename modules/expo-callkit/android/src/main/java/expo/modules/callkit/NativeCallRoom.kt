@@ -269,12 +269,14 @@ object NativeCallRoom {
     // apply the SAME E2EE options. Previously only the WARM preconnect path
     // (this object) had E2EE; a cold-launched incoming call (CallActivity
     // builds its OWN Room) connected plaintext even with a staged key.
-    internal fun buildE2EEOptionsFor(callId: String?): E2EEOptions? {
+    internal fun buildE2EEOptionsFor(callId: String?, ctx: Context? = null): E2EEOptions? {
         // [e2ee5 WP-13] Ligação cifrada v5: E2EE mesmo sem chave (quadros descartados até ela
         // chegar). Exceção aqui sobe — quem chama NÃO pode cair para texto claro.
-        if (CallE2EE.isRequired(callId)) return CallE2EE.optionsFor(callId)
+        // [e2ee5 ligação-android 2026-10-22] ctx → LiveKit.init antes do BaseKeyProvider (JNI).
+        if (CallE2EE.isRequired(callId)) return CallE2EE.optionsFor(callId, ctx)
         val keyB64 = ExpoCallKitModule.pendingE2EEKey(callId) ?: return null
         if (keyB64.isEmpty()) return null
+        try { ctx?.let { io.livekit.android.LiveKit.init(it.applicationContext) } } catch (_: Throwable) {}
         return try {
             val keyProvider = BaseKeyProvider().apply {
                 // Base64-string shared key (UTF-8) — matches iOS BaseKeyProvider(sharedKey:).
@@ -994,7 +996,7 @@ object NativeCallRoom {
                 // callId (flag ON), create the Room with E2EEOptions so frames
                 // are encrypted. No key ⇒ e2ee == null ⇒ LiveKit.create() with
                 // default options == the exact pre-E2EE path.
-                val e2ee = buildE2EEOptionsFor(callId)
+                val e2ee = buildE2EEOptionsFor(callId, ctx)
                 // [HD voice + DSP 2026-06-29] 1:1 now creates the Room with the
                 // same audio tuning the group already has (Opus 48k + RED + DTX
                 // + AEC/AGC/NS). buildCallRoomOptions folds e2ee in when present,
@@ -1036,6 +1038,10 @@ object NativeCallRoom {
                 // after the user actually taps Accept.
             } catch (t: Throwable) {
                 Log.w(TAG, "preconnect failed for callId=$callId: ${t.message}")
+                // [e2ee5 ligação-android 2026-10-22] falha do toque era só logcat → trilha (só a classe).
+                if (t !is kotlinx.coroutines.CancellationException) {
+                    try { CallDiag.log("preconnect_failed", callId, "err=${t.javaClass.simpleName} e2ee=${if (CallE2EE.isRequired(callId)) 1 else 0}", ctx.applicationContext) } catch (_: Throwable) {}
+                }
                 // Don't clear() — the cached token still lets onAnswer's
                 // fallback launch CallActivity cleanly.
                 // [2026-10-18 calls-data] Only forget OUR call id: a cancelled

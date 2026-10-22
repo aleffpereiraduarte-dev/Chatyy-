@@ -618,7 +618,7 @@ class GroupCallActivity : ComponentActivity() {
     // Não cifrada = roomOptions de hoje. Falhou com a ligação exigida ⇒ não conecta em claro.
     try { CallE2EE.noteIncoming(applicationContext, roomName, conversationId, "") } catch (_: Throwable) {}
     val roomOptionsE5 = if (CallE2EE.isRequired(roomName)) {
-      val e5 = try { CallE2EE.optionsFor(roomName) } catch (t: Throwable) { null }
+      val e5 = try { CallE2EE.optionsFor(roomName, applicationContext) } catch (t: Throwable) { null }
       if (e5 == null) {
         Log.e(TAG, "[e2ee5] E2EE options failed — NOT connecting plaintext room=$roomName")
         return

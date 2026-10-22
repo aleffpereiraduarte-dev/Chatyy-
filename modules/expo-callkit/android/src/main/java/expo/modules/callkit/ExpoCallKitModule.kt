@@ -1330,6 +1330,7 @@ class ExpoCallKitModule : Module() {
     // e2ee5_calls; sem chamada = nenhum Room muda.
     Function("callE2EECaps") { CallE2EE.API_VERSION }
     Function("setCallE2EERequired") { callId: String, required: Boolean ->
+      try { CallE2EE.bindContext(context) } catch (_: Throwable) {}
       CallE2EE.setRequired(callId, required)
       true
     }
