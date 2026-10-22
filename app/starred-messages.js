@@ -20,6 +20,9 @@ import { useAuth } from '../context/AuthContext';
 import { regionalLocale } from '../utils/dateFormat';
 import { detailColor } from '../constants/theme';
 import {
+  getCachedStarred, fetchStarred, prewarmSavedConv, openSavedFast,
+} from '../services/savedStarredCache'; // [salvas-fav 2026-10-22] cache local + SWR
+import {
   STARRED_FILTERS, starredKind, starredThumb, firstLink, starredPlainText, foldSearch,
 } from '../components/chat/starredKinds';
 
@@ -399,6 +402,27 @@ function ChatSectionHeader({ section, s }) {
   );
 }
 
+// conversation_id → { title, peerEmail, type, avatar } a partir de uma lista de conversas.
+function buildConvMap(convs, myEmail) {
+  const m = {};
+  for (const c of (Array.isArray(convs) ? convs : [])) {
+    if (!c || c.id == null) continue;
+    const others = (Array.isArray(c.members) ? c.members : []).filter(x => String(x?.email || x || '').toLowerCase() !== myEmail);
+    const o0 = others[0];
+    const o0Email = typeof o0 === 'string' ? o0 : (o0?.email || '');
+    const peerEmail = c.type === 'direct' ? (c.other_email || c.contact_email || o0Email || '') : '';
+    const title = c.type === 'direct'
+      ? api.emailToDisplayName(c.contact_name || c.display_name || (typeof o0 === 'object' ? o0?.display_name : '') || c.name || peerEmail)
+      : (c.name || '');
+    m[String(c.id)] = { title, peerEmail, type: c.type, avatar: c.avatar_url || c.avatar || '' };
+  }
+  return m;
+}
+// Espelho síncrono da lista de conversas (MMKV, ≤100) → nomes/avatares no 1º frame.
+function cachedConvMap(myEmail) {
+  try { return buildConvMap(require('../services/chatCache').getCachedConversationsMmkvSync(), myEmail); } catch { return {}; }
+}
+
 export default function StarredMessagesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -409,11 +433,12 @@ export default function StarredMessagesScreen() {
   const myEmail = String(user?.email || '').toLowerCase();
   const accent = detailColor(!!isDark) || s.textSecondary;
   // conversation_id → { title, peerEmail, type, avatar }.
-  const [convMap, setConvMap] = useState({});
+  // [salvas-fav 2026-10-22] 1º frame: nomes da lista de conversas em cache + favoritas em cache.
+  const [convMap, setConvMap] = useState(() => cachedConvMap(myEmail));
 
   const [tab, setTab] = useState('starred'); // 'saved' | 'starred'
-  const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [messages, setMessages] = useState(() => getCachedStarred(myEmail) || []);
+  const [loading, setLoading] = useState(() => !getCachedStarred(myEmail));
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
@@ -421,38 +446,32 @@ export default function StarredMessagesScreen() {
   const aliveRef = useRef(true);
   useEffect(() => () => { aliveRef.current = false; }, []);
 
+  // [salvas-fav 2026-10-22] SWR: o cache já pintou; a rede só atualiza. A lista de
+  // conversas (chat_conversations, p90 1,4 s) NÃO segura mais a pintura: só é pedida
+  // se alguma favorita é de conversa fora do espelho local, e em 2º plano.
+  const convMapRef = useRef(convMap);
+  convMapRef.current = convMap;
   const load = useCallback(async () => {
     try {
-      const [r, cv] = await Promise.all([
-        api.chatStarredMessages(),
-        api.chatConversations().catch(() => null),
-      ]);
+      const list = await fetchStarred(myEmail);
       if (!aliveRef.current) return;
-      if (r?.success && r.data) {
-        const list = Array.isArray(r.data) ? r.data : (r.data.items || r.data.messages || []);
-        setMessages(Array.isArray(list) ? list : []);
-      }
-      const convs = Array.isArray(cv?.data) ? cv.data : (Array.isArray(cv?.data?.conversations) ? cv.data.conversations : []);
-      if (convs.length) {
-        const m = {};
-        for (const c of convs) {
-          if (!c || c.id == null) continue;
-          const others = (Array.isArray(c.members) ? c.members : []).filter(x => String(x?.email || x || '').toLowerCase() !== myEmail);
-          const o0 = others[0];
-          const o0Email = typeof o0 === 'string' ? o0 : (o0?.email || '');
-          const peerEmail = c.type === 'direct' ? (c.other_email || c.contact_email || o0Email || '') : '';
-          const title = c.type === 'direct'
-            ? api.emailToDisplayName(c.contact_name || c.display_name || (typeof o0 === 'object' ? o0?.display_name : '') || c.name || peerEmail)
-            : (c.name || '');
-          m[String(c.id)] = { title, peerEmail, type: c.type, avatar: c.avatar_url || c.avatar || '' };
+      if (list) {
+        setMessages(list);
+        const missing = list.some(m => m && m.conversation_id != null && !convMapRef.current[String(m.conversation_id)]);
+        if (missing) {
+          api.chatConversations().then((cv) => {
+            if (!aliveRef.current) return;
+            const convs = Array.isArray(cv?.data) ? cv.data : (Array.isArray(cv?.data?.conversations) ? cv.data.conversations : []);
+            if (convs.length) setConvMap(prev => ({ ...prev, ...buildConvMap(convs, myEmail) }));
+          }).catch(() => {});
         }
-        setConvMap(m);
       }
     } catch (e) { console.warn('[starred] load:', e); }
     if (aliveRef.current) { setLoading(false); setRefreshing(false); }
   }, [myEmail]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { prewarmSavedConv(myEmail); }, [myEmail]); // aba Salvas abre sem esperar o servidor
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -461,8 +480,11 @@ export default function StarredMessagesScreen() {
   }, [load]);
 
   const openSavedMessages = useCallback(() => {
-    try { router.push('/saved-messages'); } catch (e) { console.warn('[starred] saved nav:', e); }
-  }, [router]);
+    try {
+      if (openSavedFast({ email: myEmail, name: t('chat.savedMessages', 'Mensagens Salvas'), router })) return;
+      router.push('/saved-messages');
+    } catch (e) { console.warn('[starred] saved nav:', e); }
+  }, [router, myEmail, t]);
 
   const openConversation = useCallback((msg) => {
     if (!msg?.conversation_id) return;

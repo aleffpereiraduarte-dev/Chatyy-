@@ -14,15 +14,18 @@
 import { useEffect, useState, useRef } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity, Platform, Animated, Easing } from 'react-native';
 import { useRouter } from 'expo-router';
-import * as api from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
+import { getCachedSavedConvId, resolveSavedConv } from '../services/savedStarredCache'; // [salvas-fav 2026-10-22]
 
 export default function SavedMessagesScreen() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const [err, setErr] = useState(null);
+  const { user } = useAuth() || {};
+  const myEmail = String(user?.email || '').toLowerCase();
   // Heading-bubble entrance — labelled "saved" badge gets an extra delayed
   // fade so it visually distinguishes itself from regular text/spinner.
   // The conversation screen reuses this `saved=1` flag to render the
@@ -37,17 +40,27 @@ export default function SavedMessagesScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    const go = (cid) => {
+      const name = encodeURIComponent(t('chat.savedMessages') || 'Mensagens Salvas');
+      // replace() not push() so the back button skips this loader and
+      // returns straight to wherever the user came from (chat list /
+      // sidebar) — Telegram-parity.
+      require('../services/openConversation').openConversation(`/chat-conversation?id=${cid}&name=${name}&type=saved&saved=1`, { replace: true });
+    };
+    // [salvas-fav 2026-10-22] id já conhecido (cache local) → abre NA HORA, sem
+    // esperar chat_saved_conv (ia ao US: 140 ms–1,2 s); revalida em 2º plano.
+    const cached = getCachedSavedConvId(myEmail);
+    if (cached) {
+      go(cached);
+      resolveSavedConv(myEmail).catch(() => {});
+      return () => { cancelled = true; };
+    }
     (async () => {
       try {
-        const r = await api.chatSavedConv();
+        const r = await resolveSavedConv(myEmail);
         if (cancelled) return;
         if (r?.success && r.data?.conversation_id) {
-          const cid = r.data.conversation_id;
-          const name = encodeURIComponent(t('chat.savedMessages') || 'Mensagens Salvas');
-          // replace() not push() so the back button skips this loader and
-          // returns straight to wherever the user came from (chat list /
-          // sidebar) — Telegram-parity.
-          require('../services/openConversation').openConversation(`/chat-conversation?id=${cid}&name=${name}&type=saved&saved=1`, { replace: true });
+          go(r.data.conversation_id);
         } else {
           setErr(r?.message || 'Erro ao abrir Mensagens Salvas');
         }

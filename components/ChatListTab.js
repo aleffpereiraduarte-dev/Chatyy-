@@ -7411,6 +7411,9 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     const peerLc = String(otherEmail || '').toLowerCase();
     const isSelf = conv.type === 'saved' || (conv.type === 'direct' && peerLc && peerLc === meLc);
     if (isSelf) {
+      // [salvas-fav 2026-10-22] id já está na linha → abre a conversa direto (sem a tela-ponte
+      // /saved-messages + chat_saved_conv ao US). Falha → caminho antigo.
+      try { if (require('../services/savedStarredCache').openSavedFast({ email: meLc, knownId: conv.id, router })) return; } catch {}
       require('../services/openConversation').openConversation('/saved-messages', { router });
       return;
     }

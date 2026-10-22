@@ -8244,6 +8244,8 @@ export async function chatStarMessage(messageId, star = true) {
   if (ld && typeof ld.queueOfflineAction === 'function') {
     try { await ld.queueOfflineAction('chat_star_message', { message_id: messageId, star: star ? 1 : 0 }); } catch {}
   }
+  // [salvas-fav 2026-10-22] desfavoritar some do cache local de Favoritas na hora.
+  if (!star) { try { require('./savedStarredCache').removeCachedStarred(messageId); } catch {} }
   return apiCall('chat_star_message', { message_id: messageId, star: star ? 1 : 0 }, 'POST');
 }
 

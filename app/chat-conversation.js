@@ -28316,9 +28316,18 @@ function ChatConversationInnerBody() {
   };
 
   const loadStarredMessages = async () => {
-    setStarredLoading(true);
+    // [salvas-fav 2026-10-22] pinta as favoritas desta conversa do cache local na hora; a rede só atualiza.
+    let _stHad = false;
     try {
-      const r = await api.chatStarredMessages();
+      const _stC = require('../services/savedStarredCache').getCachedStarred(String(user?.email || ''));
+      if (Array.isArray(_stC)) {
+        _stHad = true;
+        setStarredMessages(_stC.filter(m => m?.conversation_id == null || String(m.conversation_id) === String(conversationId)));
+      }
+    } catch {}
+    setStarredLoading(!_stHad);
+    try {
+      const r = await require('../services/savedStarredCache').fetchStarred(String(user?.email || '')).then(list => (list ? { success: true, data: { items: list } } : { success: false }));
       // Backend returns the list at r.data.items (chat_starred_messages →
       // ['items'=>...]). The old code read r.data.messages (always undefined),
       // so the "Favoritas" modal was always empty even with starred msgs.
