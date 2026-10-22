@@ -12,9 +12,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../../../context/LanguageContext';
 import { useCurrency } from '../../../context/CurrencyContext';
 import { SELECTABLE_LOCALES, LANGUAGES as I18N_LANGUAGES, languageDisplayName, isLocaleSupported } from '../../../i18n';
-import { SettingsGroup, SettingsPickerRow, SettingsRow, useGroupedColors } from '../SettingsKit';
+import { SettingsGroup, SettingsPickerRow, SettingsRow, SettingsSwitchRow, useGroupedColors } from '../SettingsKit';
 import { USE_NATIVE_SHEETS, NativeSheet, NativeSheetKeyboardView, nativeSheetBottomPad } from '../../NativeSheet';
-import { IconSearch, IconX } from '../../Icons';
+import { IconSearch, IconX, IconGlobe, IconCreditCard } from '../../Icons';
 import { useSettingsHost, useSettingsBlob, useLocalKeys, setStorage, removeStorage } from './shared';
 import { useSettingsCollector } from '../nativeCollect'; // [2026-10-18 settings-sub-native-2]
 
@@ -260,6 +260,7 @@ export default function LanguageCategory() {
   const currencyGroup = (
     <SettingsGroup header={collecting ? (t('settings.currencyLabel') || 'Moeda') : undefined} footer={t('settings.currencyDesc') || 'Usada para exibir valores no app.'}>
       <SettingsPickerRow
+        icon={collecting ? IconCreditCard : undefined}
         title={t('settings.currencyLabel') || 'Moeda'}
         value={autoDetected ? '__auto__' : currency}
         displayValue={autoDetected
@@ -282,33 +283,54 @@ export default function LanguageCategory() {
   // topo (slot do header), moeda, "Idioma do sistema" e TODOS os idiomas na
   // própria página com check no atual (atual primeiro). Mesmos pickSystem/pick.
   if (collecting) {
+    // [2026-10-21 idioma-pro] Founder: "deixa mais moderno e bonito". Estrutura nível iOS:
+    // interruptor "Usar idioma do aparelho" com ícone → "Idioma atual" (só ele, com ✓) →
+    // "Outros idiomas" → Moeda no fim (com ícone). Busca = só resultados.
     const nq = q.trim();
+    const curItem = items.find((x) => x.code === language);
+    const others = items.filter((x) => x.code !== language);
+    const row = (item) => (
+      <SettingsRow
+        key={item.code}
+        title={item.native}
+        subtitle={item.local || undefined}
+        checked={!auto && item.code === language}
+        onPress={() => pick(item.code)}
+      />
+    );
     return (
       <View ref={registerAnchor('language')}>
         <SettingsGroup nativeHeader nativeHeaderBare>
           <LanguageSearchField onChangeText={setQ} t={t} />
         </SettingsGroup>
-        {!nq && currencyGroup}
-        <SettingsGroup header={t('settings.languageLabel')} footer={auto ? (t('settings.language.autoDetectDesc') || undefined) : undefined}>
-          {!nq && (
-            <SettingsRow
-              title={t('settings.language.autoDetect')}
-              subtitle={sysName || t('settings.language.autoDetectDesc')}
-              checked={!!auto}
-              onPress={() => pickSystem(sysCode)}
-            />
-          )}
-          {items.map((item) => (
-            <SettingsRow
-              key={item.code}
-              title={item.native}
-              subtitle={item.local || undefined}
-              checked={!auto && item.code === language}
-              onPress={() => pick(item.code)}
-            />
-          ))}
-          {nq && !items.length ? <SettingsRow title={t('common.noResults')} /> : null}
-        </SettingsGroup>
+        {nq ? (
+          <SettingsGroup header={t('settings.languageLabel')}>
+            {items.map(row)}
+            {!items.length ? <SettingsRow title={t('common.noResults')} /> : null}
+          </SettingsGroup>
+        ) : (
+          <>
+            <SettingsGroup footer={auto
+              ? `${t('settings.language.autoDetectDesc') || 'Detecta o idioma a partir do seu aparelho.'}${sysName ? ' · ' + sysName : ''}`
+              : t('settings.language.manualDesc', 'Desligado: o app fica no idioma que você escolher abaixo.')}>
+              <SettingsSwitchRow
+                icon={IconGlobe}
+                title={t('settings.language.autoDetect')}
+                value={!!auto}
+                onValueChange={(v) => { if (v) pickSystem(sysCode); else pick(language); }}
+              />
+            </SettingsGroup>
+            {curItem ? (
+              <SettingsGroup header={t('settings.language.current', 'Idioma atual')}>
+                {row(curItem)}
+              </SettingsGroup>
+            ) : null}
+            <SettingsGroup header={t('settings.language.others', 'Outros idiomas')}>
+              {others.map(row)}
+            </SettingsGroup>
+            {currencyGroup}
+          </>
+        )}
       </View>
     );
   }

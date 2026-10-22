@@ -163,7 +163,7 @@ function TxRow({ item, s, t, language, first, last, onPress }) {
         ) : (
           <View style={styles.amt}>
             <Text style={[Type.callout, TABULAR, { color: amtColor, fontWeight: '700' }]}>{`${sign}${formatInt(Math.abs(d.diamonds || 0), language)}`}</Text>
-            <IconDiamond size={12} />
+            <IconDiamond size={12} color={amtColor} />
           </View>
         )}
         {!mainIsMoney && d.payout != null ? (
@@ -263,7 +263,7 @@ function TxDetailSheet({ item: openItem, onClose, s, t, language }) {
         <Text style={[Type.subhead, { color: s.textSecondary, marginTop: Space.md }]}>{d.title}</Text>
         <View style={[styles.amt, { marginTop: Space.xs }]}>
           <Text style={[styles.dBig, TABULAR, { color: d.credit ? s.success : s.text }]} accessibilityRole="header">{big}</Text>
-          {!mainIsMoney ? <IconDiamond size={22} /> : null}
+          {!mainIsMoney ? <IconDiamond size={22} color={d.credit ? s.success : s.text} /> : null}
         </View>
         {!mainIsMoney && d.payout != null ? (
           <Text style={[Type.footnote, TABULAR, { color: s.textSecondary, marginTop: 2 }]}>
@@ -484,7 +484,7 @@ function WalletScreen() {
           </View>
           <View style={styles.balRow} accessible accessibilityRole="summary"
             accessibilityLabel={`${tr(t, 'wallet.diamondBalance', 'Saldo de diamantes')}: ${wallet.diamonds == null ? '—' : formatInt(wallet.diamonds, language)}`}>
-            <DiamondMark size={30} />
+            <DiamondMark size={30} color={HERO.text} />
             <AnimatedNumber
               value={typeof wallet.diamonds === 'number' ? wallet.diamonds : null}
               format={(n) => formatInt(n, language)}

@@ -244,7 +244,21 @@ export function IconSparkles({ size, color, style }) {
 // Diamond/Gem — used for paid reactions in live (replaces 💎 emoji, project
 // rule: SVG only in UI). Filled shape with a subtle white sparkle inset so
 // it reads as a "diamond" and not just a generic hexagon.
-export function IconDiamond({ size = 22, color = '#60a5fa', style }) {
+// [2026-10-21 diamante-pro] Founder: o diamante azul brilhante dava "cara de app fake".
+// Agora = losango facetado em traço fino, monocromático (cor do texto / da superfície).
+// Sem cor → cinza neutro legível em claro e escuro. Kill: globalThis.__chatyy_diamond_classic = true.
+function _diamondClassic() { try { return globalThis.__chatyy_diamond_classic === true; } catch { return false; } }
+export function IconDiamond({ size = 22, color, style, strokeWidth }) {
+  if (!_diamondClassic()) {
+    const c = color || '#8E8E93';
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" style={style} fill="none" stroke={c} strokeWidth={strokeWidth || (size <= 14 ? 2 : 1.7)} strokeLinejoin="round" strokeLinecap="round">
+        <Path d="M6.2 3.8h11.6L21.2 9 12 20.6 2.8 9l3.4-5.2Z" />
+        <Path d="M2.8 9h18.4M9.4 3.8 8 9l4 11.6L16 9l-1.4-5.2" />
+      </Svg>
+    );
+  }
+  color = color || '#60a5fa';
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" style={style}>
       <Path d="M6 3h12l4 6-10 12L2 9l4-6Z" fill={color} stroke="#1d4ed8" strokeWidth={0.9} strokeLinejoin="round" />

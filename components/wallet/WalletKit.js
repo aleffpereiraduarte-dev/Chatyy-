@@ -144,7 +144,10 @@ export function AnimatedNumber({ value, format, style, duration = 650, numberOfL
   return <Text style={[TABULAR, style]} numberOfLines={numberOfLines} {...rest}>{txt}</Text>;
 }
 
-export function DiamondMark({ size = 28, halo = true }) {
+export function DiamondMark({ size = 28, halo = true, color }) {
+  // [2026-10-21 diamante-pro] monocromático e sem o halo azul (halo só no modo clássico).
+  let classic = false; try { classic = globalThis.__chatyy_diamond_classic === true; } catch {}
+  if (!classic) halo = false;
   const id = useGradId('wdm');
   const box = Math.round(size * 1.7);
   return (
@@ -160,7 +163,7 @@ export function DiamondMark({ size = 28, halo = true }) {
           <Circle cx={box / 2} cy={box / 2} r={box / 2} fill={`url(#${id})`} />
         </Svg>
       ) : null}
-      <IconDiamond size={size} />
+      <IconDiamond size={size} color={color} />
     </View>
   );
 }
@@ -299,7 +302,7 @@ export function PackCard({ pack, s, t, language, price, soon, disabled, loading,
       ]}
     >
       <View style={styles.packTop}>
-        <DiamondMark size={26} />
+        <DiamondMark size={24} color={s.text} />
         {pack.bonusPct > 0 ? (
           <View style={[styles.badge, { backgroundColor: s.fill }]}>
             <Text style={[styles.badgeText, { color: s.text }]}>{`+${pack.bonusPct}%`}</Text>

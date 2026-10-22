@@ -48,7 +48,7 @@ export default function DiamondStorePanel({ compact = false, onBalanceChange }) 
           <HeroCard isDark={isDark} style={{ marginBottom: Space.xl }}>
             <Text style={[styles.heroCaps, { color: HERO.sub }]}>{tr(t, 'wallet.currentBalance', 'Saldo atual')}</Text>
             <View style={styles.heroRow}>
-              <DiamondMark size={28} />
+              <DiamondMark size={28} color={HERO.text} />
               <AnimatedNumber
                 value={typeof wallet.diamonds === 'number' ? wallet.diamonds : null}
                 format={(n) => formatInt(n, language)}
@@ -66,7 +66,7 @@ export default function DiamondStorePanel({ compact = false, onBalanceChange }) 
           <Text style={[Type.footnote, { color: s.textSecondary }]}>{tr(t, 'wallet.currentBalance', 'Saldo atual')}</Text>
           <View style={styles.compactRight}>
             <Text style={[Type.headline, TABULAR, { color: negative ? s.danger : s.text }]}>{wallet.diamonds == null ? '—' : formatInt(wallet.diamonds, language)}</Text>
-            <DiamondMark size={14} halo={false} />
+            <DiamondMark size={14} halo={false} color={s.text} />
           </View>
         </View>
       )}
