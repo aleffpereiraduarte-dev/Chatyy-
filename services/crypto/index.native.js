@@ -42,7 +42,24 @@ function bridge() {
   } catch (_) {
     _bridge = null;
   }
+  if (_bridge) _reportCorePanic(_bridge);
   return _bridge;
+}
+
+// [2026-10-22 crash iOS 766] Panic do núcleo Rust (app ou NSE) gravado em disco pelo hook do
+// núcleo (panic_report.rs) → beacon callkit_diag kind "e2ee5" code core_panic no boot seguinte.
+// Só local/linha/texto do panic (redigido no Rust); nunca conteúdo nem chave. 1x por processo JS.
+function _reportCorePanic(b) {
+  try {
+    if (typeof b.takePanicReport !== 'function') return;
+    const r = String(b.takePanicReport() || '');
+    if (!r) return;
+    let os = '';
+    try { os = require('react-native').Platform.OS; } catch (_) {}
+    // 1 beacon por linha (o callkit_diag corta info em 400); o 1º panic é o que importa.
+    const nb = require('../nativeTelemetry').nativeBeacon;
+    r.split(' | ').slice(0, 4).forEach((ln) => nb('e2ee5', 'core_panic', 'code=core_panic os=' + os + ' ' + ln.slice(0, 340)));
+  } catch (_) {}
 }
 
 function codeErr(code, details) {

@@ -36,6 +36,11 @@ public class ChatyyCryptoModule: Module {
       return uid.isEmpty ? ChatyyCryptoFlags.nativeForLast() : ChatyyCryptoFlags.native(uid: uid)
     }
 
+    // [2026-10-22] Panic do núcleo gravado no App Group (app/NSE): lê+apaga; "" = nada.
+    Function("takePanicReport") { () -> String in
+      return ChatyyCryptoPanic.take()
+    }
+
     AsyncFunction("invoke") { (op: String, args: String, promise: Promise) in
       #if CHATYY_CRYPTO_CORE
       Task {

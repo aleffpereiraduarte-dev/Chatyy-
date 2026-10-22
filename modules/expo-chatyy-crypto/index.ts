@@ -32,6 +32,8 @@ type ChatyyCryptoNative = {
   info(): NativeInfo;
   nativeEnabled(uid: string): boolean;
   invoke(op: string, argsJson: string): Promise<string>;
+  /** [2026-10-22] Panic do núcleo gravado em disco (app/NSE) desde o último boot: lê+apaga; '' = nada. Binários antigos não têm. */
+  takePanicReport?(): string;
   addListener(name: NativeEventName, cb: (body: any) => void): Subscription;
 };
 

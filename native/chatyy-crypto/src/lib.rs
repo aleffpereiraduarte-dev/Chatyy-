@@ -19,7 +19,9 @@ mod keyreq;
 mod link;
 mod media;
 mod metrics;
+mod panic_report;
 mod requests;
+mod rt;
 mod transport;
 mod util;
 

@@ -370,3 +370,24 @@ public enum ChatyyCryptoJSON {
     return "{}"
   }
 }
+
+// MARK: - Panic do núcleo (2026-10-22, crash 766)
+// O núcleo Rust (panic_report.rs) acrescenta 1 linha por panic em <App Group>/e2ee5/core_panic.log
+// (app e NSE). Sem conteúdo nem chave: ts, papel, versão, thread, arquivo:linha e o texto do
+// panic (redigido). O app lê+apaga no boot seguinte e o JS manda pelo beacon (e2ee5 core_panic).
+public enum ChatyyCryptoPanic {
+  public static let fileName = "core_panic.log"
+
+  /// Primeiras linhas (≤ 3, ≤ 400 caracteres cada) e apaga o arquivo. "" = nada a relatar.
+  public static func take() -> String {
+    guard let r = ChatyyCryptoStore.root() else { return "" }
+    let f = r.appendingPathComponent(fileName, isDirectory: false)
+    guard let d = try? Data(contentsOf: f) else { return "" }
+    try? FileManager.default.removeItem(at: f)
+    let s = String(decoding: d.prefix(16 * 1024), as: UTF8.self)
+    let lines = s.split(separator: "\n").map { String($0.prefix(400)) }.filter { !$0.isEmpty }
+    let n = lines.count
+    let first = lines.prefix(3) // o 1º panic é a causa; os seguintes, eco no unwind
+    return (n > 3 ? "n=\(n) | " : "") + first.joined(separator: " | ")
+  }
+}

@@ -317,3 +317,23 @@ internal object ChatyyJson {
     else -> v
   }
 }
+
+/**
+ * Panic do núcleo (2026-10-22, crash iOS 766). O núcleo Rust (panic_report.rs) acrescenta 1 linha
+ * por panic em noBackupFilesDir/e2ee5/core_panic.log. Sem conteúdo nem chave. O app lê+apaga no
+ * boot seguinte e o JS manda pelo beacon (e2ee5 core_panic).
+ */
+internal object ChatyyCryptoPanic {
+  const val FILE_NAME = "core_panic.log"
+
+  /** Primeiras linhas (≤ 3, ≤ 400 caracteres cada) e apaga o arquivo. "" = nada a relatar. */
+  fun take(ctx: Context): String = try {
+    val f = File(ChatyyCryptoFiles.root(ctx), FILE_NAME)
+    if (!f.isFile) "" else {
+      val s = f.readText().take(16 * 1024)
+      f.delete()
+      val lines = s.split('\n').map { it.take(400) }.filter { it.isNotEmpty() }
+      (if (lines.size > 3) "n=${lines.size} | " else "") + lines.take(3).joinToString(" | ")
+    }
+  } catch (_: Throwable) { "" }
+}

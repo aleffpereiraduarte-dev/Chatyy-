@@ -45,6 +45,12 @@ class ChatyyCryptoModule : Module() {
       if (uid.isEmpty()) ChatyyCryptoFlags.nativeForLast(c) else ChatyyCryptoFlags.native(c, uid)
     }
 
+    // [2026-10-22] Panic do núcleo gravado em noBackupFilesDir/e2ee5: lê+apaga; "" = nada.
+    Function("takePanicReport") {
+      val c = ctx ?: return@Function ""
+      ChatyyCryptoPanic.take(c)
+    }
+
     AsyncFunction("invoke") { op: String, args: String, promise: Promise ->
       val c = ctx
       if (c == null) {

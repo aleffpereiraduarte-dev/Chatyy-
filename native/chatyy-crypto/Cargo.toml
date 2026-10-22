@@ -50,6 +50,11 @@ getrandom = "0.2"
 getrandom3 = { package = "getrandom", version = "0.3", features = ["wasm_js"], optional = true }
 uniffi = { version = "=0.29.5", optional = true, features = ["tokio"] }
 
+# [2026-10-22 crash iOS 766] Handle/enter do runtime para destruir o store dentro dele (src/rt.rs).
+# O tokio "rt" já vem no grafo pelo matrix-sdk-sqlite/deadpool (Cargo.lock não muda).
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { version = "1", features = ["sync", "rt"] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tempfile = "3"

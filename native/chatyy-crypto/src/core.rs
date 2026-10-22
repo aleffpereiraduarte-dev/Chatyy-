@@ -9,6 +9,7 @@ use crate::error::{internal, invalid, CoreError, CoreResult, UtdReason};
 use crate::ids::{conv_from_room_id, room_id_for_conv, uid_from_user_id, user_id_for_uid, validate_device_id};
 use crate::metrics::{Metrics, MetricsSnapshot};
 use crate::requests::{self, drain, send_request};
+use crate::rt::InRuntime;
 use crate::transport::{actions, call_json, HttpTransport};
 use crate::util::now_ms;
 use matrix_sdk_common::cross_process_lock::{CrossProcessLock, CrossProcessLockConfig, CrossProcessLockState};
@@ -261,9 +262,12 @@ pub struct CryptoCore {
     pub(crate) transport: Arc<dyn HttpTransport>,
     pub(crate) user_id: OwnedUserId,
     pub(crate) device_id: OwnedDeviceId,
-    pub(crate) machine: Mutex<OlmMachine>,
-    store: Arc<DynCryptoStore>,
-    lock: CrossProcessLock<LockableCryptoStore>,
+    // [2026-10-22 crash iOS 766] Tudo que segura o store SQLite é destruído DENTRO de um runtime
+    // tokio (o deadpool-sync fecha conexão com spawn_blocking no Drop → fora do runtime = abort).
+    // Ver rt.rs. Deref transparente.
+    pub(crate) machine: InRuntime<Mutex<OlmMachine>>,
+    store: InRuntime<Arc<DynCryptoStore>>,
+    lock: InRuntime<CrossProcessLock<LockableCryptoStore>>,
     pub(crate) metrics: Metrics,
     pub(crate) uid: String,
     role: ProcessRole,
@@ -308,6 +312,7 @@ impl CryptoCore {
         if opts.store_passphrase.len() < 16 {
             return Err(invalid("store_passphrase", "mínimo 16 caracteres (use 32 B aleatórios em base64)"));
         }
+        crate::panic_report::install(&opts.store_dir, opts.role.holder());
         let store = open_store(&opts).await?;
         let machine = OlmMachine::with_store(&user_id, &device_id, store.clone(), None).await.map_err(|e| match e {
             matrix_sdk_crypto::CryptoStoreError::MismatchedAccount { .. } => {
@@ -327,9 +332,9 @@ impl CryptoCore {
             role: opts.role,
             user_id,
             device_id,
-            machine: Mutex::new(machine),
-            store,
-            lock,
+            machine: InRuntime::new(Mutex::new(machine)),
+            store: InRuntime::new(store),
+            lock: InRuntime::new(lock),
             metrics: Metrics::default(),
         }))
     }
