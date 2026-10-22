@@ -1381,7 +1381,7 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
         // [e2ee5] v5 (N≥5): texto decifrado do cache local ou "Mensagem" genérica (decifra em 2º
         // plano; o evento e2ee5_plain repinta a linha). Sistema {"sys":"e2ee_*"} → texto do divisor.
         let _p5 = null;
-        try { if ((parsed && typeof parsed.e2e === 'number' && parsed.e2e >= 5) || (parsed && typeof parsed.sys === 'string' && parsed.sys.indexOf('e2ee_') === 0)) _p5 = require('../services/e2ee/e2ee5').previewText(lastMsg, t); } catch {}
+        try { if ((parsed && typeof parsed.e2e === 'number' && parsed.e2e >= 5) || (parsed && typeof parsed.sys === 'string' && (parsed.sys.indexOf('e2ee_') === 0 || parsed.sys === 'game' || parsed.sys === 'watch_session' /* [2026-10-22 e2ee5 D7] */))) _p5 = require('../services/e2ee/e2ee5').previewText(lastMsg, t); } catch {}
         if (_p5 != null) {
           content = _p5;
         } else if (parsed && parsed.e2e) {

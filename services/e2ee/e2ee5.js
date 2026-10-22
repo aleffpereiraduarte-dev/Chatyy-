@@ -863,6 +863,84 @@ export async function mediaFileFor(msgOrMid) {
   return uri ? { uri, poster: l.poster || null } : null;
 }
 
+/** [2026-10-22 galeria-e2ee] Arquivos decifrados JÁ no aparelho desta mensagem (síncrono, sem rede):
+ * {uri, thumb, poster, state, M} | null. Também pede miniatura/pôster em 2º plano (want). */
+export function mediaLocalFor(mid, opts) {
+  if (!isOn() || mid == null) return null;
+  const pe = _byMid.get(String(mid));
+  const M = pe && pe.payload ? _P5().mainMedia(pe.payload) : null;
+  if (!M || !M.url || !M.file) return null;
+  let l = {};
+  try { l = _M5().localSync(M) || {}; } catch (_) { l = {}; }
+  if (opts && opts.want && !(l.thumb || l.poster || l.uri)) { try { _M5().want(M, { conv: pe.conv, mid: String(mid) }); } catch (_) {} }
+  return { ...l, M };
+}
+
+/**
+ * [2026-10-22 galeria-e2ee] Mensagens desta conversa já decifradas NO APARELHO ("Mídia, links e docs" de
+ * conversa cifrada: o servidor só tem ciphertext). Fontes: memória desta sessão, store nativo e2e_plain
+ * (ingestão nativa) e IndexedDB (web). `rows` = linhas conhecidas (tela aberta + cache local) — dão o
+ * remetente/data e os ids p/ o store nativo. Nada sai do aparelho.
+ * → Promise<Array<{mid, t, payload, sender, ts, row}>>
+ */
+export async function localEntries(convId, rows) {
+  const conv = String(convId != null ? convId : '');
+  if (!isOn() || !conv) return [];
+  const out = new Map();
+  const byId = new Map();
+  for (const r of rows || []) { if (r && r.id != null && /^\d+$/.test(String(r.id)) && !byId.has(String(r.id))) byId.set(String(r.id), r); }
+  const put = (e, row) => {
+    if (!e || e.mid == null || !e.payload) return;
+    const mid = String(e.mid);
+    if (out.has(mid)) return;
+    out.set(mid, { mid, t: String(e.t || e.payload.t || 'text'), payload: e.payload, sender: e.sender || _norm(row && row.sender_email), ts: e.ts || (row ? _rowTs(row) : 0), row: row || null });
+  };
+  for (const e of _byMid.values()) { if (e && String(e.conv) === conv) put(e, byId.get(String(e.mid))); }
+  const need = [];
+  for (const [id, r] of byId) {
+    if (out.has(id)) continue;
+    const raw = typeof r._e2eRaw === 'string' ? r._e2eRaw : (typeof r.content === 'string' ? r.content : '');
+    if (!isV5Family(raw) || envVersion(raw) !== 5) continue;
+    const e = _plain.get(keyOf(raw));
+    if (e) { put(e, r); continue; }
+    need.push([id, r, raw]);
+  }
+  const st = need.length ? _nativeMod('ChatyyChatStore') : null;
+  if (st && typeof st.e2ePlainSync === 'function') {
+    for (let i = 0; i < need.length; i += 200) {
+      const part = need.slice(i, i + 200);
+      let j = {};
+      try { j = JSON.parse(st.e2ePlainSync(_me(), conv, JSON.stringify(part.map((x) => Number(x[0])))) || '{}') || {}; } catch (_) { j = {}; }
+      for (const [id, r, raw] of part) {
+        const np = j[id];
+        if (!(np && np.state === 'ok' && np.payload)) continue;
+        let payload = null;
+        try { payload = JSON.parse(np.payload) || null; } catch (_) { payload = null; }
+        if (!payload) continue;
+        const k = keyOf(raw);
+        const e = { conv, mid: id, cmid: String(payload.cmid || np.cmid || ''), text: _textOfPayload(payload), t: String(payload.t || 'text'), payload, sender: _norm(r.sender_email), ts: _rowTs(r), trust: np.trust };
+        if (!_plain.has(k)) _plain.set(k, e);
+        if (!_byMid.has(id)) _byMid.set(id, e);
+        _fail.delete(k);
+        put(e, r);
+      }
+    }
+  }
+  if (_idbOk()) {
+    let vals = [];
+    try { vals = await _persistScan(conv); } catch (_) { vals = []; }
+    for (const v of vals) {
+      if (!v || v.mid == null || !v.payload) continue;
+      const mid = String(v.mid);
+      if (out.has(mid)) continue;
+      const e = { ...v, conv, mid };
+      if (!_byMid.has(mid)) _byMid.set(mid, e);
+      put(e, byId.get(mid));
+    }
+  }
+  return Array.from(out.values());
+}
+
 function _extraOf(m) {
   const x = {};
   if (m.has_link != null) x.has_link = !!m.has_link;
@@ -1892,6 +1970,14 @@ export function previewText(lastMsg, t, convId) {
   const s = c.trim();
   if (sysKind(s)) return sysText(t, s);
   if (s.startsWith('{"sys":"gift"')) { try { return require('../../components/gifts/giftCatalog').giftPreviewText(t, s); } catch (_) { return _tx(t, 'gifts.previewPrefix', 'Presente'); } } // [2026-10-22 presente-e2ee] cartão D7
+  // [2026-10-22 e2ee5 D7] cartão de jogo / assistir junto (fora da cifra, só ids): "Jogo da Velha" / "Assistir junto"
+  if (s.startsWith('{"sys":"game"')) {
+    try { const f = _P5().sysCardFields(s); const G = require('../games'); return f && f.kind ? G.gameTitle(t, String(f.kind)) : _tx(t, 'games.preview', 'Jogo'); } catch (_) { return _tx(t, 'games.preview', 'Jogo'); }
+  }
+  if (s.startsWith('{"sys":"watch_session"')) {
+    let music = false; try { music = (_P5().sysCardFields(s) || {}).kind === 'music'; } catch (_) {}
+    return music ? _tx(t, 'watch.menu.listen', 'Ouvir junto') : _tx(t, 'watch.menu.watch', 'Assistir junto');
+  }
   if (!isV5Family(s)) return null;
   if (envVersion(s) !== 5 || !isOn()) return stateText(t, 'update_to_read');
   const e = _plain.get(keyOf(s));
@@ -2080,5 +2166,6 @@ const e2ee5 = {
   outboxScrub, relayScrub, afterSend, editViaSend, editOf, listLocal, willRetryRejected, sessionSync, deviceIdSync, myUidSync, isReadySync,
   sealPayload, reactionsView, reactViaE2ee, createPoll, votePoll, createMeetup, meetupRsvp, isE2eeMessage, // [e2ee5 WP-09/WP-11]
   liveLocationUpdate, liveLocationStop, allowsServerVoiceSession, sealRichForOutbox, mediaFileFor,
+  localEntries, mediaLocalFor,
 };
 export default e2ee5;

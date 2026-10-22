@@ -1225,7 +1225,21 @@ function _mdlMedia(m, out, ctx) {
  * Motivo (string) pelo qual a linha NÃO pode ir pro nativo, ou '' se pode.
  * ctx: ver buildCtx no chat-conversation.js.
  */
-export function unsupportedReason(item, ctx) {
+// [2026-10-22 e2ee5 D7] conversa cifrada: cartão de jogo/assistir chega como type='system' {"sys":…}.
+// A tela já traduz (normalizeMessageTypes); aqui cobre as linhas montadas fora dela (foto do store,
+// nativeStoreRows) — mesma tradução (services/e2ee/sysCards), memo por objeto.
+const _d7Memo = new WeakMap();
+function _d7(item) {
+  if (!item || item.type !== 'system' || typeof item.content !== 'string' || !item.content.startsWith('{"sys":"')) return item;
+  const hit = _d7Memo.get(item);
+  if (hit) return hit;
+  let out = item;
+  try { out = require('../../services/e2ee/sysCards').adaptSysRow(item) || item; } catch { out = item; }
+  _d7Memo.set(item, out);
+  return out;
+}
+export function unsupportedReason(item0, ctx) {
+  const item = _d7(item0);
   if (!item) return '';
   const tt = item._type;
   // [fase 2] Cartões ricos (enquete, localização, contato, chamada, …) —
@@ -1380,7 +1394,8 @@ function _mediaFor(m, ctx) {
 }
 
 /** Linha → modelo nativo (objeto simples, serializável). null = não suportada. */
-export function buildRow(item, key, ctx) {
+export function buildRow(item0, key, ctx) {
+  const item = _d7(item0); // [2026-10-22 e2ee5 D7]
   // [native-cover] nunca devolve null p/ mensagem quando o fallback por linha está ligado
   let r = null;
   try {

@@ -21,7 +21,9 @@ const TABS = ['media', 'link', 'file', 'audio'];
 const PAGE = 60;
 const _normTab = (x) => (x === 'image' || x === 'video' ? 'media' : (TABS.includes(x) ? x : 'media'));
 const _isVid = (it) => !!it && (it.type === 'video' || it.type === 'video_note');
-const _isVisual = (it) => !!it && !!it.file_url && (it.type === 'image' || _isVid(it) || it.type === 'photo');
+const _isVisual = (it) => !!it && !!(it.file_url || it._e5) && (it.type === 'image' || _isVid(it) || it.type === 'photo'); // [2026-10-22 galeria-e2ee] _e5 = mídia cifrada (arquivo local)
+// [2026-10-22 galeria-e2ee] conversa cifrada: itens montados do aparelho (services/e2ee/e2ee5Gallery)
+function _e5G() { try { return require('../services/e2ee/e2ee5Gallery'); } catch { return null; } }
 
 // Chatyy brand purple. The whole screen reads as ONE coherent purple set —
 // the active-pill, empty-state circle, list icons and accents are all the
@@ -48,6 +50,7 @@ function formatSize(bytes) {
 
 function resolveUrl(url) {
   if (!url) return url;
+  if (/^(file|content|blob|data):/i.test(url)) return url; // [2026-10-22 galeria-e2ee] arquivo local (decifrado)
   const absolute = url.startsWith('http') ? url : api.getMediaUrl(url);
   // Prefer local cached file (disk) for instant render — falls back to remote
   if (Platform.OS !== 'web') {
@@ -87,7 +90,14 @@ function _ts(d) {
 }
 
 function _nativeItems(items, type) {
-  return (items || []).filter(it => it && it.file_url).map((it) => {
+  return (items || []).filter(it => it && (it.file_url || it._e5)).map((it) => {
+    if (it._e5) { // [2026-10-22 galeria-e2ee] miniatura/pôster decifrados locais; vídeo sem pôster ainda → arquivo local
+      const vid = _isVid(it);
+      const th = it._e5Thumb || (!vid ? it.file_url : '') || '';
+      return vid
+        ? { k: String(it.id), u: th, vu: th ? '' : (it.file_url || ''), v: true, ad: !th && !!it.file_url, tr: 'video', t: _ts(it.created_at), a: it.file_name || '' }
+        : { k: String(it.id), u: th, t: _ts(it.created_at), a: it.file_name || '' };
+    }
     const url = resolveUrl(it.file_url);
     const isVideo = type === 'video' || _isVid(it); // [2026-10-18 tg-viewer] aba Mídia mista
     return isVideo
@@ -205,7 +215,7 @@ function _gridRows(items, cols) {
   let curKey = null;
   let row = null;
   for (const it of items || []) {
-    if (!it || !it.file_url) continue;
+    if (!it || !(it.file_url || it._e5)) continue;
     const ts = _ts(it.created_at);
     const d = ts ? new Date(ts) : null;
     const mk = d ? `${d.getFullYear()}-${d.getMonth()}` : '';
@@ -252,8 +262,8 @@ function SectionedMediaGrid({ items, type, colors, onView, onEndReached, loading
                 {_isVid(it) ? (
                   <View style={{ flex: 1, backgroundColor: '#000' }} />
                 ) : (
-                  <FastImage source={{ uri: resolveUrl(it.thumbnail_url || it.file_url) /* [2026-10-20 tg2] grade: versão de tela, não o original */ }} style={{ width: '100%', height: '100%' }}
-                    resizeMode="cover" recyclingKey={it.file_url} />
+                  <FastImage source={{ uri: resolveUrl(it.thumbnail_url || it.file_url || (it._e5 && it.thumb_b64 ? `data:image/jpeg;base64,${it.thumb_b64}` : '')) /* [2026-10-20 tg2] grade: versão de tela, não o original · [2026-10-22 galeria-e2ee] LQIP até decifrar */ }} style={{ width: '100%', height: '100%' }}
+                    resizeMode="cover" recyclingKey={it.file_url || String(it.id)} />
                 )}
                 {_isVid(it) ? (
                   <View style={{ position: 'absolute', right: 5, bottom: 4, flexDirection: 'row', alignItems: 'center' }}>
@@ -398,7 +408,7 @@ function MediaGrid({ items, type, colors, onView, onEndReached, loadingMore, t, 
   );
 }
 
-export default function MediaGallery({ visible, onClose, conversationId, colors, t, initialTab, onJumpToMessage, senderNameOf }) {
+export default function MediaGallery({ visible, onClose, conversationId, colors, t, initialTab, onJumpToMessage, senderNameOf, getLocalRows }) {
   const [activeTab, setActiveTab] = useState(_normTab(initialTab));
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -457,6 +467,25 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   useEffect(() => {
     if (visible && conversationId) loadMedia(activeTab);
   }, [visible, activeTab, conversationId]);
+  // [2026-10-22 galeria-e2ee] miniatura/arquivo cifrado ficou pronto no aparelho → remonta os itens locais
+  useEffect(() => {
+    const G = _e5G();
+    if (!visible || !conversationId || !G || !G.isE2eeConv(conversationId)) return undefined;
+    let tm = null;
+    const off = G.onMediaReady((ev) => {
+      if (ev && ev.conv != null && String(ev.conv) !== String(conversationId)) return;
+      if (tm) return;
+      tm = setTimeout(() => {
+        tm = null;
+        const seq = loadSeqRef.current;
+        const tab = activeTab;
+        let rows = [];
+        try { rows = typeof getLocalRows === 'function' ? (getLocalRows() || []) : []; } catch { rows = []; }
+        G.localSharedItems(conversationId, tab, rows).then((loc) => { if (seq === loadSeqRef.current && Array.isArray(loc)) setItems(loc); }).catch(() => {});
+      }, 400);
+    });
+    return () => { try { off && off(); } catch {} if (tm) clearTimeout(tm); };
+  }, [visible, activeTab, conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMedia = async (type) => {
     const seq = ++loadSeqRef.current;
@@ -465,6 +494,18 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
     moreBusyRef.current = false;
     setLoadingMore(false);
     try {
+      // [2026-10-22 galeria-e2ee] conversa cifrada: o servidor só tem ciphertext → itens do que já
+      // está decifrado no aparelho (fotos/vídeos/docs/áudios do anexo cifrado, links do texto decifrado).
+      const G = _e5G();
+      if (G && G.isE2eeConv(conversationId)) {
+        let rows = [];
+        try { rows = typeof getLocalRows === 'function' ? (getLocalRows() || []) : []; } catch { rows = []; }
+        const loc = await G.localSharedItems(conversationId, type, rows);
+        if (seq !== loadSeqRef.current) return;
+        setItems(loc || []);
+        setLoading(false);
+        return;
+      }
       // [busca-conversa 2026-10-16] servidor paginado; servidor velho (ação
       // desconhecida) → galeria antiga (até 300, sem links).
       let r = null;
@@ -524,6 +565,11 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   };
   const jumpFromLink = onJumpToMessage ? (item) => { try { onJumpToMessage(item.id); } catch {} } : null;
   const playAudioItem = (item) => {
+    if (item && item._e5 && !item.file_url) { // [2026-10-22 galeria-e2ee] baixa+decifra e toca o arquivo local
+      const G = _e5G();
+      if (G) G.ensureItemFile(item).then((u) => { if (u) playAudioItem({ ...item, file_url: u }); }).catch(() => {});
+      return;
+    }
     if (!item || !item.file_url) return;
     try {
       const VN = require('../services/voiceNotePlayer');
@@ -544,6 +590,11 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   // a célula da grade nativa (frameOfKey, grade apiVersion >= 2).
   const heroHintRef = useRef(null);
   const handleView = (item, pressRect) => {
+    if (item && item._e5 && !item.file_url) { // [2026-10-22 galeria-e2ee] abre o arquivo DECIFRADO local (nunca a URL cifrada)
+      const G = _e5G();
+      if (G) G.ensureItemFile(item).then((u) => { if (u) handleView({ ...item, file_url: u }, pressRect); }).catch(() => {});
+      return;
+    }
     if (!item?.file_url) return;
     const _name = (it) => {
       try { return typeof senderNameOf === 'function' ? (senderNameOf(it.sender_email) || '') : String(it.sender_email || '').split('@')[0]; } catch { return ''; }
@@ -561,7 +612,7 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
     let mediaList = null;
     let initialIndex = 0;
     if (activeTab === 'media' && _isVisual(item)) {
-      const vis = (items || []).filter(_isVisual);
+      const vis = (items || []).map((x) => (String(x.id) === String(item.id) ? item : x)).filter((x) => _isVisual(x) && x.file_url); // [2026-10-22 galeria-e2ee] cifrada ainda não decifrada fica fora do deslizar
       const idx = vis.findIndex(x => String(x.id) === String(item.id));
       if (vis.length > 1 && idx >= 0) {
         mediaList = vis.map((it) => {
@@ -629,7 +680,10 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
         for (const it of list) {
           try {
             // eslint-disable-next-line no-await-in-loop
-            const f = await ensureLocalFile(resolveUrl(it.file_url), it.file_name || '');
+            const _src = it._e5 ? await (_e5G()?.ensureItemFile(it) || null) : resolveUrl(it.file_url); // [2026-10-22 galeria-e2ee]
+            if (!_src) continue;
+            // eslint-disable-next-line no-await-in-loop
+            const f = await ensureLocalFile(_src, it.file_name || '');
             // eslint-disable-next-line no-await-in-loop
             if (f) { await ML.saveToLibraryAsync(f); ok++; }
           } catch {}
@@ -663,7 +717,8 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
     setSelBusy(true);
     try {
       const { shareMediaFile } = require('../utils/mediaNativeActions');
-      await shareMediaFile({ url: resolveUrl(list[0].file_url), fileName: list[0].file_name || '' });
+      const _src = list[0]._e5 ? await (_e5G()?.ensureItemFile(list[0]) || null) : resolveUrl(list[0].file_url); // [2026-10-22 galeria-e2ee]
+      if (_src) await shareMediaFile({ url: _src, fileName: list[0].file_name || '' });
     } catch {}
     setSelBusy(false);
   };

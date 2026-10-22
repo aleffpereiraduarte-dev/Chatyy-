@@ -307,7 +307,15 @@ export function useTgProfileData({ email, username, self = false, conversationId
     setShared((s) => ({ ...s, [tab]: { ...(s[tab] || EMPTY_SHARED), loading: true, error: false } }));
     const a = _api();
     let r = null;
-    try { r = a && a.chatSharedItems ? await a.chatSharedItems(convId, kind, more ? st.cursor : '', SHARED_PAGE) : null; } catch { r = null; }
+    // [2026-10-22 galeria-e2ee] conversa cifrada: o servidor só tem ciphertext → o que já está decifrado no aparelho
+    let _e5G = null;
+    try { const G = require('../../../services/e2ee/e2ee5Gallery'); if (G.isE2eeConv(convId)) _e5G = G; } catch { _e5G = null; }
+    if (_e5G) {
+      if (more) { setShared((s) => ({ ...s, [tab]: { ...(s[tab] || EMPTY_SHARED), loading: false } })); return; }
+      try { r = { success: true, data: { items: await _e5G.localSharedItems(convId, kind === 'doc' ? 'file' : kind, []), has_more: false } }; } catch { r = { success: true, data: { items: [], has_more: false } }; }
+    } else {
+      try { r = a && a.chatSharedItems ? await a.chatSharedItems(convId, kind, more ? st.cursor : '', SHARED_PAGE) : null; } catch { r = null; }
+    }
     if (seq !== sharedSeq.current[tab]) return;
     if (!r || !r.success) {
       // servidor velho: galeria antiga (sem links)

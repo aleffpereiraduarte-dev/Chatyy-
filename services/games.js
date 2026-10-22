@@ -140,7 +140,13 @@ export function ensureGameWs() {
       if (!data) return;
       if (data.game) putGameView(data.game);
       if (!_cap && gamesKillSwitched() === false) _cap = true; // servidor mandou evento de jogo → tem jogos
-      for (const fn of Array.from(_convSubs)) { try { fn(data); } catch {} }
+      // [2026-10-22 e2ee5 D7] conversa cifrada: content = cartão `{"sys":"game",…}` (só ids) → o cartão
+      // público sai da visão que veio junto (mesma forma da conversa normal)
+      let out = data;
+      if (data.game && typeof data.content === 'string' && data.content.startsWith('{"sys":')) {
+        try { out = { ...data, content: cardContentFromView(data.game), _e5Sys: 'game' }; } catch { out = { ...data, content: '' }; }
+      }
+      for (const fn of Array.from(_convSubs)) { try { fn(out); } catch {} }
     });
   } catch { _wsAttached = false; }
 }

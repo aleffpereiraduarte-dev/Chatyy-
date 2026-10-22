@@ -308,6 +308,17 @@ upload opaco, download+decifra), `api/e2ee5_media.php` (servidor). Notas: `/root
    Jogos, assistir/ouvir junto, presente, card de ligação = cartão D7 do servidor (fora da criptografia, com
    selo). Ainda recusados no aparelho (§2.8.6): visualização única, reação com figurinha, editar encontro,
    agendar/enviar-quando-online.
+5. **Cartões D7 de jogo e assistir junto (cliente, sem mudança no servidor)**: `{"sys":"game",game_id,…}` e
+   `{"sys":"watch_session",session_id,…}` viram no aparelho o MESMO cartão da conversa normal
+   (`services/e2ee/sysCards`): o estado vem pelo id (`chat_game_state` / `watch_state`, e o `game_update`
+   traz a visão junto) — nomes, título e capa nunca vão no cartão. Lista JS e nativa; toque abre o jogo /
+   a sala. O cache local guarda a linha D7 original (`_e5SysRaw`).
+6. **"Mídia, links e docs" em conversa cifrada**: o servidor só tem ciphertext (`chat_shared_items` volta
+   vazio) → a galeria é montada no aparelho (`services/e2ee/e2ee5Gallery`): mensagens já decifradas (memória,
+   store nativo `e2e_plain`, IndexedDB web) indexadas pelas linhas locais (apagadas, "apagar p/ mim" e
+   visualização única ficam fora); miniatura/arquivo = cópia decifrada local (`e2ee5.mediaLocalFor` /
+   `mediaFileFor`); links = URLs do texto/legenda decifrados (+ `link_preview`); docs = anexo `t:"file"`.
+   Conversa normal segue no servidor.
 
 ## 3. Eventos to-device `chatyy.*` (cifrados Olm aparelho→aparelho)
 

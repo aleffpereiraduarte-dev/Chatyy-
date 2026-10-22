@@ -32,6 +32,13 @@ function _quoteless(rt) { return rt && typeof rt === 'object' && rt.content ? { 
 
 export function toStoredShape(m) {
   if (!m || typeof m !== 'object') return m;
+  // [2026-10-22 e2ee5 D7] cartão de jogo/assistir traduzido da linha `{"sys":…}` (services/e2ee/sysCards):
+  // o cache guarda a linha D7 original (ao recarregar, a tradução busca o estado de novo).
+  if (typeof m._e5SysRaw === 'string' && m._e5SysRaw.startsWith('{"sys":"')) {
+    const out = { ...m, type: 'system', content: m._e5SysRaw };
+    delete out._e5SysRaw; delete out._e5Sys;
+    return out;
+  }
   if (isV5Raw(m._e2eRaw) && (m._e5T || m._e5Ty || m._e5Media || m._localUri || m.poll || m.contact || m.meetup || m.latitude != null)) {
     const out = { ...m, content: m._e2eRaw };
     for (const k of V5_DERIVED) delete out[k];

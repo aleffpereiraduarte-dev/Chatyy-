@@ -16346,6 +16346,11 @@ function ChatConversationInnerBody() {
     return msgs.map(msg => {
       if (!msg) return msg;
       const t = msg.type;
+      // [2026-10-22 e2ee5 D7] conversa cifrada: cartão de jogo/assistir junto vem como type='system'
+      // {"sys":"game"|"watch_session",…ids} → mesmo cartão da conversa normal (estado buscado pelo id)
+      if (msg._e5SysRaw || (t === 'system' && typeof msg.content === 'string' && msg.content.charCodeAt(0) === 123 && msg.content.startsWith('{"sys":"'))) {
+        try { const _sc = require('../services/e2ee/sysCards').adaptSysRow(msg); if (_sc) return _sc; } catch {}
+      }
       // Bug 2026-05-04: msg.type='status_reply' vinha do PG mas normalizer
       // pulava (so processava 'text'/'system'), entao msg.status_reply nao
       // era populado e o renderer caia no fallback que dumpava JSON cru no
@@ -22767,6 +22772,20 @@ function ChatConversationInnerBody() {
     } catch {}
     return () => { try { off && off(); } catch {} };
   }, [conversationId]);
+  // [2026-10-22 e2ee5 D7] estado do cartão de jogo/assistir (conversa cifrada) chegou → troca o content da linha
+  useEffect(() => {
+    if (!conversationId) return undefined;
+    let off = null;
+    try {
+      off = require('../services/e2ee/sysCards').onSysCardPatch((d) => {
+        if (!d || String(d.conversation_id) !== String(conversationId) || d.message_id == null || typeof d.content !== 'string') return;
+        const vOf = (c) => { try { const j = JSON.parse(c); return Number(j && j.v) || 0; } catch { return 0; } };
+        const nv = vOf(d.content);
+        setMessages(prev => _mapKeep(prev, row => (row && row._e5SysRaw && String(row.id) === String(d.message_id) && row.content !== d.content && (d.type !== 'game' || vOf(row.content) <= nv)) ? { ...row, type: d.type, content: d.content } : row));
+      });
+    } catch {}
+    return () => { try { off && off(); } catch {} };
+  }, [conversationId]);
   const _gameCardActionRef = useRef(null);
   _gameCardActionRef.current = async (msg, act) => {
     let G; try { G = require('../services/games'); } catch { return; }
@@ -27188,9 +27207,17 @@ function ChatConversationInnerBody() {
   const _npLabels = { close: t('common.close') || 'Fechar', photo: t('chatConv.viewPhoto') || 'Ver foto' };
   // [busca-conversa 2026-10-16] miniaturas da info: servidor paginado (só N linhas);
   // servidor velho → chat_media_gallery.
-  const _sharedOrGallery = (kind, n) => Promise.resolve(api.chatSharedItems?.(conversationId, kind, '', n))
+  // [2026-10-22 galeria-e2ee] conversa cifrada: o servidor só tem ciphertext → itens do que já está
+  // decifrado no aparelho (services/e2ee/e2ee5Gallery; miniatura = arquivo local). Nada vai p/ o infoCache.
+  const _e5Gal = () => { try { const G = require('../services/e2ee/e2ee5Gallery'); return G.isE2eeConv(conversationId) ? G : null; } catch { return null; } };
+  const _e5Shared = (G, kind, n) => G.localSharedItems(conversationId, kind === 'image' ? 'media' : kind, messagesRef.current || [])
+    .then((items) => ({ success: true, _e5: true, data: { items: (kind === 'image'
+      ? items.map((it) => ({ ...it, thumb_url: it._e5Thumb || (it.type === 'image' ? it.file_url : ''), file_url: it.file_url || it._e5Thumb })).filter((it) => it.thumb_url)
+      : items).slice(0, n) } }))
+    .catch(() => ({ success: true, _e5: true, data: { items: [] } }));
+  const _sharedOrGallery = (kind, n) => { const G = _e5Gal(); if (G) return _e5Shared(G, kind, n); return Promise.resolve(api.chatSharedItems?.(conversationId, kind, '', n))
     .then((r) => (r && r.success ? r : api.chatMediaGallery?.(conversationId, kind, n)))
-    .catch(() => api.chatMediaGallery?.(conversationId, kind, n));
+    .catch(() => api.chatMediaGallery?.(conversationId, kind, n)); };
   const [infoNativeMedia, setInfoNativeMedia] = _useStateT({ media: [], files: [], links: null });
   useEffect(() => {
     if (!_npOn || !(showContactInfo || showGroupInfo) || !conversationId) return undefined;
@@ -27210,13 +27237,13 @@ function ChatConversationInnerBody() {
     } catch {}
     const _same = (a, b) => { try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; } };
     _sharedOrGallery('image', 9)
-      .then((r) => { if (alive && r?.success) { const v = (r.data?.items || []).filter((it) => it?.file_url).slice(0, 9); setInfoNativeMedia((p) => (_same(p.media, v) ? p : { ...p, media: v })); try { _ic?.putConvInfo?.(conversationId, { media: { media: v } }); } catch {} } })
+      .then((r) => { if (alive && r?.success) { const v = (r.data?.items || []).filter((it) => it?.file_url).slice(0, 9); setInfoNativeMedia((p) => (_same(p.media, v) ? p : { ...p, media: v })); if (!r._e5) { try { _ic?.putConvInfo?.(conversationId, { media: { media: v } }); } catch {} } } })
       .catch(() => {});
     _sharedOrGallery('file', 5)
-      .then((r) => { if (alive && r?.success) { const v = (r.data?.items || []).slice(0, 5); setInfoNativeMedia((p) => (_same(p.files, v) ? p : { ...p, files: v })); try { _ic?.putConvInfo?.(conversationId, { media: { files: v } }); } catch {} } })
+      .then((r) => { if (alive && r?.success) { const v = (r.data?.items || []).slice(0, 5); setInfoNativeMedia((p) => (_same(p.files, v) ? p : { ...p, files: v })); if (!r._e5) { try { _ic?.putConvInfo?.(conversationId, { media: { files: v } }); } catch {} } } })
       .catch(() => {});
-    Promise.resolve(api.chatSharedItems?.(conversationId, 'link', '', 12))
-      .then((r) => { if (alive && r?.success) { const v = r.data?.items || []; setInfoNativeMedia((p) => (_same(p.links, v) ? p : { ...p, links: v })); try { _ic?.putConvInfo?.(conversationId, { media: { links: v } }); } catch {} } })
+    (_e5Gal() ? _e5Shared(_e5Gal(), 'link', 12) : Promise.resolve(api.chatSharedItems?.(conversationId, 'link', '', 12)))
+      .then((r) => { if (alive && r?.success) { const v = r.data?.items || []; setInfoNativeMedia((p) => (_same(p.links, v) ? p : { ...p, links: v })); if (!r._e5) { try { _ic?.putConvInfo?.(conversationId, { media: { links: v } }); } catch {} } } })
       .catch(() => {});
     return () => { alive = false; };
   }, [_npOn, showContactInfo, showGroupInfo, conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -41707,6 +41734,7 @@ function ChatConversationInnerBody() {
         onJumpToMessage={(id) => { setShowMediaGallery(false); setMediaGalleryTab('image'); setTimeout(() => { try { safeScrollToMsg({ id }); } catch {} }, Platform.OS === 'ios' ? 380 : 60); }}
         conversationId={conversationId}
         senderNameOf={(email) => _friendlySenderName(email, '', currentEmail, t)}
+        getLocalRows={() => messagesRef.current || []} /* [2026-10-22 galeria-e2ee] conversa cifrada: galeria do que está decifrado no aparelho */
         colors={colors}
         t={t}
       />)}</LazyMount>

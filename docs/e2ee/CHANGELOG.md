@@ -6,6 +6,8 @@
 - §2.9.2 presente em conversa cifrada: cartão D7 `{"sys":"gift"}` desenhado como a bolha de presente;
   recado vai cifrado como resposta ao cartão (nunca no `diamond_gift_send`). Servidor/financeiro inalterados.
 - §2.9.3 visualizador (nativo e JS) abre só o arquivo decifrado local. §2.9.4 lista de tipos.
+- §2.9.5 cartões D7 de jogo/assistir junto desenhados como na conversa normal (estado pelo id).
+  §2.9.6 "Mídia, links e docs" de conversa cifrada montada no aparelho. Só cliente.
 
 ## e2ee5-contrato/1.7.1 — 22/10/2026 (rollout por conta)
 - §4.1/§8.2/§9: `E2EE5_PCT` passa a ser coorte **por conta** (sha256 do e-mail canônico, baldes de

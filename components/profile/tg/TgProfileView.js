@@ -415,17 +415,25 @@ export default function TgProfileView(props) {
 
   // ── mídia / docs / voz ──
   const openMediaItem = useCallback((it, list) => {
+    if (it && it._e5 && !it.file_url) { // [2026-10-22 galeria-e2ee] conversa cifrada: baixa+decifra e abre o arquivo LOCAL
+      try { require('../../../services/e2ee/e2ee5Gallery').ensureItemFile(it).then((u) => { if (u) openMediaItem({ ...it, file_url: u }, list); }).catch(() => {}); } catch {}
+      return;
+    }
     if (!it || !it.file_url) return;
     const isVid = it.type === 'video' || it.type === 'video_note';
     let mediaList;
     let initialIndex = 0;
     if (Array.isArray(list) && list.length > 1) {
-      mediaList = list.filter((x) => x && x.file_url).map((x) => ({ fileUrl: x.file_url, fileName: x.file_name || ((x.type === 'video' || x.type === 'video_note') ? 'video.mp4' : 'image.jpg'), fileSize: x.file_size || 0, type: (x.type === 'video' || x.type === 'video_note') ? 'video' : 'image', messageId: x.id, createdAt: x.created_at || null, senderEmail: x.sender_email || '' }));
+      mediaList = list.map((x) => (x && it._e5 && String(x.id) === String(it.id) ? it : x)).filter((x) => x && x.file_url).map((x) => ({ fileUrl: x.file_url, fileName: x.file_name || ((x.type === 'video' || x.type === 'video_note') ? 'video.mp4' : 'image.jpg'), fileSize: x.file_size || 0, type: (x.type === 'video' || x.type === 'video_note') ? 'video' : 'image', messageId: x.id, createdAt: x.created_at || null, senderEmail: x.sender_email || '' }));
       initialIndex = Math.max(0, mediaList.findIndex((x) => String(x.messageId) === String(it.id)));
     }
     setViewer({ fileUrl: it.file_url, fileName: it.file_name || 'media', fileSize: it.file_size || 0, type: isVid ? 'video' : (it.type === 'file' ? 'file' : (it.type || 'image')), messageId: it.id, senderEmail: it.sender_email || '', createdAt: it.created_at || null, mediaList, initialIndex });
   }, []);
   const playVoice = useCallback((it) => {
+    if (it && it._e5 && !it.file_url) { // [2026-10-22 galeria-e2ee]
+      try { require('../../../services/e2ee/e2ee5Gallery').ensureItemFile(it).then((u) => { if (u) playVoice({ ...it, file_url: u }); }).catch(() => {}); } catch {}
+      return;
+    }
     if (!it || !it.file_url) return;
     try {
       const VN = require('../../../services/voiceNotePlayer');
@@ -500,13 +508,13 @@ export default function TgProfileView(props) {
       let bucket = [];
       const flush = () => { _chunk(bucket, 3).forEach((row) => out.push({ k: 'm', key: `m${row[0].key}`, row })); bucket = []; };
       for (const it of st.items) {
-        if (!it || !it.file_url) continue;
+        if (!it || !(it.file_url || it._e5)) continue; // [2026-10-22 galeria-e2ee] _e5 = mídia cifrada (miniatura local)
         const ts = _ts(it.created_at);
         let mon = '';
         try { mon = ts ? new Date(ts).toLocaleDateString(lang, { month: 'long', year: new Date(ts).getFullYear() === new Date().getFullYear() ? undefined : 'numeric' }) : ''; } catch {}
         if (mon !== curMonth) { flush(); curMonth = mon; if (mon) out.push({ k: 'mg', key: `mg${mon}${it.id}`, label: mon.charAt(0).toUpperCase() + mon.slice(1) }); }
         const isVid = it.type === 'video' || it.type === 'video_note';
-        const thumb = absUrl(it.thumb_url || (isVid ? '' : it.file_url));
+        const thumb = absUrl(it.thumb_url || it._e5Thumb || (isVid ? '' : it.file_url));
         let headers = null;
         try { if (/\/api\//.test(thumb)) headers = require('../../../services/avatar').avatarSource(thumb)?.headers || null; } catch {}
         bucket.push({ key: `sm${it.id}`, thumb, headers, video: isVid, it });
