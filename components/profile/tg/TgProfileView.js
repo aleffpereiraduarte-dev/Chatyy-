@@ -33,6 +33,7 @@ import { useStatusRing, openStatusFor } from '../../status/statusRingStore';
 import { usePendingProfilePosts, mergePendingPosts, openPendingPostMenu } from '../../ProfilePostProgress';
 import ProfilePostProgress from '../../ProfilePostProgress';
 import * as muralNav from '../../../services/muralNav';
+import * as muralStore from '../../../services/muralStore'; // [mural-rt 2026-10-22]
 import { getDefaultAudience, loadDefaultAudience, setDefaultAudience, subscribeDefaultAudience } from '../../../services/muralPrefs';
 import { useAnchoredMenu, AnchoredMenuButton, AnchoredMenuHost, sfSymbolFor } from '../../AnchoredMenu'; // [2026-10-21 menu-ancorado]
 import { useFollowRequestState } from '../../../services/followRequests'; // [privado 2026-10-22]
@@ -233,6 +234,33 @@ export default function TgProfileView(props) {
     if (!isSelf || !pendingRaw.length) return server;
     return mergePendingPosts(pendingRaw.map(normPost).filter(Boolean), server);
   }, [isSelf, pendingRaw, data.posts.items]);
+
+  // [mural-rt 2026-10-22] curtidas/comentários ao vivo dos cartões NA TELA (lista); o número que chegar de
+  // qualquer post já carregado aqui também vale (ex.: voltou da tela do post).
+  const postByIdRef = useRef(new Map());
+  postByIdRef.current = new Map(data.posts.items.map((p) => [String(p.id), p]));
+  const dataPatchPost = data.patchPost;
+  useEffect(() => muralStore.onLiveCounts((id, p) => {
+    const q = postByIdRef.current.get(String(id));
+    if (!q || typeof dataPatchPost !== 'function') return;
+    const nx = {};
+    if (p.likes != null && p.likes !== q.like_count) nx.like_count = p.likes;
+    if (p.comments != null && p.comments !== q.comment_count) nx.comment_count = p.comments;
+    if (p.liked != null && p.liked !== q.liked_by_me) nx.liked_by_me = p.liked;
+    if (Object.keys(nx).length) dataPatchPost(id, nx);
+  }), [dataPatchPost]);
+  const liveRef = useRef(new Map()); // id -> desassinar
+  const liveViewCfg = useRef({ itemVisiblePercentThreshold: 50, minimumViewTime: 0 }).current;
+  const onLiveViewable = useRef(({ changed }) => {
+    for (const c of changed || []) {
+      const it = c && c.item;
+      const id = it && it.k === 'c' && it.post && !it.post.__pending ? Number(it.post.id) : 0;
+      if (!id) continue;
+      if (c.isViewable) { if (!liveRef.current.has(id)) { try { liveRef.current.set(id, muralStore.watchPost(id)); } catch {} } }
+      else { const un = liveRef.current.get(id); if (un) { liveRef.current.delete(id); try { un(); } catch {} } }
+    }
+  }).current;
+  useEffect(() => () => { for (const un of liveRef.current.values()) { try { un(); } catch {} } liveRef.current.clear(); }, []);
 
   // [privado 2026-10-22] Seguir / Solicitar para seguir / Solicitado / Seguindo + perfil privado trancado.
   const social = (data.profile && data.profile.social) || null;
@@ -854,6 +882,8 @@ export default function TgProfileView(props) {
         scrollEventThrottle={16}
         onEndReached={onEndReached}
         onEndReachedThreshold={0.8}
+        viewabilityConfig={liveViewCfg}
+        onViewableItemsChanged={onLiveViewable}
         ListFooterComponent={footer}
         initialNumToRender={8}
         maxToRenderPerBatch={8}

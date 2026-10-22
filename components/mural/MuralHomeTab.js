@@ -417,19 +417,24 @@ function MuralHomeTab(props) {
   const feedVisible = active && seg !== 'reels';
   const feedVisibleRef = useRef(feedVisible);
   feedVisibleRef.current = feedVisible;
+  // [mural-rt 2026-10-22] curtidas/comentários ao vivo SÓ dos posts na tela (≥50%) com a aba visível
+  const live = useRef(new Map()); // id -> desassinar
+  const liveOn = (id) => { if (!id || live.current.has(id)) return; try { live.current.set(id, store.watchPost(id)); } catch {} };
+  const liveOff = (id) => { const un = live.current.get(id); if (un) { live.current.delete(id); try { un(); } catch {} } };
+  const liveOffAll = () => { for (const id of Array.from(live.current.keys())) liveOff(id); };
   const onViewableItemsChanged = useRef(({ changed }) => {
     for (const c of changed || []) {
       const it = c && c.item;
       if (!it || it.k !== 'post' || !it.raw) continue;
-      if (c.isViewable) { viewing.current.add(it.raw.id); if (feedVisibleRef.current) signals.muralViewStart(it.raw.id, viewCtx.current); }
-      else { viewing.current.delete(it.raw.id); signals.muralViewEnd(it.raw.id); }
+      if (c.isViewable) { viewing.current.add(it.raw.id); if (feedVisibleRef.current) { signals.muralViewStart(it.raw.id, viewCtx.current); liveOn(it.raw.id); } }
+      else { viewing.current.delete(it.raw.id); signals.muralViewEnd(it.raw.id); liveOff(it.raw.id); }
     }
   }).current;
   useEffect(() => {
-    if (!feedVisible) { signals.endAllViews(); signals.flushMuralSignals(); return; }
-    for (const id of viewing.current) signals.muralViewStart(id, viewCtx.current); // voltou p/ a aba: o que está na tela conta de novo
-  }, [feedVisible]);
-  useEffect(() => () => { signals.endAllViews(); signals.flushMuralSignals(); }, []);
+    if (!feedVisible) { signals.endAllViews(); signals.flushMuralSignals(); liveOffAll(); return; }
+    for (const id of viewing.current) { signals.muralViewStart(id, viewCtx.current); liveOn(id); } // voltou p/ a aba: o que está na tela conta de novo
+  }, [feedVisible]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { signals.endAllViews(); signals.flushMuralSignals(); liveOffAll(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   let StoriesStrip = null;
   try { StoriesStrip = require('../ChatFeedTab').StoriesStrip || null; } catch { StoriesStrip = null; }

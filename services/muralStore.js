@@ -7,7 +7,8 @@
  *     toggle do servidor) e rollback se falhar;
  *   • comentários com respostas (1 nível), curtir comentário, apagar — otimista
  *     com rollback;
- *   • ao vivo: evento WS `post_update` (canal feed_post_<id>) + refetch ao focar.
+ *   • ao vivo [mural-rt 2026-10-22]: post_rt_sub (assinatura por post c/ permissão) + eventos WS
+ *     post_like / post_comment / post_update no canal por-usuário; polling leve se o WS cair; refetch ao focar.
  *
  * Contrato do servidor: /root/mural-2026-10-20/API.md (post_get, post_like,
  * post_view, post_comments, post_comment_create, post_comment_like,
@@ -550,66 +551,238 @@ export async function deleteComment(postId, comment) {
   return true;
 }
 
-// ─── Ao vivo (WS post_update no canal feed_post_<id>) ──────────────────────
+// ─── Ao vivo [mural-rt 2026-10-22] ─────────────────────────────────────────
+// Assinatura EXPLÍCITA por post no servidor (post_rt_sub: checa a permissão na hora — audiência, perfil
+// privado, bloqueio) e eventos no canal por-usuário do WS: post_like / post_comment / post_update (com seq
+// por post → replay do resume e fora de ordem são descartados). Antes: subscribe('feed_post_<id>'), que o hub
+// não aceita → nada chegava. Repinta no máx. 1x a cada 250 ms por post. Renova a cada 30 s em 1º plano
+// (a mesma chamada traz contadores frescos); WS fora / servidor sem tempo real → polling leve (20 s).
+// Kill local: globalThis.__chatyy_mural_rt_off = true.
 let _wsOn = false;
 const _watch = new Map(); // id -> refcount
 const _cmTimers = new Map();
+const _seq = new Map(); // id -> último seq aplicado
+const _fl = new Map(); // id -> { patch, ops, timer, last }
+const _liveSubs = new Set();
+const _rt = { sid: `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, timer: null, next: null, inflight: false, again: false, unsub: new Set(), denied: new Set(), unsupported: false, on: true, renewMs: 30000, pollMs: 20000, active: true };
 function _ws() { try { return require('./websocket').default; } catch { return null; } }
-/** Assina o canal do post enquanto ele/folha estiver aberto. Devolve o "desassinar". */
+function _rtOff() { try { return !!globalThis.__chatyy_mural_rt_off; } catch { return false; } }
+function _wsUp() { const w = _ws(); return !!(w && w.isConnected && w.authenticated); }
+function _myEmail() { try { return String(_ws()?.email || '').toLowerCase(); } catch { return ''; } }
+
+/** Assina o post enquanto ele/folha/linha do feed estiver na tela. Devolve o "desassinar". */
 export function watchPost(id) {
   const k = Number(id);
   if (!k) return () => {};
   _ensureWs();
   const n = (_watch.get(k) || 0) + 1;
   _watch.set(k, n);
-  if (n === 1) { try { _ws()?.subscribe?.(`feed_post_${k}`); } catch {} }
+  if (n === 1) { _rt.unsub.delete(k); _rtKick(250); }
   let done = false;
   return () => {
     if (done) return;
     done = true;
     const m = (_watch.get(k) || 1) - 1;
-    if (m <= 0) { _watch.delete(k); try { _ws()?.unsubscribe?.(`feed_post_${k}`); } catch {} } else _watch.set(k, m);
+    if (m <= 0) { _watch.delete(k); _rt.denied.delete(k); _rt.unsub.add(k); _rtKick(1500); } else _watch.set(k, m);
   };
 }
+/** fn(id, { likes, comments, liked? }) a cada atualização ao vivo aplicada (listas com estado próprio, ex. perfil). */
+export function onLiveCounts(fn) { _liveSubs.add(fn); _ensureWs(); return () => _liveSubs.delete(fn); }
+
+function _rtKick(ms) {
+  if (_rt.unsupported) return;
+  const at = Date.now() + ms;
+  if (_rt.timer && _rt.next != null && _rt.next <= at) return;
+  clearTimeout(_rt.timer);
+  _rt.next = at;
+  _rt.timer = setTimeout(() => { _rt.timer = null; _rt.next = null; _rtSync(); }, ms);
+}
+function _rtSchedule() {
+  if (_rt.unsupported || !_rt.active || (!_watch.size && !_rt.unsub.size)) return;
+  _rtKick(_rt.on && _wsUp() && !_rtOff() ? _rt.renewMs : _rt.pollMs);
+}
+async function _rtSync() {
+  if (_rt.unsupported) return;
+  if (_rt.inflight) { _rt.again = true; return; }
+  const ids = Array.from(_watch.keys()).filter((k) => !_rt.denied.has(k)).slice(-60);
+  const unsub = Array.from(_rt.unsub).slice(0, 200);
+  if (!_rt.active && !unsub.length) return;
+  if (!ids.length && !unsub.length) return;
+  for (const k of unsub) _rt.unsub.delete(k);
+  _rt.inflight = true;
+  let r = null;
+  try { r = await _api().apiCall('post_rt_sub', { ids: _rt.active ? ids : [], unsub, sid: _rt.sid }, 'POST'); } catch { r = null; }
+  _rt.inflight = false;
+  if (r && r.success === false && _UNKNOWN_RE.test(_errMsg(r))) { _rt.unsupported = true; return; } // servidor velho: só refetch ao focar
+  const d = r && r.success && r.data ? r.data : null;
+  if (d) {
+    _rt.on = d.rt !== false;
+    if (Number(d.renew_ms) >= 5000) _rt.renewMs = Number(d.renew_ms);
+    if (Number(d.poll_ms) >= 5000) _rt.pollMs = Number(d.poll_ms);
+    for (const k of Array.isArray(d.denied) ? d.denied : []) _rt.denied.add(Number(k));
+    const st = d.stats && typeof d.stats === 'object' ? d.stats : {};
+    for (const key of Object.keys(st)) _applySnap(Number(key), st[key]);
+  }
+  if (_rt.again) { _rt.again = false; _rtKick(50); return; }
+  _rtSchedule();
+}
+// Foto dos contadores (renovação/polling): só vale se não for mais velha que o último evento aplicado.
+function _applySnap(k, s) {
+  if (!k || !s) return;
+  const seq = Number(s.seq) || 0;
+  const last = _seq.get(k) || 0;
+  if (seq < last) return;
+  if (seq) _seq.set(k, seq);
+  const patch = {};
+  if (s.like_count != null && !_likeOps.has(k)) { patch.likes = Number(s.like_count); if (s.liked_by_me != null) patch.liked = !!s.liked_by_me; }
+  if (s.comment_count != null) patch.comments = Number(s.comment_count);
+  _queue(k, patch, null);
+  // perdeu comentários com o WS fora (folha aberta e o número não bate) → recarrega a lista
+  const cs = _cm.get(k);
+  if (s.comment_count != null && cs && cs.loaded && cs.total != null && Number(s.comment_count) !== cs.total && (_cmSubs.get(k)?.size || 0) > 0) {
+    clearTimeout(_cmTimers.get(k));
+    _cmTimers.set(k, setTimeout(() => { _cmTimers.delete(k); loadComments(k); }, 300));
+  }
+}
+function _seqOk(k, seq) {
+  const n = Number(seq) || 0;
+  if (!n) return true;
+  if (n <= (_seq.get(k) || 0)) return false;
+  _seq.set(k, n);
+  return true;
+}
+// Coalescência: 1 repintura a cada 250 ms por post (a 1ª sai já; as seguintes juntam).
+function _queue(k, patch, op) {
+  if (!k) return;
+  let f = _fl.get(k);
+  if (!f) { f = { patch: {}, ops: [], timer: null, last: 0 }; _fl.set(k, f); }
+  if (patch) Object.assign(f.patch, patch);
+  if (op) f.ops.push(op);
+  if (f.timer) return;
+  f.timer = setTimeout(() => _flushNow(k), Math.max(0, f.last + 250 - Date.now()));
+}
+function _flushNow(k) {
+  const f = _fl.get(k);
+  if (!f) return;
+  f.timer = null;
+  f.last = Date.now();
+  const patch = f.patch; const ops = f.ops;
+  f.patch = {}; f.ops = [];
+  if (ops.length && _cm.has(k)) _applyCmOps(k, ops);
+  const p = _posts.get(k);
+  if (p && !p.deleted) {
+    const diff = {};
+    for (const key of Object.keys(patch)) if (p[key] !== patch[key]) diff[key] = patch[key];
+    if (diff.likes != null) diff.likes_text = ''; // texto pronto do servidor ficou velho → likersText recalcula
+    if (Object.keys(diff).length) patchPost(k, diff);
+  }
+  if (Object.keys(patch).length) for (const fn of Array.from(_liveSubs)) { try { fn(k, patch); } catch {} }
+}
+function _applyCmOps(k, ops) {
+  const s = _cm.get(k);
+  if (!s) return;
+  let items = s.items;
+  let total = s.total;
+  const me = _myEmail();
+  const post = _posts.get(k);
+  for (const op of ops) {
+    if (op.total != null) total = op.total;
+    if (op.kind === 'new') {
+      const c = op.c;
+      if (!c || c.id == null) continue;
+      const sid = String(c.id);
+      const has = (x) => String(x.id) === sid || (op.clientId && x.client_id === op.clientId);
+      if (items.some((x) => has(x) || (x.replies || []).some(has))) continue; // eco do meu (otimista/retorno do POST já pôs)
+      const mine = !!me && String(c.email || '').toLowerCase() === me;
+      const nc = { ...c, is_mine: mine, can_delete: mine || !!(post && post.is_mine), liked: false };
+      if (c.parent_id) {
+        if (!items.some((x) => String(x.id) === String(c.parent_id))) continue;
+        items = items.map((x) => (String(x.id) === String(c.parent_id) ? { ...x, replies: (x.replies || []).concat([nc]), reply_count: (x.reply_count || 0) + 1 } : x));
+      } else {
+        if (s.hasMore) continue; // páginas no meio ainda não carregadas: aparece ao paginar (só o número sobe)
+        const at = items.findIndex((x) => _isLocal(x) || Number(x.id) > Number(c.id)); // ordem do servidor (id crescente), antes dos meus em envio
+        items = at < 0 ? items.concat([nc]) : items.slice(0, at).concat([nc], items.slice(at));
+      }
+    } else if (op.kind === 'del') {
+      const sid = String(op.id);
+      if (!items.some((x) => String(x.id) === sid || (x.replies || []).some((y) => String(y.id) === sid))) continue; // já tirei (otimista)
+      items = items.filter((x) => String(x.id) !== sid).map((x) => {
+        if (!(x.replies || []).some((y) => String(y.id) === sid)) return x;
+        return { ...x, replies: x.replies.filter((y) => String(y.id) !== sid), reply_count: Math.max(0, (x.reply_count || 1) - 1) };
+      });
+    }
+  }
+  if (items === s.items && total === s.total) return;
+  _cmSet(k, { ...s, items, total });
+}
+function _evData(m) { return m && m.post_id != null ? m : (m && m.data && m.data.post_id != null ? m.data : null); }
+
 function _ensureWs() {
   if (_wsOn) return;
   const ws = _ws();
   if (!ws || typeof ws.on !== 'function') return;
   _wsOn = true;
+  ws.on('post_like', (m) => {
+    if (_rtOff()) return;
+    const d = _evData(m);
+    const k = d ? Number(d.post_id) : 0;
+    if (!k || !_seqOk(k, d.seq)) return;
+    const patch = {};
+    if (d.like_count != null && !_likeOps.has(k)) patch.likes = Number(d.like_count);
+    if (d.actor_is_me && d.liked != null && !_likeOps.has(k)) patch.liked = !!d.liked; // eco do meu outro aparelho
+    if (d.comment_count != null) patch.comments = Number(d.comment_count);
+    _queue(k, patch, null);
+  });
+  ws.on('post_comment', (m) => {
+    if (_rtOff()) return;
+    const d = _evData(m);
+    const k = d ? Number(d.post_id) : 0;
+    if (!k || !_seqOk(k, d.seq)) return;
+    const total = d.comment_count != null ? Number(d.comment_count) : null;
+    const patch = {};
+    if (total != null) patch.comments = total;
+    if (d.like_count != null && !_likeOps.has(k)) patch.likes = Number(d.like_count);
+    let op = null;
+    if (d.op === 'new' && d.comment) {
+      const c = _normComment({ ...d.comment, parent_id: d.comment.parent_id ?? d.parent_id ?? null });
+      if (c) op = { kind: 'new', c, clientId: d.client_id || null, total };
+    } else if (d.op === 'deleted' && d.comment_id != null) {
+      op = { kind: 'del', id: d.comment_id, total };
+    }
+    // meu comentário em voo: o retorno do POST resolve o otimista; o eco só não pode duplicar (client_id)
+    _queue(k, patch, op);
+  });
   ws.on('post_update', (m) => {
-    const d = m && m.post_id != null ? m : (m && m.data && m.data.post_id != null ? m.data : null);
-    if (!d) return;
-    const k = Number(d.post_id);
-    if (!k) return;
+    const d = _evData(m);
+    const k = d ? Number(d.post_id) : 0;
+    if (!k || !_seqOk(k, d.seq)) return;
     const reason = String(d.reason || '');
     if (reason === 'delete') { if (_posts.has(k)) markDeleted(k); return; }
-    if (reason === 'edit') { if (_posts.has(k)) loadPost(k); return; }
+    if (reason === 'edit') { if (_posts.has(k)) loadPost(k); if (_watch.has(k)) _rtKick(800); return; } // servidor zera assinantes no edit (público pode ter mudado) → re-assina
     const patch = {};
     if (d.like_count != null && !_likeOps.has(k)) patch.likes = Number(d.like_count);
     if (d.comment_count != null) patch.comments = Number(d.comment_count);
-    if (_posts.has(k) && Object.keys(patch).length) patchPost(k, patch);
-    if (reason === 'like' && _posts.has(k) && !_likeOps.has(k)) {
-      // likers_preview/likes_text não vêm no evento → atualiza calado depois de um respiro
-      clearTimeout(_cmTimers.get(`p${k}`));
-      _cmTimers.set(`p${k}`, setTimeout(() => { _cmTimers.delete(`p${k}`); loadPost(k); }, 1500));
-    }
-    if ((reason === 'comment' || reason === 'comment_deleted') && _cm.has(k)) {
-      const s = _cm.get(k);
-      if (reason === 'comment_deleted' && d.comment_id != null) {
-        _mapComments(k, (c) => (String(c.id) === String(d.comment_id) ? null : undefined));
-        return;
-      }
-      // meu próprio comentário em voo: o retorno do POST já resolve
-      const mineInFlight = s.items.some((c) => c.pending || (c.replies || []).some((r) => r.pending));
-      clearTimeout(_cmTimers.get(k));
-      _cmTimers.set(k, setTimeout(() => {
-        _cmTimers.delete(k);
-        const parent = d.parent_id != null ? (_cm.get(k)?.items || []).find((c) => String(c.id) === String(d.parent_id)) : null;
-        if (parent && parent.replies && parent.replies.length >= 3) loadReplies(k, { ...parent, _rcursor: null });
-        else loadComments(k);
-      }, mineInFlight ? 1200 : 250));
-    }
+    _queue(k, patch, null);
   });
+  // WS voltou → re-assina já (traz os números que mudaram enquanto caiu); caiu → próximo ciclo vira polling
+  ws.on('connection', (e) => {
+    const st = e && e.status;
+    if (st === 'authenticated' || st === 'connected') { if (_watch.size) _rtKick(400); }
+    else if (st === 'disconnected' || st === 'offline') { if (_watch.size) _rtKick(_rt.pollMs); }
+  });
+  try {
+    const { AppState } = require('react-native');
+    AppState.addEventListener('change', (s) => {
+      const act = s === 'active';
+      if (act === _rt.active) return;
+      _rt.active = act;
+      if (act) { if (_watch.size) _rtKick(300); return; }
+      // 2º plano: desassina tudo (sem eventos à toa no fundo; servidor expira sozinho de qualquer jeito)
+      clearTimeout(_rt.timer); _rt.timer = null; _rt.next = null;
+      for (const k of _watch.keys()) _rt.unsub.add(k);
+      _rtSync();
+    });
+  } catch {}
 }
 
 // ─── Texto ─────────────────────────────────────────────────────────────────
@@ -624,6 +797,6 @@ function _tr(key, fb) {
 
 export default {
   getPost, primePost, patchPost, subscribePost, usePost, loadPost, onAnyPostChange, markDeleted,
-  toggleLike, toggleSave, markViewed, normalizePost, deletePost, editPost, watchPost,
+  toggleLike, toggleSave, markViewed, normalizePost, deletePost, editPost, watchPost, onLiveCounts,
   getComments, subscribeComments, useComments, loadComments, loadReplies, addComment, retryComment, toggleCommentLike, deleteComment,
 };
