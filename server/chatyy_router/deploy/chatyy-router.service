@@ -1,0 +1,36 @@
+[Unit]
+Description=Chatyy roteador BEAM (PROTOTIPO, sem trafego de usuario) — /root/roteador-2026-10-22/README.md
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chatyy-router
+Group=chatyy-router
+EnvironmentFile=/etc/chatyy-router/env
+ExecStart=/opt/chatyy-router/bin/rt-start
+Restart=on-failure
+RestartSec=5
+# recursos limitados: edge de produção vem primeiro
+Nice=10
+CPUQuota=100%
+CPUWeight=20
+MemoryMax=768M
+MemoryHigh=640M
+TasksMax=512
+LimitNOFILE=65536
+# endurecimento
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+ReadWritePaths=/var/lib/chatyy-router
+ReadOnlyPaths=/etc/chatyy-router /opt/chatyy-router
+
+[Install]
+WantedBy=multi-user.target

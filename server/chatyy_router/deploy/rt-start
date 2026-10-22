@@ -1,0 +1,26 @@
+#!/bin/sh
+# Sobe o nó do roteador SEM epmd, distribuição só TLS e só no IP da WG.
+# Cookie: $HOME/.erlang.cookie (0400) — nunca em argv/env (não aparece no ps).
+set -eu
+ROOT=/opt/chatyy-router
+: "${ROUTER_WG_IP:?defina ROUTER_WG_IP no /etc/chatyy-router/env}"
+: "${ROUTER_DIST_PORT:=4370}"
+ERTS_VSN=$(cut -d' ' -f1 "$ROOT/releases/start_erl.data")
+REL_VSN=$(cut -d' ' -f2 "$ROOT/releases/start_erl.data")
+IFACE="{$(echo "$ROUTER_WG_IP" | tr . ,)}"
+export HOME=/var/lib/chatyy-router
+export BINDIR="$ROOT/erts-$ERTS_VSN/bin" ROOTDIR="$ROOT" EMU=beam PROGNAME=erl
+export LANG=C.UTF-8 ELIXIR_ERL_OPTIONS=""
+exec "$BINDIR/erlexec" \
+  -name "router@$ROUTER_WG_IP" \
+  -proto_dist inet_tls -ssl_dist_optfile /etc/chatyy-router/ssl_dist.conf \
+  -start_epmd false -erl_epmd_port "$ROUTER_DIST_PORT" \
+  -kernel inet_dist_use_interface "$IFACE" \
+  -kernel inet_dist_listen_min "$ROUTER_DIST_PORT" -kernel inet_dist_listen_max "$ROUTER_DIST_PORT" \
+  -kernel net_ticktime 20 -connect_all false \
+  -mnesia dir '"/var/lib/chatyy-router/mnesia"' -mnesia dump_log_write_threshold 50000 -mnesia dc_dump_limit 40 \
+  -boot "$ROOT/releases/$REL_VSN/start" -boot_var RELEASE_LIB "$ROOT/lib" \
+  -config "$ROOT/releases/$REL_VSN/sys" \
+  -mode embedded -noshell -noinput \
+  +S "${ROUTER_SCHEDULERS:-2}" +sbwt none +sbwtdcpu none +sbwtdio none \
+  -elixir ansi_enabled false
