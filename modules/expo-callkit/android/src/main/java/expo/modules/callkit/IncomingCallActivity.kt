@@ -30,9 +30,14 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 class IncomingCallActivity : AppCompatActivity() {
 
@@ -50,6 +55,7 @@ class IncomingCallActivity : AppCompatActivity() {
   private var groupName: String = ""
   private var avatarTextView: TextView? = null
   private var avatarSizePx: Int = 0
+  private var backgroundImageView: ImageView? = null
   private val mainHandler = Handler(Looper.getMainLooper())
 
   companion object {
@@ -191,8 +197,29 @@ class IncomingCallActivity : AppCompatActivity() {
   }
 
   private fun buildUI() {
-    // [2026-10-16 P&B premium] Fundo preto, avatar #1C1C1E, rótulos brancos; só os
-    // botões ATENDER (verde) e RECUSAR (vermelho) mantêm cor (convenção).
+    // [2026-10-22 incoming-layout] Layout estilo WhatsApp. Antes: container
+    // MATCH_PARENT só com CENTER_HORIZONTAL e sem insets → com edge-to-edge
+    // (targetSdk 35 / Android 15) o avatar ficava colado no topo POR CIMA da
+    // status bar e tudo amontoado na metade de cima. Agora:
+    //  - fundo = foto do contato desfocada (downscale) + véu escuro, ou preto;
+    //  - padding = insets reais de status/navigation bar + cutout;
+    //  - avatar 136dp no terço superior, nome, "Chamada de voz do Chatyy";
+    //  - "Recusar com mensagem" + Recusar/Atender embaixo (zona do polegar);
+    //  - ícones vetoriais (phone_end / phone_answer), sem glifos ✖/✔.
+    try {
+      WindowCompat.setDecorFitsSystemWindows(window, false)
+      @Suppress("DEPRECATION")
+      window.statusBarColor = Color.TRANSPARENT
+      @Suppress("DEPRECATION")
+      window.navigationBarColor = Color.TRANSPARENT
+      WindowInsetsControllerCompat(window, window.decorView).apply {
+        isAppearanceLightStatusBars = false
+        isAppearanceLightNavigationBars = false
+      }
+    } catch (e: Exception) {
+      Log.w("IncomingCallActivity", "edge-to-edge setup failed: ${e.message}")
+    }
+
     val root = FrameLayout(this).apply {
       setBackgroundColor(Color.parseColor("#000000"))
       layoutParams = FrameLayout.LayoutParams(
@@ -201,30 +228,80 @@ class IncomingCallActivity : AppCompatActivity() {
       )
     }
 
+    // Fundo: foto desfocada (preenchida em fetchAndApplyAvatar) + véu escuro.
+    val bgImage = ImageView(this).apply {
+      scaleType = ImageView.ScaleType.CENTER_CROP
+      alpha = 0f
+      layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT
+      )
+    }
+    backgroundImageView = bgImage
+    root.addView(bgImage)
+    val scrim = android.view.View(this).apply {
+      background = GradientDrawable(
+        GradientDrawable.Orientation.TOP_BOTTOM,
+        intArrayOf(
+          Color.parseColor("#99000000"),
+          Color.parseColor("#B3000000"),
+          Color.parseColor("#E6000000")
+        )
+      )
+      layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT
+      )
+    }
+    root.addView(scrim)
+
+    val sidePad = dpToPx(24)
     val container = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       gravity = Gravity.CENTER_HORIZONTAL
       layoutParams = FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT,
         FrameLayout.LayoutParams.MATCH_PARENT
-      ).apply {
-        gravity = Gravity.CENTER
-      }
+      )
+      setPadding(sidePad, dpToPx(24), sidePad, dpToPx(24))
+    }
+    // Insets reais (status bar, navigation bar, recorte da câmera).
+    ViewCompat.setOnApplyWindowInsetsListener(container) { v, insets ->
+      val bars = insets.getInsets(
+        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+      )
+      v.setPadding(
+        sidePad + bars.left,
+        dpToPx(24) + bars.top,
+        sidePad + bars.right,
+        dpToPx(24) + bars.bottom
+      )
+      insets
     }
 
+    fun spacer(weight: Float, minDp: Int = 0) = android.view.View(this).apply {
+      minimumHeight = dpToPx(minDp)
+      layoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT, 0, weight
+      )
+    }
+
+    // Respiro acima do avatar (avatar fica no terço superior).
+    container.addView(spacer(1f, 24))
+
     // Avatar circle with initial
-    val avatarSize = dpToPx(120)
+    val avatarSize = dpToPx(136)
     avatarSizePx = avatarSize
     val avatarBg = GradientDrawable().apply {
       shape = GradientDrawable.OVAL
       setColor(Color.parseColor("#1C1C1E"))
-      setStroke(dpToPx(3), Color.parseColor("#3A3A3C"))
+      setStroke(dpToPx(2), Color.parseColor("#3A3A3C"))
     }
     val avatarText = TextView(this).apply {
       val initial = callerName?.firstOrNull()?.uppercase() ?: "?"
       text = initial
       setTextColor(Color.WHITE)
-      textSize = 48f
+      textSize = 52f
       gravity = Gravity.CENTER
       background = avatarBg
       layoutParams = LinearLayout.LayoutParams(avatarSize, avatarSize).apply {
@@ -236,8 +313,7 @@ class IncomingCallActivity : AppCompatActivity() {
     container.addView(avatarText)
 
     // Async: baixa o avatar real e substitui o background gradiente por um
-    // BitmapDrawable circular. Sem isso o callee só vê inicial+gradiente
-    // (igual pra qualquer chamador). Backend manda caller_avatar no FCM.
+    // BitmapDrawable circular (e preenche o fundo desfocado).
     fetchAndApplyAvatar()
 
     // Caller name
@@ -246,6 +322,8 @@ class IncomingCallActivity : AppCompatActivity() {
       setTextColor(Color.WHITE)
       textSize = 28f
       gravity = Gravity.CENTER
+      maxLines = 2
+      ellipsize = android.text.TextUtils.TruncateAt.END
       layoutParams = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT,
         LinearLayout.LayoutParams.WRAP_CONTENT
@@ -257,143 +335,41 @@ class IncomingCallActivity : AppCompatActivity() {
 
     // Call type label
     val typeText = TextView(this).apply {
-      text = if (hasVideo) "Chamada de vídeo" else "Chamada de voz"
-      setTextColor(Color.parseColor("#8E8E93"))
+      text = if (hasVideo) "Chamada de vídeo do Chatyy" else "Chamada de voz do Chatyy"
+      setTextColor(Color.parseColor("#C7C7CC"))
       textSize = 16f
       gravity = Gravity.CENTER
       layoutParams = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT,
         LinearLayout.LayoutParams.WRAP_CONTENT
-      ).apply {
-        bottomMargin = dpToPx(80)
-      }
+      )
     }
     container.addView(typeText)
 
-    // Buttons row
-    val buttonsRow = LinearLayout(this).apply {
-      orientation = LinearLayout.HORIZONTAL
-      gravity = Gravity.CENTER
-      layoutParams = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.MATCH_PARENT,
-        LinearLayout.LayoutParams.WRAP_CONTENT
-      )
-    }
+    // Espaço flexível: empurra as ações para a parte de baixo.
+    container.addView(spacer(3f, 32))
 
-    // Decline button
-    val declineBtnSize = dpToPx(72)
-    val declineContainer = LinearLayout(this).apply {
-      orientation = LinearLayout.VERTICAL
-      gravity = Gravity.CENTER_HORIZONTAL
-      layoutParams = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.WRAP_CONTENT,
-        LinearLayout.LayoutParams.WRAP_CONTENT
-      ).apply {
-        marginEnd = dpToPx(48)
-      }
-    }
-
-    val declineBg = GradientDrawable().apply {
-      shape = GradientDrawable.OVAL
-      setColor(Color.parseColor("#e74c3c"))
-    }
-    val declineBtn = TextView(this).apply {
-      text = "\u2716"
-      textSize = 28f
-      setTextColor(Color.WHITE)
-      gravity = Gravity.CENTER
-      background = declineBg
-      layoutParams = LinearLayout.LayoutParams(declineBtnSize, declineBtnSize)
-      isClickable = true
-      isFocusable = true
-      setOnClickListener { onDecline() }
-    }
-    declineContainer.addView(declineBtn)
-
-    val declineLabel = TextView(this).apply {
-      text = "Recusar"
-      setTextColor(Color.parseColor("#FFFFFF"))
-      textSize = 14f
-      gravity = Gravity.CENTER
-      layoutParams = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.WRAP_CONTENT,
-        LinearLayout.LayoutParams.WRAP_CONTENT
-      ).apply {
-        topMargin = dpToPx(8)
-      }
-    }
-    declineContainer.addView(declineLabel)
-    buttonsRow.addView(declineContainer)
-
-    // Accept button
-    val acceptContainer = LinearLayout(this).apply {
-      orientation = LinearLayout.VERTICAL
-      gravity = Gravity.CENTER_HORIZONTAL
-      layoutParams = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.WRAP_CONTENT,
-        LinearLayout.LayoutParams.WRAP_CONTENT
-      )
-    }
-
-    val acceptBg = GradientDrawable().apply {
-      shape = GradientDrawable.OVAL
-      setColor(Color.parseColor("#2ecc71"))
-    }
-    val acceptBtn = TextView(this).apply {
-      text = "\u2714"
-      textSize = 28f
-      setTextColor(Color.WHITE)
-      gravity = Gravity.CENTER
-      background = acceptBg
-      layoutParams = LinearLayout.LayoutParams(declineBtnSize, declineBtnSize)
-      isClickable = true
-      isFocusable = true
-      setOnClickListener { onAccept() }
-    }
-    acceptContainer.addView(acceptBtn)
-
-    val acceptLabel = TextView(this).apply {
-      text = "Atender"
-      setTextColor(Color.parseColor("#FFFFFF"))
-      textSize = 14f
-      gravity = Gravity.CENTER
-      layoutParams = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.WRAP_CONTENT,
-        LinearLayout.LayoutParams.WRAP_CONTENT
-      ).apply {
-        topMargin = dpToPx(8)
-      }
-    }
-    acceptContainer.addView(acceptLabel)
-    buttonsRow.addView(acceptContainer)
-
-    container.addView(buttonsRow)
-
-    // [decline-with-message, 2026-05-17] Secondary "Recusar com mensagem"
-    // button below the main accept/decline row. Tapping it opens a bottom
-    // sheet with 4 preset replies + a custom field. Mirrors WhatsApp's
-    // incoming-call quick-reply. The actual send happens in
-    // onDeclineWithMessage which posts to chat_call_decline_with_message
-    // (so the caller sees the reason as a chat message) and then ends
-    // the call with reason='declined' just like a plain decline.
+    // [decline-with-message, 2026-05-17] "Recusar com mensagem" — agora ACIMA
+    // dos botões principais (estilo WhatsApp). Abre o bottom sheet com 4
+    // respostas prontas + campo livre (onDeclineWithMessage).
     val quickReplyContainer = LinearLayout(this).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER
       layoutParams = LinearLayout.LayoutParams(
         LinearLayout.LayoutParams.MATCH_PARENT,
         LinearLayout.LayoutParams.WRAP_CONTENT
-      ).apply { topMargin = dpToPx(20) }
+      ).apply { bottomMargin = dpToPx(32) }
     }
     val quickReplyBtn = TextView(this).apply {
       text = "Recusar com mensagem"
-      setTextColor(Color.parseColor("#AEAEB2"))
+      setTextColor(Color.parseColor("#E5E5EA"))
       textSize = 14f
       gravity = Gravity.CENTER
-      setPadding(dpToPx(16), dpToPx(10), dpToPx(16), dpToPx(10))
+      setPadding(dpToPx(20), dpToPx(12), dpToPx(20), dpToPx(12))
       val bg = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dpToPx(24).toFloat()
-        setStroke(dpToPx(1), Color.parseColor("#3A3A3C"))
+        setColor(Color.parseColor("#33FFFFFF"))
       }
       background = bg
       isClickable = true
@@ -403,8 +379,83 @@ class IncomingCallActivity : AppCompatActivity() {
     quickReplyContainer.addView(quickReplyBtn)
     container.addView(quickReplyContainer)
 
+    // Buttons row
+    val buttonsRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER
+      layoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT
+      ).apply { bottomMargin = dpToPx(24) }
+    }
+
+    val btnSize = dpToPx(76)
+    fun iconRes(name: String, fallback: Int): Int =
+      resources.getIdentifier(name, "drawable", packageName).takeIf { it != 0 } ?: fallback
+
+    fun actionButton(
+      color: String,
+      icon: Int,
+      label: String,
+      desc: String,
+      onTap: () -> Unit
+    ): LinearLayout {
+      val col = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+      }
+      val circle = FrameLayout(this).apply {
+        background = GradientDrawable().apply {
+          shape = GradientDrawable.OVAL
+          setColor(Color.parseColor(color))
+        }
+        layoutParams = LinearLayout.LayoutParams(btnSize, btnSize)
+        isClickable = true
+        isFocusable = true
+        contentDescription = desc
+        setOnClickListener { onTap() }
+      }
+      val iv = ImageView(this).apply {
+        setImageResource(icon)
+        setColorFilter(Color.WHITE)
+        val s = dpToPx(34)
+        layoutParams = FrameLayout.LayoutParams(s, s).apply { gravity = Gravity.CENTER }
+      }
+      circle.addView(iv)
+      col.addView(circle)
+      col.addView(TextView(this).apply {
+        text = label
+        setTextColor(Color.WHITE)
+        textSize = 14f
+        gravity = Gravity.CENTER
+        layoutParams = LinearLayout.LayoutParams(
+          LinearLayout.LayoutParams.WRAP_CONTENT,
+          LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dpToPx(10) }
+      })
+      return col
+    }
+
+    buttonsRow.addView(
+      actionButton(
+        "#E74C3C",
+        iconRes("phone_end", android.R.drawable.ic_menu_close_clear_cancel),
+        "Recusar", "Recusar chamada"
+      ) { onDecline() }
+    )
+    buttonsRow.addView(
+      actionButton(
+        "#2ECC71",
+        iconRes("phone_answer", android.R.drawable.ic_menu_call),
+        "Atender", "Atender chamada"
+      ) { onAccept() }
+    )
+    container.addView(buttonsRow)
+
     root.addView(container)
     setContentView(root)
+    ViewCompat.requestApplyInsets(container)
   }
 
   /**
@@ -587,7 +638,31 @@ class IncomingCallActivity : AppCompatActivity() {
       val bmp = CallNotificationService.fetchAvatarBitmap(url) ?: return@Thread
       try {
         val circular = makeCircularBitmap(bmp, avatarSizePx)
+        // Fundo desfocado barato: reduz p/ ~24 px e amplia com filtro.
+        val blurred = try {
+          val w = 24
+          val h = (w * bmp.height / bmp.width.coerceAtLeast(1)).coerceAtLeast(1)
+          Bitmap.createScaledBitmap(bmp, w, h, true)
+        } catch (_: Exception) { null }
         mainHandler.post {
+          try {
+            if (blurred != null) {
+              backgroundImageView?.let { bg ->
+                bg.setImageDrawable(BitmapDrawable(resources, blurred).apply { isFilterBitmap = true })
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                  bg.setRenderEffect(
+                    android.graphics.RenderEffect.createBlurEffect(
+                      dpToPx(16).toFloat(), dpToPx(16).toFloat(),
+                      android.graphics.Shader.TileMode.CLAMP
+                    )
+                  )
+                }
+                bg.animate().alpha(1f).setDuration(220).start()
+              }
+            }
+          } catch (e: Exception) {
+            Log.w("IncomingCallActivity", "Apply blurred bg failed: ${e.message}")
+          }
           try {
             avatarTextView?.let {
               it.text = "" // remove a inicial, mostra só a foto
