@@ -1148,7 +1148,17 @@ final class CMLContextMenuOverlay: UIView {
     finished = true
     if let o = kbObs { NotificationCenter.default.removeObserver(o); kbObs = nil }
     onDismissed?(reason)
-    removeFromSuperview()
+    // [2026-10-22 ctx-blink] célula já visível embaixo (onDismissed) → o balão
+    // pousado sai com fade curto em vez de sumir seco (GIF: quadro do snapshot
+    // ≠ quadro ao vivo). Sem toques (isUserInteractionEnabled = false).
+    if window != nil && dismissing && !reduce && reason != "off" && reason != "replaced" {
+      isUserInteractionEnabled = false
+      UIView.animate(withDuration: 0.12, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        self.alpha = 0
+      }, completion: { _ in self.removeFromSuperview() })
+    } else {
+      removeFromSuperview()
+    }
   }
 }
 

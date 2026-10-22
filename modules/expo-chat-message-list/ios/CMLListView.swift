@@ -1424,6 +1424,11 @@ public final class CMLListView: ExpoView, UICollectionViewDelegateFlowLayout, UI
       guard let self = self else { return }
       if let o = ov, self.ctxOverlay === o { self.ctxOverlay = nil }
       self.overlay.setBlocked(self.selMode || self.ctxOverlay != nil)
+      // [2026-10-22 ctx-blink] o snapshot já está pousado em cima da bolha: a
+      // célula volta a 100% NA HORA (antes era fade 0→1 de 0,15 s DEPOIS de o
+      // overlay sumir → a foto/GIF "piscava" ao fechar o menu). O overlay some
+      // por cima com fade curto (finish), sem buraco entre os dois.
+      if self.liftedKey == key, let c = self.visibleCell(key) { c.setLifted(false, animated: false) }
       if self.liftedKey == key { self.setLiftedKey("") }
       self.onMenuDismiss(["key": key, "reason": reason])
       self.checkPendingPop()
