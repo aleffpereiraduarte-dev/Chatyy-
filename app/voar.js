@@ -14,7 +14,8 @@ import ChatPickPanel from '../components/flyGame/ChatPickPanel';
 import RecordCard, { shareRecord } from '../components/flyGame/RecordCard';
 import { Buddy } from '../components/flyGame/BuddyArt';
 import { useRM } from '../components/games/motion';
-import { IconChevronLeft, IconTrophy } from '../components/games/GameIcons';
+import { IconTrophy } from '../components/games/GameIcons';
+import { IconChevronLeft } from '../components/Icons'; // [2026-10-22] não existe em GameIcons → tela quebrava (Element type is invalid)
 import { loadSoundPref, soundOn, setSoundOn, onSoundPref, playSfx } from '../components/games/sound';
 import * as Fly from '../services/flyGame/api';
 
