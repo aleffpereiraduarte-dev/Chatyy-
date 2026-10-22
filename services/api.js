@@ -561,6 +561,7 @@ const _LB_BOOT_REMEASURE_MS = 5 * 60 * 1000;
 const _LB_NET_REMEASURE_MS = 60 * 1000;
 const _LB_WARM_MS = 8000;
 const _LB_PROBE_MS = 2500;
+const _LB_NET_MAX_PROBES = 5; // [client-lb 2026-10-22] sondas na troca de rede (US conta)
 function _lbS() {
   if (_lbSt) return _lbSt;
   let p = null;
@@ -750,9 +751,20 @@ async function _lbDetect(opts) {
       return;
     }
     const near = Array.isArray(list.near) && list.near.length ? list.near : null;
-    const cands = L.pickCandidates({ list, near, tz: L.deviceTz(), current: curUsable ? cur : null, lastGood: st.lastGood, max: eco ? 3 : 4, remembered: mem ? mem.reg : null, geoBad: !!(mem && mem.geoBad) });
+    // [client-lb 2026-10-22 fix] troca de rede: última boa + atual sempre + regiões no raio do IP;
+    // até _LB_NET_MAX_PROBES sondas (economia 3). Caso real: Android em SCL 11 ms trocou de rede,
+    // o /health do SCL falhou na transição e ele caiu p/ BR 82 ms (só BR e US responderam).
+    const netChange = !!(st.session.fresh || netChanged || why === 'net');
+    const cands = L.pickCandidates({ list, near, tz: L.deviceTz(), current: curUsable ? cur : (cur || null), lastGood: st.lastGood, max: eco ? 3 : (netChange ? _LB_NET_MAX_PROBES : 4), remembered: mem ? mem.reg : null, geoBad: !!(mem && mem.geoBad), geo: list.geo, netChange });
     const results = await _lbMeasure(cands, eco ? 1 : 2);
     if (!_lbActive()) return; // [2026-10-21 lb-freeze] foi p/ 2º plano no meio da medição → não decide com ela
+    // Quem não respondeu (rádio ainda trocando de rede) ganha 1 nova chance 1,5 s depois.
+    const _miss = cands.filter(id => results[id] == null && id !== 'us');
+    if (_miss.length && Object.keys(results).some(k => results[k] == null)) {
+      await new Promise(r => setTimeout(r, 1500));
+      if (!_lbActive()) return;
+      try { const again = await _lbMeasure(_miss, 1); for (const id of _miss) if (typeof again[id] === 'number') results[id] = again[id]; } catch {}
+    }
     const anyOk = Object.keys(results).some(k => typeof results[k] === 'number');
     if (!anyOk) return; // offline / rede péssima: mantém e tenta no próximo gatilho
     st.results = { ...results };

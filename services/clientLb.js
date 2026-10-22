@@ -100,6 +100,9 @@ export function validateList(j) {
     // [client-lb 2026-10-22] rede vista pelo servidor: hash do IP /24 (v6 /48) e /16 (v6 /32) + ASN
     // (quando o servidor souber). Só hashes — o app usa como chave de "melhor edge POR rede".
     net: _validNet(j.net),
+    // [client-lb 2026-10-22] posição estimada do IP (CF) → candidatas num raio.
+    geo: (j.geo && typeof j.geo.lat === 'number' && typeof j.geo.lon === 'number' && Math.abs(j.geo.lat) <= 90 && Math.abs(j.geo.lon) <= 180)
+      ? { lat: j.geo.lat, lon: j.geo.lon } : null,
     // [client-lb 2026-10-22] WS no leaf (hub regional) p/ contas da lista (hash FNV-1a do e-mail)
     // mesmo em binário cujo nativo só conhece br/eu. Kill remoto: tirar do JSON / "ws_leaf":false.
     wsLeaf: _validWsLeaf(j.ws_leaf),
@@ -247,13 +250,34 @@ export function deviceTz() {
  * Candidatas a medir (exportada p/ teste): 2 mais prováveis (near do servidor, senão fuso)
  * + a atual + a última boa + US. Só utilizáveis; no máx. `max` (US conta).
  */
-export function pickCandidates({ list, near, tz, current, lastGood, max = 4, remembered = null, geoBad = false } = {}) {
+export const GEO_RADIUS_KM = 2500;
+export function distKm(a, b) {
+  const R = 6371, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+/** Regiões utilizáveis (exceto US) a até `km` da posição, da mais perto p/ a mais longe. */
+export function regionsNear(geo, list, km = GEO_RADIUS_KM) {
+  if (!geo) return [];
+  return usableRegions(list || getList()).filter((r) => r.id !== 'us')
+    .map((r) => ({ id: r.id, d: distKm(geo, r) })).filter((x) => x.d <= km)
+    .sort((a, b) => a.d - b.d).map((x) => x.id);
+}
+export function pickCandidates({ list, near, tz, current, lastGood, max = 4, remembered = null, geoBad = false, geo = null, netChange = false } = {}) {
   const L = list || getList();
   const ok = (id) => isUsable(regionById(id, L));
   const out = [];
   const add = (id) => { if (id && !out.includes(id) && ok(id) && out.length < max) out.push(id); };
-  // [client-lb 2026-10-22] melhor edge JÁ medido nesta rede vem primeiro.
+  // [client-lb 2026-10-22] melhor edge JÁ medido nesta rede vem primeiro; na troca de rede a
+  // última boa e a atual entram SEMPRE (antes de qualquer palpite) e depois as regiões a até
+  // GEO_RADIUS_KM da posição do IP (CF) — o país do CF pode mentir (roaming), a medição decide.
   add(remembered);
+  if (netChange) {
+    add(lastGood);
+    add(current);
+    for (const id of regionsNear(geo || L.geo, L)) add(id);
+  }
   // País (CF) e fuso intercalados: VPN/roaming fazem um dos dois mentir — medir resolve.
   // Rede onde a medição já contradisse o geo do CF (roaming c/ home routing): o geo não
   // ocupa vaga na frente — entra a vizinha mais próxima da que ganhou (explorar ao redor).
@@ -521,6 +545,6 @@ export function beacon(ev, data = {}) {
 
 export default {
   getList, refreshList, isClientLbOn, isUsable, usableRegions, regionById, pickCandidates, decide,
-  rankRegions, loadState, saveState, isEconomy, beacon, tzGuess, deviceTz, validateList,
+  rankRegions, loadState, saveState, isEconomy, beacon, tzGuess, deviceTz, validateList, regionsNear, distKm,
   netSignature, netKeys, listNetStale, netMemGet, netMemPut, noteWsRtt, wsRttFor, blendScores, wsLeafFor, fnv1a, nearestTo,
 };
