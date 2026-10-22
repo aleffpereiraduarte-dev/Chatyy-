@@ -1,4 +1,4 @@
-// ─── [roteamento-regiao 2026-10-13] RTT do app até cada região (us/br/eu/usw) ───
+// ─── [roteamento-regiao 2026-10-13] RTT do app até cada região (us/br/eu/usw/in/sg + edges do client-lb) ───
 // Para o servidor escolher o servidor de ligação (LiveKit) e o TURN mais perto do
 // PAR/GRUPO (minimax). Quem decide é o servidor no join da chamada (o `url`/
 // iceServers do chat_livekit_token / chat_call_invite_v2 já vêm da região escolhida).
@@ -30,13 +30,32 @@ const DEFAULT_TARGETS = {
   usw: 'https://lk-usw.chatyy.com.br/ping',
   in: 'https://lk-in.chatyy.com.br/ping', // [2026-10-15] edge Índia (Mumbai)
   sg: 'https://lk-sg.chatyy.com.br/ping', // [2026-10-15] edge Ásia (Jacarta; região lógica sg)
+  // [hint-11 2026-10-22] edges do client-lb (21/10): medidos só quando o client-lb os considera (ver _extraRegions)
+  br2: 'https://lk-br2.chatyy.com.br/ping',
+  mia: 'https://lk-mia.chatyy.com.br/ping',
+  mex: 'https://lk-mex.chatyy.com.br/ping',
+  mad: 'https://lk-mad.chatyy.com.br/ping',
+  scl: 'https://lk-scl.chatyy.com.br/ping',
 };
 // Mesmo IP do SFU; usados só se o alvo principal não responder no warm-up.
 const ALT_TARGETS = {
   br: 'https://api-br.chatyy.com.br/ping',
   eu: 'https://api-eu.chatyy.com.br/ping',
+  br2: 'https://api-br2.chatyy.com.br/ping',
+  mia: 'https://api-mia.chatyy.com.br/ping',
+  mex: 'https://api-mex.chatyy.com.br/ping',
+  mad: 'https://api-mad.chatyy.com.br/ping',
+  scl: 'https://api-scl.chatyy.com.br/ping',
 };
-const REGIONS = ['us', 'br', 'eu', 'usw', 'in', 'sg'];
+// Regiões com SFU/TURN de ligação: SEMPRE medidas (o minimax da chamada precisa do RTT de todas).
+const BASE_REGIONS = ['us', 'br', 'eu', 'usw', 'in', 'sg'];
+// [hint-11 2026-10-22] Edges novos (client-lb): a casa regional das conversas (chat_user_region_hint →
+// política do leaf) precisa enxergá-los — sem isso, alguém em Santiago (scl 11–17 ms) virava 'usw'.
+// Limite de sondas: só os que o client-lb JÁ mediu nesta rede (results) ou escolheu, no máx. MAX_EXTRA,
+// os de menor RTT do client-lb primeiro (não sonda os 11 sempre).
+const EXTRA_REGIONS = ['br2', 'mia', 'mex', 'mad', 'scl'];
+const REGIONS = [...BASE_REGIONS, ...EXTRA_REGIONS];
+const MAX_EXTRA = 2;
 const SAMPLES = 5;
 const MIN_OK_SAMPLES = 3;
 const ROUND_GAP_MS = 150;
@@ -168,14 +187,39 @@ export function _shouldMeasure(last, now, sig, opts = {}) {
   return age >= TTL_MS;
 }
 
-async function _measure(tg) {
+// [hint-11] Estado do client-lb (services/api.js): região/origem escolhidas + RTTs da última medição.
+function _lbInfo() {
+  try { const i = require('./api').getClientLbInfo?.(); return i && i.on ? i : null; } catch { return null; }
+}
+// Exportada p/ teste: quais edges novos medir (reaproveita a medição do client-lb p/ escolher; ≤ max).
+export function _extraRegions(info, max = MAX_EXTRA) {
+  if (!info) return [];
+  const res = (info.results && typeof info.results === 'object') ? info.results : {};
+  const usable = Array.isArray(info.usable) ? info.usable : [];
+  const score = (id) => {
+    if (id === 'br2') return info.origin === 'br2' ? (typeof res.br === 'number' ? res.br : 0) : null; // br2 = host da região br
+    if (!usable.includes(id)) return null;
+    if (info.region === id) return typeof res[id] === 'number' ? res[id] : 0;
+    return typeof res[id] === 'number' && res[id] > 0 ? res[id] : null;
+  };
+  return EXTRA_REGIONS.map((id) => [id, score(id)]).filter(([, v]) => v != null)
+    .sort((a, b) => a[1] - b[1]).slice(0, Math.max(0, max)).map(([id]) => id);
+}
+// Exportada p/ teste: região que o client-lb escolheu, na identidade do leaf (br + origem br2 → br2).
+export function _lbPick(info) {
+  if (!info || typeof info.region !== 'string') return null;
+  const id = info.region === 'br' && info.origin === 'br2' ? 'br2' : info.region;
+  return /^[a-z][a-z0-9]{1,5}$/.test(id) ? id : null;
+}
+
+async function _measure(tg, regions = BASE_REGIONS) {
   // 1) warm-up por região (paga DNS+TCP+TLS e acorda o rádio) — DESCARTADO
   const urls = {};
-  await Promise.all(REGIONS.map(async (r) => {
+  await Promise.all(regions.map(async (r) => {
     if ((await _timed(tg[r], WARM_TIMEOUT_MS)) != null) { urls[r] = tg[r]; return; }
     if (ALT_TARGETS[r] && (await _timed(ALT_TARGETS[r], WARM_TIMEOUT_MS)) != null) urls[r] = ALT_TARGETS[r];
   }));
-  const live = REGIONS.filter((r) => urls[r]);
+  const live = regions.filter((r) => urls[r]);
   if (!live.length) return null;
   // 2) N rodadas intercaladas, UMA requisição por vez (ninguém compete), conexão quente
   const samples = {};
@@ -206,7 +250,8 @@ export async function measureAndReport(opts = {}) {
     if (!_shouldMeasure(_load(), Date.now(), sig, opts)) return _last;
     await _afterInteractions();
     if (!_active()) return null;
-    const m = await _measure(_targets());
+    const lb = _lbInfo();
+    const m = await _measure(_targets(), [...BASE_REGIONS, ..._extraRegions(lb)]);
     if (!m) return null; // offline/péssimo/2º plano: tenta na próxima
     _last = { v: MEASURE_VERSION, ts: Date.now(), rtt: m.rtt, jit: m.jit, net, sig };
     try { _mm()?.setString(STORE_KEY, JSON.stringify(_last)); } catch {}
@@ -215,6 +260,9 @@ export async function measureAndReport(opts = {}) {
       const body = { rtt: m.rtt, v: MEASURE_VERSION, n: SAMPLES, net, jit: m.jit };
       const cc = _hintCountry();
       if (cc) body.cc = cc;
+      // [hint-11] região do client-lb (HTTP+WS) → servidor grava como hint da casa regional (fonte 'lb')
+      const pick = _lbPick(lb);
+      if (pick) body.lb = { reg: pick, rtt: typeof m.rtt[pick] === 'number' ? m.rtt[pick] : null };
       const res = await apiCall('chat_region_rtt_report', body, 'POST');
       const t = res && res.data && res.data.targets;
       if (t && typeof t === 'object') { try { _mm()?.setString(TARGETS_KEY, JSON.stringify(t)); } catch {} }
