@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.EmptyCoroutineContext
+import kotlinx.coroutines.Dispatchers
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 /**
@@ -192,7 +192,13 @@ object E2eeNative {
     val ok = AtomicReference<Any?>(null)
     val err = AtomicReference<Throwable?>(null)
     val cont = object : Continuation<Any?> {
-      override val context: CoroutineContext = EmptyCoroutineContext
+      // [2026-10-21 android754] NUNCA EmptyCoroutineContext: sem dispatcher, o resume do
+      // suspendCancellableCoroutine do UniFFI roda INLINE dentro do waker do Rust, que segura o
+      // Mutex (std, não reentrante) do scheduler do RustFuture → o laço de poll do Kotlin chama
+      // poll()→is_cancelled()→lock() na MESMA thread = deadlock eterno. O RustFuture que fica
+      // preso já ganhou a permissão do tokio::Mutex da OlmMachine → TODO o núcleo para (JS não
+      // decifra nem cifra). Com Dispatchers.IO o resume é despachado (como no módulo Expo).
+      override val context: CoroutineContext = Dispatchers.IO
       override fun resumeWith(result: Result<Any?>) {
         val e = result.exceptionOrNull()
         if (e != null) err.set(e) else ok.set(result.getOrNull())
