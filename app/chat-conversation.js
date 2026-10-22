@@ -13069,7 +13069,8 @@ function ChatConversationInnerBody() {
   const [reactionPickerTab, setReactionPickerTab] = _useStateT('emoji');
   const [stickerReactionPacks, setStickerReactionPacks] = _useStateT([]); // [{id, name, cover_url, stickers: [{id, file_url}]}]
   const [stickerReactionLoading, setStickerReactionLoading] = _useStateT(false);
-  const [stickerReactionPremium, setStickerReactionPremium] = _useStateT(null); // null=unknown, true/false=resolved
+  // [2026-10-22 founder] reagir com figurinha liberado para TODOS (plano cobra só nuvem) → sempre true.
+  const [stickerReactionPremium, setStickerReactionPremium] = _useStateT(true); // null=unknown, true/false=resolved
   // "Meus emojis" tab: lazy-loaded list of the user's custom animated emoji
   // (custom_animated_emoji table). Shape: [{ id, emoji_handle, webp_url }].
   const [myCustomEmojis, setMyCustomEmojis] = _useStateT(null); // null=not loaded, []=loaded empty
@@ -26017,7 +26018,7 @@ function ChatConversationInnerBody() {
         if (prevReactions) {
           setMessages(prev => _mapKeep(prev, m => m.id === msgId ? { ...m, reactions: prevReactions } : m));
         }
-        if (isSticker && /premium/i.test(r.message || '')) {
+        if (false && isSticker && /premium/i.test(r.message || '')) { // [2026-10-22 founder] sem trava premium
           setStickerReactionPremium(false);
           safeAlert(
             t('chatConv.stickerReactPremium') || 'Recurso Premium',
@@ -30798,9 +30799,8 @@ function ChatConversationInnerBody() {
     if (stickerReactionPremium !== null) return;
     try {
       const r = await api.planInfo();
-      const plan = r?.data?.plan || 'free';
-      setStickerReactionPremium(plan !== 'free');
-    } catch { setStickerReactionPremium(false); }
+      void r; setStickerReactionPremium(true); // [2026-10-22 founder] liberado para todos
+    } catch { setStickerReactionPremium(true); }
   }, [stickerReactionPremium]);
 
   const openEditHistory = useCallback(async (messageId) => {
