@@ -24,7 +24,7 @@ import { Platform, AppState } from 'react-native';
 
 const ORIGIN = 'https://chatyy.com.br';
 const CONTRACT_MAJOR = 1;
-const RETRYABLE = new Set(['missing_session', 'unknown_index', 'store', 'untrusted_device', 'no_session', 'sender_unknown']);
+const RETRYABLE = new Set(['missing_session', 'unknown_index', 'store', 'untrusted_device', 'no_session', 'sender_unknown', 'timeout', 'lock_busy']);
 const CONV_TTL_MS = 10 * 60 * 1000;
 const STATUS_TTL_MS = 10 * 60 * 1000;
 const PLAIN_MEM_MAX = 5000;
@@ -269,6 +269,61 @@ export async function endSession({ wipe } = {}) {
   try { if (wipe) await _C().wipe(s.uid); else await _C().close(); } catch (_) {}
 }
 
+// [2026-10-21 android754] Chamada nativa estourou o prazo (services/crypto/index.native.js): no
+// Android 754 o núcleo pode ficar preso num deadlock do RustFuture (E2eeNative.callSuspend sem
+// dispatcher — corrigido no BUILD seguinte) segurando a OlmMachine para sempre. Recuperação OTA:
+// fecha o CryptoCore preso e reabre outro (mesmo store/aparelho, mesmo holder da trava) — as
+// caches de texto ficam; o que aguardava volta a tentar. No máx. 1x a cada 30 s.
+let _lastReset = 0;
+function _resetCore(why) {
+  if (!_sess || Date.now() - _lastReset < 30000) return;
+  _lastReset = Date.now();
+  _diag('core_reset', { code: why, os: Platform.OS });
+  _sess = null;
+  _syncRunning = false;
+  // _sessP = a própria reabertura: ninguém reabre em paralelo (o open nativo devolveria o núcleo preso)
+  const p = (async () => {
+    try { await _C().close(); } catch (_) {}
+    _sessP = null;
+    return ensureSession();
+  })();
+  _sessP = p;
+  p.then((s) => {
+    if (!s) return;
+    _diag('core_reset_ok', { code: why, os: Platform.OS });
+    requestSync(50);
+  }).catch(() => {});
+}
+function _isTimeout(e) { return !!(e && (e.code === 'timeout' || e.code === 'lock_busy')); }
+
+// [2026-10-21] Métricas do núcleo (MetricsSnapshot) com a PLATAFORMA → e2ee5_metrics. O flushMetrics do
+// núcleo manda sem `platform` e ninguém o chamava (Android ficava zerado): aqui vai o DELTA desde o
+// último envio (o snapshot não zera), com platform = Platform.OS.
+let _coreSnapLast = null;
+let _coreSnapAt = 0;
+async function _flushCoreMetrics() {
+  if (!_sess || Date.now() - _coreSnapAt < 120000) return;
+  _coreSnapAt = Date.now();
+  try {
+    const m = await _C().metricsSnapshot();
+    if (!m) return;
+    const prev = _coreSnapLast && _coreSnapLast.dev === _sess.deviceId ? _coreSnapLast.m : null;
+    const d = (k) => { const v = Number(m[k]) || 0; const p = prev ? (Number(prev[k]) || 0) : 0; return v >= p ? v - p : v; };
+    let utdPrev = {}; let utdNow = {};
+    try { utdNow = JSON.parse(m.utdJson || '{}') || {}; } catch (_) { utdNow = {}; }
+    try { utdPrev = prev ? (JSON.parse(prev.utdJson || '{}') || {}) : {}; } catch (_) { utdPrev = {}; }
+    const utd = {};
+    for (const r of Object.keys(utdNow)) { const v = (Number(utdNow[r]) || 0) - (Number(utdPrev[r]) || 0); if (v > 0) utd[r] = v; }
+    const body = {
+      platform: Platform.OS, encrypt: d('encrypt'), decrypt_ok: d('decryptOk'), utd_total: d('utdTotal'), to_device_in: d('toDeviceIn'),
+      to_device_utd: d('toDeviceUtd'), dropped_untrusted: d('droppedUntrusted'), store_reloads: d('storeReloads'), utd_json: JSON.stringify(utd),
+    };
+    if (!(body.encrypt || body.decrypt_ok || body.utd_total || body.to_device_in || body.to_device_utd || body.dropped_untrusted || body.store_reloads)) return;
+    const r = await _http('e2ee5_metrics', body);
+    if (r && r.ok) _coreSnapLast = { dev: _sess.deviceId, m };
+  } catch (_) {}
+}
+
 // ───────────────────────────────────────────────────────────── sync
 
 let _syncTimer = null;
@@ -290,7 +345,7 @@ async function _runSync() {
   try {
     for (let i = 0; i < 6; i++) {
       let r = null;
-      try { r = await _C().sync(); } catch (e) { _log('sync_fail', { code: e && e.code }); break; }
+      try { r = await _C().sync(); } catch (e) { _log('sync_fail', { code: e && e.code }); if (_isTimeout(e)) _resetCore('sync_' + e.code); break; }
       _onSyncResult(r);
       if (!r || !r.more) break;
     }
@@ -341,12 +396,13 @@ function _armPeriodic() {
       if (!isOn() || !_sess) return;
       try { if (AppState.currentState && AppState.currentState !== 'active') return; } catch (_) {}
       requestSync(0);
+      _flushCoreMetrics();
     }, 60000);
   } catch (_) {}
   try {
     _appStateSub = AppState.addEventListener('change', (st) => {
       if (st !== 'active' || !isOn() || !_sess) {
-        if (st === 'background') { try { _health()?.flush(); } catch (_) {} }
+        if (st === 'background') { try { _health()?.flush(); } catch (_) {} _coreSnapAt = 0; _flushCoreMetrics(); }
         return;
       }
       requestSync(100);
@@ -623,6 +679,7 @@ export async function sealPayload(convId, fields, opts) {
     r = await _C().encrypt(k, members, payload);
   } catch (e) {
     _log('encrypt_fail', { conv: k, code: e && e.code, t: payload.t });
+    if (_isTimeout(e)) _resetCore('encrypt_' + e.code);
     throw e;
   }
   try { _health()?.recordEncrypt(Date.now() - t0, { claimed: (r && r.keyShareRequests) > 0 }); } catch (_) {}
@@ -1093,6 +1150,7 @@ export function decryptRow(row, convId) {
       return entry;
     } catch (e) {
       const reason = (e && (e.reason || e.code)) || 'internal';
+      if (_isTimeout(e)) _resetCore('decrypt_' + e.code);
       return _setFail(k, reason, row, conv);
     }
   })().finally(() => { _inflight.delete(k); });

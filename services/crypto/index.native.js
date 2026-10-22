@@ -89,8 +89,20 @@ function call(op, args) {
   } catch (_) {
     return reject('invalid_input', { field: 'args', msg: 'json' });
   }
-  return b.invoke(op, json).then(
+  const ms = opTimeoutMs(op);
+  let timer = null;
+  const t0 = Date.now();
+  const p = b.invoke(op, json);
+  const guard = new Promise((_, rej) => {
+    timer = setTimeout(() => {
+      timer = null;
+      _noteNative(op, 'timeout', ms);
+      rej(codeErr('timeout', { op, ms }));
+    }, ms);
+  });
+  return Promise.race([p, guard]).then(
     (s) => {
+      if (timer) { clearTimeout(timer); timer = null; }
       try {
         const o = JSON.parse(s);
         return o ? o.v : undefined;
@@ -99,9 +111,37 @@ function call(op, args) {
       }
     },
     (e) => {
-      throw fromNative(e);
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (e && e.code === 'timeout' && e.message === 'e2ee5:timeout') throw e;
+      const ne = fromNative(e);
+      if (ne.code !== 'utd') _noteNative(op, ne.code, Date.now() - t0);
+      throw ne;
     }
   );
+}
+
+// [2026-10-21 android754] TODA chamada nativa tem prazo: uma chamada pendurada no núcleo (ex.: o
+// deadlock do RustFuture no Android, ver E2eeNative.callSuspend) não pode prender a fila de envio
+// nem o `_inflight` do decrypt para sempre. Rede no núcleo (status/sync/keys_*) = até 15 s por ida.
+const _NET_OPS = new Set(['status', 'sync', 'syncWith', 'bootstrapIdentity', 'sendToDevice', 'flushMetrics', 'forgetDevice', 'signDevice',
+  'backupEnable', 'backupStep', 'backupRestore', 'backupDisable', 'linkAccept', 'linkPhonePoll', 'onMembersChanged', 'rotateConversation']);
+function opTimeoutMs(op) {
+  if (op === 'encrypt') return 20000; // keys_query + keys_claim + to_device_send no 1º envio da sessão
+  if (op === 'decryptFile' || op === 'encryptFile') return 60000;
+  if (_NET_OPS.has(op)) return 35000;
+  return 8000; // decrypt/thisDevice/listDevices/open/close/… são locais
+}
+// Beacon callkit_diag kind "e2ee5" (só op/código/plataforma; nunca conteúdo). 1x por op+código.
+const _noted = new Set();
+function _noteNative(op, code, ms) {
+  try {
+    const k = op + ':' + code;
+    if (_noted.has(k) || _noted.size >= 32) return;
+    _noted.add(k);
+    let os = '';
+    try { os = require('react-native').Platform.OS; } catch (_) {}
+    require('../nativeTelemetry').nativeBeacon('e2ee5', 'native_' + (code === 'timeout' ? 'timeout' : 'err'), 'op=' + op + ' code=' + code + ' ms=' + (Number(ms) || 0) + ' os=' + os);
+  } catch (_) {}
 }
 
 // ---------------------------------------------------------------- base64 ↔ Uint8Array
