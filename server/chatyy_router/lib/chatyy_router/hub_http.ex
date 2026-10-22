@@ -142,15 +142,22 @@ defmodule ChatyyRouter.Hub.Http do
     end
   end
 
+  # presença é por LEAF (cada leaf só conhece os próprios sockets): online aqui = esta região;
+  # senão pergunta aos roteadores das outras regiões (ChatyyRouter.Presence), sem passar pelo US.
   defp fetch_region(d) do
-    case request("GET", "/rt/presence?device=" <> URI.encode_www_form(d), "") do
+    case local_online(d) do
+      true -> {:ok, ChatyyRouter.Net.me()}
+      false -> ChatyyRouter.Presence.ask_cluster(d)
+      err -> err
+    end
+  end
+
+  @doc "O aparelho tem socket no leaf DESTE edge? true | false | {:error, _}"
+  def local_online(d) do
+    case request("GET", "/rt/presence?device=" <> URI.encode_www_form(to_string(d)), "") do
       {:ok, 200, resp} ->
         devs = Map.get(decode(resp) || %{}, "devices", [])
-
-        case Enum.find(devs, &(&1["online"] == true)) || List.first(devs) do
-          %{"region" => r} when is_binary(r) and r != "" -> {:ok, r}
-          _ -> {:error, :offline}
-        end
+        Enum.any?(devs, &(&1["online"] == true))
 
       {:ok, code, _} ->
         Telemetry.execute([:chatyy_router, :hub, :presence_error], %{count: 1}, %{http: code})

@@ -84,10 +84,11 @@ defmodule ChatyyRouter.HubHttpTest do
     assert j["push"] == false
   end
 
-  test "region_of/1 lê a presença e guarda 5 s em cache" do
-    assert {:ok, "mia"} = Http.region_of("PONLINE")
+  test "region_of/1: online no leaf local = região deste nó; cache de 5 s" do
+    me = ChatyyRouter.Net.me()
+    assert {:ok, ^me} = Http.region_of("PONLINE")
     assert_receive {:req, _}, 1_000
-    assert {:ok, "mia"} = Http.region_of("PONLINE")
+    assert {:ok, ^me} = Http.region_of("PONLINE")
     refute_receive {:req, _}, 200
     assert {:error, :offline} = Http.region_of("POFFLINE")
   end

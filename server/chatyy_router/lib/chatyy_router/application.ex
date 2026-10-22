@@ -47,6 +47,7 @@ defmodule ChatyyRouter.Application do
       [
         ChatyyRouter.Directory,
         ChatyyRouter.Hub.Stub,
+        ChatyyRouter.Presence,
         ChatyyRouter.Replica,
         {DynamicSupervisor, name: ChatyyRouter.ConvSup, strategy: :one_for_one, max_restarts: 1000, max_seconds: 1},
         ChatyyRouter.Home
