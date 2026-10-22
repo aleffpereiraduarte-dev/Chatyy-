@@ -7,6 +7,7 @@
 // os contatos veem "o código de segurança mudou" (como no WhatsApp).
 import React, { useState } from 'react';
 import { View, Text, ScrollView, TextInput, Pressable, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Platform } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -75,7 +76,7 @@ export default function E2eeBackupRestoreScreen() {
   })();
 
   return (
-    <View style={[st.root, { backgroundColor: g.pageBg, paddingTop: insets.top }]}>
+    <SheetKeyboardAvoider style={[st.root, { backgroundColor: g.pageBg, paddingTop: insets.top }]}>
       <View style={st.header}>
         <TouchableOpacity onPress={leave} style={st.backBtn} accessibilityRole="button" accessibilityLabel={tx(t, 'common.back', 'Voltar')}>
           <IconArrowLeft size={24} color={colors.text} />
@@ -131,7 +132,7 @@ export default function E2eeBackupRestoreScreen() {
           <Text style={[st.lockText, { color: g.secondary }]}>{tx(t, 'e2ee5.backup.lock_note', 'A chave e a senha nunca saem deste aparelho. O Chatyy não consegue abrir o backup.')}</Text>
         </View>
       </ScrollView>
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

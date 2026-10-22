@@ -7,7 +7,8 @@
 //   noEmail→ conta sem e-mail de recuperação → falar com o suporte
 // Quem abre recebe o payload de login (token/email/name) em onLoggedIn.
 import { useEffect, useState } from 'react';
-import { View, Text, Pressable, Modal, ScrollView, Platform, KeyboardAvoidingView, StyleSheet, Linking } from 'react-native';
+import { View, Text, Pressable, Modal, ScrollView, Platform, StyleSheet, Linking } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../../context/LanguageContext';
 import { IconX, IconShield } from '../Icons';
@@ -125,7 +126,7 @@ export default function LoginPinResetSheet({ visible, challenge, hasEmail, onClo
   return (
     <Modal visible={!!visible} animationType="slide" presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'} onRequestClose={close}>
       {/* [2026-10-16 polish] Android: Modal tela-cheia edge-to-edge não redimensiona com o teclado → 'height' encolhe a área e o botão fica acima do teclado. */}
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: g.pageBg }} behavior={Platform.OS === 'ios' ? 'padding' : (Platform.OS === 'android' ? 'height' : undefined)}>
+      <KeyboardSafeView style={{ flex: 1, backgroundColor: g.pageBg }}>
         <View style={[s.header, { paddingTop: (Platform.OS === 'ios' ? 12 : insets.top + 8) }]}>
           <Pressable onPress={close} hitSlop={12} accessibilityRole="button" testID="login-pin-reset-close"
             accessibilityLabel={t('common.close') || 'Fechar'} style={({ pressed }) => [s.hBtn, { opacity: pressed ? 0.5 : 1 }]}>
@@ -139,7 +140,7 @@ export default function LoginPinResetSheet({ visible, challenge, hasEmail, onClo
           keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} testID="login-pin-reset-sheet">
           {content}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

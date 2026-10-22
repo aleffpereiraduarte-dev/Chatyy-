@@ -9,6 +9,7 @@ import {
   View, Text, TouchableOpacity, FlatList, ActivityIndicator, Alert, Platform,
   Image, TextInput, Modal, Animated, Share, PanResponder,
 } from 'react-native';
+import SheetKeyboardAvoider from '../../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useTheme } from '../../context/ThemeContext';
@@ -405,7 +406,7 @@ export default function StickerMyPacksScreen() {
       )}
 
       <Modal visible={showCreate} animationType="slide" transparent onRequestClose={() => setShowCreate(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
+        <SheetKeyboardAvoider style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
           <View style={{
             backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20,
             padding: 20,
@@ -494,7 +495,7 @@ export default function StickerMyPacksScreen() {
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </SheetKeyboardAvoider>
       </Modal>
     </View>
   );

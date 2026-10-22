@@ -5,6 +5,7 @@ import {
   ActivityIndicator, RefreshControl, Alert, Platform, Modal, Linking,
   ScrollView, useWindowDimensions, Image, Pressable, Animated,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 // FlashList reverted to FlatList
 import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 // [2026-10-09 native-sheets-headers] Header + busca NATIVOS (UINavigationBar/UISearchController; Toolbar Material). Web mantém o header JS.
@@ -1924,6 +1925,7 @@ function DriveScreenInner() {
   // New Folder Modal
   const renderNewFolderModal = () => (
     <Modal transparent visible={newFolderModal} animationType="fade" onRequestClose={() => setNewFolderModal(false)}>
+      <SheetKeyboardAvoider style={{ flex: 1 }}>{/* [2026-10-22 kb-uniforme] */}
       <Pressable style={styles.modalOverlay} onPress={() => setNewFolderModal(false)}>
         <View style={[styles.modalCard, { backgroundColor: colors.surface, ...Shadow.xl }]}>
           <Text style={[styles.modalTitle, { color: colors.text }]}>{t('drive.newFolder')}</Text>
@@ -1947,12 +1949,14 @@ function DriveScreenInner() {
           </View>
         </View>
       </Pressable>
+      </SheetKeyboardAvoider>
     </Modal>
   );
 
   // Rename Modal
   const renderRenameModal = () => (
     <Modal transparent visible={!!renameModal} animationType="fade" onRequestClose={() => setRenameModal(null)}>
+      <SheetKeyboardAvoider style={{ flex: 1 }}>{/* [2026-10-22 kb-uniforme] */}
       <Pressable style={styles.modalOverlay} onPress={() => setRenameModal(null)}>
         <View style={[styles.modalCard, { backgroundColor: colors.surface, ...Shadow.xl }]}>
           <Text style={[styles.modalTitle, { color: colors.text }]}>{t('drive.rename')}</Text>
@@ -1974,12 +1978,14 @@ function DriveScreenInner() {
           </View>
         </View>
       </Pressable>
+      </SheetKeyboardAvoider>
     </Modal>
   );
 
   // Share Modal
   const renderShareModal = () => (
     <Modal transparent visible={!!shareModal} animationType="fade" onRequestClose={() => setShareModal(null)}>
+      <SheetKeyboardAvoider style={{ flex: 1 }}>{/* [2026-10-22 kb-uniforme] */}
       <Pressable style={styles.modalOverlay} onPress={() => setShareModal(null)}>
         <View style={[styles.modalCard, { backgroundColor: colors.surface, ...Shadow.xl }]}>
           <Text style={[styles.modalTitle, { color: colors.text }]}>{t('drive.shareFile')}</Text>
@@ -2038,6 +2044,7 @@ function DriveScreenInner() {
           </View>
         </View>
       </Pressable>
+      </SheetKeyboardAvoider>
     </Modal>
   );
 

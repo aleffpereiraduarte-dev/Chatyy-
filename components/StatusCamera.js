@@ -53,6 +53,7 @@ import StatusPlainCamera from './status/StatusPlainCamera';
 import { FACE_FILTER_PRESETS } from './status/FaceFilters';
 import RecentGalleryStrip, { useRecentAssets } from './status/RecentGalleryStrip'; // [2026-10-09 status-composer]
 import FastImage from './FastImage'; // [2026-10-15 status-cam] expo-image carrega ph:// (RN Image não)
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme]
 
 // Haptics (graceful — `expo-haptics` may not be present in every build)
 let _Haptics = null;
@@ -1736,7 +1737,7 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
         animationType="slide"
         onRequestClose={() => setMusicPickerOpen(false)}
       >
-        <View style={s.musicSheetBackdrop}>
+        <SheetKeyboardAvoider style={s.musicSheetBackdrop}>{/* [2026-10-22 kb-uniforme] Android: busca de música acima do teclado */}
           <View style={s.musicSheet}>
             <View style={s.musicSheetHandle} />
             {trimTrack ? (
@@ -1875,7 +1876,7 @@ function StatusCameraJS({ visible, onClose, onCapture, t, initialSeed = null, di
             </>
             )}
           </View>
-        </View>
+        </SheetKeyboardAvoider>
       </Modal>
     </View>
   );

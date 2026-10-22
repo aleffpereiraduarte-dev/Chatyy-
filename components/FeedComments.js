@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Modal,
-  TextInput, KeyboardAvoidingView, Platform, ActivityIndicator,
+  TextInput, Platform, ActivityIndicator,
   Animated, Dimensions, Pressable,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // FlashList reverted to FlatList
 import AvatarCircle from './AvatarCircle';
@@ -1119,9 +1120,8 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <KeyboardAvoidingView
+      <KeyboardSafeView
         style={[styles.overlay, isWeb ? { backgroundColor: 'rgba(0,0,0,0.5)' } : null]}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* Backdrop */}
         <Pressable
@@ -1399,7 +1399,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
             </View>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
 
       {/* [anon-comment 2026-10-14] Opções do comentário (P&B, sem emoji). */}
       <Modal visible={!!optionsFor} transparent animationType="fade" onRequestClose={closeOptions}>

@@ -16,6 +16,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput,
   ActivityIndicator, Alert, Platform,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -268,7 +269,7 @@ export default function AdvancedKeyScreen() {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+    <SheetKeyboardAvoider style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('byok.title') })} />
       ) : (
@@ -290,7 +291,7 @@ export default function AdvancedKeyScreen() {
           renderDone()}
       </ScrollView>
       </FadeSlideIn>
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

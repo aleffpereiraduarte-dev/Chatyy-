@@ -3,6 +3,7 @@
 // A fila NÃO traz o autor real; "Ver autor real" pede motivo e fica na auditoria (chat_feed_anon_audit).
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, TextInput, ActivityIndicator, StyleSheet, Platform } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -121,7 +122,7 @@ export default function ModeracaoComentarios() {
 
   const line = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <SheetKeyboardAvoider style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.header, { borderBottomColor: line }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel={t('common.back') || 'Voltar'}>
@@ -154,7 +155,7 @@ export default function ModeracaoComentarios() {
           refreshing={false}
         />
       )}
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

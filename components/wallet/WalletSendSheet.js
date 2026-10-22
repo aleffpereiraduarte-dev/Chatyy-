@@ -16,8 +16,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, Modal, TouchableOpacity, StyleSheet, ActivityIndicator,
-  TextInput, FlatList, Alert, Platform, KeyboardAvoidingView,
+  TextInput, FlatList, Alert, Platform,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HapticsCompat as Haptics } from '../../services/haptics'; // [2026-10-16 motion-telegram] shim único (Core Haptics iOS / performHapticFeedback Android)
 import { useTheme } from '../../context/ThemeContext';
@@ -175,7 +176,7 @@ export default function WalletSendSheet({ visible, onClose, balance, onSent }) {
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={() => { if (step === 'amount') { setStep('pick'); return; } onClose?.(); }}>
       <DragSheetRoot>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardSafeView style={{ flex: 1 }}>
         <View style={[styles.scrim, { backgroundColor: 'transparent' }]}>
           <DragBackdrop drag={drag} color="rgba(0,0,0,0.55)" />
           <DragPanel drag={drag} style={[styles.sheet, { backgroundColor: surface, paddingBottom: Math.max(insets.bottom, 18) }]}>
@@ -361,7 +362,7 @@ export default function WalletSendSheet({ visible, onClose, balance, onSent }) {
             )}
           </DragPanel>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
       </DragSheetRoot>
     </Modal>
   );

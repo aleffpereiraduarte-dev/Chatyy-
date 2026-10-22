@@ -19,7 +19,8 @@
 //   5. Sheet auto-dismisses after send or 6s of inactivity.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, View, Text, TextInput, TouchableOpacity, Pressable, Platform, StyleSheet, KeyboardAvoidingView } from 'react-native';
+import { Modal, View, Text, TextInput, TouchableOpacity, Pressable, Platform, StyleSheet } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
@@ -117,7 +118,7 @@ export default function DeclineWithMessageSheet() {
       <DragSheetRoot>
       <Pressable style={[styles.overlay, { backgroundColor: 'transparent' }]} onPress={onClose}>
         <DragBackdrop drag={_drag108} color="rgba(0,0,0,0.5)" />
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ width: '100%' }}>
+        <KeyboardSafeView style={{ width: '100%' }}>
           <DragPanel drag={_drag108} onStartShouldSetResponder={() => true}  style={[styles.sheet, { backgroundColor: colors.surface }]}>
             <View style={styles.handle} />
             <Text style={[styles.title, { color: colors.text }]}>
@@ -158,7 +159,7 @@ export default function DeclineWithMessageSheet() {
               </TouchableOpacity>
             </View>
           </DragPanel>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       </Pressable>
       </DragSheetRoot>
     </Modal>

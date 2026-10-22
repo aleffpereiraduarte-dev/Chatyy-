@@ -5,6 +5,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconShield, IconCheck, IconCheckCircle, IconKey, IconCopy } from './Icons';
 import * as api from '../services/api';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme]
 
 import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 export default function TwoFactorSetup({ visible, onClose }) {
@@ -277,6 +278,7 @@ export default function TwoFactorSetup({ visible, onClose }) {
 
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={handleClose}>
+      <SheetKeyboardAvoider style={{ flex: 1 }}>{/* [2026-10-22 kb-uniforme] Android: diálogo encolhe acima do teclado */}
       <TouchableOpacity style={s.overlay} onPress={handleClose} activeOpacity={1}>
         <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
@@ -303,6 +305,7 @@ export default function TwoFactorSetup({ visible, onClose }) {
           {renderContent()}
         </TouchableOpacity>
       </TouchableOpacity>
+      </SheetKeyboardAvoider>
     </Modal>
   );
 }

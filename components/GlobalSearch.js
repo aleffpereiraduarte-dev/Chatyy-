@@ -26,6 +26,7 @@ import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable,
   ScrollView, ActivityIndicator, Platform, StyleSheet, Keyboard,
 } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
 import { peekCached, putCached } from '../hooks/useCachedAction'; // [2026-10-14 offline-first]
@@ -695,6 +696,7 @@ export default function GlobalSearch({
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={close}>
+    <SheetKeyboardAvoider style={{ flex: 1 }}>
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={close}>
         <Pressable
           style={{
@@ -910,6 +912,7 @@ export default function GlobalSearch({
           )}
         </Pressable>
       </Pressable>
+    </SheetKeyboardAvoider>
     </Modal>
   );
 }

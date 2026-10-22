@@ -15,14 +15,18 @@
 // direto do evento: paddingBottom = altura do teclado (o RN Android já exclui a
 // barra de navegação) SÓ enquanto existe um TextInput focado; ao fechar o
 // teclado, ou ao voltar p/ o app sem input focado, zera. Trocar de um campo
-// p/ outro não dispara keyboardDidHide, então não pisca. O sheet dentro deve
-// somar o inset da barra de navegação no próprio paddingBottom.
+// p/ outro não dispara keyboardDidHide, então não pisca.
+// [2026-10-22 kb-uniforme] O padding agora inclui a barra de navegação
+// (useKeyboardInset) = mesma geometria do iOS. Para telas/folhas FORA deste
+// componente use components/ui/KeyboardSafeView (troca 1:1 do
+// KeyboardAvoidingView: iOS idêntico, Android padding pelo evento).
 //
 // iOS: por padrão NÃO muda nada (View com o mesmo style), p/ não alterar telas
 // que já se comportam bem lá. Passe `ios` p/ usar KeyboardAvoidingView
 // 'padding'. Web: View simples.
-import React, { useEffect, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { AppState, Keyboard, KeyboardAvoidingView, Platform, TextInput, View } from 'react-native';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 
 function hasFocusedInput() {
   try { return !!TextInput.State?.currentlyFocusedInput?.(); } catch { return false; }
@@ -38,6 +42,21 @@ export function useAndroidKeyboardInset(active = true) {
   useEffect(() => {
     if (!isAndroid || !active) { setKb(0); return undefined; }
     const subs = [];
+    // [2026-10-22 kb-uniforme] Montou com o teclado JÁ aberto (folha aberta
+    // por cima de um campo focado / foco passou p/ o campo da folha sem o
+    // teclado descer): o RN Android só emite keyboardDidShow na TRANSIÇÃO de
+    // visibilidade → sem isto a folha nascia atrás do teclado. Lê o último
+    // estado conhecido agora e de novo depois do autofocus (~280 ms).
+    const sync = () => {
+      try {
+        const vis = typeof Keyboard.isVisible === 'function' ? Keyboard.isVisible() : false;
+        const h = vis ? Math.max(0, Math.round(Keyboard.metrics?.()?.height || 0)) : 0;
+        if (vis && h > 0 && hasFocusedInput()) setKb(h);
+      } catch {}
+    };
+    sync();
+    const t1 = setTimeout(sync, 420);
+    subs.push({ remove: () => clearTimeout(t1) });
     try {
       subs.push(Keyboard.addListener('keyboardDidShow', (e) => {
         const h = Math.max(0, Math.round(e?.endCoordinates?.height || 0));
@@ -56,9 +75,21 @@ export function useAndroidKeyboardInset(active = true) {
   return isAndroid && active ? kb : 0;
 }
 
+// [2026-10-22 kb-uniforme] Quanto o teclado cobre do RODAPÉ da tela no
+// Android (0 no iOS/web e sem campo focado). O evento do RN Android dá a altura
+// SEM a barra de navegação (ime − systemBars); no edge-to-edge o teclado cobre
+// também a barra → soma o inset de baixo. Mesma geometria do KeyboardAvoidingView
+// 'padding' do iOS (borda de baixo do contêiner = topo do teclado).
+export function useKeyboardInset(active = true) {
+  const kb = useAndroidKeyboardInset(active);
+  const ins = useContext(SafeAreaInsetsContext); // null fora do provider (não lança)
+  const nav = (ins && ins.bottom) || 0;
+  return kb > 0 ? Math.round(kb + nav) : 0;
+}
+
 export default function SheetKeyboardAvoider({ children, style, ios = false, ...rest }) {
   const isAndroid = Platform.OS === 'android';
-  const kb = useAndroidKeyboardInset();
+  const kb = useKeyboardInset();
 
   if (isAndroid) {
     return <View style={[style, kb > 0 ? { paddingBottom: kb } : null]} {...rest}>{children}</View>;

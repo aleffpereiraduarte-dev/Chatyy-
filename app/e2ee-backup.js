@@ -8,6 +8,7 @@
 // Tudo atrás de __chatyy_e2ee5 + flag e2ee5_backup (services/e2ee/backup.backupOnSync).
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, TextInput, Pressable, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Platform } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader';
@@ -151,7 +152,7 @@ export default function E2eeBackupScreen() {
   const inputStyle = [st.input, { color: g.text, borderColor: g.separator, backgroundColor: g.cardBg }];
 
   return (
-    <View style={[st.root, { backgroundColor: g.pageBg, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+    <SheetKeyboardAvoider style={[st.root, { backgroundColor: g.pageBg, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: tx(t, 'e2ee5.backup.header', 'Backup das conversas protegidas'), headerStyle: { backgroundColor: g.pageBg }, headerShadowVisible: false, contentStyle: { backgroundColor: g.pageBg } })} />
       ) : (
@@ -284,7 +285,7 @@ export default function E2eeBackupScreen() {
           </>
         )}
       </ScrollView>
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

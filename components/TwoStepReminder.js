@@ -7,7 +7,8 @@
 // (403 current_pin_required = errado; 429 = muitas tentativas; 409 not_enabled
 // = PIN já desligado em outro aparelho → atualiza o estado e fecha).
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, Modal, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, Modal, StyleSheet, Platform } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconShield } from './Icons';
@@ -102,7 +103,7 @@ function ReminderCard({ email, onDone, onForgot }) {
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={notNow}>
-      <KeyboardAvoidingView style={[s.overlay]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView style={[s.overlay]}>
         <View style={[s.card, { backgroundColor: g.cardBg }]} testID="twostep-reminder-card">
           <View style={[s.icon, { backgroundColor: g.chipBg }]}><IconShield size={28} color={g.ink} /></View>
           <Text style={[s.title, { color: g.text }]}>{t('twoStep.remindTitle') || 'Digite seu PIN'}</Text>
@@ -126,7 +127,7 @@ function ReminderCard({ email, onDone, onForgot }) {
             </>
           ) : null}
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

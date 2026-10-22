@@ -2,9 +2,9 @@ import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // 
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Modal, TextInput,
-  Image, ScrollView, Platform, ActivityIndicator, Dimensions,
-  KeyboardAvoidingView, FlatList, Switch, Pressable,
+  Image, ScrollView, Platform, ActivityIndicator, Dimensions, FlatList, Switch, Pressable,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import {
   IconX, IconImage, IconMapPin, IconCamera, IconChevronLeft, IconTrash,
   IconVideo, IconPlay, IconSparkles, IconMusic, IconUsers, IconLock,
@@ -1057,9 +1057,8 @@ export default function CreatePostModal({
       onRequestClose={handleClose}
       statusBarTranslucent
     >
-      <KeyboardAvoidingView
+      <KeyboardSafeView
         style={[gs.container, { backgroundColor: bgColor }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* ---- HEADER ---- */}
         <View style={[gs.header, { borderBottomColor: borderColor }]}>
@@ -1686,7 +1685,7 @@ export default function CreatePostModal({
             </TouchableOpacity>
           </View>
         ) : null}
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
 
       {/* Modals */}
       <AudienceModal

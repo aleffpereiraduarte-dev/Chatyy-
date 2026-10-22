@@ -12,6 +12,7 @@ import {
   IconClock, IconArrowRight, IconMail, IconStar, IconPaperclip,
 } from './Icons';
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme]
 
 import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos dos botões só-ícone
 // --- Search operator definitions for inline suggestions ---
@@ -261,6 +262,8 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
     <>
       {triggerBar}
       <Modal transparent visible={open} animationType="none" onRequestClose={closeSearch}>
+        {/* [2026-10-22 kb-uniforme] Android edge-to-edge: o Modal não encolhe com o teclado → filtros avançados ficavam embaixo dele. iOS = View igual. */}
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Animated.View style={[st.overlay, { opacity: fadeAnim, paddingTop: Math.max(insets.top + 16, 60) }]}>
           <Pressable style={st.overlayBg} onPress={closeSearch} />
           <Animated.View style={[
@@ -524,6 +527,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
             </ScrollView>
           </Animated.View>
         </Animated.View>
+        </SheetKeyboardAvoider>
       </Modal>
     </>
   );
@@ -563,6 +567,7 @@ const st = StyleSheet.create({
     width: '100%', borderRadius: 20, borderWidth: 1,
     overflow: 'hidden', maxHeight: 520,
     zIndex: 10,
+    flexShrink: 1, // [2026-10-22 kb-uniforme] encolhe acima do teclado (Android) em vez de passar por baixo
   },
 
   // --- Input row ---
@@ -582,7 +587,7 @@ const st = StyleSheet.create({
   escText: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
 
   // --- Body ---
-  body: { maxHeight: 400 },
+  body: { maxHeight: 400, flexShrink: 1 }, // [2026-10-22 kb-uniforme]
 
   // --- Operator suggestions ---
   opSuggestSection: {

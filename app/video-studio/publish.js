@@ -4,7 +4,8 @@
 // retomável → reels_render_submit → acompanha em 2º plano) e fecha o estúdio;
 // o progresso aparece no banner do Reels/Feed e o vídeo entra no perfil/Reels.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView, Platform, Alert, ActivityIndicator, KeyboardAvoidingView, Switch } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView, Platform, Alert, ActivityIndicator, Switch } from 'react-native';
+import KeyboardSafeView from '../../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -252,7 +253,7 @@ export default function VideoStudioPublish() {
 
   const dur = totalDuration(draft.edl);
   return (
-    <KeyboardAvoidingView style={[styles.root, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardSafeView style={[styles.root, { paddingTop: insets.top }]}>
       <StatusBar style="light" />
       <View style={styles.top}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={10} style={styles.topBtn} accessibilityRole="button" accessibilityLabel={t('common.back')}>
@@ -324,7 +325,7 @@ export default function VideoStudioPublish() {
         <PrimaryButton label={t('studio.publish.saveDraft')} onPress={saveDraft} dark style={{ flex: 1 }} />
         <PrimaryButton label={busy ? t('studio.publish.sending') : t('studio.publish.publish')} onPress={publish} disabled={busy} style={{ flex: 1.4 }} />
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, ScrollView, Modal, Image,
-  TextInput, ActivityIndicator, Alert, Animated, Platform, Dimensions,
-  KeyboardAvoidingView, RefreshControl,
+  TextInput, ActivityIndicator, Alert, Animated, Platform, Dimensions, RefreshControl,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import {
   IconX, IconSearch, IconPlus, IconTrash, IconStar, IconHeart,
   IconCheck, IconArrowLeft, IconSparkles, IconUser,
@@ -637,7 +637,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
 
   return (
     <Animated.View style={{ flex: 1, opacity: fadeAnim, backgroundColor: colors.background }}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView style={{ flex: 1 }}>
         {/* Header */}
         <View style={{
           flexDirection: 'row', alignItems: 'center', padding: 16,
@@ -872,7 +872,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
             </Text>
           </View>
         )}
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Animated.View>
   );
 }

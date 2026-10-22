@@ -4,6 +4,7 @@ import {
   KeyboardAvoidingView, Platform, Dimensions,
   ScrollView, Modal, Linking, Image, Alert, Share, TextInput, Keyboard,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [bia-fase0 2026-10-18] sheet do sistema p/ "o que estava errado?"
 import { HeaderIconButton } from '../components/nativeHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -2931,10 +2932,9 @@ export default function OneScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
+    <KeyboardSafeView
       style={[st.container, { backgroundColor: canvasBg }]}
       // [2026-05-21] Android: 'height' empurra a barra acima do teclado (adjustResize sozinho não bastava).
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}
     >
       {chatLayout ? (
@@ -3278,7 +3278,7 @@ export default function OneScreen() {
           ]);
         }}
       />
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 

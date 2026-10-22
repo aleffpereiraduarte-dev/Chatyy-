@@ -21,8 +21,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Modal, Platform, Animated, Easing, AppState, Image,
-  PanResponder, Pressable, TextInput, KeyboardAvoidingView, ScrollView,
+  PanResponder, Pressable, TextInput, ScrollView,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -444,7 +445,7 @@ function InAppIncomingCallAndroid() {
         {sheet ? (
           <View style={StyleSheet.absoluteFill}>
             <Pressable style={st.backdrop} onPress={() => setSheet(null)} accessibilityLabel={S.cancel} />
-            <KeyboardAvoidingView behavior="padding" style={st.sheetWrap} pointerEvents="box-none">
+            <KeyboardSafeView style={st.sheetWrap} pointerEvents="box-none">
               <View style={[st.sheet, { paddingBottom: insets.bottom + 14 }]}>
                 <View style={st.sheetHead}>
                   <Text style={st.sheetTitle}>{sheet === 'reply' ? S.replyTitle : S.remindTitle}</Text>
@@ -490,7 +491,7 @@ function InAppIncomingCallAndroid() {
                   </View>
                 )}
               </View>
-            </KeyboardAvoidingView>
+            </KeyboardSafeView>
           </View>
         ) : null}
       </Animated.View>

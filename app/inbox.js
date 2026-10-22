@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Modal, Pressable, TextInput,
-  ActivityIndicator, useWindowDimensions, Platform, Animated, Easing, Alert, AppState,
-  KeyboardAvoidingView, BackHandler, ScrollView,
+  ActivityIndicator, useWindowDimensions, Platform, Animated, Easing, Alert, AppState, BackHandler, ScrollView,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 // FlashList reverted to FlatList
 import { useRouter, useFocusEffect } from 'expo-router';
 import NativeSheetDialog from '../components/NativeSheetDialog'; // [2026-10-09 native-sheets] sheet do sistema (web = Modal original)
@@ -2397,9 +2397,8 @@ function InboxScreenInner() {
       {/* Account Switch Password Prompt */}
       {switchLoginEmail && (
         <Modal visible transparent animationType="fade" onRequestClose={() => setSwitchLoginEmail(null)}>
-          <KeyboardAvoidingView
+          <KeyboardSafeView
             style={{ flex: 1 }}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           >
           <Pressable
             style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
@@ -2501,7 +2500,7 @@ function InboxScreenInner() {
               </View>
             </Pressable>
           </Pressable>
-          </KeyboardAvoidingView>
+          </KeyboardSafeView>
         </Modal>
       )}
 

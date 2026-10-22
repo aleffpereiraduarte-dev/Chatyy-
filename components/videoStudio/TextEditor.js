@@ -1,7 +1,8 @@
 // [2026-10-13 video-studio] Editor de texto (tela cheia sobre a prévia):
 // fonte, cor, fundo (nenhum / caixa / contorno), alinhamento.
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, Modal, StyleSheet, TouchableOpacity, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
+import { View, Text, TextInput, Modal, StyleSheet, TouchableOpacity, ScrollView, Platform } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path, Rect } from 'react-native-svg';
 import { fontStyleFor, contrastOn } from './OverlayLayer';
@@ -49,7 +50,7 @@ export default function TextEditor({ visible, initial, onDone, onCancel, t }) {
 
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={onCancel} statusBarTranslucent>
-      <KeyboardAvoidingView style={[styles.root, { paddingTop: insets.top + 6 }]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <KeyboardSafeView style={[styles.root, { paddingTop: insets.top + 6 }]}>
         <View style={styles.top}>
           <TouchableOpacity onPress={onCancel} hitSlop={10} accessibilityRole="button"><Text style={styles.topTxt}>{t('common.cancel')}</Text></TouchableOpacity>
           <View style={styles.topMid}>
@@ -92,7 +93,7 @@ export default function TextEditor({ visible, initial, onDone, onCancel, t }) {
             })}
           </ScrollView>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

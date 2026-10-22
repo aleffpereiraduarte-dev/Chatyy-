@@ -13,6 +13,7 @@ import {
   View, Text, Modal, Pressable, TouchableOpacity, FlatList, ActivityIndicator,
   StyleSheet, Platform, TextInput,
 } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import AvatarCircle from './AvatarCircle';
 import { IconX, IconSearch } from './Icons';
 import * as api from '../services/api';
@@ -170,6 +171,7 @@ export default function FollowersSheet({
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <DragSheetRoot>
+      <SheetKeyboardAvoider style={{ flex: 1 }}>
       <Pressable style={{ flex: 1 }} onPress={onClose}>
         <DragBackdrop drag={drag} color="rgba(0,0,0,0.5)" />
         <DragPanel drag={drag} onStartShouldSetResponder={() => true}
@@ -272,6 +274,7 @@ export default function FollowersSheet({
           /></DragScroll>
         </DragPanel>
       </Pressable>
+      </SheetKeyboardAvoider>
       </DragSheetRoot>
     </Modal>
   );

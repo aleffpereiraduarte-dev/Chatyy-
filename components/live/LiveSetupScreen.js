@@ -186,7 +186,9 @@ export default function LiveSetupScreen({
   ];
 
   const camOn = cameraState === 'on';
-  const bottomPad = kbOpen ? kbHeight + 10 : Math.max(insets.bottom, 12) + 8;
+  // [2026-10-22 kb-uniforme] Android: o evento do RN dá a altura SEM a barra de navegação
+  // (edge-to-edge: o teclado cobre a barra também) → soma o inset de baixo. iOS igual.
+  const bottomPad = kbOpen ? kbHeight + (Platform.OS === 'android' ? (insets?.bottom || 0) : 0) + 10 : Math.max(insets.bottom, 12) + 8;
   const flipLabel = tr('live.flipCamera', 'Virar câmera');
   const fxLabel = tr('live.effects', 'Efeitos');
 

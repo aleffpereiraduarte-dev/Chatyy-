@@ -32,6 +32,7 @@ import { Typography, BorderRadius, Elevation, hairlineColor, THEME_V2, Grafite, 
 // nativa (SettingsCategoryScreen + ChatyySettingsList api ≥ 2) grupo/linha
 // não desenham — viram descritores da lista nativa (components/settings/nativeCollect.js).
 import { SettingsCollectContext, CollectGroup, CollectRow } from './nativeCollect';
+import { useKeyboardInset } from '../chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme]
 
 // Palette for grouped lists. Light = iOS systemGroupedBackground; dark keeps
 // the app's true-black page [2026-10-08 dark-black] and lifts the cards one step so groups read as groups.
@@ -471,8 +472,12 @@ export function SettingsScreen({ title, children, headerRight, onBack, contentSt
     try { if (router.canGoBack?.()) { router.back(); return; } } catch {}
     try { router.replace('/settings'); } catch {}
   });
+  // [2026-10-22 kb-uniforme] Android edge-to-edge: a janela não encolhe com o
+  // teclado → a lista encolhe pelo padding (campos da lista acima do teclado).
+  // iOS segue com automaticallyAdjustKeyboardInsets (hook = 0 fora do Android).
+  const kbInset = useKeyboardInset();
   return (
-    <View style={{ flex: 1, backgroundColor: g.pageBg }} testID={testID}>
+    <View style={[{ flex: 1, backgroundColor: g.pageBg }, kbInset > 0 ? { paddingBottom: kbInset } : null]} testID={testID}>
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({
           colors,

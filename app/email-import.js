@@ -19,6 +19,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput,
   ActivityIndicator, Platform, Linking,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import * as WebBrowser from 'expo-web-browser';
@@ -455,7 +456,7 @@ export default function EmailImportScreen() {
   const past = history.filter(h => !job || h.id !== job.id);
 
   return (
-    <View style={[s.root, { backgroundColor: c.background }]}>
+    <SheetKeyboardAvoider style={[s.root, { backgroundColor: c.background }]}>
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('emailImport.title') })} />
       ) : (
@@ -491,7 +492,7 @@ export default function EmailImportScreen() {
           </>
         )}
       </ScrollView>
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

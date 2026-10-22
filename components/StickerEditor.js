@@ -13,6 +13,7 @@ import {
   Dimensions, ActivityIndicator, PanResponder, Animated, ScrollView,
 } from 'react-native';
 import CachedImage from './CachedImage';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme]
 import {
   IconX, IconCheck, IconTrash, IconSmile, IconType, IconMapPin, IconClock, IconMusic,
   IconAtSign, IconHelpCircle, IconBarChart, IconAward, IconSliders,
@@ -379,7 +380,7 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onCancel}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+      <SheetKeyboardAvoider style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>{/* [2026-10-22 kb-uniforme] Android: campo de texto da figurinha acima do teclado */}
         <ScrollView contentContainerStyle={{ alignItems: 'center', paddingVertical: 20 }} showsVerticalScrollIndicator={false}>
           {/* Sticker library tabs — Instagram-style horizontal chip rail.
               Tapping a chip selects the active overlay type. Currently only
@@ -617,7 +618,7 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
             {t?.('chat.stickerHint') || 'Arraste o texto • Escolha cor • Toque em ✓ pra salvar'}
           </Text>
         </ScrollView>
-      </View>
+      </SheetKeyboardAvoider>
     </Modal>
   );
 }

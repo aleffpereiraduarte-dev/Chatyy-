@@ -22,9 +22,10 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, TextInput, Image as RNImage,
-  ActivityIndicator, Platform, KeyboardAvoidingView, ScrollView, InteractionManager,
+  ActivityIndicator, Platform, ScrollView, InteractionManager,
   Alert, DeviceEventEmitter,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -555,7 +556,7 @@ function LegacyPhotoNew() {
         </View>
       )}
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={insets.top + 50}>
+      <KeyboardSafeView style={{ flex: 1 }} keyboardVerticalOffset={insets.top + 50}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 24 + insets.bottom }} pointerEvents={busy ? 'none' : 'auto'}>
           <View
             style={[s.carouselWrap, { aspectRatio: items.length ? ratio : 1 }, !items.length && { backgroundColor: isDark ? '#0d0d0f' : '#F2F2F7' }]}
@@ -680,7 +681,7 @@ function LegacyPhotoNew() {
           </View>
           {caption.length > MAX_CAPTION - 200 && <Text style={s.counter}>{MAX_CAPTION - caption.length}</Text>}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
 
       <PhotoEditor
         visible={editorOpenForIdx >= 0}

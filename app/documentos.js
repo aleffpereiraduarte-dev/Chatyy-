@@ -5,6 +5,7 @@ import {
   Modal, Pressable, FlatList, TextInput, Alert, RefreshControl, ScrollView,
   BackHandler,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -827,6 +828,7 @@ function DocumentosScreenInner() {
 
       {/* Rename modal */}
       <Modal visible={!!renameDoc} animationType="fade" transparent onRequestClose={() => setRenameDoc(null)}>
+        <SheetKeyboardAvoider style={{ flex: 1 }}>{/* [2026-10-22 kb-uniforme] */}
         <Pressable style={s.overlay} onPress={() => setRenameDoc(null)}>
           <Pressable style={[s.renameCard, {
             backgroundColor: colors.surface,
@@ -862,6 +864,7 @@ function DocumentosScreenInner() {
             </View>
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
     </View>
   );

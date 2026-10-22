@@ -13,6 +13,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Platform, TextInput,
 } from 'react-native';
+import SheetKeyboardAvoider from '../../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: nome do pacote novo + Importar acima do teclado (iOS igual)
 import { Image as ExpoImage } from 'expo-image';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../../components/nativeHeader';
@@ -128,7 +129,7 @@ export default function StickerImportScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <SheetKeyboardAvoider style={{ flex: 1, backgroundColor: colors.background }}>
       {USE_NATIVE_HEADER && <Stack.Screen options={nativeHeaderOptions({ colors, title: t('stickers.importTitle') })} />}
       {!USE_NATIVE_HEADER && (
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 12, gap: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}>
@@ -239,6 +240,6 @@ export default function StickerImportScreen() {
           </View>
         )}
       </ScrollView>
-    </View>
+    </SheetKeyboardAvoider>
   );
 }

@@ -11,8 +11,9 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, Modal, ScrollView, ActivityIndicator,
-  Platform, KeyboardAvoidingView, StyleSheet,
+  Platform, StyleSheet,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
@@ -493,7 +494,7 @@ export default function TwoStepSheet({ visible, onClose, initialStep = 'main' })
       onRequestClose={back}
     >
       {/* [2026-10-16 polish] Android: Modal tela-cheia edge-to-edge não redimensiona com o teclado → 'height' encolhe a área e o botão fica acima do teclado. */}
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: g.pageBg }} behavior={Platform.OS === 'ios' ? 'padding' : (Platform.OS === 'android' ? 'height' : undefined)}>
+      <KeyboardSafeView style={{ flex: 1, backgroundColor: g.pageBg }}>
         {header}
         <ScrollView
           contentContainerStyle={{ paddingBottom: 32 + insets.bottom, maxWidth: 560, width: '100%', alignSelf: 'center' }}
@@ -503,7 +504,7 @@ export default function TwoStepSheet({ visible, onClose, initialStep = 'main' })
         >
           {content}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

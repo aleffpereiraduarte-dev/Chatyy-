@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, FlatList, Modal, Pressable, ActivityIndicator,
 } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import { IconCheck } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import ModalHeader from './ModalHeader';
@@ -83,6 +84,7 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <DragSheetRoot>
+      <SheetKeyboardAvoider style={{ flex: 1 }}>
       <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }, { backgroundColor: 'transparent' }]} onPress={onClose}>
         <DragBackdrop drag={_drag73} color="rgba(0,0,0,0.5)" />
         <DragPanel drag={_drag73} onStartShouldSetResponder={() => true} style={{
@@ -178,6 +180,7 @@ export default function BroadcastModal({ visible, onClose, onCreated, colors, t,
           )}
         </DragPanel>
       </Pressable>
+      </SheetKeyboardAvoider>
       </DragSheetRoot>
     </Modal>
   );

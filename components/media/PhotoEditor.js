@@ -29,8 +29,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, Image, StyleSheet, Platform, Modal, TextInput,
-  ActivityIndicator, KeyboardAvoidingView, ScrollView, Alert,
+  ActivityIndicator, ScrollView, Alert,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { IconX, IconCheck, IconCrop, IconPencil, IconType, IconUndo, IconRotateCcw, IconTrash } from '../Icons';
@@ -942,8 +943,7 @@ function PhotoEditorInner({ imageUri, onCancel, onDone, initialTool }) {
 
         {/* ── Edição de texto ── */}
         {textEdit && (
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          <KeyboardSafeView
             style={styles.textEditor}
           >
             <View style={[styles.textEditorTop, { paddingTop: Math.max(insets.top, 12) + 4 }]}>
@@ -982,7 +982,7 @@ function PhotoEditorInner({ imageUri, onCancel, onDone, initialTool }) {
             <View style={{ paddingBottom: 12 }}>
               <Swatches value={textEdit.color} onChange={(c) => setTextEdit((te) => (te ? { ...te, color: c } : te))} />
             </View>
-          </KeyboardAvoidingView>
+          </KeyboardSafeView>
         )}
       </GH.GestureHandlerRootView>
     </Modal>

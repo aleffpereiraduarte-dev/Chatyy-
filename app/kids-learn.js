@@ -1,6 +1,7 @@
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, ActivityIndicator, Platform, Linking, Animated, Dimensions } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -117,7 +118,7 @@ function KidsLearnScreenInner() {
   };
 
   return (
-    <View style={[s.container, { backgroundColor: isDark ? '#0f0720' : '#faf5ff' }]}>
+    <SheetKeyboardAvoider style={[s.container, { backgroundColor: isDark ? '#0f0720' : '#faf5ff' }]}>
       {/* Colorful gradient header */}
       <View style={[s.header,
         Platform.OS === 'web'
@@ -249,7 +250,7 @@ function KidsLearnScreenInner() {
           ) : null}
         </View>
       </ScrollView>
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

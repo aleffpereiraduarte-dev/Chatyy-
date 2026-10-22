@@ -4,9 +4,9 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import React from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView,
-  ActivityIndicator, Platform, Modal, Alert, SectionList, Animated, Easing,
-  KeyboardAvoidingView, RefreshControl, PixelRatio,
+  ActivityIndicator, Platform, Modal, Alert, SectionList, Animated, Easing, RefreshControl, PixelRatio,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 // FlashList reverted to FlatList
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, NativeHeaderSafeArea } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav]
@@ -2067,9 +2067,8 @@ function ContactsScreenInner() {
       {/* Add/Edit Modal */}
       <Modal visible={showAdd} animationType="slide" transparent onRequestClose={() => setShowAdd(false)}>
         <DragSheetRoot>
-        <KeyboardAvoidingView
+        <KeyboardSafeView
           style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={0}
         >
         <TouchableOpacity style={[s.overlay, { backgroundColor: 'transparent' }]} onPress={() => setShowAdd(false)} activeOpacity={1}>
@@ -2213,7 +2212,7 @@ function ContactsScreenInner() {
             </ScrollView></DragScroll>
           </DragPanel>
         </TouchableOpacity>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
         </DragSheetRoot>
       </Modal>
 

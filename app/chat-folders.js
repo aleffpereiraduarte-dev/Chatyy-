@@ -18,8 +18,9 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity, Pressable, TextInput, Modal, FlatList,
-  ActivityIndicator, Animated, PanResponder, Platform, KeyboardAvoidingView,
+  ActivityIndicator, Animated, PanResponder, Platform,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
@@ -581,7 +582,7 @@ function FolderEditor({ editId, preset }) {
   return (
     <View style={{ flex: 1, backgroundColor: P.bg }}>
       <ScreenHeader P={P} title={title} onBack={back} right={saveBtn} />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView style={{ flex: 1 }}>
         <ScrollView {...(nativeScrollInsetProps() || {})} keyboardShouldPersistTaps="handled" contentContainerStyle={st.scrollPad}>
           {/* nome + ícone */}
           <View style={st.nameWrap}>
@@ -694,7 +695,7 @@ function FolderEditor({ editId, preset }) {
             </Pressable>
           ) : null}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
       <ChatPicker
         visible={picker}
         initial={draft.ids.map(Number)}

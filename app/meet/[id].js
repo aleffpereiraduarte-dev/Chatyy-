@@ -6,7 +6,8 @@
 //    largura, sheet "Mais", conversa, participantes, cartão "Aguardando participantes" (link/QR).
 //  - room.html (v1) segue intocado p/ quem ainda roda o app antigo.
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { View, Text, TextInput, StyleSheet, Platform, ActivityIndicator, Alert, Pressable, AppState, Linking, KeyboardAvoidingView, Share } from 'react-native';
+import { View, Text, TextInput, StyleSheet, Platform, ActivityIndicator, Alert, Pressable, AppState, Linking, Share } from 'react-native';
+import KeyboardSafeView from '../../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
@@ -626,7 +627,7 @@ export default function MeetScreen() {
   if (phase === 'password' && needsPassword) {
     const submit = async () => { setJoining(true); await attemptJoin(passwordInput); setJoining(false); };
     return (
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: '#000' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView style={{ flex: 1, backgroundColor: '#000' }}>
         <View style={[s.centered, { paddingTop: insets.top }]}>
           <View style={s.iconCircle}><IconLock size={28} color="#fff" /></View>
           <Text style={s.h1}>{t('meetScreen.passwordRequired')}</Text>
@@ -649,7 +650,7 @@ export default function MeetScreen() {
             <Text style={s.ghostText}>{t('common.cancel')}</Text>
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     );
   }
 

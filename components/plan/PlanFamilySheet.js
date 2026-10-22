@@ -3,7 +3,8 @@
 // adicionada recebe o Pro na própria conta (espaço e conversas separados);
 // o titular paga. Só o titular gerencia. Folha nativa (pageSheet no iOS).
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, Modal, Pressable, TextInput, ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, KeyboardAvoidingView } from 'react-native';
+import { View, Text, Modal, Pressable, TextInput, ActivityIndicator, Alert, Platform, ScrollView, StyleSheet } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../../services/api';
 import { useLanguage } from '../../context/LanguageContext';
@@ -97,7 +98,7 @@ export default function PlanFamilySheet({ visible, onClose, planName, maxMembers
   const inputBg = g.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(118,118,128,0.10)';
   return (
     <Modal visible={visible} animationType="slide" presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'} onRequestClose={onClose} transparent={false}>
-      <KeyboardAvoidingView style={{ flex: 1, backgroundColor: g.pageBg }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView style={{ flex: 1, backgroundColor: g.pageBg }}>
         <View style={[s.head, { paddingTop: Platform.OS === 'ios' ? 14 : insets.top + 10 }]}>
           <Text style={[s.headTitle, { color: g.text }]} accessibilityRole="header">{t('planHub.famTitle')}</Text>
           <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel={t('common.close')} style={[s.close, { backgroundColor: g.fill }]} testID="plan-family-close">
@@ -180,7 +181,7 @@ export default function PlanFamilySheet({ visible, onClose, planName, maxMembers
             </>
           )}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

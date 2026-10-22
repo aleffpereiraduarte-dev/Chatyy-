@@ -7,9 +7,9 @@
  */
 import { useState, useRef } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, ActivityIndicator,
-  KeyboardAvoidingView, Platform, ScrollView, Alert,
+  View, Text, TextInput, TouchableOpacity, ActivityIndicator, Platform, ScrollView, Alert,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -125,8 +125,7 @@ export default function VerifyPhoneRequiredScreen() {
   });
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    <KeyboardSafeView
       style={{ flex: 1, backgroundColor: colors.background }}
     >
       <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 24, justifyContent: 'center' }}>
@@ -247,6 +246,6 @@ export default function VerifyPhoneRequiredScreen() {
           <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('common.signOut')}</Text>
         </TouchableOpacity>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }

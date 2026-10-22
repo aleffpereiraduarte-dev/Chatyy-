@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  Modal, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform,
+  Modal, ScrollView, ActivityIndicator, Platform,
   SafeAreaView,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
@@ -93,9 +94,8 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
       <SafeAreaView style={[s.fullScreen, { backgroundColor: colors.background }]}>
-        <KeyboardAvoidingView
+        <KeyboardSafeView
           style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           {/* Header — full-screen with gradient accent */}
           <View style={[s.header, { borderBottomColor: colors.borderLight, backgroundColor: colors.surface }]}>
@@ -265,7 +265,7 @@ export default function AIComposeModal({ visible, onClose, onUseDraft }) {
               </View>
             ) : null}
           </ScrollView>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       </SafeAreaView>
     </Modal>
   );

@@ -40,6 +40,7 @@ import {
   TextInput,
   Platform,
 } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import Svg, { Path as SvgPath, Circle as SvgCircle } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import { useLanguage } from '../context/LanguageContext';
@@ -216,6 +217,7 @@ export default function CallParticipantList({
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose}>
       <DragSheetRoot>
+      <SheetKeyboardAvoider style={{ flex: 1 }}>
       <Pressable style={[styles.overlay, { backgroundColor: 'transparent' }]} onPress={onClose}>
         <DragBackdrop drag={_drag213} color="rgba(0,0,0,0.55)" />
         <DragPanel drag={_drag213}
@@ -392,6 +394,7 @@ export default function CallParticipantList({
           </Pressable>
         </DragPanel>
       </Pressable>
+      </SheetKeyboardAvoider>
       </DragSheetRoot>
     </Modal>
   );

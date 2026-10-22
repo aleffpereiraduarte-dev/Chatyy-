@@ -3,6 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Animated,
   ActivityIndicator, Platform, Alert, Modal, useWindowDimensions, Linking, Easing,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, useLocalSearchParams, Redirect } from 'expo-router';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { PLANS_ENABLED, isPstnEnabled } from '../constants/featureFlags';
@@ -3136,6 +3137,7 @@ export default function PlansScreen() {
 
       {/* Payment Modal (subscribe or update card) */}
       <Modal visible={!!paymentModal} transparent animationType="none" onRequestClose={closePaymentModal}>
+        <SheetKeyboardAvoider style={{ flex: 1 }}>{/* [2026-10-22 kb-uniforme] */}
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={closePaymentModal}>
           <Animated.View style={{ opacity: modalOpacityAnim, transform: [{ scale: modalScaleAnim }, { translateX: shakeAnim }] }}>
           <TouchableOpacity activeOpacity={1} style={[s.paymentModalCard, { backgroundColor: colors.surface, ...Shadow.lg }]} onPress={() => {}}>
@@ -3462,6 +3464,7 @@ export default function PlansScreen() {
           </TouchableOpacity>
           </Animated.View>
         </TouchableOpacity>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* Cancel Subscription Confirmation Modal */}
@@ -3503,6 +3506,7 @@ export default function PlansScreen() {
 
       {/* Add Member Modal */}
       <Modal visible={showAddMember} transparent animationType="fade" onRequestClose={() => setShowAddMember(false)}>
+        <SheetKeyboardAvoider style={{ flex: 1 }}>{/* [2026-10-22 kb-uniforme] */}
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setShowAddMember(false)}>
           <TouchableOpacity activeOpacity={1} style={[s.modalCard, { backgroundColor: colors.surface, ...Shadow.lg }]}>
             <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600', marginBottom: 16 }}>{t('plans.addMember')}</Text>
@@ -3534,6 +3538,7 @@ export default function PlansScreen() {
             </View>
           </TouchableOpacity>
         </TouchableOpacity>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* [2026-10-18 stripe-off] web: "Assine pelo app" ao tocar em assinar/upgrade */}

@@ -6,9 +6,9 @@
 // Overlay absoluto (não <Modal>) como o aviso de Termos; o seletor de país é Modal próprio.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, TextInput, Pressable, StyleSheet, Platform, ActivityIndicator, Keyboard,
-  KeyboardAvoidingView, BackHandler, ScrollView,
+  View, Text, TextInput, Pressable, StyleSheet, Platform, ActivityIndicator, Keyboard, BackHandler, ScrollView,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Localization from 'expo-localization';
 import { useTheme } from '../../context/ThemeContext';
@@ -282,7 +282,7 @@ export default function AddPhoneSheet({ email, required = false, snoozeDays = PH
   return (
     <View style={[StyleSheet.absoluteFill, st.backdrop]} accessibilityViewIsModal testID="addphone-sheet">
       <Pressable style={StyleSheet.absoluteFill} onPress={() => { if (!required && step === 'phone' && !busy) close(true); }} accessible={false} />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={st.kav} pointerEvents="box-none">
+      <KeyboardSafeView style={st.kav} pointerEvents="box-none">
         <View style={[st.card, {
           backgroundColor: bg,
           marginBottom: Math.max(insets.bottom, 16),
@@ -298,7 +298,7 @@ export default function AddPhoneSheet({ email, required = false, snoozeDays = PH
             {body}
           </ScrollView>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
       <CountryPicker
         visible={showCountry}
         onClose={() => setShowCountry(false)}

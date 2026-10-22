@@ -26,10 +26,10 @@ import {
   Platform,
   PanResponder,
   ActivityIndicator,
-  KeyboardAvoidingView,
   useWindowDimensions,
   AppState,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -680,7 +680,7 @@ export default function ReelsComposeScreen() {
           {!!pickError && <Text style={styles.err}>{pickError}</Text>}
         </ScrollView>
       ) : (
-        <KeyboardAvoidingView style={{ flex: 1, width: '100%' }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardSafeView style={{ flex: 1, width: '100%' }}>
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={{ width: contentW, alignSelf: 'center', paddingBottom: 24 }}
@@ -838,7 +838,7 @@ export default function ReelsComposeScreen() {
               </TouchableOpacity>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       )}
 
       {/* Discard confirm (same on every platform) */}

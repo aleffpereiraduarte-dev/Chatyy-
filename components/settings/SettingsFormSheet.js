@@ -14,7 +14,8 @@
 //
 // Campos: prefira `defaultValue` + onChangeText (o conteúdo do sheet nativo é
 // republicado a cada render do dono; `value` controlado pode pular o cursor).
-import { Modal, View, Text, Pressable, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { Modal, View, Text, Pressable, Platform, StyleSheet } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguageOptional } from '../../context/LanguageContext';
 import { USE_NATIVE_SHEETS, NativeSheet, nativeSheetBottomPad } from '../NativeSheet';
@@ -45,13 +46,13 @@ export default function SettingsFormSheet({ visible, onClose, title, doneLabel, 
   }
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={st.backdrop}>
+      <KeyboardSafeView style={st.backdrop}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel={done} />
         <View style={[st.panel, { backgroundColor: g.pageBg, paddingBottom: Math.max(insets.bottom, 16) }]} testID={testID}>
           {head}
           {children}
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

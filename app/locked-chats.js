@@ -21,6 +21,7 @@ import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator,
   Modal, TextInput, Platform,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, Stack, useFocusEffect } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 more-native]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -300,7 +301,7 @@ export default function LockedChatsScreen() {
 
       {codeModal && (
         <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={() => setCodeModal(false)}>
-          <View style={styles.modalDim}>
+          <SheetKeyboardAvoider style={styles.modalDim}>
             <View style={[styles.modalCard, { backgroundColor: colors.surface || (isDark ? '#1c1c1e' : '#fff') }]}>
               <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700', marginBottom: 6 }}>
                 {t('chat.secretCode') || 'Código secreto'}
@@ -342,7 +343,7 @@ export default function LockedChatsScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-          </View>
+          </SheetKeyboardAvoider>
         </Modal>
       )}
 

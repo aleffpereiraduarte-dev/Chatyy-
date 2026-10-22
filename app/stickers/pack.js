@@ -12,6 +12,7 @@ import {
   View, Text, TouchableOpacity, FlatList, ActivityIndicator, Alert, Platform, Share,
   TextInput, Modal, useWindowDimensions,
 } from 'react-native';
+import SheetKeyboardAvoider from '../../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import { Image as ExpoImage } from 'expo-image';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../../components/nativeHeader';
@@ -300,7 +301,7 @@ export default function StickerPackScreen() {
       )}
 
       <Modal visible={renaming} transparent animationType="fade" onRequestClose={() => setRenaming(false)}>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 }}>
+        <SheetKeyboardAvoider style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 }}>
           <View style={{ backgroundColor: colors.background, borderRadius: 16, padding: 18, maxWidth: 420, width: '100%', alignSelf: 'center' }}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Text style={{ flex: 1, fontSize: 16, fontWeight: '800', color: colors.text }}>{t('stickers.rename')}</Text>
@@ -315,7 +316,7 @@ export default function StickerPackScreen() {
               <Text style={{ color: colors.background, fontWeight: '700' }}>{t('common.save')}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </SheetKeyboardAvoider>
       </Modal>
 
       <StickerActionSheet visible={!!sheet} url={sheet?.url || ''} onClose={() => setSheet(null)} />

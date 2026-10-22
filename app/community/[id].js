@@ -8,6 +8,7 @@ import {
   Image, ActivityIndicator, RefreshControl, TextInput, Alert, Pressable, Platform,
   Animated, Easing,
 } from 'react-native';
+import SheetKeyboardAvoider from '../../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
@@ -566,7 +567,7 @@ export default function CommunityScreen() {
   }
 
   return (
-    <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <SheetKeyboardAvoider style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Header */}
       <View style={sty.header}>
         <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
@@ -705,7 +706,7 @@ export default function CommunityScreen() {
       <Sheet visible={!!roleMenu} onClose={() => setRoleMenu(null)} title={roleMenu?.title} subtitle={roleMenu?.subtitle}>
         <ActionList items={roleMenu?.items || []} onDone={() => setRoleMenu(null)} />
       </Sheet>
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

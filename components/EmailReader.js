@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import FastImage from './FastImage'; // [2026-10-09 expo-image]
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, UIManager, TextInput, Modal as RNModal, FlatList, useWindowDimensions, Alert } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: resposta rápida no fim do e-mail acima do teclado (iOS igual)
 import { getString as mmkvGetString, setString as mmkvSetString } from '../services/mmkv';
 // DOMPurify is web-only — lazy load to avoid crash on native
 let DOMPurify = null;
@@ -1008,6 +1009,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
   };
 
   return (
+    <SheetKeyboardAvoider style={{ flex: 1 }}>
     <ScrollView
       style={s.container}
       contentContainerStyle={[s.content, { maxWidth: computeContentMaxWidth(win.width), width: '100%', alignSelf: 'center' }, Platform.OS !== 'web' && { paddingBottom: 80 + insets.bottom }]}
@@ -2000,6 +2002,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       )}
       </Animated.View>
     </ScrollView>
+    </SheetKeyboardAvoider>
   );
 }
 

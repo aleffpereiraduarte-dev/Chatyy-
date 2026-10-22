@@ -11,7 +11,8 @@
 // Nativo (ChatyyAppsGrid api ≥ 2) desenha a mesma grade; binário antigo (api 1, que
 // ainda tinha Bia/Recentes) cai nesta grade JS. Rotas/ações iguais às de antes.
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, Animated, Dimensions, Modal, Pressable, KeyboardAvoidingView, PanResponder, Keyboard } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Platform, Animated, Dimensions, Modal, Pressable, PanResponder, Keyboard } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import {
@@ -498,7 +499,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, des
   return (
     <Modal visible={mounted} transparent animationType="none" statusBarTranslucent onRequestClose={onClose}>
       <Root style={{ flex: 1 }}>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <KeyboardSafeView style={{ flex: 1 }}>
           <View
             style={{ flex: 1, justifyContent: 'flex-end' }}
             onLayout={(e) => { const h = e?.nativeEvent?.layout?.height; if (h > 0 && Math.abs(h - containerH) > 1) setContainerH(h); }}
@@ -517,7 +518,7 @@ function AppsSheet({ visible, onClose, router, colors, isDark, t, userEmail, des
             </Animated.View>
             {sheetGesture && !useNativeGrid ? <_GH.GestureDetector gesture={sheetGesture.pan}>{sheetEl}</_GH.GestureDetector> : sheetEl}
           </View>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       </Root>
     </Modal>
   );

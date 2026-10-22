@@ -5,6 +5,7 @@ import {
   ActivityIndicator, Platform, Dimensions, TextInput, Modal, ScrollView, Alert,
   Image, Linking, BackHandler, KeyboardAvoidingView, Share,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import AvatarCircle from './AvatarCircle';
 import { IconSearch, IconPlus, IconArrowLeft, IconPlay } from './Icons';
 // [2026-10-08 apps-native] feedback nativo (célula iOS/ripple Android), empty
@@ -903,7 +904,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
   }, [colors, isDark, t, myEmail, isMember, handleReact]);
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardSafeView style={{ flex: 1 }}>
       {/* Header */}
       <View style={[styles.channelHeader, {
         backgroundColor: colors.background,
@@ -1025,7 +1026,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
           </PressableScale>
         </View>
       )}
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 
@@ -1061,7 +1062,7 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <DragSheetRoot>
       {/* [2026-10-08 apps-native] KeyboardAvoidingView: o teclado cobria o sheet */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <KeyboardSafeView style={{ flex: 1 }}>
       <TouchableOpacity activeOpacity={1} onPress={onClose} style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]}>
         <DragBackdrop drag={_drag1052} color="rgba(0,0,0,0.5)" />
         <DragPanel drag={_drag1052} onStartShouldSetResponder={() => true}   style={{
@@ -1133,7 +1134,7 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
           </PressableScale>
         </DragPanel>
       </TouchableOpacity>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
       </DragSheetRoot>
     </Modal>
   );

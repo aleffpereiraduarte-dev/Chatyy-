@@ -1,6 +1,7 @@
 // [2026-10-13 video-studio] Peças de UI do estúdio (P&B premium, sem emoji).
 import React, { useMemo, useRef, useState } from 'react';
-import { View, Text, Modal, Pressable, StyleSheet, PanResponder, Platform, TouchableOpacity, KeyboardAvoidingView } from 'react-native';
+import { View, Text, Modal, Pressable, StyleSheet, PanResponder, Platform, TouchableOpacity } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 
@@ -21,7 +22,7 @@ export function IconClose({ size = 20, color = '#fff' }) {
 /** Folha inferior escura. `full` = ocupa ~90% da altura. */
 export function StudioSheet({ visible, onClose, title, right, children, full = false, avoidKeyboard = false }) {
   const insets = useSafeAreaInsets();
-  const Body = avoidKeyboard ? KeyboardAvoidingView : View;
+  const Body = avoidKeyboard ? KeyboardSafeView : View; // [2026-10-22 kb-uniforme] Android: KAV sem behavior não fazia nada
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <Body style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>

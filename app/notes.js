@@ -2,9 +2,9 @@ import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, ScrollView,
-  Modal, Alert, Animated, Dimensions, FlatList, Pressable, ActivityIndicator, RefreshControl,
-  KeyboardAvoidingView, Linking, PanResponder, Easing, AppState,
+  Modal, Alert, Animated, Dimensions, FlatList, Pressable, ActivityIndicator, RefreshControl, Linking, PanResponder, Easing, AppState,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { cssLoop, IS_WEB } from '../utils/webCssLoop';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
@@ -3239,12 +3239,11 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
   const selectedNotebook = notebooks.find(n => n.id === selectedNotebookId);
 
   return (
-    <KeyboardAvoidingView
+    <KeyboardSafeView
       style={[s.editorContainer, {
         backgroundColor: bgColor,
         ...(Platform.OS === 'web' ? { background: gradientBg } : {}),
       }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       {/* Editor Header */}
       <View style={[s.editorHeader, {
@@ -3837,7 +3836,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
           </View>
         )}
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 

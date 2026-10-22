@@ -19,8 +19,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
-  Platform, KeyboardAvoidingView, ScrollView, Modal, Pressable, Alert,
+  Platform, ScrollView, Modal, Pressable, Alert,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import * as Localization from 'expo-localization';
@@ -303,8 +304,7 @@ export default function LinkedPhones() {
             style={[s.modalSheet, { backgroundColor: colors.surface }]}
             
           >
-            <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            <KeyboardSafeView
               keyboardVerticalOffset={Platform.OS === 'ios' ? 20 : 0}
             >
               <View style={[s.modalHeader, { borderBottomColor: colors.borderLight }]}>
@@ -382,7 +382,7 @@ export default function LinkedPhones() {
                   </Text>
                 </View>
               )}
-            </KeyboardAvoidingView>
+            </KeyboardSafeView>
           </DragPanel>
         </Pressable>
         </DragSheetRoot>

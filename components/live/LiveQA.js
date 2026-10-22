@@ -11,9 +11,9 @@
  */
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet, Modal, Pressable, FlatList,
-  KeyboardAvoidingView, Platform, Animated, ActivityIndicator,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, Modal, Pressable, FlatList, Platform, Animated, ActivityIndicator,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useLanguage } from '../../context/LanguageContext';
 import AvatarCircle from '../AvatarCircle';
 import { IconX, IconSend, IconThumbsUp, IconHelpCircle, IconTrash, IconPin } from '../Icons';
@@ -113,7 +113,7 @@ export const LiveQASheet = memo(function LiveQASheet({ engage, isHost }) {
     <Modal visible transparent animationType="slide" onRequestClose={close}>
       <DragSheetRoot>
       <DragFade drag={drag}><Pressable style={styles.backdrop} onPress={close} accessibilityRole="button" accessibilityLabel={t('common.close')} /></DragFade>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView>
         <DragPanel drag={drag} style={styles.sheet}>
           <View style={styles.handle} />
           <View style={styles.header}>
@@ -169,7 +169,7 @@ export const LiveQASheet = memo(function LiveQASheet({ engage, isHost }) {
             </View>
           ) : null}
         </DragPanel>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
       </DragSheetRoot>
     </Modal>
   );

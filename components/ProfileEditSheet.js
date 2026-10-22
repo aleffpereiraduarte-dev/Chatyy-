@@ -8,9 +8,10 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable,
-  ScrollView, ActivityIndicator, Platform, StyleSheet, KeyboardAvoidingView,
+  ScrollView, ActivityIndicator, Platform, StyleSheet,
   Alert, Animated, Easing, Linking, BackHandler,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePreventRemove, useNavigation } from '@react-navigation/native';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll } from './ui/useDragToDismiss';
@@ -611,8 +612,7 @@ export default function ProfileEditSheet({
     <Wrap {...wrapProps}>
       <SheetRootMaybe on={!asScreen}>
       <Backdrop {...backdropProps}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        <KeyboardSafeView
           keyboardVerticalOffset={asScreen ? _kbOffset : 0}
           style={asScreen ? { flex: 1 } : { flex: 1, justifyContent: 'flex-end' }}
         >
@@ -1138,7 +1138,7 @@ export default function ProfileEditSheet({
             </ScrollMaybe>
           </Sheet>
           </PanelMaybe>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
 
         {/* Avatar preview modal — shown after the user picks an image and
             BEFORE we upload. The big square frame with a circular crop

@@ -183,6 +183,7 @@ function _convSheetsOn() {
 import ReactionBurst from '../components/ReactionBurst';
 import ShareContactPicker from '../components/chat/ShareContactPicker'; // [2026-10-17 share-contact] seletor Chatyy + agenda, até 5
 import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-11 android-kav]
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme] folhas enquete/encontro/playlist/legenda: iOS igual, Android padding pelo evento
 import { useTheme } from '../context/ThemeContext';
 import { useConfirm } from '../components/ConfirmModal';
 import MessageTypeIcon, { stripLeadingGlyph, hasLeadingGlyph } from '../components/MessageTypeIcon'; // [2026-10-07 app-feel-ui]
@@ -6441,8 +6442,7 @@ function CreatorSheetShell({ native, kavEnabled, onClose, colors, insets, childr
     );
   }
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <KeyboardSafeView
       enabled={kavEnabled}
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}
       keyboardVerticalOffset={0}
@@ -6455,7 +6455,7 @@ function CreatorSheetShell({ native, kavEnabled, onClose, colors, insets, childr
         <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: framed ? 8 : 16 }} />
         {body}
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 
@@ -7072,8 +7072,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
   const inputBase = { backgroundColor: colors.surfaceVariant, borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, fontSize: 15, color: colors.text };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <KeyboardSafeView
       enabled={kavEnabled}
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}
       keyboardVerticalOffset={0}
@@ -7239,7 +7238,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated, o
           }
         </TouchableOpacity>
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 
@@ -7308,8 +7307,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
   if (!editor) return null;
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <KeyboardSafeView
       enabled={kavEnabled}
       style={{ flex: 1 }}
       keyboardVerticalOffset={0}
@@ -7513,7 +7511,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
         </View>
       </Pressable>
     </Pressable>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 
@@ -8157,8 +8155,7 @@ function MediaPreview({ visible, onClose, onSend, onSchedule, files: filesProp, 
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      <KeyboardSafeView
         enabled={Platform.OS === 'ios' || capFocus}
         style={previewStyles.container}
       >
@@ -8436,7 +8433,7 @@ function MediaPreview({ visible, onClose, onSend, onSchedule, files: filesProp, 
           )}
 
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }
@@ -8462,7 +8459,7 @@ function FileCaptionPreview({ visible, kind, file, gifUri, colors, t, onClose, o
   const isAudio = kind === 'audio';
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} enabled={Platform.OS === 'ios' || capFocus} style={previewStyles.container}>
+      <KeyboardSafeView enabled={Platform.OS === 'ios' || capFocus} style={previewStyles.container}>
         <View style={previewStyles.header}>
           <TouchableOpacity onPress={onClose} style={previewStyles.headerBtn} accessibilityLabel={_t('common.close', 'Close')} accessibilityRole="button">
             <IconX size={24} color="#fff" />
@@ -8516,7 +8513,7 @@ function FileCaptionPreview({ visible, kind, file, gifUri, colors, t, onClose, o
             </TouchableOpacity>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

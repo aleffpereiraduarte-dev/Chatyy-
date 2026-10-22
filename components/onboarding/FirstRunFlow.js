@@ -12,8 +12,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal, View, Text, TextInput, Pressable, Image, StyleSheet, Platform, Animated,
-  Easing, ActivityIndicator, ScrollView, KeyboardAvoidingView, StatusBar, useWindowDimensions, Linking,
+  Easing, ActivityIndicator, ScrollView, StatusBar, useWindowDimensions, Linking,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { useTheme } from '../../context/ThemeContext';
@@ -405,8 +406,7 @@ export default function FirstRunFlow({ visible, steps, initialStep, onDone, onOp
       onRequestClose={back}
     >
       <View style={[st.root, wide ? st.rootWide : { backgroundColor: bg }]}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        <KeyboardSafeView
           style={[wide ? [st.card, { backgroundColor: bg }] : { flex: 1 }, { paddingTop: wide ? 18 : topPad, paddingBottom: Math.max(insets.bottom, 16) }]}
         >
           <View style={st.header}>
@@ -427,7 +427,7 @@ export default function FirstRunFlow({ visible, steps, initialStep, onDone, onOp
             </Animated.View>
           </ScrollView>
           <View style={st.footer}>{footer}</View>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       </View>
     </Modal>
   );

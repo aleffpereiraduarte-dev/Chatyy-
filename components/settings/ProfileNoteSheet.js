@@ -8,8 +8,9 @@
 // some sozinha em 24 h. Sem emoji (SVG/texto).
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Modal, View, Text, TextInput, Pressable, Platform, StyleSheet, KeyboardAvoidingView, ActivityIndicator,
+  Modal, View, Text, TextInput, Pressable, Platform, StyleSheet, ActivityIndicator,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../ui/useDragToDismiss';
 import { useGroupedColors } from './SettingsKit';
@@ -167,7 +168,7 @@ export default function ProfileNoteSheet({ visible, note, onClose, t, onError })
       <DragSheetRoot>
         <Pressable style={st.overlay} onPress={onClose}>
           <DragBackdrop drag={drag} color="rgba(0,0,0,0.45)" />
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+          <KeyboardSafeView style={{ width: '100%' }}>
             <DragPanel
               drag={drag}
               onStartShouldSetResponder={() => true}
@@ -176,7 +177,7 @@ export default function ProfileNoteSheet({ visible, note, onClose, t, onError })
               <View style={[st.handle, { backgroundColor: g.tertiary }]} />
               {body}
             </DragPanel>
-          </KeyboardAvoidingView>
+          </KeyboardSafeView>
         </Pressable>
       </DragSheetRoot>
     </Modal>

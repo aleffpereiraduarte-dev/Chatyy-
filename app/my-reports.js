@@ -6,6 +6,7 @@
  */
 import { useEffect, useState, useCallback } from 'react';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity, RefreshControl, ActivityIndicator, Alert, Platform, TextInput, Modal, Pressable } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -167,6 +168,7 @@ export default function MyReportsScreen() {
         </FadeSlideIn>
       )}
       <Modal visible={appealOpen} transparent animationType="fade" onRequestClose={() => setAppealOpen(false)}>
+        <SheetKeyboardAvoider style={{ flex: 1 }}>{/* [2026-10-22 kb-uniforme] */}
         <Pressable style={st.backdrop} onPress={() => setAppealOpen(false)}>
           <Pressable style={[st.dialog, { backgroundColor: colors.surface }]} onPress={() => {}}>
             <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700', marginBottom: 6 }}>{t('mod.appeal')}</Text>
@@ -183,6 +185,7 @@ export default function MyReportsScreen() {
             </View>
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
     </View>
   );

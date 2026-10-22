@@ -6,8 +6,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal, View, Text, TextInput, TouchableOpacity, Pressable, ScrollView, StyleSheet,
-  Platform, KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconTrash, IconMail, IconBell, IconCalendar, IconFlag, IconPlus } from '../Icons';
 import NativeSwitch from '../NativeSwitch';
@@ -157,7 +158,7 @@ export default function TaskDetailSheet({
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <DragSheetRoot>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView style={{ flex: 1 }}>
         <View style={s.overlay}>
           <DragFade drag={_drag155}><Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel={tt('common.close', 'Fechar')} /></DragFade>
           <DragPanel drag={_drag155} style={[s.sheet, { backgroundColor: g.pageBg, paddingBottom: Math.max(insets.bottom, 12) }]}>
@@ -329,7 +330,7 @@ export default function TaskDetailSheet({
             </ScrollView></DragScroll>
           </DragPanel>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
       </DragSheetRoot>
     </Modal>
   );

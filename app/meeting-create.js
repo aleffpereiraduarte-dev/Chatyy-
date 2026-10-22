@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Switch, Modal,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
@@ -284,9 +285,8 @@ export default function MeetingCreateScreen() {
   return (
     // [2026-10-20 tg-modal] arrastar o topo p/ baixo fecha (= seta voltar).
     <RouteDragDismiss zone={insets.top + HEADER_HEIGHT} enabled={!!router.canGoBack?.()} onDismiss={() => router.back()}>
-    <KeyboardAvoidingView
+    <KeyboardSafeView
       style={[s.container, { paddingTop: insets.top }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
     >
       {/* Header */}
@@ -545,7 +545,7 @@ export default function MeetingCreateScreen() {
           </View>
         </View>
       </Modal>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
     </RouteDragDismiss>
   );
 }

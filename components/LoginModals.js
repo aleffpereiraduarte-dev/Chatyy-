@@ -3,6 +3,7 @@ import {
   View, Text, TouchableOpacity, TextInput, ScrollView, Modal,
   StyleSheet, Platform, Animated, ActivityIndicator, useWindowDimensions,
 } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, Spacing, FontSize } from '../constants/theme';
@@ -352,6 +353,7 @@ export function HelpModal({ visible, onClose }) {
 
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={handleClose} statusBarTranslucent>
+    <SheetKeyboardAvoider style={{ flex: 1 }}>
       <Animated.View style={[ms.overlay, { opacity: fadeAnim }]}>
         <TouchableOpacity style={ms.overlayBg} onPress={handleClose} activeOpacity={1} />
         <Animated.View style={[
@@ -390,6 +392,7 @@ export function HelpModal({ visible, onClose }) {
           </ScrollView>
         </Animated.View>
       </Animated.View>
+    </SheetKeyboardAvoider>
     </Modal>
   );
 }

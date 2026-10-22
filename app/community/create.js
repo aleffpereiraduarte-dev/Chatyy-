@@ -3,8 +3,9 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, TextInput, ScrollView,
-  ActivityIndicator, Alert, KeyboardAvoidingView, Platform,
+  ActivityIndicator, Alert, Platform,
 } from 'react-native';
+import KeyboardSafeView from '../../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -103,8 +104,7 @@ export default function CommunityCreateScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    <KeyboardSafeView
       style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}
     >
       {/* Header */}
@@ -258,7 +258,7 @@ export default function CommunityCreateScreen() {
           )}
         </TouchableOpacity>
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 

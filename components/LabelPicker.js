@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, Modal, Platform, ScrollView } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
@@ -157,6 +158,7 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
 
   return (
     <Modal visible={visible} animationType="fade" transparent>
+    <SheetKeyboardAvoider style={{ flex: 1 }}>
       <TouchableOpacity style={s.overlay} onPress={onClose} activeOpacity={1}>
         <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
@@ -214,6 +216,7 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
           </View>
         </TouchableOpacity>
       </TouchableOpacity>
+    </SheetKeyboardAvoider>
     </Modal>
   );
 }

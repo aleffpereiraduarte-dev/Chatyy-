@@ -4,6 +4,7 @@ import {
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
   Animated, Modal, Pressable, Switch, AppState, useWindowDimensions,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 let DOMPurify = null;
 if (Platform.OS === 'web') {
   try {
@@ -2325,9 +2326,8 @@ export default function ComposeScreen() {
     return (
       // [2026-10-20 tg-modal] arrastar o topo p/ baixo fecha; o rascunho é salvo pelo flush da desmontagem.
       <RouteDragDismiss zone={insets.top + HEADER_HEIGHT} enabled={!!router.canGoBack?.()} onDismiss={() => router.back()}>
-      <KeyboardAvoidingView
+      <KeyboardSafeView
         style={[s.flex, { backgroundColor: colors.background }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
       >
         <View style={[s.container, { paddingTop: insets.top }]}>
@@ -2502,7 +2502,7 @@ export default function ComposeScreen() {
         />
         <TemplatePickerModal visible={showTemplates} onClose={() => setShowTemplates(false)} onSelect={handleTemplateSelect} />
         <SendOptionsSheet />
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
       </RouteDragDismiss>
     );
   }
@@ -2513,9 +2513,8 @@ export default function ComposeScreen() {
   return (
     // [2026-10-20 tg-modal] arrastar o topo p/ baixo fecha; o rascunho é salvo pelo flush da desmontagem.
     <RouteDragDismiss zone={insets.top + HEADER_HEIGHT} enabled={!!router.canGoBack?.()} onDismiss={() => router.back()}>
-    <KeyboardAvoidingView
+    <KeyboardSafeView
       style={[s.flex, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
     >
       <View style={[s.container, { paddingTop: insets.top }]}>
@@ -2798,7 +2797,7 @@ export default function ComposeScreen() {
           </View>
         </View>
       )}
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
     </RouteDragDismiss>
   );
 }

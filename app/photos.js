@@ -6,6 +6,7 @@ import {
   useWindowDimensions, Animated, Switch, Alert, Pressable, SectionList,
   Share, Linking, AppState, BackHandler,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, Stack, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import StorageMeter, { StorageNudgeCard, meterFromDriveInfo } from '../components/storage/StorageMeter'; // [2026-10-17 smart-storage]
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
@@ -5714,6 +5715,7 @@ function PhotosScreenInner() {
 
       {/* Create album modal */}
       <Modal visible={createAlbumVisible} transparent animationType="fade" onRequestClose={() => setCreateAlbumVisible(false)}>
+        <SheetKeyboardAvoider style={{ flex: 1 }}>{/* [2026-10-22 kb-uniforme] */}
         <Pressable style={s.modalOverlay} onPress={() => setCreateAlbumVisible(false)}>
           <Pressable style={[s.modalContent, { backgroundColor: colors.surface }]} onPress={e => e.stopPropagation()}>
             <Text style={[s.modalTitle, { color: colors.text }]}>{t('photos.createAlbum')}</Text>
@@ -5735,10 +5737,12 @@ function PhotosScreenInner() {
             </View>
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* Wave 14 — rename face cluster modal */}
       <Modal visible={!!renameClusterTarget} transparent animationType="fade" onRequestClose={() => setRenameClusterTarget(null)}>
+        <SheetKeyboardAvoider style={{ flex: 1 }}>{/* [2026-10-22 kb-uniforme] */}
         <Pressable style={s.modalOverlay} onPress={() => setRenameClusterTarget(null)}>
           <Pressable style={[s.modalContent, { backgroundColor: colors.surface }]} onPress={e => e.stopPropagation()}>
             <Text style={[s.modalTitle, { color: colors.text }]}>
@@ -5763,6 +5767,7 @@ function PhotosScreenInner() {
             </View>
           </Pressable>
         </Pressable>
+        </SheetKeyboardAvoider>
       </Modal>
 
       {/* Wave 14 — photobook layout picker + progress */}

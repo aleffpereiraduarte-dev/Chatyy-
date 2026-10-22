@@ -4,9 +4,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView,
-  FlatList, Modal, Platform, Alert, Image, ActivityIndicator,
-  KeyboardAvoidingView, Pressable, Animated, Dimensions,
+  FlatList, Modal, Platform, Alert, Image, ActivityIndicator, Pressable, Animated, Dimensions,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -278,7 +278,7 @@ function ProfileTab({ colors, isDark, user }) {
   if (loading) return <LoadingView colors={colors} />;
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+    <KeyboardSafeView style={{ flex: 1 }}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20 }} showsVerticalScrollIndicator={false}>
         {/* Business card */}
         <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: colors.shadow }]}>
@@ -349,7 +349,7 @@ function ProfileTab({ colors, isDark, user }) {
               {busy ? <ActivityIndicator size="small" color={colors.text} /> : <IconCheck size={22} color={colors.text} />}
             </TouchableOpacity>
           </View>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <KeyboardSafeView style={{ flex: 1 }}>
             <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }} showsVerticalScrollIndicator={false}>
               <FormField label={`${t('business.companyName')} *`} value={form.company_name} onChangeText={v => setForm(f => ({ ...f, company_name: v }))} placeholder={t('business.ph.company')} colors={colors} />
               <FormField label={t('business.description')} value={form.description} onChangeText={v => setForm(f => ({ ...f, description: v }))} placeholder={t('business.ph.about')} multiline colors={colors} />
@@ -374,10 +374,10 @@ function ProfileTab({ colors, isDark, user }) {
                 </ScrollView>
               </View>
             </ScrollView>
-          </KeyboardAvoidingView>
+          </KeyboardSafeView>
         </View>
       </Modal>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 
@@ -530,7 +530,7 @@ function CatalogTab({ colors, isDark, cart, setCart }) {
               {busy ? <ActivityIndicator size="small" color={colors.text} /> : <IconCheck size={22} color={colors.text} />}
             </TouchableOpacity>
           </View>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <KeyboardSafeView style={{ flex: 1 }}>
             <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }} showsVerticalScrollIndicator={false}>
               {/* Photo picker */}
               <ProductPhotoPicker photoUrl={form.photo_url} onChange={url => setForm(f => ({ ...f, photo_url: url }))} colors={colors} />
@@ -539,7 +539,7 @@ function CatalogTab({ colors, isDark, cart, setCart }) {
               <FormField label={`${t('business.price')} *`} value={form.price} onChangeText={v => setForm(f => ({ ...f, price: v }))} placeholder="0,00" keyboardType="decimal-pad" colors={colors} />
               <FormField label={t('business.stock')} value={form.stock} onChangeText={v => setForm(f => ({ ...f, stock: v }))} placeholder={t('business.ph.stock')} keyboardType="number-pad" colors={colors} />
             </ScrollView>
-          </KeyboardAvoidingView>
+          </KeyboardSafeView>
         </View>
       </Modal>
     </View>
@@ -723,7 +723,7 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
   }
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+    <KeyboardSafeView style={{ flex: 1 }}>
       <FlatList
         data={cart}
         keyExtractor={item => String(item.product.id)}
@@ -764,7 +764,7 @@ function CartTab({ colors, isDark, cart, setCart, user }) {
           <CartItem item={item} colors={colors} onUpdateQty={updateQty} />
         )}
       />
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 
@@ -995,7 +995,7 @@ function AutoRepliesTab({ colors, isDark }) {
               {qrBusy ? <ActivityIndicator size="small" color={colors.text} /> : <IconCheck size={22} color={colors.text} />}
             </TouchableOpacity>
           </View>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+          <KeyboardSafeView style={{ flex: 1 }}>
             <ScrollView contentContainerStyle={{ padding: 20, gap: 16 }}>
               <FormField
                 label={t('business.shortcutLabel')}
@@ -1013,7 +1013,7 @@ function AutoRepliesTab({ colors, isDark }) {
                 colors={colors}
               />
             </ScrollView>
-          </KeyboardAvoidingView>
+          </KeyboardSafeView>
         </View>
       </Modal>
     </ScrollView>

@@ -9,6 +9,7 @@ import {
   Animated, PanResponder, Platform, LayoutAnimation, UIManager, Image,
   KeyboardAvoidingView, Pressable, Dimensions, AppState,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 // [2026-09-24 PILOTO FlashList v2] Religando o motor de lista NATIVO (FlashList
 // 2.0.2, reescrito pra New Architecture) SÓ na lista de conversas — teste no
 // TestFlight. FlashList v1 travava no iOS SDK55 (por isso todas as listas
@@ -4275,8 +4276,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
           {/* Caption + Send — wrapped in KeyboardAvoidingView so the input
               lifts above the keyboard instead of being covered by it (was
               showing only the keyboard with a blank screen behind). */}
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          <KeyboardSafeView
             style={{ position:'absolute', bottom:0, left:0, right:0 }}
             keyboardVerticalOffset={0}
           >
@@ -4385,7 +4385,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               {statusPublishing ? <ActivityIndicator color="#111" /> : <IconArrowRight size={24} color="#111" />}
             </TouchableOpacity>
           </View>
-          </KeyboardAvoidingView>
+          </KeyboardSafeView>
 
           {/* Upload progress overlay — fullscreen translucent layer with
               ring + percentage so the user sees the post in flight instead

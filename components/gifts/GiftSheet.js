@@ -24,8 +24,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal, View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator,
-  Animated, ScrollView, Easing, TextInput, KeyboardAvoidingView,
+  Animated, ScrollView, Easing, TextInput,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../../context/LanguageContext';
@@ -259,7 +260,7 @@ function GiftSheet({ visible, onClose, context, targetId, targetError = '', reci
   return (
     <Modal visible transparent animationType="slide" onRequestClose={close} statusBarTranslucent>
       <DragSheetRoot>
-      <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : (Platform.OS === 'android' ? 'height' : undefined) /* [2026-10-16 polish] Android edge-to-edge: recado não fica sob o teclado */}>
+      <KeyboardSafeView style={styles.root}>
       <DragBackdrop drag={drag} color="rgba(0,0,0,0.4)" onPress={close} accessibilityLabel={tr(t, 'common.close', 'Fechar')} />
       <DragPanel drag={drag} style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
         <View style={styles.handle} />
@@ -357,7 +358,7 @@ function GiftSheet({ visible, onClose, context, targetId, targetError = '', reci
           )}
         </View>
       </DragPanel>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
       </DragSheetRoot>
     </Modal>
   );

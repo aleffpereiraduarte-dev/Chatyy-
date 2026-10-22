@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,
-  ActivityIndicator, ScrollView, Image, Modal, Platform, Alert,
-  KeyboardAvoidingView, RefreshControl, Pressable, Animated,
+  ActivityIndicator, ScrollView, Image, Modal, Platform, Alert, RefreshControl, Pressable, Animated,
   useWindowDimensions,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers] header NATIVO
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -317,7 +317,7 @@ function CreateListingModal({ visible, onClose, onCreated }) {
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView style={{ flex: 1 }}>
         <View style={{ flex: 1, backgroundColor: colors.background }}>
           {/* Header */}
           <View style={[s.modalHeader, { borderBottomColor: colors.border }]}>
@@ -418,7 +418,7 @@ function CreateListingModal({ visible, onClose, onCreated }) {
             />
           </ScrollView>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

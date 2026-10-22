@@ -1,7 +1,8 @@
 // [2026-10-15 meet-v2] Conversa da reunião: tela cheia no celular (antes ocupava 40% = ~150 px),
 // painel lateral no web largo. P&B, bolhas, safe-area e teclado.
 import { useState, useRef, useEffect } from 'react';
-import { View, Text, TextInput, Pressable, FlatList, StyleSheet, Platform, KeyboardAvoidingView, useWindowDimensions } from 'react-native';
+import { View, Text, TextInput, Pressable, FlatList, StyleSheet, Platform, useWindowDimensions } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useLanguage } from '../context/LanguageContext';
 import { IconX, IconSend } from './Icons';
 
@@ -44,7 +45,7 @@ export default function MeetChatPanel({ messages, onSend, onClose, visible, inse
 
   return (
     <View style={[s.panel, wide ? s.panelWide : s.panelFull, { paddingTop: wide ? 0 : (insets?.top || 0) }]}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView style={{ flex: 1 }}>
         <View style={s.header}>
           <Text style={s.headerTitle}>{t('meet.chat')}</Text>
           <Pressable onPress={onClose} style={s.closeBtn} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('common.close')}>
@@ -75,7 +76,7 @@ export default function MeetChatPanel({ messages, onSend, onClose, visible, inse
             <IconSend size={16} color="#000" />
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </View>
   );
 }

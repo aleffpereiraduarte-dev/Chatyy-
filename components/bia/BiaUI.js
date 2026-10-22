@@ -25,6 +25,7 @@ import { useReducedMotion, isReduceMotionEnabled } from '../reducedMotion';
 import { getNativeBlurView } from '../NativeBlur';
 import BiaOrb from './BiaOrb';
 import useDragToDismiss, { DragSheetRoot, DragPanel } from '../ui/useDragToDismiss';
+import SheetKeyboardAvoider from '../chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme]
 
 const ND = Platform.OS !== 'web';
 
@@ -748,7 +749,7 @@ export function BiaHistoryDrawer({
             ) : null}
 
             {renaming ? (
-              <View style={[StyleSheet.absoluteFill, hs.menuLayer]}>
+              <SheetKeyboardAvoider style={[StyleSheet.absoluteFill, hs.menuLayer]}>{/* [2026-10-22 kb-uniforme] Android: diálogo Renomear acima do teclado */}
                 <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.55)' }]} onPress={() => setRenaming(null)} />
                 <BiaFadeIn dy={8} duration={220} style={[hs.menuCard, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF', borderColor: P.hair, padding: 16 }, softShadow(isDark, 2.4)]}>
                   <Text style={[hs.renameTitle, { color: P.fg }]}>{t('one.histRenameTitle') || 'Renomear conversa'}</Text>
@@ -775,7 +776,7 @@ export function BiaHistoryDrawer({
                     </TouchableOpacity>
                   </View>
                 </BiaFadeIn>
-              </View>
+              </SheetKeyboardAvoider>
             ) : null}
           </View>
         </Animated.View>

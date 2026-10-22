@@ -7,6 +7,7 @@
 // Vermelho só p/ alerta/destrutivo. Loaders/handlers/API inalterados.
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Platform, ScrollView, TextInput, Alert, Animated, AppState, RefreshControl, Linking, BackHandler, Pressable } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -1060,7 +1061,7 @@ function ParentalMonitorScreenInner() {
   const bottomPad = 32 + (USE_NATIVE_HEADER && Platform.OS === 'ios' ? 0 : insets.bottom);
 
   return (
-    <View style={[s.container, { backgroundColor: g.pageBg }]}>
+    <SheetKeyboardAvoider style={[s.container, { backgroundColor: g.pageBg }]}>
       {USE_NATIVE_HEADER ? (
         // As options do Stack.Screen se MESCLAM entre renders: headerLeft/headerTitle
         // são sempre passados explicitamente (undefined limpa) p/ não "vazar" entre
@@ -1132,7 +1133,7 @@ function ParentalMonitorScreenInner() {
         onClose={() => setMoreOpen(false)}
         cancelLabel={t('parentalDash.cancel')}
       />
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

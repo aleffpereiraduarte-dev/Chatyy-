@@ -50,6 +50,7 @@ import {
   ScrollView, Dimensions, Modal, Pressable, ActivityIndicator, Alert,
   Linking, StatusBar, AppState, TextInput,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useSharedNow } from '../hooks/useSharedNow';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -3033,7 +3034,7 @@ export default function SnapMapScreen() {
       {/* [2026-10-12 mapa-amigos] Escolher contato → pedido de localização */}
       <Modal visible={pickerOpen} transparent animationType="slide" onRequestClose={() => setPickerOpen(false)}>
         <DragSheetRoot>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+        <SheetKeyboardAvoider style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <DragFade drag={_drag3012}><Pressable style={{ flex: 1 }} onPress={() => setPickerOpen(false)} /></DragFade>
           <DragPanel drag={_drag3012} style={{ backgroundColor: colors.surface, paddingTop: 18, paddingHorizontal: 18, paddingBottom: 12 + (insets.bottom || 0), borderTopLeftRadius: 24, borderTopRightRadius: 24, height: SH * 0.72 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
@@ -3100,7 +3101,7 @@ export default function SnapMapScreen() {
               );
             })()}
           </DragPanel>
-        </View>
+        </SheetKeyboardAvoider>
         </DragSheetRoot>
       </Modal>
     </View>

@@ -44,6 +44,7 @@ import {
   Platform,
   Keyboard,
 } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import { Springs as MotionSprings } from '../constants/motion'; // [2026-10-18 elegance]
 import Svg, { Path as SvgPath, Circle as SvgCircle } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
@@ -385,6 +386,7 @@ export default function AddToCallSheet({
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
       <DragSheetRoot>
+      <SheetKeyboardAvoider style={{ flex: 1 }}>
       <Pressable style={styles.overlay} onPress={onClose}>
         <DragPanel drag={_drag382}
           style={[styles.sheet, { opacity, transform: [{ translateY }] }]}
@@ -461,6 +463,7 @@ export default function AddToCallSheet({
           </Pressable>
         </DragPanel>
       </Pressable>
+      </SheetKeyboardAvoider>
       </DragSheetRoot>
     </Modal>
   );

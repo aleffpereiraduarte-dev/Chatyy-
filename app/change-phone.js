@@ -19,8 +19,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useContext } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
-  Animated, Platform, KeyboardAvoidingView, ScrollView, Modal, Pressable, Easing,
+  Animated, Platform, ScrollView, Modal, Pressable, Easing,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, Stack } from 'expo-router';
 import { HeaderHeightContext } from '@react-navigation/elements';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
@@ -312,9 +313,8 @@ export default function ChangePhone() {
           headerLeft: () => <HeaderBackButton onPress={goBack} color={colors.text} accessibilityLabel={t('common.back')} />,
         })} />
       )}
-      <KeyboardAvoidingView
+      <KeyboardSafeView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' && USE_NATIVE_HEADER ? nativeHeaderH : 0}
       >
         {/* Header — back arrow + title */}
@@ -698,7 +698,7 @@ export default function ChangePhone() {
             </ScrollView>
           </View>
         </Modal>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </View>
   );
 }

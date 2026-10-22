@@ -4,6 +4,7 @@
 // [2026-10-09 own-backup] Preto e branco, ícones SVG, textos via t().
 import React, { useCallback, useEffect, useState } from 'react';
 import { Modal, View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing } from '../constants/theme';
@@ -77,7 +78,7 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={busy ? undefined : onClose}>
-      <View style={[st.backdrop]}>
+      <SheetKeyboardAvoider style={[st.backdrop]}>
         <View style={[st.sheet, { backgroundColor: colors.background, borderColor: colors.border }]} testID="ownbk-restore-prompt">
           <View style={st.row}>
             {stage === 'done' ? <IconCheck size={22} color={colors.text} /> : <IconCloudCheck size={22} color={colors.text} />}
@@ -149,7 +150,7 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
             )}
           </View>
         </View>
-      </View>
+      </SheetKeyboardAvoider>
     </Modal>
   );
 }

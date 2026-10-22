@@ -9,8 +9,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Pressable, ScrollView, Image, Animated, ActivityIndicator, Linking, StatusBar,
-  TextInput, KeyboardAvoidingView, Platform, PanResponder, Easing, useWindowDimensions, BackHandler, Keyboard,
+  TextInput, Platform, PanResponder, Easing, useWindowDimensions, BackHandler, Keyboard,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -669,7 +670,7 @@ export default function WatchRoom() {
     const artW = Math.max(200, Math.min(winW - 44, 420));
     const roster = (viewers.length ? viewers : [{ e: me, n: myName || you }]).slice(0, 5);
     return (
-      <KeyboardAvoidingView style={[st.root, { backgroundColor: '#17171a' }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView style={[st.root, { backgroundColor: '#17171a' }]}>
         <StatusBar barStyle="light-content" />
         <AmbientBackdrop uri={item && item.thumb} />
         <ScrollView ref={scrollRef} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
@@ -776,7 +777,7 @@ export default function WatchRoom() {
         </ScrollView>
         {composer}
         {toastEl}
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     );
   }
 
@@ -833,7 +834,7 @@ export default function WatchRoom() {
   const fsAllowed = fullscreenOn();
 
   return (
-    <KeyboardAvoidingView style={[st.root, { backgroundColor: '#17171a' }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    <KeyboardSafeView style={[st.root, { backgroundColor: '#17171a' }]}
       onLayout={(e) => { const { width, height } = e.nativeEvent.layout; setRootSz((p) => (p && p.w === width && p.h === height ? p : { w: width, h: height })); }}>
       <StatusBar barStyle="light-content" hidden={fsOn} />
       {/* [juntos 21/10] fora do vídeo: cores do pôster desfocado (sem o preto chapado) */}
@@ -888,7 +889,7 @@ export default function WatchRoom() {
       </ScrollView>
       {composer}
       {toastEl}
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 

@@ -5,7 +5,8 @@
 //   nota ("Respondeu à sua nota: “...”" + resposta). "Abrir conversa" embaixo.
 // O toque na bolinha do carrossel continua o de antes (status/conversa).
 import React, { useEffect, useState } from 'react';
-import { Modal, View, Text, TextInput, Pressable, Platform, StyleSheet, KeyboardAvoidingView, ActivityIndicator } from 'react-native';
+import { Modal, View, Text, TextInput, Pressable, Platform, StyleSheet, ActivityIndicator } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../ui/useDragToDismiss';
 import AvatarCircle from '../AvatarCircle';
@@ -83,7 +84,7 @@ export default function ContactNoteSheet({ visible, note, onClose, t, isDark, ro
       <DragSheetRoot>
         <Pressable style={st.overlay} onPress={onClose}>
           <DragBackdrop drag={drag} color="rgba(0,0,0,0.45)" />
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ width: '100%' }}>
+          <KeyboardSafeView style={{ width: '100%' }}>
             <DragPanel drag={drag} onStartShouldSetResponder={() => true}
               style={[st.sheet, { backgroundColor: bg, paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
               <View style={[st.handle, { backgroundColor: sub }]} />
@@ -126,7 +127,7 @@ export default function ContactNoteSheet({ visible, note, onClose, t, isDark, ro
                 <Text style={[st.openText, { color: ink }]} maxFontSizeMultiplier={1.3}>{tc(t, 'homeCarousel.openChat', 'Abrir conversa')}</Text>
               </Pressable>
             </DragPanel>
-          </KeyboardAvoidingView>
+          </KeyboardSafeView>
         </Pressable>
       </DragSheetRoot>
     </Modal>

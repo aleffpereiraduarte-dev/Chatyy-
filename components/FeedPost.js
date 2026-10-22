@@ -62,6 +62,7 @@ import {
   Dimensions, Animated, Platform, Alert, Share, Pressable, Linking,
   Modal, ActivityIndicator, TextInput, ActionSheetIOS, FlatList,
 } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import Svg, { Path } from 'react-native-svg';
 import { haptic } from '../constants/theme'; // [2026-10-08 apps-native]
 import AvatarCircle from './AvatarCircle';
@@ -1194,6 +1195,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       {/* Save-to-collection bottom sheet (long-press bookmark) */}
       <Modal visible={collectionsOpen} transparent animationType="slide" onRequestClose={() => setCollectionsOpen(false)}>
         <DragSheetRoot>
+        <SheetKeyboardAvoider style={{ flex: 1 }}>
         <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }, { backgroundColor: 'transparent' }]} onPress={() => setCollectionsOpen(false)}>
           <DragBackdrop drag={_drag1173} color="rgba(0,0,0,0.5)" />
           <DragPanel drag={_drag1173} onStartShouldSetResponder={() => true}
@@ -1246,6 +1248,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
             )}
           </DragPanel>
         </Pressable>
+        </SheetKeyboardAvoider>
         </DragSheetRoot>
       </Modal>
 

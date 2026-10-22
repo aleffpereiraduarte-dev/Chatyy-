@@ -27,6 +27,7 @@ import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable, ScrollView,
   ActivityIndicator, Platform, StyleSheet, Alert, Image, Animated, Easing,
 } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import * as api from '../services/api';
 import { IconX, IconCheck, IconCamera, IconTrash, IconEdit } from './Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop } from './ui/useDragToDismiss';
@@ -294,6 +295,7 @@ export default function HighlightEditSheet({
   return (
     <Modal visible={!!visible} animationType="slide" transparent onRequestClose={onClose}>
       <DragSheetRoot>
+      <SheetKeyboardAvoider style={{ flex: 1 }}>
       <Pressable style={[{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }, { backgroundColor: 'transparent' }]} onPress={onClose}>
         <DragBackdrop drag={_drag291} color="rgba(0,0,0,0.5)" />
         <DragPanel drag={_drag291} onStartShouldSetResponder={() => true}  style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: '15%', backgroundColor: sheetBg, borderTopLeftRadius: 18, borderTopRightRadius: 18, overflow: 'hidden' }}>
@@ -437,6 +439,7 @@ export default function HighlightEditSheet({
           </ScrollView></DragScroll>
         </DragPanel>
       </Pressable>
+      </SheetKeyboardAvoider>
       </DragSheetRoot>
     </Modal>
   );

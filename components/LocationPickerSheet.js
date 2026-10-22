@@ -45,8 +45,9 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Pressable, ActivityIndicator,
-  Platform, KeyboardAvoidingView, TextInput, ScrollView, StyleSheet,
+  Platform, TextInput, ScrollView, StyleSheet,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { WebView } from 'react-native-webview';
 import Svg, { Defs, RadialGradient, LinearGradient, Stop, Rect, Circle, Path, Ellipse, G } from 'react-native-svg';
 import { IconMapPin, IconX, IconClock, IconNavigation } from './Icons';
@@ -790,8 +791,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      <KeyboardSafeView
         style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
       >
         <Pressable style={{ flex: 1 }} onPress={onClose} />
@@ -1230,7 +1230,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
             </>
           )}
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

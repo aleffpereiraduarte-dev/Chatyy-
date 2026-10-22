@@ -18,6 +18,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
   Animated, Platform, KeyboardAvoidingView, ScrollView, Easing, useWindowDimensions,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, Redirect } from 'expo-router';
 import { HapticsCompat as Haptics } from '../services/haptics'; // [2026-10-11] same API, routed via the shared haptics shim
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -258,9 +259,8 @@ function SignupUsername() {
   );
 
   return (
-    <KeyboardAvoidingView
+    <KeyboardSafeView
       style={[styles.container, { backgroundColor: _wideWeb ? (colors.authBg || colors.background) : colors.background }, _wideWeb && styles.wideRoot]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <AuthCardWrap {...(_wideWeb ? { style: [styles.wideCard, { backgroundColor: colors.authCardBg || colors.background, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,17,17,0.08)' }, Platform.OS === 'web' && { boxShadow: isDark ? '0 2px 8px rgba(0,0,0,0.30), 0 18px 60px rgba(0,0,0,0.40)' : '0 1px 2px rgba(60,64,67,0.06), 0 6px 20px rgba(17,17,17,0.07), 0 24px 64px rgba(60,64,67,0.10)' }] } : {})}>
       {/* [2026-10-12 first-run polish] One compact top row — back · progress ·
@@ -613,7 +613,7 @@ function SignupUsername() {
         </View>
       )}
       </AuthCardWrap>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 

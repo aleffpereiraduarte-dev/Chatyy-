@@ -11,6 +11,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput,
   ActivityIndicator, Platform, Share,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useTheme } from '../context/ThemeContext';
@@ -275,7 +276,7 @@ export default function PgpKeysScreen() {
   );
 
   return (
-    <View style={[s.root, { backgroundColor: colors.background }]}>
+    <SheetKeyboardAvoider style={[s.root, { backgroundColor: colors.background }]}>
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('pgp.title') })} />
       ) : (
@@ -451,7 +452,7 @@ export default function PgpKeysScreen() {
           )}
         </ScrollView>
       </FadeSlideIn>
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

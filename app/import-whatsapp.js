@@ -20,6 +20,7 @@ import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, ActivityIndicator, TextInput,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader';
@@ -893,7 +894,7 @@ export default function ImportWhatsAppScreen() {
 
   const readingPct = Math.round((jobState.prepProgress || 0) * 100);
   return (
-    <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <SheetKeyboardAvoider style={{ flex: 1, backgroundColor: colors.background }}>
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: t('waImport.title'), headerLeft: () => (
           <TouchableOpacity onPress={goBackSafe} hitSlop={12} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'} style={{ paddingRight: 8 }}>
@@ -917,7 +918,7 @@ export default function ImportWhatsAppScreen() {
         {step === 'job' && renderJob()}
         {step === 'error' && renderError()}
       </ScrollView>
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

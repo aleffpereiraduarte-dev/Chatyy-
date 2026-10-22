@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, TextInput, FlatList,
-  KeyboardAvoidingView, Platform, ActivityIndicator, Animated, Dimensions,
+  View, Text, TouchableOpacity, StyleSheet, TextInput, FlatList, Platform, ActivityIndicator, Animated, Dimensions,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import Svg, { Path, Circle as SvgCircle, Rect, Defs, LinearGradient, Stop, G, Line } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -308,7 +308,7 @@ export default function KidsLearnTab() {
   const bg = isDark ? '#0f0720' : '#faf5ff';
 
   return (
-    <KeyboardAvoidingView style={[s.container, { backgroundColor: bg }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={100}>
+    <KeyboardSafeView style={[s.container, { backgroundColor: bg }]} keyboardVerticalOffset={100}>
       {/* Colorful gradient header */}
       <View style={[s.header, Platform.OS === 'web'
         ? { background: 'linear-gradient(135deg, #6366f1 0%, #111111 40%, #111111 70%, #f43f5e 100%)' }
@@ -543,7 +543,7 @@ export default function KidsLearnTab() {
         isDark={isDark}
         t={t}
       />
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 

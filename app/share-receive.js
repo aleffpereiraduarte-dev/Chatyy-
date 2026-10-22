@@ -19,8 +19,9 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, Image, StyleSheet, Platform,
-  ActivityIndicator, TextInput, ScrollView, KeyboardAvoidingView, InteractionManager,
+  ActivityIndicator, TextInput, ScrollView, InteractionManager,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -845,9 +846,8 @@ export default function ShareReceiveScreen() {
   return (
     // [2026-10-20 tg-modal] arrastar o topo p/ baixo fecha (= X). Só com tela atrás (aberta pela extensão a frio não tem).
     <RouteDragDismiss zone={insets.top + 64} enabled={!!router.canGoBack?.()} onDismiss={() => { try { router.back(); } catch { router.replace('/chat'); } }}>
-    <KeyboardAvoidingView
+    <KeyboardSafeView
       style={[s.container, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={{ paddingTop: insets.top, backgroundColor: colors.background }}>
         <View style={[s.header, { borderBottomColor: hair }]}>
@@ -915,7 +915,7 @@ export default function ShareReceiveScreen() {
           <ActivityIndicator size="small" color={colors.textSecondary} />
         </View>
       ) : null}
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
     </RouteDragDismiss>
   );
 }

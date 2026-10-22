@@ -16,6 +16,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, Alert, Switch, FlatList,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useTheme } from '../context/ThemeContext';
@@ -119,7 +120,7 @@ export default function EmailSignaturesScreen() {
   };
 
   return (
-    <View style={[s.root, { backgroundColor: colors.background }]}>
+    <SheetKeyboardAvoider style={[s.root, { backgroundColor: colors.background }]}>
       {USE_NATIVE_HEADER ? (
         <Stack.Screen options={nativeHeaderOptions({ colors, isDark, title: editing ? (editing === 'new' ? t('signatures.newSignature') : t('signatures.editSignature')) : t('settings.signatures'), ...(editing ? { headerLeft: () => <HeaderBackButton onPress={reset} color={colors.text} accessibilityLabel={t('common.back')} /> } : { headerLeft: undefined, headerBackVisible: true }) })} />
       ) : (
@@ -265,7 +266,7 @@ export default function EmailSignaturesScreen() {
         </>
       )}
       </FadeSlideIn>
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

@@ -2,8 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, Alert, TextInput, Modal, Platform,
-  Animated, Switch, KeyboardAvoidingView, Linking,
+  Animated, Switch, Linking,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, HeaderBackButton } from '../components/nativeHeader'; // [2026-10-09 native-sheets-headers]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -292,9 +293,8 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
   };
 
   return (
-    <KeyboardAvoidingView
+    <KeyboardSafeView
       style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
     >
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 80 + insets.bottom }} keyboardShouldPersistTaps="handled">
@@ -583,7 +583,7 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
         </TouchableOpacity>
       </View>
     </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 

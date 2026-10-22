@@ -18,8 +18,9 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Pressable, Image, FlatList,
   Platform, Dimensions, StyleSheet, ActivityIndicator, Alert,
-  TextInput, KeyboardAvoidingView, useWindowDimensions,
+  TextInput, useWindowDimensions,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import CachedImage from './CachedImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconHeart, IconMessageSquare, IconPlay, IconMoreHorizontal } from './Icons';
@@ -361,8 +362,7 @@ export default function ProfilePostViewer({
         />
 
         {editing && (
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          <KeyboardSafeView
             style={[StyleSheet.absoluteFill, { justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.55)', zIndex: 20 }]}
           >
             <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 16, paddingBottom: 16 + insets.bottom, gap: 12 }}>
@@ -385,7 +385,7 @@ export default function ProfilePostViewer({
                 </TouchableOpacity>
               </View>
             </View>
-          </KeyboardAvoidingView>
+          </KeyboardSafeView>
         )}
 
         <LikersSheet

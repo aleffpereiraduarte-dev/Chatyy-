@@ -4,6 +4,7 @@ import {
   useWindowDimensions, Animated, PanResponder, Platform, ActivityIndicator,
   ScrollView, TextInput,
 } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: painel Texto/Marcar acima do teclado (iOS igual)
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1116,7 +1117,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
 
   return (
     <Modal visible={visible} animationType="fade" transparent={false} onRequestClose={onClose}>
-      <View style={s.container}>
+      <SheetKeyboardAvoider style={s.container}>
         {/* Top bar — X on the left, "Próximo" pill on the right (primary
             purple). Reset is folded into a small icon pill in the middle so
             users still have the safety hatch without crowding the header. */}
@@ -1985,7 +1986,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
             ))}
           </ScrollView>
         </View>
-      </View>
+      </SheetKeyboardAvoider>
 
       {/* Music picker sheet — same UX pattern as StatusCamera. Lazy library
           built into AsyncStorage recents until a real catalog ships, but the

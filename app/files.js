@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   View, FlatList, SectionList, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, RefreshControl, Alert, Platform, Modal, Linking, Image,
-  Animated, Easing, ScrollView, useWindowDimensions, KeyboardAvoidingView,
+  Animated, Easing, ScrollView, useWindowDimensions,
   BackHandler,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 // FlashList reverted to FlatList
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -3373,7 +3374,7 @@ function FilesScreenInner() {
 
       {/* ============ RENAME MODAL ============ */}
       <Modal visible={!!renameModal} transparent animationType="fade" onRequestClose={() => setRenameModal(null)}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardSafeView style={{ flex: 1 }}>
           <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => setRenameModal(null)}>
             <View style={[
               styles.dialogBox,
@@ -3406,12 +3407,12 @@ function FilesScreenInner() {
               </View>
             </View>
           </TouchableOpacity>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       </Modal>
 
       {/* ============ NEW FOLDER MODAL ============ */}
       <Modal visible={newFolderModal} transparent animationType="fade" onRequestClose={() => setNewFolderModal(false)}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardSafeView style={{ flex: 1 }}>
           <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => setNewFolderModal(false)}>
             <View style={[
               styles.dialogBox,
@@ -3445,7 +3446,7 @@ function FilesScreenInner() {
               </View>
             </View>
           </TouchableOpacity>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       </Modal>
 
       {/* ============ VERSION HISTORY MODAL (Drive-style) ============ */}
@@ -3519,7 +3520,7 @@ function FilesScreenInner() {
 
       {/* ============ SHARE MODAL ============ */}
       <Modal visible={!!shareModal} transparent animationType="fade" onRequestClose={() => setShareModal(null)}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardSafeView style={{ flex: 1 }}>
         <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => setShareModal(null)}>
           <View style={[
             styles.dialogBox,
@@ -3641,12 +3642,12 @@ function FilesScreenInner() {
             </View>
           </View>
         </TouchableOpacity>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       </Modal>
 
       {/* ============ PUBLIC LINK SHARE MODAL ============ */}
       <Modal visible={!!linkShareModal} transparent animationType="fade" onRequestClose={() => setLinkShareModal(null)}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardSafeView style={{ flex: 1 }}>
         <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => {
           setLinkShareModal(null);
           setLinkOptPassword(''); setLinkOptHasPassword(false); setLinkOptExpires(0); setLinkOptMaxDl(0);
@@ -3863,7 +3864,7 @@ function FilesScreenInner() {
             </View>
           </View>
         </TouchableOpacity>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       </Modal>
 
       {/* ============ MOVE MODAL ============ */}

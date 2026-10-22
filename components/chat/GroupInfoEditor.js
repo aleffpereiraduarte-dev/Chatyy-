@@ -4,7 +4,8 @@
 // grupo" com contador e Salvar). Abre por cima de "Dados do grupo" (nativa
 // ou JS). `onSave(value)` → Promise<boolean> (true fecha).
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 
@@ -65,7 +66,7 @@ export default function GroupInfoEditor({ visible, mode = 'description', initial
             )}
           </Pressable>
         </View>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardSafeView style={{ flex: 1 }}>
           <View style={[styles.card, { backgroundColor: card }]}>
             <TextInput
               ref={inputRef}
@@ -88,7 +89,7 @@ export default function GroupInfoEditor({ visible, mode = 'description', initial
               {tr('chatInfo.descHint', 'A descrição fica visível para todos os membros e para quem abrir o link de convite.')}
             </Text>
           )}
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       </View>
     </Modal>
   );

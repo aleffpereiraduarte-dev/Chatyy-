@@ -19,8 +19,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, Image, StyleSheet, Platform, Modal, TextInput,
-  ActivityIndicator, ScrollView, PanResponder, KeyboardAvoidingView, useWindowDimensions,
+  ActivityIndicator, ScrollView, PanResponder, useWindowDimensions,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path, Circle, Rect, Defs, Pattern, Line } from 'react-native-svg';
 import {
@@ -907,7 +908,7 @@ function StickerMakerInner({ sourceUri, onClose, onSaved, onSend, autoCutout = t
 
         {/* editor de texto */}
         {textEdit ? (
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.textOverlay}>
+          <KeyboardSafeView style={styles.textOverlay}>
             <View style={[styles.textTop, { paddingTop: insets.top + 6 }]}>
               <TouchableOpacity
                 onPress={() => setTextEdit((te) => (te ? { ...te, style: TEXT_STYLES[(TEXT_STYLES.indexOf(te.style) + 1) % TEXT_STYLES.length] } : te))}
@@ -959,7 +960,7 @@ function StickerMakerInner({ sourceUri, onClose, onSaved, onSend, autoCutout = t
                 <TouchableOpacity key={c} onPress={() => setTextEdit((te) => (te ? { ...te, color: c } : te))} style={[styles.swatch, { backgroundColor: c }, textEdit.color === c && styles.swatchActive]} accessibilityRole="button" accessibilityLabel={c} hitSlop={4} />
               ))}
             </View>
-          </KeyboardAvoidingView>
+          </KeyboardSafeView>
         ) : null}
 
         {/* confirmar descarte */}

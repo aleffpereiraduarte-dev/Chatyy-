@@ -29,8 +29,8 @@ import React, { useState, useMemo, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Modal, Image, Platform,
   ActivityIndicator, TextInput, StyleSheet, useWindowDimensions,
-  KeyboardAvoidingView,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import PressableScale from './PressableScale';
 import {
@@ -449,7 +449,7 @@ export default function WallpaperPicker({
       <DragSheetRoot>
       {/* [2026-10-14 wallpaper-ai] KAV: o teclado cobria o campo e o botão Gerar
           (sheet ancorada embaixo) — no iPhone não dava pra ver/tocar em Gerar. */}
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardSafeView style={{ flex: 1 }}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
         <DragFade drag={_drag444}><TouchableOpacity activeOpacity={1} style={{ flex: 1 }} onPress={onClose} /></DragFade>
         <DragPanel drag={_drag444} style={{ backgroundColor: C.background || (isDark ? '#000000' : '#F7F7F7'), borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '92%', overflow: 'hidden' }}>
@@ -590,7 +590,7 @@ export default function WallpaperPicker({
           </View>
         </DragPanel>
       </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
       {preview ? (
         <WallpaperPreview spec={preview.spec} appDark={isDark} t={t}
           onCancel={() => setPreview(null)} onApply={applyPreview} />

@@ -2,9 +2,10 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, RefreshControl, Alert, Modal, ScrollView,
-  Switch, Platform, Linking, KeyboardAvoidingView, Animated, PanResponder, Easing,
+  Switch, Platform, Linking, Animated, PanResponder, Easing,
   Dimensions, AppState, Keyboard,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 
 // Compact header heuristic: narrow phone screens (< 420px) can't fit
 // month/week toggle + "Hoje" + Timezones + Sync + Plus in a single row.
@@ -1632,7 +1633,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+      <KeyboardSafeView style={{ flex: 1 }} keyboardVerticalOffset={0}>
       <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.4)' }]}>
         <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
           <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
@@ -1975,7 +1976,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
           </ScrollView>
         </View>
       </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

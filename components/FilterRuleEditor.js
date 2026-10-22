@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, Modal, FlatList, Switch, ActivityIndicator, ScrollView, Platform } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
@@ -231,6 +232,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
 
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
+    <SheetKeyboardAvoider style={{ flex: 1 }}>
       <TouchableOpacity style={s.overlay} onPress={onClose} activeOpacity={1}>
         <TouchableOpacity activeOpacity={1} style={[s.modal, { backgroundColor: colors.surface },
           Platform.OS === 'web' && { boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }]}>
@@ -480,6 +482,7 @@ export default function FilterRuleEditor({ visible, onClose }) {
           )}
         </TouchableOpacity>
       </TouchableOpacity>
+    </SheetKeyboardAvoider>
     </Modal>
   );
 }

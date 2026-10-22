@@ -35,6 +35,7 @@ import {
   Platform,
   Pressable,
 } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -281,6 +282,7 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
       onRequestClose={handleDismissOnce}
       statusBarTranslucent
     >
+    <SheetKeyboardAvoider style={{ flex: 1 }}>
       <Pressable style={styles.backdrop} onPress={handleDismissOnce}>
         <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
           {/* Header */}
@@ -475,6 +477,7 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
           )}
         </Pressable>
       </Pressable>
+    </SheetKeyboardAvoider>
     </Modal>
   );
 }

@@ -9,9 +9,10 @@
 // globalThis.__chatyy_mural_composer !== false).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, ScrollView, TextInput, KeyboardAvoidingView, Platform, Alert,
+  View, Text, Pressable, ScrollView, TextInput, Platform, Alert,
   InteractionManager, StatusBar, StyleSheet, useWindowDimensions, ActivityIndicator,
 } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image as ExpoImage } from 'expo-image';
@@ -234,7 +235,7 @@ export default function PostComposer() {
           </Pressable>
         </View>
       </View>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView style={{ flex: 1 }}>
         <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" contentContainerStyle={{ paddingBottom: 40 + insets.bottom, maxWidth: 680, width: '100%', alignSelf: 'center' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 14 }}>
             <Avatar email={user?.email} name={myName} size={44} />
@@ -358,7 +359,7 @@ export default function PostComposer() {
             </View>
           ) : null}
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
       {LocationPicker && locOpen ? (
         <LocationPicker visible={locOpen} onClose={() => setLocOpen(false)} colors={themeCtx?.colors} t={t}
           onSend={({ latitude, longitude, address }) => {

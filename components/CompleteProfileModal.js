@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, Modal,
-  ActivityIndicator, Platform, KeyboardAvoidingView, ScrollView,
+  ActivityIndicator, Platform, ScrollView,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
@@ -321,8 +322,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={s.overlay}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        <KeyboardSafeView
           style={s.keyboardView}
         >
           <View style={[s.card, { backgroundColor: colors.surface }]}>
@@ -404,7 +404,7 @@ export default function CompleteProfileModal({ visible, onDone, onSkip, profile 
               </TouchableOpacity>
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       </View>
     </Modal>
   );

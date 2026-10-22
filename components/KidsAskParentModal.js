@@ -11,6 +11,7 @@ import {
   View, Text, Modal, TouchableOpacity, TextInput, ScrollView, ActivityIndicator,
   Animated, Platform, StyleSheet,
 } from 'react-native';
+import SheetKeyboardAvoider from './chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: folha/diálogo acima do teclado (iOS igual)
 import Svg, { Path } from 'react-native-svg';
 import * as api from '../services/api';
 import { IconUsers, IconSmartphone, IconMessageCircle, IconAlertTriangle, IconCheckCircle, IconClock as IconClockSvg } from './Icons';
@@ -121,7 +122,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
       <DragSheetRoot>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
+      <SheetKeyboardAvoider style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
         <DragPanel drag={_drag119} style={{
           opacity: fade,
           backgroundColor: isDark ? '#0f0720' : '#fff',
@@ -445,7 +446,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
           </ScrollView></DragScroll>
           )}
         </DragPanel>
-      </View>
+      </SheetKeyboardAvoider>
       </DragSheetRoot>
     </Modal>
   );

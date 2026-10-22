@@ -10,6 +10,7 @@ import {
   Alert,
   Platform,
 } from 'react-native';
+import SheetKeyboardAvoider from '../components/chat/SheetKeyboardAvoider'; // [2026-10-22 kb-uniforme] Android: teclado não cobre campos (edge-to-edge)
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -513,7 +514,7 @@ export default function ChatBackupScreen() {
   }, [includeMedia, t]);
 
   return (
-    <View style={[styles.root, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <SheetKeyboardAvoider style={[styles.root, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} accessibilityLabel={t('common.back')}>
           <IconArrowLeft size={22} color={colors.text} />
@@ -800,7 +801,7 @@ export default function ChatBackupScreen() {
           </View>
         ))}
       </ScrollView>
-    </View>
+    </SheetKeyboardAvoider>
   );
 }
 

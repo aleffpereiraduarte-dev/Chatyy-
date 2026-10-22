@@ -28,8 +28,9 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, TextInput, Platform, KeyboardAvoidingView, Linking,
+  View, Text, StyleSheet, ScrollView, TextInput, Platform, Linking,
 } from 'react-native';
+import KeyboardSafeView from '../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import UIRefreshControl from '../components/ui/RefreshControl'; // [2026-10-16 motion] P&B + toque soft ao armar
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -750,7 +751,7 @@ export default function WalletCashoutScreen() {
           <Skeleton height={64} radius={Radius.card} delay={120} />
         </View>
       ) : (
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardSafeView style={{ flex: 1 }}>
           <ScrollView
             contentContainerStyle={[styles.scrollBody, { paddingBottom: Math.max(Space.xxxl, (insets.bottom || 0) + Space.xl) }]}
             showsVerticalScrollIndicator={false}
@@ -759,7 +760,7 @@ export default function WalletCashoutScreen() {
           >
             <SkeletonFadeIn style={{ gap: Space.md }}>{body}</SkeletonFadeIn>
           </ScrollView>
-        </KeyboardAvoidingView>
+        </KeyboardSafeView>
       )}
 
       <Sheet visible={!!detailRow} onClose={() => { setDetailRow(null); setDetail(null); }} title={tr(t, 'wallet.cashoutDetailTitle', 'Detalhes do saque')}>

@@ -4,8 +4,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, Modal, TouchableOpacity, TextInput, ScrollView, StyleSheet,
-  Platform, Alert, ActivityIndicator, KeyboardAvoidingView, Animated, Easing,
+  Platform, Alert, ActivityIndicator, Animated, Easing,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Spacing, BorderRadius, FontSize, Shadow } from '../constants/theme';
@@ -273,8 +274,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      <KeyboardSafeView
         style={styles.backdrop}
       >
         <View style={[styles.sheet, { backgroundColor: colors.background }]}>
@@ -524,7 +524,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
             </Animated.View>
           </ScrollView>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

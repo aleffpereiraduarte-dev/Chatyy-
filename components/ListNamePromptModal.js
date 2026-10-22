@@ -2,7 +2,8 @@
 // Android não tem Alert.prompt → antes a lista nascia "Lista N" e não dava p/ renomear.
 // Uso: <ListNamePromptModal prompt={{ title, initial, resolve }} onDone={() => setPrompt(null)} />
 import React, { useEffect, useState } from 'react';
-import { Modal, View, Text, TextInput, Pressable, Platform, KeyboardAvoidingView, StyleSheet } from 'react-native';
+import { Modal, View, Text, TextInput, Pressable, Platform, StyleSheet } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 
@@ -24,7 +25,7 @@ export default function ListNamePromptModal({ prompt, onDone }) {
   const trimmed = String(value || '').trim();
   return (
     <Modal transparent animationType="fade" visible onRequestClose={() => finish(null)}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={st.backdrop}>
+      <KeyboardSafeView style={st.backdrop}>
         <Pressable style={StyleSheet.absoluteFill} onPress={() => finish(null)} accessibilityRole="button" accessibilityLabel={t('common.cancel') || 'Cancelar'} />
         <View style={[st.card, { backgroundColor: card }]}>
           <Text style={[st.title, { color: fg }]} accessibilityRole="header">{prompt.title || (t('chat.newListName') || 'Nome da lista')}</Text>
@@ -49,7 +50,7 @@ export default function ListNamePromptModal({ prompt, onDone }) {
             </Pressable>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }

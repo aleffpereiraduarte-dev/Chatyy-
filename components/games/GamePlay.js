@@ -21,7 +21,8 @@
 //  - toda confirmação é folha nativa (components/games/GameSheet: UISheetPresentationController/BottomSheet).
 //  - háptico em toda interação; safe areas; tema claro/escuro.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, TextInput, ActivityIndicator, StyleSheet, AppState, Platform, KeyboardAvoidingView, useWindowDimensions } from 'react-native';
+import { View, Text, Pressable, ScrollView, TextInput, ActivityIndicator, StyleSheet, AppState, Platform, useWindowDimensions } from 'react-native';
+import KeyboardSafeView from '../ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { useSharedValue, useAnimatedStyle, useAnimatedProps, withRepeat, withSequence, withTiming, withSpring, withDelay, cancelAnimation, Easing } from 'react-native-reanimated';
@@ -822,7 +823,7 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
 
   if (wide) {
     return (
-      <KeyboardAvoidingView style={[st.fill, { backgroundColor: pal.bg }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardSafeView android={!docked} style={[st.fill, { backgroundColor: pal.bg }]}>
         {embedded ? null : <Stack.Screen options={{ headerShown: false }} />}
         {header}
         <View style={st.wideRow}>
@@ -839,7 +840,7 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
           </View>
         </View>
         {overlays}
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     );
   }
 
@@ -864,7 +865,7 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
   }
 
   return (
-    <KeyboardAvoidingView style={[st.fill, { backgroundColor: pal.bg }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardSafeView android={!docked} style={[st.fill, { backgroundColor: pal.bg }]}>
       {embedded ? null : <Stack.Screen options={{ headerShown: false }} />}
       {header}
       {showTable ? <View style={{ paddingTop: 8, paddingLeft: ins.left, paddingRight: ins.right }}><Table view={view} me={me} pal={pal} t={t} rm={rm} offset={offRef.current} /></View> : null}
@@ -876,7 +877,7 @@ export default function GamePlay({ gid: gidProp, cid: cidProp, embedded: embedde
         </ScrollView>
         {inputRow}
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardSafeView>
   );
 }
 

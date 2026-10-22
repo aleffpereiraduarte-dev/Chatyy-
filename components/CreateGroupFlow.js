@@ -2,9 +2,9 @@ import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, TextInput,
-  FlatList, ActivityIndicator, Alert, Platform, ScrollView,
-  KeyboardAvoidingView, Modal, Animated,
+  FlatList, ActivityIndicator, Alert, Platform, ScrollView, Modal, Animated,
 } from 'react-native';
+import KeyboardSafeView from './ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -278,9 +278,8 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={handleBack} transparent={false}>
-      <KeyboardAvoidingView
+      <KeyboardSafeView
         style={[sty.container, { backgroundColor: pageBg }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* Header — [2026-10-17 wa-polish] barra do sistema estilo WhatsApp:
             fundo da página, título centralizado + contagem, ações em texto
@@ -546,7 +545,7 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
             )}
           </ScrollView>
         )}
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 }
