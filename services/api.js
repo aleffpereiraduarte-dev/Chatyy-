@@ -792,6 +792,14 @@ async function _lbDetect(opts) {
     _bestServer = { ...pickSrv, latency: typeof results[pickSrv.region] === 'number' ? results[pickSrv.region] : null, ts: Date.now(), net, src: 'lb' };
     if (changed) _applySelectedServer(pickSrv);
     if (d.kind === 'switch') { st.session.voluntary++; st.session.lastSwitchAt = Date.now(); st.switches++; }
+    // [client-lb 2026-10-22 recheck] a região boa de antes (atual/última boa) seguiu muda mesmo
+    // após a re-sonda → a escolha saiu sem ela (caso SCL 11 ms → BR 82 ms). Sem isto ficava até o
+    // tick de 15 min no pior edge: re-mede 1× por rede em 30 s (rádio já estável).
+    const prevGood = [cur, st.lastGood].find(id => id && id !== 'us' && id !== pickSrv.region && cands.includes(id) && results[id] == null);
+    if (netChange && prevGood && !st.session.recheck) {
+      st.session.recheck = true;
+      setTimeout(() => { detectFastestServer({ why: 'net' }); }, 30 * 1000);
+    }
     if (typeof results[pickSrv.region] === 'number') st.lastGood = pickSrv.region;
     // [client-lb 2026-10-22] geo do CF contradito pela medição (roaming c/ home routing, VPN):
     // a região "perto" do país perdeu pela margem → esta rede não confia mais no geo.
