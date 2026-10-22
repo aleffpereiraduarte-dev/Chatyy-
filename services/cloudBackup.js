@@ -461,6 +461,9 @@ async function _pick(m, cid) {
     if (v === undefined || v === null || v === '') continue;
     o[f] = v;
   }
+  // [wa-import-local] mídia da importação do WhatsApp que só existe no aparelho: o caminho entra (a
+  // restauração o refaz no documentDirectory do aparelho novo). Linhas normais nunca levam caminho local.
+  if ((m.imported || m.is_imported) && typeof m.local_path === 'string' && m.local_path) o.local_path = m.local_path;
   // E2EE v5: o servidor só tem o envelope; o backup leva o texto decifrado NESTE aparelho.
   const e2 = typeof m.content === 'string' && m.content.startsWith('{"e2e":5') ? _e2() : null;
   if (e2) {
@@ -486,11 +489,24 @@ async function _pick(m, cid) {
  * Mídia de uma mensagem já escolhida (_pick) → candidatos [{k, m, r, u, ct, n, s, kind, F?}].
  * F = objeto de mídia do payload E2EE (com a chave) — fica só na memória desta execução.
  */
+/** Caminho relativo dentro de documentDirectory/wa-import-local/ (sem '..'); null = fora do padrão. */
+function _waRel(p) {
+  const s = String(p || ''); const i = s.indexOf('wa-import-local/');
+  if (i < 0) return null;
+  const rel = s.slice(i + 16).replace(/^\/+/, '');
+  return rel && !rel.split('/').some((x) => x === '..' || x === '') ? rel : null;
+}
 function _mediaCands(o, prefs) {
   if (!o || o.deleted_at || prefs.includeMedia === false) return [];
   const out = [];
   const mid = String(o.id);
   const add = (r, u, kind, extra) => { if (typeof u === 'string' && u) out.push({ k: `${mid}|${r}`, m: mid, r, u, kind, ...extra }); };
+  if (o.local_path) { // [wa-import-local] cópia pessoal importada: o arquivo do aparelho é a origem
+    const kind = MEDIA_T[String(o.type || '')] || (o.type === 'sticker' ? 'image' : null);
+    const rel = _waRel(o.local_path) || `misc/${mid}_${String(o.local_path).split('/').pop()}`;
+    if (kind && (kind !== 'video' || prefs.includeVideos)) add('f', 'local:' + rel, kind, { L: o.local_path, l: rel, ct: o.mime || '', n: o.file_name || '', s: Number(o.file_size) || 0 });
+    return out;
+  }
   if (o.e2ee === 5) {
     if (o.e2ee_missing || !o.e2ee_payload) return [];
     const kind = E2_MEDIA_T[o.e2ee_t || ''];
@@ -515,6 +531,7 @@ function _mediaCands(o, prefs) {
 /** Arquivo local EM CLARO do candidato (decifrado se E2EE). → {uri, tmp?} | null. Nunca sobe em claro. */
 async function _mediaSource(c, cid, budget) {
   if (Platform.OS === 'web') return null;
+  if (c.L) return { uri: c.L }; // [wa-import-local] já está em claro no aparelho (só sai cifrado daqui)
   if (c.F) {
     const EM = _e2m();
     if (!EM) return null;
@@ -546,7 +563,7 @@ async function _mediaSource(c, cid, budget) {
   } catch { await _rm(tmp); return null; }
 }
 function _compressible(c) { return COMPRESSIBLE_EXT.test(String(c.n || '')) || /^text\/|json|xml|csv/i.test(String(c.ct || '')); }
-const _manMedia = (e) => { const o = { m: e.m, r: e.r, u: e.u, ct: e.ct || '', n: e.n || '', s: e.s, c: e.c.slice() }; if (e.e) o.e = 1; return o; };
+const _manMedia = (e) => { const o = { m: e.m, r: e.r, u: e.u, ct: e.ct || '', n: e.n || '', s: e.s, c: e.c.slice() }; if (e.e) o.e = 1; if (e.l) o.l = e.l; return o; };
 
 function _isBoundary(id) {
   const n = Number(id) || 0;
@@ -752,6 +769,7 @@ async function _runBackup(opts) {
           const comp = _compressible(c);
           const ent = { k: c.k, m: c.m, r: c.r, u: c.u, ct: c.ct || '', n: c.n || '', s: size, c: [], cv };
           if (c.F) ent.e = 1;
+          if (c.l) ent.l = c.l;
           let aborted = false;
           for (let pos = 0; pos < size; pos += MEDIA_CHUNK) {
             const bytes = await _readRange(src.uri, pos, Math.min(MEDIA_CHUNK, size - pos));
@@ -956,7 +974,11 @@ async function _restoreMedia(uid, keys, cid, list, onEach) {
 async function _restoreOneMedia(uid, keys, cid, e, urls, FS) {
   if (!Array.isArray(e.c) || !e.c.length || !e.u) return false;
   let dest; let plan = null; let MS = null; let urlKey = null;
-  if (e.e) {
+  if (e.l) { // [wa-import-local] volta para o mesmo lugar relativo (documentDirectory muda entre aparelhos)
+    if (!FS.documentDirectory || e.l.split('/').some((x) => x === '..' || x === '')) return false;
+    dest = `${FS.documentDirectory}wa-import-local/${e.l}`;
+    await _mkdir(dest.slice(0, dest.lastIndexOf('/') + 1));
+  } else if (e.e) {
     dest = `${FS.cacheDirectory}cbk4-rst-${_hex(nacl.hash(decodeUTF8(e.u)).slice(0, 10))}`;
   } else {
     MS = _ms(); const MC = _mc();
@@ -974,6 +996,7 @@ async function _restoreOneMedia(uid, keys, cid, e, urls, FS) {
   } catch (err) { await sink.close(); await _rm(dest); throw err; }
   await sink.close();
   if (e.s && bytes !== e.s) { await _rm(dest); return false; }
+  if (e.l) return true; // a linha já foi gravada com este local_path (_restore)
   if (e.e) {
     const EM = _e2m();
     const kind = e.r === 't' ? 't320' : e.r === 'p' ? 'poster' : undefined;
@@ -1077,13 +1100,23 @@ async function _restore(set, opts) {
     if (rs.done[c.id]) continue;
     const ids = (c.blocks || []).map((b) => b.o);
     await _getObjs(set.uid, ids, keys, async (_o, blk) => {
-      const rows = (blk?.m || []).map((m) => (m.e2ee === 5 ? { ...m, _cbk4_restored: 1 } : m));
+      const rows = (blk?.m || []).map((m0) => {
+        let m = m0.e2ee === 5 ? { ...m0, _cbk4_restored: 1 } : m0;
+        if (m.local_path) { // [wa-import-local] caminho do aparelho NOVO (o arquivo vem com a mídia logo abaixo)
+          const ent = (c.media || []).find((x) => x.l && String(x.m) === String(m.id));
+          const docDir = Platform.OS !== 'web' ? _FSL().documentDirectory : null;
+          m = { ...m, local_path: ent && docDir ? `${docDir}wa-import-local/${ent.l}` : null };
+          if (!m.local_path) m.media_missing = 1;
+        }
+        return m;
+      });
       if (rows.length) { await db.dbSaveMessages(String(c.id), rows); msgs += rows.length; }
       done++;
       _emit({ phase: 'restore', done, total, msgs, media });
     });
     await _restoreMedia(set.uid, keys, String(c.id), c.media || [], (_e, ok) => {
       done++; if (ok) media++; else mediaFailed++;
+      if (!ok && _e?.l) { try { db.dbUpdateMessageFields?.(String(c.id), _e.m, { local_path: null }); } catch {} }
       _emit({ phase: 'restore', done, total, msgs, media });
     });
     rs.done[c.id] = 1; rs.msgs = msgs; rs.media = media;
