@@ -11,7 +11,13 @@ defmodule ChatyyRouter.Config do
     ROUTER_QUORUM    regiões vistas (contando a si) p/ aceitar escrita e p/ promover (padrão = maioria)
     ROUTER_FAILOVER_MS  tempo fora antes de promover a irmã (padrão 60000)
     ROUTER_STORE     "disc" | "ram"
-    ROUTER_ACK_MODE  "local" | "sister" (sister = só confirma após a irmã gravar; RPO 0)
+    ROUTER_ACK_MODE  "sister" (PADRÃO: só confirma/entrega depois de a irmã gravar c/ fsync; RPO 0)
+                     | "local" (cópia assíncrona; RPO ≤ lag da irmã) — decisão do founder pendente
+    ROUTER_FSYNC     "always" (padrão: put só volta após datasync, em grupo) | "none" (bench)
+    ROUTER_LOG_DIR   diretório do Seglog (padrão /var/lib/chatyy-router/log)
+    ROUTER_LOG_MAX_MB  teto de disco POR tabela de log (padrão 20480) → put = {:error, :disk_full}
+    ROUTER_HOT_MS    janela do cache quente de corpos recém-gravados (padrão 60000)
+    ROUTER_FANOUT    1|0 — R1: aceita /fanout (entrega de mensagem cuja casa é externa, ex. US)
     ROUTER_CTL_PORT  porta HTTP de controle em 127.0.0.1 (padrão 4790)
     ROUTER_FLAGS_FILE  kill switch (RT_ROUTE=0 desliga)
     ROUTER_HUB_URL   presença/entrega do hub Go (stub; não chamado no protótipo)
@@ -36,7 +42,7 @@ defmodule ChatyyRouter.Config do
     end
   end
 
-  @ints ~w(quorum failover_ms tick_ms redeliver_ms retention_ms dedupe_ms ctl_port idle_ms janitor_ms)a
+  @ints ~w(quorum failover_ms tick_ms redeliver_ms retention_ms dedupe_ms ctl_port idle_ms janitor_ms replica_timeout_ms hot_ms seg_max_bytes log_max_mb ping_ms fanout_ttl_ms)a
   defp parse(k, v) when k in @ints, do: String.to_integer(v)
   defp parse(:regions, v), do: parse_regions(v)
   defp parse(:sisters, v), do: parse_sisters(v)
@@ -73,11 +79,24 @@ defmodule ChatyyRouter.Config do
   def idle_ms, do: get(:idle_ms, 300_000)
   def janitor_ms, do: get(:janitor_ms, 3_600_000)
   def store, do: to_string(get(:store, "disc"))
-  def ack_mode, do: to_string(get(:ack_mode, "local"))
+  def ack_mode, do: to_string(get(:ack_mode, "sister"))
   def ctl_port, do: get(:ctl_port, 4790)
   def flags_file, do: get(:flags_file, "/etc/chatyy-router/flags")
-  def hub_url, do: get(:hub_url, "http://127.0.0.1:8084")
-  def hub_module, do: get(:hub_module, ChatyyRouter.Hub.Stub)
+  def hub_url, do: get(:hub_url, "http://127.0.0.1:8086")
+  def hub_module do
+    case get(:hub_module, ChatyyRouter.Hub.Stub) do
+      m when is_atom(m) -> m
+      "http" -> ChatyyRouter.Hub.Http
+      "stub" -> ChatyyRouter.Hub.Stub
+      s when is_binary(s) -> String.to_existing_atom("Elixir." <> String.trim_leading(s, "Elixir."))
+    end
+  end
+
+  @doc "Alguma fonte PG ligada (home/directory/ack)? Só então sobem as conexões PG."
+  def pg_enabled? do
+    to_string(get(:home_source, "local")) == "pg" or to_string(get(:dir_source, "local")) == "pg" or
+      to_string(get(:ack_source, "off")) == "dlv"
+  end
   def autostart?, do: get(:autostart, true) != false
 end
 

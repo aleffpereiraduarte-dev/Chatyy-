@@ -1,38 +1,222 @@
 defmodule ChatyyRouter.Directory do
   @moduledoc """
   Quem recebe: membros por conversa e aparelhos por usuário (com a região do
-  edge onde o aparelho está). No protótipo é um ETS difundido entre os nós.
-  Em produção:
-    * membros  -> `chat_conversation_members` do PG replicado (global);
-    * aparelhos -> `e2ee5_devices` (não revogados, vistos < 30 d) +
-      região atual = presença do hub Go (`ChatyyRouter.Hub.region_of/1`).
+  edge onde o aparelho está).
+
+  Dois modos (ROUTER_DIR_SOURCE):
+    * `local` (padrão; testes/bench): ETS difundido entre os nós (`put_members/2`,
+      `put_devices/2`), como no protótipo.
+    * `pg`: lê a RÉPLICA LOCAL do PG (`ChatyyRouter.PG.Conn` :replica), com cache ETS:
+        - membros  = `chat_conversation_members` com `left_at` vazio, email
+          canonizado (minúsculas, @onemundo.com.br -> @chatyy.com.br — igual ao
+          `_dlvCanon` do dlv-shadow.php) -> `e2ee5_uid.uid`; TTL ROUTER_DIR_TTL_MS (30 s);
+        - aparelhos = `e2ee5_devices` não revogados (vistos < ROUTER_DEVICE_MAX_AGE_DAYS,
+          padrão 30) ∪ `e2ee5_bearer_device` sem registro e2ee5 (cliente antigo) —
+          o mesmo conjunto que a fila sombra dlv considera "esperado"; TTL igual e
+          invalidação por `e2ee5_device_changes` (poll 2 s, id > marca d'água);
+        - região do aparelho = `ChatyyRouter.Hub.region_of/1` (presença do hub),
+          cache ROUTER_PRESENCE_TTL_MS (5 s); sem presença -> última região conhecida
+          -> região deste nó.
+      Falha do PG: devolve a cópia vencida do cache se houver; sem cópia,
+      `recipients_result/2` dá {:error, :directory_unavailable} (o chamador NÃO
+      deve tratar como "sem destinatários" e apagar a mensagem).
+    Entradas postas à mão (`put_members/2`, `put_devices/2`) valem nos dois modos
+    e têm precedência (ensaios).
   """
   use GenServer
-  alias ChatyyRouter.Net
+  require Logger
+  alias ChatyyRouter.{Config, Net}
+  alias ChatyyRouter.PG.Conn
 
   @members :rt_members
   @devices :rt_devices
+  @mcache :rt_dir_members
+  @dcache :rt_dir_devices
+  @rcache :rt_dir_region
+
+  @q_members """
+  SELECT DISTINCT u.uid::text
+    FROM chat_conversation_members cm
+    JOIN e2ee5_uid u
+      ON u.email_canon = regexp_replace(lower(btrim(cm.email)), '@onemundo\\.com\\.br$', '@chatyy.com.br')
+   WHERE cm.conversation_id = $1::bigint AND NULLIF(cm.left_at, '') IS NULL
+  """
+
+  @q_devices """
+  SELECT x.device_id FROM e2ee5_devices x
+   WHERE x.uid = $1::bigint AND x.revoked_at IS NULL
+     AND x.last_seen_at > now() - make_interval(days => $2::int)
+  UNION
+  SELECT b.device_id FROM e2ee5_bearer_device b
+   WHERE b.uid = $1::bigint
+     AND NOT EXISTS (SELECT 1 FROM e2ee5_devices y WHERE y.uid = b.uid AND y.device_id = b.device_id)
+  """
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  def members(cid) do
-    case :ets.lookup(@members, cid) do
-      [{_, uids}] -> uids
-      [] -> []
+  def pg?, do: to_string(Config.get(:dir_source, "local")) == "pg"
+  defp ttl, do: int_cfg(:dir_ttl_ms, 30_000)
+  defp presence_ttl, do: int_cfg(:presence_ttl_ms, 5_000)
+  defp max_age_days, do: int_cfg(:device_max_age_days, 30)
+
+  defp int_cfg(k, d) do
+    case Config.get(k, d) do
+      v when is_integer(v) -> v
+      v -> String.to_integer(to_string(v))
     end
   end
 
+  # ---------------- leitura ----------------
+
+  def members(cid) do
+    case members_result(cid) do
+      {:ok, uids} -> uids
+      _ -> []
+    end
+  end
+
+  def members_result(cid) do
+    case :ets.lookup(@members, cid) do
+      [{_, uids}] -> {:ok, uids}
+      [] -> if pg?(), do: cached(@mcache, cid, fn -> pg_members(cid) end), else: {:ok, []}
+    end
+  end
+
+  @doc "Aparelhos do usuário: [{device, região}]."
   def devices(uid) do
+    case devices_result(uid) do
+      {:ok, devs} -> devs
+      _ -> []
+    end
+  end
+
+  def devices_result(uid) do
     case :ets.lookup(@devices, uid) do
-      [{_, devs}] -> devs
-      [] -> []
+      [{_, devs}] ->
+        {:ok, devs}
+
+      [] ->
+        if pg?() do
+          with {:ok, ids} <- cached(@dcache, uid, fn -> pg_devices(uid) end) do
+            {:ok, for(d <- ids, do: {d, region(d)})}
+          end
+        else
+          {:ok, []}
+        end
     end
   end
 
   @doc "Aparelhos destino ({device, região}), inclusive os OUTROS aparelhos do remetente."
   def recipients(cid, sender_device) do
-    for uid <- members(cid), {d, r} <- devices(uid), d != sender_device, do: {d, r}
+    case recipients_result(cid, sender_device) do
+      {:ok, l} -> l
+      _ -> []
+    end
   end
+
+  def recipients_result(cid, sender_device) do
+    with {:ok, uids} <- members_result(cid) do
+      Enum.reduce_while(uids, {:ok, []}, fn uid, {:ok, acc} ->
+        case devices_result(uid) do
+          {:ok, devs} -> {:cont, {:ok, acc ++ for({d, r} <- devs, d != sender_device, do: {d, r})}}
+          err -> {:halt, err}
+        end
+      end)
+    end
+  end
+
+  @doc "Região atual do aparelho (presença do hub, com cache curto e fallback)."
+  def region(device) do
+    now = System.monotonic_time(:millisecond)
+
+    case :ets.lookup(@rcache, device) do
+      [{_, r, exp}] when exp > now ->
+        r
+
+      cached ->
+        r =
+          case safe_region_of(device) do
+            {:ok, r} when is_binary(r) -> if r in Config.region_names(), do: r, else: nil
+            _ -> nil
+          end
+
+        r = r || (match?([{_, _, _}], cached) && elem(hd(cached), 1)) || Net.me()
+        :ets.insert(@rcache, {device, r, now + presence_ttl()})
+        r
+    end
+  end
+
+  defp safe_region_of(device) do
+    try do
+      ChatyyRouter.Hub.region_of(device)
+    rescue
+      _ -> {:error, :hub}
+    catch
+      _, _ -> {:error, :hub}
+    end
+  end
+
+  def invalidate_conv(cid), do: :ets.delete(@mcache, cid)
+  def invalidate_user(uid), do: :ets.delete(@dcache, uid)
+
+  # cache com TTL; falha do PG -> cópia vencida, se houver
+  defp cached(tab, key, fun) do
+    now = System.monotonic_time(:millisecond)
+
+    case :ets.lookup(tab, key) do
+      [{_, v, exp}] when exp > now ->
+        {:ok, v}
+
+      old ->
+        case fun.() do
+          {:ok, v} ->
+            :ets.insert(tab, {key, v, now + ttl()})
+            {:ok, v}
+
+          {:error, e} ->
+            ChatyyRouter.Metrics.inc(:dir_pg_fail)
+
+            case old do
+              [{_, v, _}] -> {:ok, v}
+              _ -> {:error, {:directory_unavailable, e}}
+            end
+        end
+    end
+  end
+
+  defp to_bigint(v) when is_integer(v), do: {:ok, v}
+
+  defp to_bigint(v) when is_binary(v) do
+    case Integer.parse(v) do
+      {i, ""} -> {:ok, i}
+      _ -> :error
+    end
+  end
+
+  defp to_bigint(_), do: :error
+
+  defp pg_members(cid) do
+    case to_bigint(cid) do
+      {:ok, i} ->
+        with {:ok, %{rows: rows}} <- Conn.query(:replica, @q_members, [i]), do: {:ok, Enum.map(rows, &hd/1)}
+
+      :error ->
+        {:ok, []}
+    end
+  end
+
+  defp pg_devices(uid) do
+    case to_bigint(uid) do
+      {:ok, i} ->
+        with {:ok, %{rows: rows}} <- Conn.query(:replica, @q_devices, [i, max_age_days()]),
+             do: {:ok, Enum.map(rows, &hd/1)}
+
+      :error ->
+        {:ok, []}
+    end
+  end
+
+  # ---------------- escrita (ensaio / modo local) ----------------
 
   def put_members(cid, uids), do: broadcast({:members, cid, uids})
   def put_devices(uid, devs), do: broadcast({:devices, uid, devs})
@@ -47,13 +231,16 @@ defmodule ChatyyRouter.Directory do
     :ok
   end
 
+  # ---------------- GenServer ----------------
+
   @impl true
   def init(_) do
-    for t <- [@members, @devices], :ets.whereis(t) == :undefined do
-      :ets.new(t, [:named_table, :public, :set, read_concurrency: true])
+    for t <- [@members, @devices, @mcache, @dcache, @rcache], :ets.whereis(t) == :undefined do
+      :ets.new(t, [:named_table, :public, :set, read_concurrency: true, write_concurrency: true])
     end
 
-    {:ok, %{}}
+    if pg?(), do: send(self(), :devchg)
+    {:ok, %{devchg_wm: nil}}
   end
 
   @impl true
@@ -73,6 +260,40 @@ defmodule ChatyyRouter.Directory do
     apply_msg(msg)
     {:noreply, s}
   end
+
+  # invalidação incremental dos aparelhos por e2ee5_device_changes (id crescente)
+  @impl true
+  def handle_info(:devchg, s) do
+    s =
+      case s.devchg_wm do
+        nil ->
+          case Conn.query(:replica, "SELECT coalesce(max(id), 0)::text FROM e2ee5_device_changes") do
+            {:ok, %{rows: [[m]]}} -> %{s | devchg_wm: String.to_integer(m)}
+            _ -> s
+          end
+
+        wm ->
+          case Conn.query(
+                 :replica,
+                 "SELECT id::text, uid::text FROM e2ee5_device_changes WHERE id > $1::bigint ORDER BY id LIMIT 2000",
+                 [wm]
+               ) do
+            {:ok, %{rows: rows}} ->
+              for [_, uid] <- rows, do: :ets.delete(@dcache, uid)
+              if rows != [], do: ChatyyRouter.Metrics.inc(:dir_dev_invalidated, length(rows))
+              last = Enum.reduce(rows, wm, fn [id, _], acc -> max(acc, String.to_integer(id)) end)
+              %{s | devchg_wm: last}
+
+            _ ->
+              s
+          end
+      end
+
+    Process.send_after(self(), :devchg, 2_000)
+    {:noreply, s}
+  end
+
+  def handle_info(_, s), do: {:noreply, s}
 
   defp apply_msg({:members, cid, uids}), do: :ets.insert(@members, {cid, uids})
   defp apply_msg({:devices, uid, devs}), do: :ets.insert(@devices, {uid, devs})
@@ -162,59 +383,4 @@ defmodule ChatyyRouter.Hub.Stub do
   end
 end
 
-defmodule ChatyyRouter.Hub.Http do
-  @moduledoc "Esqueleto do adaptador real (hub Go via HTTP local). Não ligado no protótipo."
-  @behaviour ChatyyRouter.Hub
-  @impl true
-  def push(_device, _msg), do: :ok
-  @impl true
-  def region_of(_device), do: {:error, :not_wired}
-end
-
-defmodule ChatyyRouter.Flags do
-  @moduledoc """
-  Kill switch. Arquivo (padrão /etc/chatyy-router/flags) com `RT_ROUTE=0|1`,
-  relido a cada 2 s; `override/1` (Control POST /flags) vale até o restart.
-  RT_ROUTE=0 => `send` responde {:error, :disabled} na hora e o chamador
-  (leaf/PHP) volta ao caminho de hoje (gravar no master).
-  """
-  use GenServer
-  require Logger
-
-  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
-
-  def route?, do: :persistent_term.get({__MODULE__, :route}, true)
-  def override(v) when is_boolean(v), do: GenServer.call(__MODULE__, {:override, v})
-
-  @impl true
-  def init(_) do
-    send(self(), :reload)
-    {:ok, %{override: nil}}
-  end
-
-  @impl true
-  def handle_call({:override, v}, _f, s) do
-    :persistent_term.put({__MODULE__, :route}, v)
-    Logger.warning("router: kill switch override route=#{v}")
-    {:reply, :ok, %{s | override: v}}
-  end
-
-  @impl true
-  def handle_info(:reload, s) do
-    if s.override == nil do
-      v =
-        case File.read(ChatyyRouter.Config.flags_file()) do
-          {:ok, body} -> not String.contains?(body, "RT_ROUTE=0")
-          _ -> true
-        end
-
-      if v != route?() do
-        Logger.warning("router: kill switch arquivo route=#{v}")
-        :persistent_term.put({__MODULE__, :route}, v)
-      end
-    end
-
-    Process.send_after(self(), :reload, 2_000)
-    {:noreply, s}
-  end
-end
+# ChatyyRouter.Hub.Http (adaptador real, hub Go /rt/*) → lib/chatyy_router/hub_http.ex

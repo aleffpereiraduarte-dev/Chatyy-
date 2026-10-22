@@ -1,5 +1,5 @@
 [Unit]
-Description=Chatyy roteador BEAM (PROTOTIPO, sem trafego de usuario) — /root/roteador-2026-10-22/README.md
+Description=Chatyy roteador BEAM por regiao-casa (R0: cluster observando, 0 trafego) — /root/roteador-2026-10-22/README.md
 After=network-online.target wg-quick@wg0.service
 Wants=network-online.target
 
@@ -29,6 +29,9 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_UNIX
+# só fala com a malha WG e com o próprio host (PG réplica, hub/leaf, controle)
+IPAddressDeny=any
+IPAddressAllow=localhost 10.8.0.0/24
 ReadWritePaths=/var/lib/chatyy-router
 ReadOnlyPaths=/etc/chatyy-router /opt/chatyy-router
 

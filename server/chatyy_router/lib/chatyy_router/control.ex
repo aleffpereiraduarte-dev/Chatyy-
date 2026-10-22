@@ -6,7 +6,8 @@ defmodule ChatyyRouter.Control do
     GET  /health                 -> {"ok":true,"region","alive":[...],"route":bool}
     GET  /status                 -> tabela de casa, filas, failover, contadores
     GET  /metrics                -> Prometheus
-    POST /flags?route=0|1        -> kill switch em memória (arquivo vale após restart)
+    POST /flags?route=0|1&fanout=0|1 -> kill switch em memória (arquivo vale após restart)
+    POST /fanout  {"cid","msg_id","home":"us","from","device","cmi","ts","body_b64","devices":[[d,r]]?}  (R1)
     POST /send    {"cid","from","device","cmi","body_b64","devices":[[d,r]]?}
     POST /ack     {"device","cid","upto"}
     GET  /fetch?device=D
@@ -98,7 +99,18 @@ defmodule ChatyyRouter.Control do
   defp body(b), do: if(b == "", do: %{}, else: :json.decode(b))
 
   defp route(:GET, "/health", _, _) do
-    ok(%{ok: true, region: Net.me(), node: node(), alive: Net.alive_regions(), quorum: Net.quorum?(), route: ChatyyRouter.Flags.route?()})
+    alive = Net.alive_regions()
+
+    ok(%{
+      ok: true,
+      region: Net.me(),
+      node: node(),
+      alive: alive,
+      down: Config.region_names() -- alive,
+      quorum: Net.quorum?(),
+      route: ChatyyRouter.Flags.route?(),
+      fanout: ChatyyRouter.Flags.fanout?()
+    })
   end
 
   defp route(:GET, "/metrics", _, _), do: {200, "text/plain; version=0.0.4", ChatyyRouter.Metrics.prometheus()}
@@ -114,14 +126,49 @@ defmodule ChatyyRouter.Control do
       tables: Map.new(Store.tables(), &{&1, Store.size(&1)}),
       ack_outbox: ChatyyRouter.AckOutbox.pending(),
       route: ChatyyRouter.Flags.route?(),
+      fanout: ChatyyRouter.Flags.fanout?(),
+      ack_mode: Config.ack_mode(),
+      quorum: Config.quorum(),
+      rtt_ms: for({r, {us, _}} <- ChatyyRouter.Net.Cluster.rtts(), into: %{}, do: {r, Float.round(us / 1000, 1)}),
+      log: Map.new(Store.log_tables(), &{&1, ChatyyRouter.Seglog.stats(&1)}),
+      fanout_pending: ChatyyRouter.Fanout.pending(),
+      home_sync: if(Process.whereis(ChatyyRouter.HomeSync), do: ChatyyRouter.HomeSync.status()),
+      ack_source: if(Process.whereis(ChatyyRouter.AckSource), do: ChatyyRouter.AckSource.status()),
+      hub: inspect(ChatyyRouter.Config.hub_module()),
       counters: for({{:c, n}, v} <- ChatyyRouter.Metrics.snapshot(), into: %{}, do: {inspect(n), v}),
       memory_mb: div(:erlang.memory(:total), 1_048_576)
     })
   end
 
-  defp route(:POST, "/flags", %{"route" => v}, _) do
-    ChatyyRouter.Flags.override(v == "1")
-    ok(%{route: ChatyyRouter.Flags.route?()})
+  defp route(:POST, "/flags", q, _) do
+    for {k, key} <- [{"route", :route}, {"fanout", :fanout}], v = q[k], v != nil do
+      ChatyyRouter.Flags.override(key, v == "1")
+    end
+
+    ok(%{route: ChatyyRouter.Flags.route?(), fanout: ChatyyRouter.Flags.fanout?()})
+  end
+
+  # R1: mensagem já gravada no US (casa externa); só entrega + fila por aparelho
+  defp route(:POST, "/fanout", _, b) do
+    p = body(b)
+
+    req = %{
+      cid: p["cid"],
+      seq: p["msg_id"] || p["seq"],
+      epoch: p["epoch"] || 0,
+      home: p["home"] || "us",
+      from: p["from"],
+      from_device: p["device"],
+      cmi: p["cmi"],
+      ts: p["ts"],
+      body: Base.decode64!(p["body_b64"] || ""),
+      devices: p["devices"] && Enum.map(p["devices"], fn [d, r] -> {d, r} end)
+    }
+
+    case ChatyyRouter.Fanout.fanout(req) do
+      {:ok, r} -> ok(Map.put(r, :ok, true))
+      {:error, e} -> {503, "application/json", json(%{ok: false, error: e})}
+    end
   end
 
   defp route(:POST, "/send", _, b) do
@@ -164,6 +211,12 @@ defmodule ChatyyRouter.Control do
     {_, e, _} = HomeTable.lookup(p["cid"])
     HomeTable.assign(p["cid"], p["region"], e + 1)
     ok(%{ok: true, epoch: e + 1})
+  end
+
+  # troca de casa por decisão de operador/produto: CAS no master (conv_home_cas)
+  defp route(:POST, "/home_cas", _, b) do
+    p = body(b)
+    ok(%{result: ChatyyRouter.HomeSync.cas(p["cid"], p["expected"], p["region"])})
   end
 
   defp route(:POST, "/migrate", _, b) do

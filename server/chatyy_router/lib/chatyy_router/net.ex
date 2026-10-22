@@ -121,10 +121,19 @@ defmodule ChatyyRouter.Net.Cluster do
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
+  @rtt :rt_peer_rtt
+
+  @doc "Último RTT medido por região: %{região => {µs, ms_desde_epoch}}"
+  def rtts do
+    if :ets.whereis(@rtt) == :undefined, do: %{}, else: Map.new(:ets.tab2list(@rtt), fn {r, us, at} -> {r, {us, at}} end)
+  end
+
   @impl true
   def init(_) do
     :net_kernel.monitor_nodes(true)
+    if :ets.whereis(@rtt) == :undefined, do: :ets.new(@rtt, [:named_table, :public, :set])
     send(self(), :tick)
+    Process.send_after(self(), :ping, 2_000)
     {:ok, %{}}
   end
 
@@ -146,6 +155,23 @@ defmodule ChatyyRouter.Net.Cluster do
     {:noreply, s}
   end
 
+  # RTT de cada par (chamada vazia pela distribuição TLS), p/ /metrics e alertas
+  def handle_info(:ping, s) do
+    for r <- Net.alive_regions(), r != Net.me() do
+      spawn(fn ->
+        case Net.ping_us(r) do
+          nil -> ChatyyRouter.Metrics.inc({:ping_fail, r})
+          us ->
+            :ets.insert(@rtt, {r, us, System.os_time(:millisecond)})
+            ChatyyRouter.Metrics.hist({:rtt, r}, us)
+        end
+      end)
+    end
+
+    Process.send_after(self(), :ping, Config.get(:ping_ms, 10_000))
+    {:noreply, s}
+  end
+
   def handle_info({:nodeup, n}, s) do
     r = Net.region_of(n)
 
@@ -158,6 +184,7 @@ defmodule ChatyyRouter.Net.Cluster do
 
       true ->
         Logger.info("router: região #{r} conectada (#{n})")
+        ChatyyRouter.Metrics.inc({:nodeup, r})
         ChatyyRouter.HomeTable.push_sync(r)
         ChatyyRouter.Directory.push_sync(r)
     end
@@ -166,7 +193,11 @@ defmodule ChatyyRouter.Net.Cluster do
   end
 
   def handle_info({:nodedown, n}, s) do
-    if r = Net.region_of(n), do: Logger.warning("router: região #{r} caiu (#{n})")
+    if r = Net.region_of(n) do
+      Logger.warning("router: região #{r} caiu (#{n})")
+      ChatyyRouter.Metrics.inc({:nodedown, r})
+      :ets.delete(@rtt, r)
+    end
     {:noreply, s}
   end
 end

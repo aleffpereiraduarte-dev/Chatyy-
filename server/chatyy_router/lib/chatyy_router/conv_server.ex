@@ -48,7 +48,11 @@ defmodule ChatyyRouter.Home do
   end
 
   def handle_call({:import, cid, epoch, rows}, _from, s) do
-    for {t, k, v} <- rows, do: Store.put(t, k, v)
+    # corpos (Seglog, 1 fsync por tabela) antes dos metadados
+    rows
+    |> Enum.group_by(&elem(&1, 0), fn {_, k, v} -> {k, v} end)
+    |> Enum.sort_by(fn {t, _} -> if Store.log?(t), do: 0, else: 1 end)
+    |> Enum.each(fn {t, kvs} -> :ok = Store.put_many(t, kvs) end)
     meta = Store.get(:rt_meta, cid) || %{last_seq: 0, epoch: 0}
     Store.put(:rt_meta, cid, %{meta | epoch: epoch})
     HomeTable.merge(cid, Net.me(), epoch)
@@ -122,6 +126,7 @@ defmodule ChatyyRouter.ConvServer do
           end
 
         Store.put(:rt_meta, cid, %{last_seq: last, epoch: epoch})
+        rebuild_dedupe(cid)
         :pg.join(:chatyy_router, {:conv, cid}, self())
 
         unstored =
@@ -132,7 +137,7 @@ defmodule ChatyyRouter.ConvServer do
         if unstored != %{}, do: Process.send_after(self(), :redeliver, 50)
 
         {:ok,
-         %{cid: cid, me: me, epoch: epoch, seq: last, mode: :active, unstored: unstored},
+         %{cid: cid, me: me, epoch: epoch, seq: last, mode: :active, unstored: unstored, unrep: %{}},
          Config.idle_ms()}
     end
   end
@@ -140,21 +145,20 @@ defmodule ChatyyRouter.ConvServer do
   # Fui irmã e agora sou casa: a cópia vira o original.
   defp promote_replica(cid) do
     rows = Store.prefix(:rt_replica, cid)
+    fresh = for {seq, msg} <- rows, not Store.member?(:rt_msg, {cid, seq}), do: {seq, msg}
+    # corpos primeiro (1 fsync), só depois os metadados e o apagar da cópia
+    :ok = Store.put_many(:rt_msg, for({seq, msg} <- fresh, do: {{cid, seq}, msg}))
 
-    epoch =
-      Enum.reduce(rows, 0, fn {seq, msg}, acc ->
-        if Store.get(:rt_msg, {cid, seq}) == nil do
-          Store.put(:rt_msg, {cid, seq}, msg)
-          regions = msg.devices |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
-          # reentrega a todas as regiões dos aparelhos ainda pendentes
-          # (inbox é idempotente; o app deduplica frame por seq/cmi)
-          Store.put(:rt_pend, {cid, seq}, {msg.devices, regions})
-          if msg.cmi, do: Store.put(:rt_dedupe, {cid, msg.cmi}, {seq, msg.ts})
-        end
+    for {seq, msg} <- fresh do
+      regions = msg.devices |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+      # reentrega a todas as regiões dos aparelhos ainda pendentes
+      # (inbox é idempotente; o app deduplica frame por seq/cmi)
+      Store.put(:rt_pend, {cid, seq}, {msg.devices, regions})
+      if msg.cmi, do: Store.put(:rt_dedupe, {cid, msg.cmi}, {seq, msg.ts})
+    end
 
-        Store.delete(:rt_replica, {cid, seq})
-        max(acc, msg.epoch)
-      end)
+    for {seq, _} <- rows, do: Store.delete(:rt_replica, {cid, seq})
+    epoch = Enum.reduce(rows, 0, fn {_, msg}, acc -> max(acc, msg.epoch) end)
 
     if rows != [] do
       Telemetry.execute([:chatyy_router, :replica, :promoted], %{count: length(rows)}, %{cid: cid})
@@ -164,9 +168,16 @@ defmodule ChatyyRouter.ConvServer do
   end
 
   defp max_msg_seq(cid) do
-    case Store.prefix(:rt_msg, cid) do
+    case Store.prefix_keys(:rt_msg, cid) do
       [] -> 0
-      rows -> rows |> Enum.map(&elem(&1, 0)) |> Enum.max()
+      seqs -> Enum.max(seqs)
+    end
+  end
+
+  # Mnesia não faz fsync: o dedupe de quem ainda tem corpo volta do aux do Seglog
+  defp rebuild_dedupe(cid) do
+    for {seq, {ts, cmi}} <- Store.msg_aux(cid), cmi != nil, Store.get(:rt_dedupe, {cid, cmi}) == nil do
+      Store.put(:rt_dedupe, {cid, cmi}, {seq, ts})
     end
   end
 
@@ -246,7 +257,18 @@ defmodule ChatyyRouter.ConvServer do
     case cmi && Store.get(:rt_dedupe, {cid, cmi}) do
       {seq, _} ->
         Telemetry.execute([:chatyy_router, :send, :dup], %{count: 1})
-        {{:ok, seq, s.epoch}, s}
+
+        case Map.get(s.unrep, seq) do
+          nil ->
+            {{:ok, seq, s.epoch}, s}
+
+          msg ->
+            # reenvio de algo que a irmã ainda não confirmou: tenta de novo
+            case replicate(msg) do
+              :ok -> {{:ok, seq, s.epoch}, release(seq, msg, s)}
+              {:error, e} -> {{:error, e}, s}
+            end
+        end
 
       _ ->
         seq = s.seq + 1
@@ -268,45 +290,94 @@ defmodule ChatyyRouter.ConvServer do
           devices: devs
         }
 
-        regions = devs |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
-        Store.put(:rt_msg, {cid, seq}, msg)
-        if devs != [], do: Store.put(:rt_pend, {cid, seq}, {devs, regions})
-        if cmi, do: Store.put(:rt_dedupe, {cid, cmi}, {seq, now})
-        Store.put(:rt_meta, cid, %{last_seq: seq, epoch: s.epoch})
+        # modo sister: a cópia na irmã corre EM PARALELO com o fsync local
+        # (o ack espera os dois; poupa 1 fsync do caminho crítico)
+        rep_task = if Config.ack_mode() == "sister", do: Task.async(fn -> replicate(msg) end)
 
-        replicate(msg)
+        # corpo no disco (fsync) ANTES de qualquer confirmação
+        case Store.put(:rt_msg, {cid, seq}, msg) do
+          :ok ->
+            if cmi, do: Store.put(:rt_dedupe, {cid, cmi}, {seq, now})
+            Store.put(:rt_meta, cid, %{last_seq: seq, epoch: s.epoch})
+            s = %{s | seq: seq}
 
-        if devs == [] do
-          purge(cid, seq, :no_recipients)
+            rep =
+              if rep_task,
+                do: Task.await(rep_task, Config.get(:replica_timeout_ms, 3_000) + 2_000),
+                else: replicate(msg)
+
+            case rep do
+              :ok ->
+                {{:ok, seq, s.epoch}, release(seq, msg, s)}
+
+              {:error, e} ->
+                # ROUTER_ACK_MODE=sister: sem cópia na irmã não confirma NEM
+                # entrega (senão um failover reusaria este seq). O reenvio do
+                # cliente (mesmo cmi) ou o tick de reentrega tentam de novo.
+                Process.send_after(self(), :redeliver, Config.redeliver_ms())
+                {{:error, e}, %{s | unrep: Map.put(s.unrep, seq, msg)}}
+            end
+
+          {:error, e} ->
+            # seq não avança: uma cópia que a irmã tenha gravado é sobrescrita pela próxima
+            if rep_task, do: Task.shutdown(rep_task, :brutal_kill)
+            Telemetry.execute([:chatyy_router, :store, :error], %{count: 1})
+            {{:error, e}, s}
         end
-
-        s = %{s | seq: seq}
-        s = fanout(msg, regions, s)
-        {{:ok, seq, s.epoch}, s}
     end
   end
 
-  defp replicate(msg) do
+  # mensagem já durável na casa (e na irmã, no modo sister): pendências + fan-out
+  defp release(seq, msg, s) do
+    devs = msg.devices
+    regions = devs |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+    s = %{s | unrep: Map.delete(s.unrep, seq)}
+
+    if devs == [] do
+      purge(s.cid, seq, :no_recipients)
+      s
+    else
+      Store.put(:rt_pend, {s.cid, seq}, {devs, regions})
+      fanout(msg, regions, s)
+    end
+  end
+
+  @doc """
+  Cópia na irmã. ROUTER_ACK_MODE:
+    * "sister" (PADRÃO): espera a irmã gravar com fsync (RPO 0; +1 RTT da irmã);
+      sem irmã viva → {:error, :no_sister} (não perde: o cliente reenvia).
+    * "local": cópia assíncrona (RPO ≤ lag da irmã; ack sem a perna da irmã).
+  """
+  def replicate(msg) do
+    msg = Map.delete(msg, :home_pid)
+
     case HomeTable.successor(Net.me()) do
       nil ->
         Telemetry.execute([:chatyy_router, :replica, :skipped], %{count: 1})
+        if Config.ack_mode() == "sister", do: {:error, :no_sister}, else: :ok
 
       sister ->
         if Config.ack_mode() == "sister" do
           t0 = System.monotonic_time(:microsecond)
 
-          case Net.call(sister, ChatyyRouter.Replica, {:put, msg}, 2_000) do
+          case Net.call(sister, ChatyyRouter.Replica, {:put, msg}, Config.get(:replica_timeout_ms, 3_000)) do
             :ok ->
               Telemetry.execute([:chatyy_router, :replica, :lag], %{lag_us: System.monotonic_time(:microsecond) - t0})
+              :ok
 
-            _ ->
+            other ->
               Telemetry.execute([:chatyy_router, :replica, :sync_fail], %{count: 1})
+              {:error, {:replica, short(other)}}
           end
         else
           Net.cast(sister, ChatyyRouter.Replica, {:put, msg})
+          :ok
         end
     end
   end
+
+  defp short({:error, e}), do: e
+  defp short(e), do: e
 
   defp fanout(msg, regions, s) do
     slim = Map.delete(msg, :devices)
@@ -389,6 +460,14 @@ defmodule ChatyyRouter.ConvServer do
 
   @impl true
   def handle_info(:redeliver, s) do
+    s =
+      Enum.reduce(Enum.sort(s.unrep), s, fn {seq, msg}, s ->
+        case replicate(msg) do
+          :ok -> release(seq, msg, s)
+          _ -> s
+        end
+      end)
+
     for {seq, regions} <- s.unstored, r <- regions, Net.alive?(r) do
       case {Store.get(:rt_msg, {s.cid, seq}), Store.get(:rt_pend, {s.cid, seq})} do
         {msg, {devs, _}} when msg != nil ->
@@ -404,7 +483,7 @@ defmodule ChatyyRouter.ConvServer do
 
     # mensagens já apagadas (ack/expiração) saem da lista
     unstored = Map.filter(s.unstored, fn {seq, _} -> Store.get(:rt_pend, {s.cid, seq}) != nil end)
-    if unstored != %{}, do: Process.send_after(self(), :redeliver, Config.redeliver_ms())
+    if unstored != %{} or s.unrep != %{}, do: Process.send_after(self(), :redeliver, Config.redeliver_ms())
     {:noreply, %{s | unstored: unstored}, Config.idle_ms()}
   end
 
@@ -419,7 +498,7 @@ defmodule ChatyyRouter.ConvServer do
   end
 
   def handle_info(:timeout, s) do
-    if s.unstored == %{}, do: {:stop, :normal, s}, else: {:noreply, s, :hibernate}
+    if s.unstored == %{} and s.unrep == %{}, do: {:stop, :normal, s}, else: {:noreply, s, :hibernate}
   end
 
   def handle_info(_, s), do: {:noreply, s}
@@ -430,13 +509,13 @@ defmodule ChatyyRouter.ConvServer do
   reenvia pelo cmi e a nova casa deduplica.
   """
   def stepdown_cleanup(cid, _epoch) do
-    n = length(Store.prefix(:rt_msg, cid))
+    n = length(Store.prefix_keys(:rt_msg, cid))
     local_cleanup(cid)
     if n > 0, do: Telemetry.execute([:chatyy_router, :stepdown, :orphans], %{count: n}, %{cid: cid})
   end
 
   defp local_cleanup(cid) do
-    for t <- [:rt_msg, :rt_pend, :rt_dedupe], {k, _} <- Store.prefix(t, cid), do: Store.delete(t, {cid, k})
+    for t <- [:rt_msg, :rt_pend, :rt_dedupe], k <- Store.prefix_keys(t, cid), do: Store.delete(t, {cid, k})
     Store.delete(:rt_meta, cid)
   end
 end
@@ -452,9 +531,14 @@ defmodule ChatyyRouter.Replica do
   def init(_), do: {:ok, %{}}
 
   @impl true
-  def handle_call({:put, msg}, _f, s) do
-    put(msg)
-    {:reply, :ok, s}
+  # modo sister: a casa espera esta resposta. A gravação (fsync) roda fora deste
+  # processo para que cópias de várias casas/conversas entrem no MESMO group
+  # commit do Seglog (com um processo só, 1 fsync por vez = ~1/fsync msgs/s:
+  # medido 161/s no SG com irmã IN a 5,4 ms/fsync). Ordem por conversa continua:
+  # a casa só manda a próxima depois desta resposta; purge/acked só vêm depois.
+  def handle_call({:put, msg}, from, s) do
+    spawn(fn -> GenServer.reply(from, put(msg)) end)
+    {:noreply, s}
   end
 
   @impl true
@@ -478,7 +562,7 @@ defmodule ChatyyRouter.Replica do
   end
 
   def handle_cast({:drop_conv, cid}, s) do
-    for {seq, _} <- Store.prefix(:rt_replica, cid), do: Store.delete(:rt_replica, {cid, seq})
+    for seq <- Store.prefix_keys(:rt_replica, cid), do: Store.delete(:rt_replica, {cid, seq})
     {:noreply, s}
   end
 
@@ -493,8 +577,8 @@ defmodule ChatyyRouter.Replica do
 
   @doc "Conversas com cópia aqui cuja casa era `region`: [{cid, epoch_max}]"
   def convs_of(region) do
-    Store.all(:rt_replica)
-    |> Enum.filter(fn {_, m} -> m.home == region end)
-    |> Enum.reduce(%{}, fn {{cid, _}, m}, acc -> Map.update(acc, cid, m.epoch, &max(&1, m.epoch)) end)
+    ChatyyRouter.Seglog.meta_all(:rt_replica)
+    |> Enum.filter(fn {_, _exp, {home, _epoch, _ts}} -> home == region end)
+    |> Enum.reduce(%{}, fn {{cid, _}, _, {_, e, _}}, acc -> Map.update(acc, cid, e, &max(&1, e)) end)
   end
 end

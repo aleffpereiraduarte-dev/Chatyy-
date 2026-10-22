@@ -12,6 +12,15 @@ defmodule ChatyyRouter.Application do
     end
   end
 
+  # conexões PG (réplica local p/ leitura, master p/ CAS) só se alguma fonte pg estiver ligada
+  defp pg_children do
+    if ChatyyRouter.Config.pg_enabled?() do
+      [ChatyyRouter.PG.Conn.child_spec(:replica), ChatyyRouter.PG.Conn.child_spec(:master)]
+    else
+      []
+    end
+  end
+
   defp start_full do
     ChatyyRouter.Metrics.init()
     ChatyyRouter.Router.init_cache()
@@ -24,11 +33,18 @@ defmodule ChatyyRouter.Application do
     ctl = if ChatyyRouter.Config.ctl_port() > 0, do: [ChatyyRouter.Control], else: []
 
     children =
+      ChatyyRouter.Store.child_specs() ++
       [
         %{id: :pg, start: {:pg, :start_link, [:chatyy_router]}},
         {Registry, keys: :unique, name: ChatyyRouter.ConvRegistry},
-        ChatyyRouter.Flags,
-        ChatyyRouter.HomeTable,
+        ChatyyRouter.Flags
+      ] ++
+      pg_children() ++
+      [
+        ChatyyRouter.HomeTable
+      ] ++
+      if(ChatyyRouter.Config.pg_enabled?(), do: ChatyyRouter.HomeSync.child_specs(), else: []) ++
+      [
         ChatyyRouter.Directory,
         ChatyyRouter.Hub.Stub,
         ChatyyRouter.Replica,
@@ -36,6 +52,8 @@ defmodule ChatyyRouter.Application do
         ChatyyRouter.Home
       ] ++
         ChatyyRouter.Delivery.child_specs() ++
+        ChatyyRouter.Fanout.child_specs() ++
+        if(ChatyyRouter.Config.pg_enabled?(), do: [ChatyyRouter.AckSource], else: []) ++
         [
           ChatyyRouter.AckOutbox,
           ChatyyRouter.Net.Cluster,

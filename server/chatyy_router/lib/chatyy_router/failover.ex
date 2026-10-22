@@ -129,24 +129,20 @@ defmodule ChatyyRouter.Janitor do
 
   def sweep do
     now = Clock.now_ms()
-    cutoff = now - Config.retention_ms()
+    alias ChatyyRouter.Seglog
 
-    inbox =
-      :mnesia.dirty_select(:rt_inbox, [{{:rt_inbox, :"$1", {:_, :"$2"}}, [{:<, :"$2", now}], [:"$1"]}])
-
-    for k <- inbox, do: Store.delete(:rt_inbox, k)
-
-    msgs = for {k, m} <- Store.all(:rt_msg), m.ts < cutoff, do: k
-    for k <- msgs, do: (Store.delete(:rt_msg, k); Store.delete(:rt_pend, k))
-
-    reps = for {k, m} <- Store.all(:rt_replica), m.ts < cutoff, do: k
-    for k <- reps, do: Store.delete(:rt_replica, k)
+    # corpos na casa vencidos (> 30 d): leva junto as pendências
+    old = :ets.select(Seglog.idx(:rt_msg), [{{:"$1", :_, :_, :_, :"$2", :_}, [{:<, :"$2", now}], [:"$1"]}])
+    for k <- old, do: Store.delete(:rt_pend, k)
+    msgs = Seglog.expire(:rt_msg, now)
+    reps = Seglog.expire(:rt_replica, now)
+    inbox = Seglog.expire(:rt_inbox, now)
 
     dd = for {k, {_seq, ts}} <- Store.all(:rt_dedupe), ts < now - Config.dedupe_ms(), do: k
     for k <- dd, do: Store.delete(:rt_dedupe, k)
 
-    Telemetry.execute([:chatyy_router, :inbox, :expired], %{count: length(inbox)})
-    Telemetry.execute([:chatyy_router, :home, :expired], %{count: length(msgs) + length(reps)})
-    %{inbox: length(inbox), msgs: length(msgs), replica: length(reps), dedupe: length(dd)}
+    Telemetry.execute([:chatyy_router, :inbox, :expired], %{count: inbox})
+    Telemetry.execute([:chatyy_router, :home, :expired], %{count: msgs + reps})
+    %{inbox: inbox, msgs: msgs, replica: reps, dedupe: length(dd)}
   end
 end

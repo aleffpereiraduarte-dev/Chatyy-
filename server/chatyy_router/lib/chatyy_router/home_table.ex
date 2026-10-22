@@ -29,10 +29,24 @@ defmodule ChatyyRouter.HomeTable do
     end
   end
 
+  @doc """
+  Casa de conversa SEM registro. ROUTER_DEFAULT_HOME fixa uma região (R1: "us",
+  a casa externa = master; quem trata é o caminho de fan-out externo); sem ela,
+  HRW sobre as regiões do cluster (pulando região em failover).
+  """
   def default_region(cid) do
-    r = hrw(cid, Config.region_names())
-    if failed?(r), do: successor(r) || r, else: r
+    case Config.get(:default_home) do
+      nil ->
+        r = hrw(cid, Config.region_names())
+        if failed?(r), do: successor(r) || r, else: r
+
+      r ->
+        to_string(r)
+    end
   end
+
+  @doc "Fonte da tabela de casa: \"local\" (difusão no cluster) ou \"pg\" (+ conv_home no PG)."
+  def pg?, do: to_string(Config.get(:home_source, "local")) == "pg"
 
   def hrw(cid, regions), do: Enum.max_by(regions, &:erlang.phash2({cid, &1}))
 
@@ -71,6 +85,9 @@ defmodule ChatyyRouter.HomeTable do
       Net.cast(r, __MODULE__, {:merge, cid, region, epoch})
     end
 
+    # fonte da verdade durável: conv_home no master (outbox com repetição;
+    # master fora => o epoch do cluster segue valendo e reconcilia depois)
+    if pg?(), do: ChatyyRouter.HomeSync.enqueue(cid, region, epoch)
     :ok
   end
 

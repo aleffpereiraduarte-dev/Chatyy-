@@ -23,20 +23,25 @@ defmodule ChatyyRouter.Router do
   def send_msg(cid, from, from_device, cmi, body, opts \\ []) do
     t0 = System.monotonic_time(:microsecond)
 
-    req = %{
-      from: from,
-      from_device: from_device,
-      cmi: cmi,
-      body: body,
-      meta: opts[:meta] || %{},
-      devices: opts[:devices] || Directory.recipients(cid, from_device)
-    }
+    devices =
+      case opts[:devices] do
+        nil -> Directory.recipients_result(cid, from_device)
+        l -> {:ok, l}
+      end
 
     res =
-      if ChatyyRouter.Flags.route?() do
-        attempt(cid, {:send, req}, opts[:timeout] || 5_000, 4)
-      else
-        {:error, :disabled}
+      cond do
+        not ChatyyRouter.Flags.route?() ->
+          {:error, :disabled}
+
+        # falha do PG/diretório NUNCA vira "sem destinatários" (senão a casa apagaria a msg)
+        match?({:error, _}, devices) ->
+          {:error, :directory_unavailable}
+
+        true ->
+          {:ok, devs} = devices
+          req = %{from: from, from_device: from_device, cmi: cmi, body: body, meta: opts[:meta] || %{}, devices: devs}
+          attempt(cid, {:send, req}, opts[:timeout] || 5_000, 4)
       end
 
     result =
@@ -106,13 +111,19 @@ defmodule ChatyyRouter.Router do
         {region, _, _} = HomeTable.lookup(cid)
 
         res =
-          if region == Net.me() do
-            Home.ensure(cid)
-          else
-            case Net.call(region, Home, {:ensure, cid}, 10_000) do
-              {:error, :unreachable} -> {:error, :home_unreachable}
-              r -> r
-            end
+          cond do
+            # casa fora do cluster (R1: "us"): escrita continua pelo caminho de hoje
+            region not in ChatyyRouter.Config.region_names() ->
+              {:error, :external_home}
+
+            region == Net.me() -> 
+              Home.ensure(cid)
+
+            true ->
+              case Net.call(region, Home, {:ensure, cid}, 10_000) do
+                {:error, :unreachable} -> {:error, :home_unreachable}
+                r -> r
+              end
           end
 
         with {:ok, pid} <- res, do: :ets.insert(@cache, {cid, pid})
