@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Versão** | `e2ee5-contrato/1.7` (1.7.0) — 22/10/2026 (1.7: pedido de chave de sala `chatyy.key_request`/`chatyy.room_key` + `e2ee5_key_request(_check)` (§3, §4.2.21–22, §6.12), encaminhamento automático entre MEUS aparelhos (`automatic-room-key-forwarding`), aparelhos já desconectados `e2ee5_devices_former` (§4.2.23) com `trust: device_removed` e UTD `unverified_sender`; 1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n; 1.3: códigos/campos do WP-07, `e2e_np` e flag NSE do WP-10, fila NSE→app do núcleo; 1.4: §2.8 tipos ricos e mídia cifrada do WP-09/WP-11; 1.5: §0.3bis privada inteira, §4.6 `e2ee5x_*` e denúncia do WP-16; 1.6: `sender_uid`, `members[].email`, códigos `{"sys"}`, leaf/`chat_send_rejected`, `gen` do `call_sdp`) |
+| **Versão** | `e2ee5-contrato/1.7` (1.7.1) — 22/10/2026 (1.7.1: rollout por CONTA — `E2EE5_PCT` = hash do e-mail canônico, inscrito pegajoso, `client_flag` com núcleo+build, `blocked_reason` `reserved`/`group_size`, ROLLOUT.md; 1.7: pedido de chave de sala `chatyy.key_request`/`chatyy.room_key` + `e2ee5_key_request(_check)` (§3, §4.2.21–22, §6.12), encaminhamento automático entre MEUS aparelhos (`automatic-room-key-forwarding`), aparelhos já desconectados `e2ee5_devices_former` (§4.2.23) com `trust: device_removed` e UTD `unverified_sender`; 1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n; 1.3: códigos/campos do WP-07, `e2e_np` e flag NSE do WP-10, fila NSE→app do núcleo; 1.4: §2.8 tipos ricos e mídia cifrada do WP-09/WP-11; 1.5: §0.3bis privada inteira, §4.6 `e2ee5x_*` e denúncia do WP-16; 1.6: `sender_uid`, `members[].email`, códigos `{"sys"}`, leaf/`chat_send_rejected`, `gen` do `call_sdp`) |
 | **Dono** | WP-00 (líder/arquiteto). Mudanças só por PR neste arquivo + entrada em `CHANGELOG.md`. |
 | **Implementação de referência** | `native/chatyy-crypto` (WP-01) e o servidor falso dos testes `native/chatyy-crypto/tests/common/fake_server.rs` (conformidade do WP-05). |
 | **Base** | `/root/e2ee-2026-10-21/PLANO.md` + DECISÕES DO FOUNDER (21/10: todas as recomendações aprovadas, "nível WhatsApp"). |
@@ -324,8 +324,15 @@ estava desligada: nenhum pedido saía.)
   **tem** de bater com o cabeçalho (`e2ee5_device_mismatch`).
 - Escritas sempre no **master US**. Leituras podem ir à réplica com RYW pelo cursor (`sync`) —
   se `td_since`/`dc_since` > réplica, ler do master.
-- Todas as ações respondem `e2ee5_disabled` (HTTP 403) se a conta não está na allowlist /
-  coorte (`e2ee5_allow` + `E2EE5_PCT`), **exceto** `status`.
+- Todas as ações respondem `e2ee5_disabled` (HTTP 403) se a conta não está liberada, **exceto**
+  `status`. (1.7.1) Liberada = linha em `e2ee5_allow` → vale `enabled` (false = fora mesmo na coorte);
+  sem linha → coorte por conta (`E2EE5_PCT`, §9) **ou** conta já inscrita (tem `e2ee5_xsign`:
+  baixar o PCT não corta quem já tem conversa cifrada; `E2EE5_STICKY=0` desliga). `api/.e2ee5-off` = ninguém.
+- (1.7.1) `e2ee5_status` traz `rollout.source` ∈ `allow` | `cohort` | `enrolled` | `none`.
+- (1.7.1) `e2ee5_client_flag` (liga `__chatyy_e2ee5` no app): linha da allowlist → `enabled AND client_on`
+  (como antes); coorte/inscrito → só se o app **declara** `{"platform":"ios"|"android","build":N,"core":1}`
+  com `build ≥ E2EE5_MIN_IOS` (763) / `E2EE5_MIN_ANDROID` (756). Resposta `{e2ee5, kill, ttl, source, reason?}`,
+  `reason` ∈ `platform` | `no_core` | `old_build`. App que manda `{}` (hoje) nunca liga por coorte.
 
 ### 4.2 Ações
 
@@ -454,7 +461,9 @@ Rate limit: 10/h por uid (tentativas de restauração).
 **4.2.19 `e2ee5_conversation_state`** Req `{"conv_id":"971"}` → `{"conv_id":"971",
 "e2ee_mode":1,"since_pts":12345,"members":[{"uid":"7","capable":true,"email":"a@chatyy.com.br"},{"uid":"42","capable":true,"email":"b@chatyy.com.br"}],
 "can_enable":true,"blocked_reason":null}`. `blocked_reason` ∈ `member_needs_update`,
-`not_allowed`, `kill`, `kids`, `bot`, `public`. Também: `{"conv_id","set":1}` liga (se
+`not_allowed`, `kill`, `kids`, `bot`, `public` e (1.7.1) `reserved` (conversa canário 971: nunca
+cifra) e `group_size` (grupo acima de `E2EE5_GROUP_MAX`, teto por degrau). `not_allowed` = algum membro
+fora da allowlist e da coorte ATUAL (o inscrito pegajoso não basta para ligar conversa nova). Também: `{"conv_id","set":1}` liga (se
 `can_enable`) e `{"conv_id","set":0,"confirm":true}` rebaixa com mensagem `e2ee_off`.
 `members[].email` é o e-mail **canônico** (§1.1); as linhas de mensagem podem trazer
 `sender_email` com `@onemundo.com.br` — canonicalizar antes de comparar, ou usar `sender_uid`.
@@ -884,8 +893,8 @@ tenta de novo; senão mostra "Nova mensagem". Responder pela notificação cifra
 ### 8.2 Elegível
 Conversa `direct` ou `group` (≤ 1024 membros), **não** `channel`/`saved`/comunidade/bot/
 ponte/live, **sem** conta Kids supervisionada (D6), todos os membros ativos com ≥ 1 aparelho
-`e2ee5` **assinado** (principal com MSK) e na coorte (`e2ee5_allow` ou `E2EE5_PCT` por
-`conv_id`), e `E2EE5_KILL` desligado.
+`e2ee5` **assinado** (principal com MSK) e liberados para ligar (`e2ee5_allow.enabled` ou coorte
+por conta `E2EE5_PCT`, §9), grupo ≤ `E2EE5_GROUP_MAX`, conversa ≠ 971, e `E2EE5_KILL` desligado.
 
 ### 8.3 Ativação automática
 > **Estado da implementação (WP-07, 21/10):** ainda **não** implementada — só existe a ativação
@@ -925,7 +934,11 @@ Toque para saber mais." (`e2ee5.divider.on`).
 | Flag | Onde mora | Quem lê | Efeito |
 |---|---|---|---|
 | `e2ee5_allow(email_canon, enabled)` | tabela | `e2ee5.php` | allowlist de contas (QA: apitest@onemundo, qa2@chatyy; **nunca duarte@**) |
-| `E2EE5_PCT` (0–100) | `/etc/mail-api.env` | `e2ee5.php`, `chat.php` | coorte por `conv_id % 100 < PCT` (além da allowlist) |
+| `E2EE5_PCT` (0–100, 2 casas) | `/etc/mail-api.env` (11 hosts; `kits/degrau.sh`) | `e2ee5.php` | (1.7.1) coorte por **conta**: `uint32(sha256("e2ee5-rollout-v1\|" + email_canon)[0:4]) % 10000 < round(PCT×100)`; subir só acrescenta contas. Linha da allowlist vence. (Antes: `conv_id % 100`.) |
+| `E2EE5_MIN_IOS` / `E2EE5_MIN_ANDROID` | env | `e2ee5.php` (`client_flag`) | (1.7.1) build mínimo para o app da coorte ligar (padrão 763 / 756) |
+| `E2EE5_GROUP_MAX` | env | `e2ee5.php` (`conversation_state`) | (1.7.1) teto de membros p/ grupo ligar (padrão 1024; o degrau ajusta) |
+| `E2EE5_STICKY` | env | `e2ee5.php` | (1.7.1) `0` = conta inscrita fora da coorte perde o servidor de chaves (padrão `1`, pegajoso) |
+| `HUB_E2EE5_PCT` (proposto) | `/etc/chatyy-hub-flags.env` | hub/leaf (WP-06) | mesma fórmula do `E2EE5_PCT` p/ `e2ee5Allowed` (caps `e2ee5_ws`/`e2ee5_ns`); ainda não existe |
 | `E2EE5_KILL=1` | env | `e2ee5.php`, `chat.php` | para de **ligar** conversas e de aceitar `bootstrap`; as cifradas continuam |
 | `e2ee_mode` | `chat_conversations` | servidor, hub, clientes | estado real + imposição |
 | `__chatyy_e2ee5` | JS global (OTA) | `services/flags.js` → WP-08c | liga o caminho novo no JS; desligado = byte a byte igual a hoje |

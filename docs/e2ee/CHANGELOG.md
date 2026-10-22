@@ -1,5 +1,14 @@
 # Contrato E2EE v5 — histórico
 
+## e2ee5-contrato/1.7.1 — 22/10/2026 (rollout por conta)
+- §4.1/§8.2/§9: `E2EE5_PCT` passa a ser coorte **por conta** (sha256 do e-mail canônico, baldes de
+  0,01 %), compondo com a allowlist (linha vence) — antes: `conv_id % 100` e "PCT > 0 libera todos no
+  servidor de chaves". Conta inscrita (tem identidade) continua liberada quando o PCT baixa.
+- §4.1 `e2ee5_status.rollout.source`; `e2ee5_client_flag` para coorte exige `{platform, build, core:1}`
+  com build mínimo (`E2EE5_MIN_IOS`/`E2EE5_MIN_ANDROID`).
+- §4.2.19 `blocked_reason` + `reserved` (971) e `group_size` (`E2EE5_GROUP_MAX`).
+- §9 flags novas; `HUB_E2EE5_PCT` proposto ao WP-06. Plano dos degraus: `/root/e2ee-2026-10-21/ROLLOUT.md`.
+
 ## e2ee5-contrato/1.7 — 22/10/2026 (keyreq + achados B1/B2 da matriz)
 - §3 `chatyy.key_request` / `chatyy.room_key` (reservado ao núcleo); `chatyy.key_resend` obsoleto.
 - §3 encaminhamento automático entre MEUS aparelhos: núcleo com `automatic-room-key-forwarding`
