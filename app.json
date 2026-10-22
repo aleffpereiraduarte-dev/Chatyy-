@@ -356,6 +356,7 @@
       "./plugins/with-custom-share-extension",
       "./plugins/with-android-share-intents",
       "./plugins/with-android-native-polish",
+      "./plugins/with-android-back-root",
       "./plugins/with-tablet-orientation",
       "./plugins/with-ios-localizations",
       "./plugins/with-android-auto",
