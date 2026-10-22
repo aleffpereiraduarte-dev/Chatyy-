@@ -148,6 +148,34 @@ export const MediaRow = memo(function MediaRow({ row, width, th, onPress }) {
 
 const AUD_ICON = { public: 'globe', everyone: 'globe', contacts: 'users', private: 'lock' };
 
+// [2026-10-22 mural-toque] Toque na mídia do cartão: 1 toque = abre (depois de 250 ms, p/ ver se é duplo);
+// 2 toques = CURTE (como o Instagram: só curte, nunca descurte) + coração grande; e trava de 800 ms
+// depois de abrir (vários toques abriam a tela várias vezes).
+const DOUBLE_MS = 250;
+const OPEN_LOCK_MS = 800;
+let _lastOpenAt = 0;
+function _openOnce(fn, p) {
+  const now = Date.now();
+  if (now - _lastOpenAt < OPEN_LOCK_MS) return;
+  _lastOpenAt = now;
+  try { fn && fn(p); } catch {}
+}
+const BigHeart = memo(function BigHeart({ trigger, color }) {
+  const op = useSharedValue(0);
+  const sc = useSharedValue(0.4);
+  useEffect(() => {
+    if (!trigger) return;
+    op.value = withSequence(withTiming(1, { duration: 90 }), withTiming(1, { duration: 420 }), withTiming(0, { duration: 220 }));
+    sc.value = withSequence(withSpring(1.1, { duration: 320, dampingRatio: 0.5 }), withTiming(1, { duration: 200 }));
+  }, [trigger]); // eslint-disable-line react-hooks/exhaustive-deps
+  const ast = useAnimatedStyle(() => ({ opacity: op.value, transform: [{ scale: sc.value }] }));
+  return (
+    <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }, ast]}>
+      <TgIcon name="heart" size={96} color={color || '#FFFFFF'} fill={color || '#FFFFFF'} />
+    </Animated.View>
+  );
+});
+
 export const PostCard = memo(function PostCard({ post, th, lang, author, onOpen, onLike, onComments, onShare, onMore, onBookmark, bookmarked, shadow }) {
   const p = post;
   const imgs = p.media.slice(0, 3);
@@ -155,6 +183,22 @@ export const PostCard = memo(function PostCard({ post, th, lang, author, onOpen,
   const name = (author && author.name) || (p.author && p.author.name) || '';
   const handle = (author && author.username) || (p.author && p.author.username) || '';
   const sub = [handle ? `@${handle}` : '', relTime(lang, p.created_at)].filter(Boolean).join(' · ');
+  const tapRef = useRef({ at: 0, timer: null });
+  const [heartN, setHeartN] = React.useState(0);
+  useEffect(() => () => { if (tapRef.current.timer) clearTimeout(tapRef.current.timer); }, []);
+  const onMediaPress = () => {
+    const r = tapRef.current;
+    const now = Date.now();
+    if (r.timer && now - r.at < DOUBLE_MS) {
+      clearTimeout(r.timer); r.timer = null; r.at = 0;
+      setHeartN((n) => n + 1);
+      if (!p.liked_by_me && !p.__pending) { try { onLike && onLike(p); } catch {} }
+      return;
+    }
+    r.at = now;
+    if (r.timer) clearTimeout(r.timer);
+    r.timer = setTimeout(() => { r.timer = null; _openOnce(onOpen, p); }, DOUBLE_MS);
+  };
   return (
     <View style={[st.pcard, { backgroundColor: th.card }, shadow]}>
       <View style={st.ph}>
@@ -171,12 +215,12 @@ export const PostCard = memo(function PostCard({ post, th, lang, author, onOpen,
         </Pressable>
       </View>
       {p.text ? (
-        <Pressable onPress={() => onOpen(p)}>
+        <Pressable onPress={() => _openOnce(onOpen, p)}>
           <Text style={[big ? st.ptxtBig : st.ptxt, { color: th.text }]}>{p.text}</Text>
         </Pressable>
       ) : null}
       {imgs.length ? (
-        <Pressable onPress={() => onOpen(p)} style={[st.pimgs, imgs.length > 1 && { flexDirection: 'row' }]}>
+        <Pressable onPress={onMediaPress} style={[st.pimgs, imgs.length > 1 && { flexDirection: 'row' }]}>
           {imgs.length === 1 ? (
             <FastImage source={{ uri: _cardUri(imgs[0]) }} placeholder={_ph(imgs[0])} transition={imgs[0].blurhash ? 120 : 0} style={{ width: '100%', aspectRatio: imgs[0].w && imgs[0].h ? Math.max(0.8, Math.min(1.6, imgs[0].w / imgs[0].h)) : 4 / 3.4, backgroundColor: th.chip }} resizeMode="cover" recyclingKey={`c${p.id}`} />
           ) : imgs.length === 2 ? (
@@ -191,6 +235,7 @@ export const PostCard = memo(function PostCard({ post, th, lang, author, onOpen,
             </>
           )}
           {p.media.length > 3 ? <View style={st.countPill}><Text style={st.countPillTxt}>+{p.media.length - 3}</Text></View> : null}
+          <BigHeart trigger={heartN} color="#FFFFFF" />
         </Pressable>
       ) : null}
       {p.__pending ? <View style={{ paddingTop: 8 }}><Text style={{ color: th.muted, fontSize: 13 }}>{p.__pending.status === 'failed' ? tgT(lang, 'failed') : tgT(lang, 'pending')}</Text></View> : (
