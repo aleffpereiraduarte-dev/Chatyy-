@@ -15,6 +15,7 @@ mod envelope;
 mod error;
 mod identity;
 mod ids;
+mod keyreq;
 mod link;
 mod media;
 mod metrics;
@@ -31,15 +32,16 @@ pub use crate::envelope::{envelope_version, ENVELOPE_VERSION, INNER_EVENT_TYPE, 
 pub use crate::error::{CoreError, CoreResult, UtdReason};
 pub use crate::identity::{fingerprint_digits, safety_number_for, SafetyNumber};
 pub use crate::ids::{conv_from_room_id, new_device_id, room_id_for_conv, uid_from_user_id, user_id_for_uid};
+pub use crate::keyreq::{KeyRequestResult, ShareKeyResult};
 pub use crate::link::{LinkPhone, LinkPhoneState, LinkWeb, LinkWebState, LINK_INFO};
 pub use crate::media::{decrypt_bytes, decrypt_file, encrypt_bytes, encrypt_file, EncryptedBytes, EncryptedFile};
 pub use crate::metrics::MetricsSnapshot;
 pub use crate::transport::{actions, HttpResponse, HttpTransport, TransportError};
 
 /// Versão do contrato que este núcleo implementa (CONTRATO, cabeçalho).
-pub const CONTRACT_VERSION: &str = "e2ee5-contrato/1.6";
+pub const CONTRACT_VERSION: &str = "e2ee5-contrato/1.7";
 
-/// `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.6; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"`.
+/// `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.7; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"`.
 #[cfg_attr(feature = "uniffi", uniffi::export)]
 pub fn core_version() -> String {
     format!(

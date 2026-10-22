@@ -20,6 +20,34 @@ pub struct Evil {
     pub swap_device_keys: Option<(String, String, Value)>,
     /// Aparelhos injetados (sem assinatura do dono) que o servidor "acrescenta" ao user.
     pub injected: Vec<(String, String, Value)>,
+    /// [1.7] `key_request_check` atesta QUALQUER aparelho pedido (servidor mentindo sobre membros).
+    pub attest_all: bool,
+    /// [1.7] `devices_former` não devolve nada (servidor escondendo aparelhos antigos).
+    pub hide_former: bool,
+}
+
+/// [1.7] Mensagem v5 registrada no "chat_messages" (com os membros/aparelhos daquele instante).
+#[derive(Clone)]
+pub struct MsgRec {
+    pub conv: String,
+    pub sender: String,
+    pub session_id: String,
+    pub index: u32,
+    pub members: BTreeSet<String>,
+    pub devices: BTreeSet<(String, String)>,
+}
+
+#[derive(Clone)]
+pub struct KeyReq {
+    pub id: u64,
+    pub conv: String,
+    pub sid: String,
+    pub sender: String,
+    pub req_user: String,
+    pub req_dev: String,
+    pub min_index: u32,
+    pub at: std::time::Instant,
+    pub served: bool,
 }
 
 #[derive(Default)]
@@ -44,6 +72,11 @@ pub struct State {
     pub calls: BTreeMap<String, u64>,
     pub examples: BTreeMap<String, (Value, Value)>,
     pub evil: Evil,
+    pub msgs: BTreeMap<String, MsgRec>,
+    pub keyreqs: Vec<KeyReq>,
+    pub keyreq_seq: u64,
+    /// [1.7] aparelhos revogados (device_keys como estavam, com a assinatura da SSK).
+    pub revoked: BTreeMap<String, BTreeMap<String, Value>>,
 }
 
 #[derive(Default, Clone)]
@@ -152,6 +185,34 @@ impl FakeServer {
     }
     pub fn device_keys(&self, uid: &str, dev: &str) -> Option<Value> {
         self.st.lock().unwrap().devices.get(&uid_user(uid)).and_then(|d| d.get(dev)).cloned()
+    }
+    /// [1.7] Registra a mensagem `mid` (como o chat_send grava em chat_messages).
+    pub fn post_message(&self, conv: &str, mid: &str, sender_uid: &str, envelope: &str) {
+        let v: Value = serde_json::from_str(envelope).unwrap();
+        let c = &v["c"];
+        let sid = c["session_id"].as_str().unwrap_or("").to_string();
+        let index = vodozemac::megolm::MegolmMessage::from_base64(c["ciphertext"].as_str().unwrap_or("")).map(|m| m.message_index()).unwrap_or(0);
+        let mut st = self.st.lock().unwrap();
+        let members = st.convs.get(conv).cloned().unwrap_or_default();
+        let devices: BTreeSet<(String, String)> = members
+            .iter()
+            .flat_map(|u| st.devices.get(u).map(|d| d.keys().map(|k| (u.clone(), k.clone())).collect::<Vec<_>>()).unwrap_or_default())
+            .collect();
+        st.msgs.insert(mid.to_string(), MsgRec { conv: conv.into(), sender: uid_user(sender_uid), session_id: sid, index, members, devices });
+    }
+    /// [1.7] Perde o to-device pendente de um aparelho (simula entrega perdida). Devolve quantos.
+    pub fn drop_to_device(&self, uid: &str, dev: &str) -> usize {
+        let mut st = self.st.lock().unwrap();
+        let u = uid_user(uid);
+        let before = st.td.len();
+        st.td.retain(|(_, uu, d, _)| !(uu == &u && d == dev));
+        before - st.td.len()
+    }
+    pub fn set_hide_former(&self, on: bool) {
+        self.st.lock().unwrap().evil.hide_former = on;
+    }
+    pub fn set_attest_all(&self, on: bool) {
+        self.st.lock().unwrap().evil.attest_all = on;
     }
     pub fn examples(&self) -> BTreeMap<String, (Value, Value)> {
         self.st.lock().unwrap().examples.clone()
@@ -401,9 +462,10 @@ impl FakeServer {
             }
             "device_delete" => {
                 let d = b["device_id"].as_str().unwrap_or("").to_string();
-                if st.devices.get_mut(&me).and_then(|x| x.remove(&d)).is_none() {
+                let Some(old) = st.devices.get_mut(&me).and_then(|x| x.remove(&d)) else {
                     return err(400, "e2ee5_bad_request");
-                }
+                };
+                st.revoked.entry(me.clone()).or_default().insert(d.clone(), old);
                 st.otks.remove(&(me.clone(), d.clone()));
                 st.fallback.remove(&(me.clone(), d.clone()));
                 st.td.retain(|(_, u, dd, _)| !(u == &me && dd == &d));
@@ -514,6 +576,66 @@ impl FakeServer {
                 ok(json!({"bearer": bearer}))
             }
             "metrics" => ok(json!({})),
+            // [1.7] §4.2.23 — aparelhos já desconectados (só de quem divide conversa, ou meus)
+            "devices_former" => {
+                let mut out = Map::new();
+                for u in b["user_ids"].as_array().into_iter().flatten().filter_map(|x| x.as_str()) {
+                    if !st.shares(&me, u) || st.evil.hide_former {
+                        continue;
+                    }
+                    let devs: Map<String, Value> = st.revoked.get(u).map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default();
+                    out.insert(u.to_string(), Value::Object(devs));
+                }
+                ok(json!({"device_keys": out}))
+            }
+            // [1.7] §4.2.21 — destinatário sem chave pede (membro NA HORA da mensagem; dedupe 20 s)
+            "key_request" => {
+                let mid = b["mid"].as_str().unwrap_or("").to_string();
+                let conv = b["conv_id"].as_str().unwrap_or("").to_string();
+                let sid = b["session_id"].as_str().unwrap_or("").to_string();
+                let sender = uid_user(b["sender_uid"].as_str().unwrap_or(""));
+                let Some(m) = st.msgs.get(&mid).cloned() else { return err(403, "e2ee5_key_request_refused") };
+                if m.conv != conv || m.session_id != sid || m.sender != sender {
+                    return err(403, "e2ee5_key_request_refused");
+                }
+                if !m.members.contains(&me) || !m.devices.contains(&(me.clone(), dev.clone())) {
+                    return err(403, "e2ee5_key_request_refused");
+                }
+                let now = std::time::Instant::now();
+                if let Some(r) = st.keyreqs.iter_mut().find(|r| r.req_dev == dev && r.req_user == me && r.sid == sid) {
+                    if !r.served && now.duration_since(r.at).as_secs() < 20 {
+                        return ok(json!({"req_id": r.id.to_string(), "min_index": r.min_index, "dedup": true}));
+                    }
+                    r.at = now;
+                    r.served = false;
+                    r.min_index = r.min_index.min(m.index);
+                    return ok(json!({"req_id": r.id.to_string(), "min_index": r.min_index, "dedup": false}));
+                }
+                st.keyreq_seq += 1;
+                let id = st.keyreq_seq;
+                st.keyreqs.push(KeyReq { id, conv, sid, sender, req_user: me.clone(), req_dev: dev.clone(), min_index: m.index, at: now, served: false });
+                ok(json!({"req_id": id.to_string(), "min_index": m.index, "dedup": false}))
+            }
+            // [1.7] §4.2.22 — remetente pergunta quais aparelhos pediram (atestado do servidor)
+            "key_request_check" => {
+                let conv = b["conv_id"].as_str().unwrap_or("").to_string();
+                let sid = b["session_id"].as_str().unwrap_or("").to_string();
+                let target = uid_user(b["target_uid"].as_str().unwrap_or(""));
+                let want: BTreeSet<String> = b["target_devices"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect();
+                if st.evil.attest_all {
+                    let devs: Vec<String> = if want.is_empty() { st.devices.get(&target).map(|d| d.keys().cloned().collect()).unwrap_or_default() } else { want.into_iter().collect() };
+                    let allowed: Vec<Value> = devs.into_iter().map(|d| json!({"device_id": d, "min_index": 0, "req_id": "0"})).collect();
+                    return ok(json!({"allowed": allowed}));
+                }
+                let mut allowed = vec![];
+                for r in st.keyreqs.iter_mut() {
+                    if r.sender == me && r.sid == sid && r.conv == conv && r.req_user == target && !r.served && (want.is_empty() || want.contains(&r.req_dev)) {
+                        r.served = true;
+                        allowed.push(json!({"device_id": r.req_dev, "min_index": r.min_index, "req_id": r.id.to_string()}));
+                    }
+                }
+                ok(json!({"allowed": allowed}))
+            }
             _ => err(400, "e2ee5_bad_request"),
         }
     }

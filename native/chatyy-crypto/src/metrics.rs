@@ -16,6 +16,12 @@ pub struct MetricsSnapshot {
     pub to_device_utd: u64,
     pub dropped_untrusted: u64,
     pub store_reloads: u64,
+    /// [1.7] pedidos de chave de sala: enviados (destinatário sem chave), servidos (remetente
+    /// reenviou), recebidos e importados (destinatário), recusados (regras de membro/índice).
+    pub key_req_sent: u64,
+    pub key_req_served: u64,
+    pub key_req_ok: u64,
+    pub key_req_refused: u64,
 }
 
 #[derive(Default)]
@@ -35,6 +41,10 @@ impl Metrics {
     pub fn inc_td_utd(&self) { self.with(|s, _| s.to_device_utd += 1) }
     pub fn inc_dropped_untrusted(&self) { self.with(|s, _| s.dropped_untrusted += 1) }
     pub fn inc_reload(&self) { self.with(|s, _| s.store_reloads += 1) }
+    pub fn inc_key_req_sent(&self) { self.with(|s, _| s.key_req_sent += 1) }
+    pub fn add_key_req_served(&self, n: u64) { self.with(|s, _| s.key_req_served += n) }
+    pub fn inc_key_req_ok(&self) { self.with(|s, _| s.key_req_ok += 1) }
+    pub fn add_key_req_refused(&self, n: u64) { self.with(|s, _| s.key_req_refused += n) }
     pub fn snapshot(&self) -> MetricsSnapshot {
         let g = self.0.lock().map(|g| g.clone()).unwrap_or_default();
         let mut s = g.0;

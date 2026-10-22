@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Versão** | `e2ee5-contrato/1.6` (1.6.0) — 21/10/2026 (1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n; 1.3: códigos/campos do WP-07, `e2e_np` e flag NSE do WP-10, fila NSE→app do núcleo; 1.4: §2.8 tipos ricos e mídia cifrada do WP-09/WP-11; 1.5: §0.3bis privada inteira, §4.6 `e2ee5x_*` e denúncia do WP-16; 1.6: `sender_uid`, `members[].email`, códigos `{"sys"}`, leaf/`chat_send_rejected`, `gen` do `call_sdp`) |
+| **Versão** | `e2ee5-contrato/1.7` (1.7.0) — 22/10/2026 (1.7: pedido de chave de sala `chatyy.key_request`/`chatyy.room_key` + `e2ee5_key_request(_check)` (§3, §4.2.21–22, §6.12), encaminhamento automático entre MEUS aparelhos (`automatic-room-key-forwarding`), aparelhos já desconectados `e2ee5_devices_former` (§4.2.23) com `trust: device_removed` e UTD `unverified_sender`; 1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n; 1.3: códigos/campos do WP-07, `e2e_np` e flag NSE do WP-10, fila NSE→app do núcleo; 1.4: §2.8 tipos ricos e mídia cifrada do WP-09/WP-11; 1.5: §0.3bis privada inteira, §4.6 `e2ee5x_*` e denúncia do WP-16; 1.6: `sender_uid`, `members[].email`, códigos `{"sys"}`, leaf/`chat_send_rejected`, `gen` do `call_sdp`) |
 | **Dono** | WP-00 (líder/arquiteto). Mudanças só por PR neste arquivo + entrada em `CHANGELOG.md`. |
 | **Implementação de referência** | `native/chatyy-crypto` (WP-01) e o servidor falso dos testes `native/chatyy-crypto/tests/common/fake_server.rs` (conformidade do WP-05). |
 | **Base** | `/root/e2ee-2026-10-21/PLANO.md` + DECISÕES DO FOUNDER (21/10: todas as recomendações aprovadas, "nível WhatsApp"). |
@@ -287,13 +287,23 @@ Todos têm `v:1`. Evento em claro com tipo `chatyy.*` é **descartado**.
 | `chatyy.call_key` | `{v, call_id, conv_id, key (b64 32 B), index (u32), ts}` | chave LiveKit E2EE por ligação; rotação = `index+1` (F5) |
 | `chatyy.call_sdp` | `{v, call_id, kind: "offer"\|"answer"\|"candidate"\|"bye", gen, sdp?, candidate?, mid?, mline?}` — `gen` (int, 0 = 1ª negociação) = geração da negociação (ICE restart), igual ao `call_p2p_*` do hub; o receptor casa por `(call_id, kind, gen)` | P2P 1:1 DTLS-SRTP autenticado (F5) |
 | `chatyy.draft` | `{v, conv_id, text, ts}` | sync de rascunho entre MEUS aparelhos (opcional) |
-| `chatyy.decrypt_report` | `{v, conv_id, mid, session_id, reason, ts}` | "não consegui decifrar" → remetente reenvia chave (`rotate_conversation` + reenvio) |
-| `chatyy.key_resend` | `{v, conv_id, session_id}` | pedido de reenvio de chave a outro membro (a biblioteca já pede aos MEUS aparelhos) |
+| `chatyy.decrypt_report` | `{v, conv_id, mid, session_id, reason, ts}` | "não consegui decifrar" (60 s) → remetente rotaciona (`rotate_conversation`): resolve as PRÓXIMAS; as já enviadas vêm pelo `chatyy.key_request` (1.7) |
+| `chatyy.key_resend` | `{v, conv_id, session_id}` | **obsoleto (1.7)** — substituído por `chatyy.key_request`; o app só rotaciona ao recebê-lo |
+| `chatyy.key_request` (1.7) | `{v, req_id, conv_id, session_id, mid}` | destinatário sem a chave de uma sessão EXISTENTE pede ao remetente (§6.12). Vai a todos os aparelhos assinados do remetente; só o que CRIOU a sessão atende (`share_room_key`). Sai do `request_room_key` do núcleo, nunca do host |
+| `chatyy.room_key` (1.7) | `{v, req_id, conv_id, session_id, key: ExportedRoomKey}` | resposta: chave da sessão exportada a partir do índice permitido. **Reservado ao núcleo**: `send_to_device` recusa este tipo; o receptor importa DENTRO do núcleo (não aparece em `chatyy_events`) e só se (a) ele pediu há ≤ 48 h, (b) `sender_key`/`sender_claimed_keys.ed25519` = chaves do aparelho Olm remetente, assinado pelo dono, (c) sem cadeia de encaminhamento |
 | `chatyy.link.revoked` | `{v, device_id}` | celular avisa meus aparelhos que um vinculado saiu |
 | `chatyy.read_sync` | **[fora do v1]** | — |
 
 `targets`: lista `{uid, device_id}`; `device_id` vazio = todos os aparelhos **assinados** do uid.
 O aparelho atual nunca recebe o próprio evento.
+
+**Entre MEUS aparelhos (1.7):** o núcleo é compilado com `automatic-room-key-forwarding` da
+matrix-sdk-crypto: um decrypt sem chave (`missing_session`/`unknown_index`) enfileira um
+`m.room_key_request` (em claro, só ids) para os MEUS aparelhos, que respondem com
+`m.forwarded_room_key` (Olm); só se aceita forward de aparelho PRÓPRIO verificado. Para chave de
+OUTRO usuário a biblioteca recusa forward — por isso o `chatyy.key_request`/`chatyy.room_key` acima.
+(Antes da 1.7 este parágrafo dizia que a biblioteca já pedia aos meus aparelhos, mas a feature
+estava desligada: nenhum pedido saía.)
 
 ---
 
@@ -450,7 +460,37 @@ Rate limit: 10/h por uid (tentativas de restauração).
 `sender_email` com `@onemundo.com.br` — canonicalizar antes de comparar, ou usar `sender_uid`.
 
 **4.2.20 `e2ee5_metrics`** Req `MetricsSnapshot` do núcleo (§6.9) + `{"platform","app_version"}`
-→ `{}`. Agrega por dia/plataforma em `e2ee5_metrics`. Nunca ids de mensagem.
+→ `{}`. Agrega por dia/plataforma em `e2ee5_metrics`. Nunca ids de mensagem. Campos aceitos (1.7):
+`encrypt, decrypt_ok, utd_total, to_device_in, to_device_utd, dropped_untrusted, store_reloads,
+key_req_sent, key_req_served, key_req_ok, key_req_refused`, `utd_json` (→ `utd.<motivo>`) e
+`counters{}` só com `utd_60s, utd_resolved, enc_le50, enc_le150, enc_le500, enc_gt500,
+missing_sessions, plaintext_refused, nse_fallback, native_timeout, native_err, core_slow,
+key_request_sent, key_request_served, key_request_ok`. O servidor grava também, com
+`platform="srv"`, `keyreq.srv_request|srv_dedup|srv_refused|srv_attested|srv_check_empty`.
+
+**4.2.21 `e2ee5_key_request`** (1.7, destinatário) Req `{"conv_id":"2585","mid":"104080944762881",
+"session_id":"<sid>","sender_uid":"7"}` → `{"req_id":"12","min_index":5,"dedup":false}`.
+O servidor confere, e recusa com 403 `e2ee5_key_request_refused` + `data.reason` se não:
+a mensagem `mid` existe nessa conversa, é envelope v5 dessa `session_id` e desse remetente
+(`no_message`/`not_e2ee`/`session_mismatch`/`sender_mismatch`/`bad_envelope`); o chamador era
+**membro da conversa na hora da mensagem** (`joined_at ≤ created_at + 5 s` e não tinha saído;
+`not_member_at_message`); o aparelho chamador já existia (`created_at ≤ created_at da msg + 5 s`;
+`device_after_message` — aparelho novo/reinstalação recupera pelo backup, não por pedido).
+`min_index` = índice Megolm da mensagem (lido do `ciphertext`); repetições guardam o menor.
+Dedupe: o mesmo (aparelho, sessão) pendente há < 20 s ⇒ `dedup:true` (o núcleo não manda o
+`chatyy.key_request` de novo). Limites: 120/min por aparelho, 3.000/h por uid, 60 repetições do
+mesmo pedido (429). Tabela `e2ee5_key_requests` (DDL 021, só ids/índice/horários; 7 dias).
+
+**4.2.22 `e2ee5_key_request_check`** (1.7, remetente) Req `{"conv_id","session_id","target_uid",
+"target_devices":["W…"]}` (≤ 20; vazio = todos que pediram) → `{"allowed":[{"device_id","min_index",
+"req_id"}]}`: pedidos ≤ 48 h, ainda não atendidos, de aparelhos ativos do alvo, para sessões em
+que o CHAMADOR é o remetente. Marca atendido. 300/min por aparelho.
+
+**4.2.23 `e2ee5_devices_former`** (1.7) Req `{"user_ids":["@u42:chatyy"]}` (≤ 50) →
+`{"device_keys":{"@u42:chatyy":{"<device_id>":{…device_keys como estavam, com a assinatura da SSK…}}}}`:
+aparelhos **revogados** (≤ 400 dias, que eram assinados) de quem divide conversa comigo, ou meus.
+Nunca entram no `keys_query` (aparelho revogado não recebe chave nova). O núcleo confere a
+assinatura com a SSK ATUAL do dono antes de usar (§6.5). 60/min por aparelho.
 
 ### 4.3 Códigos de erro (`data.code`)
 | Código | HTTP | Quando |
@@ -475,6 +515,7 @@ Rate limit: 10/h por uid (tentativas de restauração).
 | `e2ee5_not_e2ee` | 409 | envelope em conversa `e2ee_mode=0` (cliente desatualizado do estado) |
 | `e2ee5_server_read_refused` | 409 | (chat.php) ação que leria conteúdo de conversa cifrada: IA/Bia, tradução, transcrição, resumo, export, jogos (D2/D7) |
 | `e2ee5_forward_client` | 409 | (chat.php) `chat_forward`/`chat_forward_multi`/`chat_clone_to_saved`/broadcast de mensagem cifrada — o cliente recifra e envia por conta própria |
+| `e2ee5_key_request_refused` | 403 | (1.7) `e2ee5_key_request` recusado; `data.reason` ∈ `no_message`, `not_e2ee`, `session_mismatch`, `sender_mismatch`, `bad_envelope`, `not_member_at_message`, `device_after_message`, `device_mismatch` |
 | `e2ee5_forbidden` | 403 | (`conversation_state set:0`) em grupo só admin rebaixa a criptografia |
 
 ### 4.6 Pedido explícito do usuário (`e2ee5x_*`, WP-16) e denúncia
@@ -521,6 +562,9 @@ base64_decode_unpadded(pub))`. A referência em Rust está em
 | `sync` | 120/min por aparelho |
 | `link_create` | 20/h por IP |
 | `secret_storage_get` | 10/h por uid |
+| `key_request` (1.7) | 120/min por aparelho; 3.000/h por uid; dedupe 20 s por (aparelho, sessão) |
+| `key_request_check` (1.7) | 300/min por aparelho |
+| `devices_former` (1.7) | 60/min por aparelho |
 
 ---
 
@@ -629,7 +673,7 @@ Timeout recomendado: 15 s (NSE: 5 s).
 ### 6.3 Funções livres
 | Função | Retorno |
 |---|---|
-| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.6; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
+| `core_version()` | `"chatyy-crypto 0.1.0; contrato e2ee5-contrato/1.7; matrix-sdk-crypto 0.18.0; vodozemac 0.10.0"` |
 | `new_device_id(prefix: "P"\|"W"\|"T"\|"X")` | `String` |
 | `envelope_version(content)` | `Option<u64>` (5, ou outro N → placeholder "Atualize") |
 | `encrypt_bytes(plain: bytes) / decrypt_bytes(data: bytes, info_json)` | `EncryptedBytes{data, info_json}` / bytes |
@@ -667,6 +711,8 @@ backup_enable(passphrase|"") -> BackupEnabled{recovery_key, version}
 backup_step(max_batches) -> u32 / backup_status() -> BackupStatus / backup_disable()
 backup_restore(recovery_key_or_passphrase) -> RestoreResult{imported, total, identity_restored, convs}
 metrics_snapshot() -> MetricsSnapshot / flush_metrics()
+request_room_key(conv_id, session_id, sender_uid, server_mid) -> KeyRequestResult{sent, dedup, req_id, sent_devices, reason}   // 1.7, §6.12
+share_room_key(conv_id, session_id, target_uid, target_devices) -> ShareKeyResult{shared_devices, refused, reason}             // 1.7, §6.12
 ```
 Regras de uso:
 - `member_uids` em `encrypt` = membros **atuais** segundo o servidor (`conversation_state`);
@@ -696,6 +742,18 @@ Regras de uso:
 Retentáveis após `sync()`: `missing_session`, `unknown_index`, `store`, `untrusted_device`.
 UI: retentável = "Aguardando esta mensagem…"; não retentável = "Não foi possível decifrar".
 Após 60 s retentável sem sucesso ⇒ `chatyy.decrypt_report` ao remetente + métrica.
+(1.7) Antes disso, com `__chatyy_e2ee5_keyreq`, o host pede a chave aos 3 s / 20 s / 50 s (§6.12).
+
+(1.7) `unverified_sender` (**não retentável**): sessão importada (backup/vínculo/export) cuja chave
+existe, mas cujo aparelho remetente não é assinado pelo dono nem na lista atual nem entre os já
+desconectados (`e2ee5_devices_former`, assinatura conferida com a SSK atual). UI: "Não foi
+possível decifrar" (o app não fica "aguardando" para sempre). Se o servidor não respondeu, segue
+`untrusted_device` (retentável).
+
+(1.7) `Trust::DeviceRemoved` (`trust: "device_removed"` no JS): mensagem de histórico enviada de um
+aparelho do dono que JÁ FOI assinado por ele e hoje está desconectado. UI: aviso discreto
+"Enviada de um aparelho que não está mais conectado" (não é alerta de segurança; `changed`
+continua tendo prioridade).
 
 ### 6.6 Número de segurança
 - Por lado: `SHA-512(0x0000 ‖ MSK(32 B) ‖ uid ASCII)`, depois 5.200 × `SHA-512(h ‖ MSK)`;
@@ -733,7 +791,7 @@ Celular: LinkPhone::accept(core, qr, ExportFilter) -> LinkPhone ; check_code()
 
 ### 6.9 Métricas
 `MetricsSnapshot{encrypt, decrypt_ok, utd_json, utd_total, to_device_in, to_device_utd,
-dropped_untrusted, store_reloads}` — só contagens. `flush_metrics()` envia e zera.
+dropped_untrusted, store_reloads, key_req_sent, key_req_served, key_req_ok, key_req_refused}` (1.7: `key_req_*`) — só contagens. `flush_metrics()` envia e zera.
 
 ### 6.10 Store
 - Nativo: SQLite `matrix-sdk-sqlite` cifrado com `store_passphrase` em `store_dir`
@@ -764,6 +822,32 @@ com estas decisões do WP-00:
    deviceId?, chunks?}` (espelha `LinkPhoneState` do §6.7). Lado web: `linkBegin`,
    `linkPoll`, `linkSendDevice`, `linkCompleteUpload`, `linkCancel` como na proposta.
 6. O host esconde `store_dir`, `store_passphrase`, `role`, `holder_suffix`; o JS passa só `uid`.
+
+### 6.12 Pedido de chave de sala (1.7) — "nunca perder mensagem"
+Fonte: `native/chatyy-crypto/src/keyreq.rs`; testes `utd_pede_chave_remetente_reenvia_e_decifra`,
+`quem_entrou_depois_nao_recebe_chave_do_passado`, `pedido_de_chave_dedupe_e_limite`,
+`meu_outro_aparelho_encaminha_a_chave_automaticamente`; matriz T16.
+1. **Destinatário** (UTD `missing_session`/`unknown_index` de mensagem com `mid` do servidor):
+   `request_room_key(conv, session, sender_uid, mid)` → `e2ee5_key_request` (servidor atesta,
+   §4.2.21) → `chatyy.key_request` por Olm a todos os aparelhos assinados do remetente. Dedupe
+   local: 30 s por sessão, máx. 6/24 h; `own_session` se eu sou o criador.
+2. **Remetente** (o host, ao receber `chatyy.key_request` no `SyncResult.chatyy_events`):
+   `share_room_key(conv, session, sender_uid_do_evento, [sender_device_id_do_evento])`. O núcleo:
+   (a) só o aparelho que CRIOU a sessão atende (`not_owner`); (b) `e2ee5_key_request_check`
+   precisa atestar o aparelho (`not_attested`); (c) **registro local** `share_log` (gravado no
+   `encrypt`: com quais aparelhos a sessão saiu e a partir de qual índice) — se a sessão tem
+   registro e o usuário-alvo não estava nele ⇒ `not_member_at_share` (quem entrou depois nunca
+   recebe, mesmo com servidor mentindo); (d) índice = max(`min_index` do servidor, índice do
+   registro), exportado com `export_at_index` (nunca o passado anterior); (e) aparelho-alvo
+   assinado pelo dono; dedupe 2 min por (sessão, aparelho); máx. 20 aparelhos.
+3. **Destinatário**: o `sync()` importa o `chatyy.room_key` (§3) e devolve a conversa em
+   `convs_with_new_keys` — o host re-tenta as mensagens "aguardando".
+Por que não `m.forwarded_room_key`/`m.room_key` da biblioteca: o receptor só aceita forward de
+aparelho PRÓPRIO, e reenviar a sessão de SAÍDA só serve do índice ATUAL (a catraca já passou).
+Host JS (flag `__chatyy_e2ee5_keyreq`): pede aos 3/20/50 s; atende no máx. 30/min e 1×/min por
+(sessão, aparelho); núcleo/servidor sem suporte (`unsupported`) ⇒ desliga sozinho. Web: o worker
+expõe `requestRoomKey`/`shareRoomKey`, mas o wasm publicado só os ganha ao rodar
+`vendor/chatyy-crypto-wasm/build.sh`. Nativo: BUILD.
 
 ---
 
@@ -845,6 +929,7 @@ Toque para saber mais." (`e2ee5.divider.on`).
 | `E2EE5_KILL=1` | env | `e2ee5.php`, `chat.php` | para de **ligar** conversas e de aceitar `bootstrap`; as cifradas continuam |
 | `e2ee_mode` | `chat_conversations` | servidor, hub, clientes | estado real + imposição |
 | `__chatyy_e2ee5` | JS global (OTA) | `services/flags.js` → WP-08c | liga o caminho novo no JS; desligado = byte a byte igual a hoje |
+| `__chatyy_e2ee5_keyreq` (1.7) | JS global (OTA) | `services/e2ee/e2ee5.js` | pede/atende chave de sala (§6.12); desligado = só `decrypt_report` aos 60 s |
 | `e2ee5_native` | `e2ee5_status.flags` | módulo nativo (WP-03) grava no store nativo ao abrir | o nativo só inicializa o núcleo se `true` |
 | `e2ee5_media` / `e2ee5_calls` / `e2ee5_link` / `e2ee5_backup` / `e2ee5_push_decrypt` | `e2ee5_status.flags` (env `E2EE5_FLAGS=media,calls,…` + por conta) | clientes | um interruptor por fase |
 | input `chatyy_crypto` | workflows CI | WP-02 | inclui o núcleo no binário (sem comportamento até as flags) |

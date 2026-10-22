@@ -25,7 +25,9 @@ js = ["matrix-sdk-crypto/js", "dep:matrix-sdk-indexeddb", "getrandom/js", "dep:g
 
 [dependencies]
 # VERSÃO FIXA: o formato de store/pickle/fio depende dela (PLANO §2.1). Atualização trimestral c/ vetores.
-matrix-sdk-crypto = { version = "=0.18.0", features = ["experimental-send-custom-to-device"] }
+# automatic-room-key-forwarding [1.7]: pedido/encaminhamento de chave entre MEUS aparelhos (m.room_key_request /
+# m.forwarded_room_key, só aceito de aparelho próprio verificado). Para OUTRO usuário: keyreq.rs (share_room_key).
+matrix-sdk-crypto = { version = "=0.18.0", features = ["experimental-send-custom-to-device", "automatic-room-key-forwarding"] }
 matrix-sdk-common = { version = "=0.18.0" }
 matrix-sdk-sqlite = { version = "=0.18.0", default-features = false, features = ["crypto-store", "bundled"], optional = true }
 rusqlite = { version = "=0.37.0", features = ["bundled"], optional = true }

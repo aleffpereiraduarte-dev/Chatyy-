@@ -69,6 +69,11 @@ pub mod actions {
     pub const LINK_POLL: &str = "link_poll";
     pub const LINK_FINISH: &str = "link_finish";
     pub const METRICS: &str = "metrics";
+    /// [1.7] pedido de chave de sala (destinatário) e atestado do pedido (remetente).
+    pub const KEY_REQUEST: &str = "key_request";
+    pub const KEY_REQUEST_CHECK: &str = "key_request_check";
+    /// [1.7] aparelhos já desconectados (chaves assinadas) — histórico importado continua legível.
+    pub const DEVICES_FORMER: &str = "devices_former";
 }
 
 /// Chama a ação e devolve `data` (o JSON no formato Matrix) ou erro tipado.

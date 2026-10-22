@@ -110,6 +110,10 @@ export const encrypt = (convId, memberUids, payload) => op('encrypt')({ convId, 
 export const decrypt = (input) => op('decrypt')(input);
 export const sendToDevice = (eventType, targets, content) => op('sendToDevice')({ eventType, targets, content });
 export const rotateConversation = (convId) => op('rotateConversation')({ convId });
+/** [1.7] → `{sent, dedup, reqId, sentDevices, reason}` (destinatário sem a chave da sessão) */
+export const requestRoomKey = (convId, sessionId, senderUid, serverMid) => op('requestRoomKey')({ convId, sessionId, senderUid, serverMid });
+/** [1.7] → `{sharedDevices, refused, reason}` (remetente dono da sessão reenvia a chave) */
+export const shareRoomKey = (convId, sessionId, targetUid, targetDevices) => op('shareRoomKey')({ convId, sessionId, targetUid, targetDevices: targetDevices || [] });
 export const onMembersChanged = (convId, memberUids, removedUids) => op('onMembersChanged')({ convId, memberUids, removedUids });
 export const forgetDevice = (deviceId) => op('forgetDevice')({ deviceId });
 export const listDevices = (uid) => op('listDevices')({ uid });

@@ -310,8 +310,10 @@ async function _flushCoreMetrics() {
     const body = {
       platform: Platform.OS, encrypt: d('encrypt'), decrypt_ok: d('decryptOk'), utd_total: d('utdTotal'), to_device_in: d('toDeviceIn'),
       to_device_utd: d('toDeviceUtd'), dropped_untrusted: d('droppedUntrusted'), store_reloads: d('storeReloads'), utd_json: JSON.stringify(utd),
+      key_req_sent: d('keyReqSent'), key_req_served: d('keyReqServed'), key_req_ok: d('keyReqOk'), key_req_refused: d('keyReqRefused'), // [e2ee5 1.7 keyreq]
     };
-    if (!(body.encrypt || body.decrypt_ok || body.utd_total || body.to_device_in || body.to_device_utd || body.dropped_untrusted || body.store_reloads)) return;
+    if (!(body.encrypt || body.decrypt_ok || body.utd_total || body.to_device_in || body.to_device_utd || body.dropped_untrusted || body.store_reloads
+      || body.key_req_sent || body.key_req_served || body.key_req_ok || body.key_req_refused)) return;
     const r = await _http('e2ee5_metrics', body);
     if (r && r.ok) _coreSnapLast = { dev: _sess.deviceId, m };
   } catch (_) {}
@@ -372,6 +374,7 @@ function _onSyncResult(r) {
     for (const ev of (Array.isArray(r.chatyyEvents) ? r.chatyyEvents : [])) {
       if (ev && typeof ev.eventType === 'string' && ev.eventType.startsWith('chatyy.call_')) { try { require('../callE2ee').e2ee5HandleEvent(ev); } catch (_) {} continue; } // [e2ee5 WP-13]
       if (ev && ev.eventType === 'chatyy.link.revoked') { try { require('./link').onChatyyEvent(ev); } catch (_) {} continue; } // [e2ee5 WP-12]
+      if (ev && ev.eventType === 'chatyy.key_request') { _onKeyRequest(ev).catch(() => {}); continue; } // [e2ee5 1.7 keyreq]
       if (!ev || (ev.eventType !== 'chatyy.decrypt_report' && ev.eventType !== 'chatyy.key_resend')) continue;
       let c = null;
       try { c = JSON.parse(ev.contentJson || '{}'); } catch (_) {}
@@ -1162,6 +1165,7 @@ export function decryptRow(row, convId) {
       _notePlainLat(k);
       _unwait(conv, k);
       if (wasWaiting) { try { _health()?.recordResolved(k); } catch (_) {} }
+      if (_keyreqAsked.delete(k)) _hcount('key_request_ok'); // [e2ee5 1.7 keyreq]
       _emitLocal('e2ee5_plain', { conversation_id: conv, key: k, id: row.id });
       return entry;
     } catch (e) {
@@ -1196,6 +1200,7 @@ function _wait(conv, k, row) {
   if (!m.has(k)) {
     m.set(k, { row, at: Date.now(), reported: false });
     try { setTimeout(() => _maybeReport(conv, k), REPORT_AFTER_MS + 500); } catch (_) {}
+    _armKeyRequest(conv, k); // [e2ee5 1.7 keyreq]
   }
 }
 function _unwait(conv, k) { const m = _waiting.get(conv); if (m) { m.delete(k); if (!m.size) _waiting.delete(conv); } }
@@ -1220,6 +1225,72 @@ async function _maybeReport(conv, k) {
     const sid = /"session_id":"([^"]+)"/.exec(w.row.content || '');
     await _C().sendToDevice('chatyy.decrypt_report', [{ uid: su, deviceId: '' }], { v: 1, conv_id: conv, mid: String(w.row.id || ''), session_id: sid ? sid[1] : '', reason: (_fail.get(k) || {}).reason || 'missing_session', ts: Date.now() });
   } catch (_) {}
+}
+
+// [e2ee5 1.7 keyreq] "Nunca perder mensagem" (nível WhatsApp/Matrix): sem a chave de uma sessão que
+// já existe, ~3 s depois o aparelho pede ao remetente (núcleo: requestRoomKey → e2ee5_key_request +
+// chatyy.key_request por Olm); o aparelho DONO da sessão, online, responde sozinho (shareRoomKey →
+// chatyy.room_key, que o núcleo importa sem passar pelo JS). Regras de membro/índice ficam no
+// servidor + núcleo; aqui só agenda, limita e conta. Flag OTA `globalThis.__chatyy_e2ee5_keyreq`.
+const KEYREQ_AT_MS = [3000, 20000, 50000];
+const KEYREQ_REASONS = new Set(['missing_session', 'unknown_index']);
+let _keyreqOff = false; // núcleo/servidor sem suporte nesta instalação
+const _keyreqAsked = new Set(); // k que pediram chave (para contar key_request_ok)
+const _keyreqServed = new Map(); // sessão|aparelho → ts
+let _keyreqServeWin = { t: 0, n: 0 };
+function _keyreqOn() { try { return !_keyreqOff && _g().__chatyy_e2ee5_keyreq === true; } catch (_) { return false; } }
+function _armKeyRequest(conv, k) {
+  if (!_keyreqOn()) return;
+  for (const ms of KEYREQ_AT_MS) { try { setTimeout(() => { _maybeKeyRequest(conv, k).catch(() => {}); }, ms); } catch (_) {} }
+}
+function _hcount(name) { try { _health()?.recordCounter?.(name); } catch (_) {} }
+function _keyreqUnsupported(e) { return !!(e && (e.code === 'unsupported' || e.code === 'not_supported')); }
+async function _maybeKeyRequest(conv, k) {
+  if (!_keyreqOn() || !_sess) return;
+  const m = _waiting.get(conv);
+  const w = m && m.get(k);
+  if (!w || !w.row) return;
+  const reason = (_fail.get(k) || {}).reason || '';
+  if (!KEYREQ_REASONS.has(String(reason))) return;
+  const mid = String(w.row.id == null ? '' : w.row.id);
+  if (!/^\d+$/.test(mid)) return; // ainda sem id do servidor
+  const sid = /"session_id":"([^"]+)"/.exec(w.row.content || '');
+  if (!sid) return;
+  const su = await _senderUid(conv, w.row.sender_email, w.row.content, _hintUid(w.row));
+  if (!su) return;
+  if (typeof _C().requestRoomKey !== 'function') { _keyreqOff = true; return; }
+  try {
+    const r = await _C().requestRoomKey(conv, sid[1], su, mid);
+    if (r && r.sent) { _keyreqAsked.add(k); _hcount('key_request_sent'); }
+    _log('keyreq', { conv, mid, sent: !!(r && r.sent), reason: r && r.reason });
+  } catch (e) {
+    if (_keyreqUnsupported(e)) { _keyreqOff = true; return; }
+    if (_isTimeout(e)) _resetCore('keyreq_' + e.code);
+    _log('keyreq_fail', { conv, code: e && e.code });
+  }
+}
+async function _onKeyRequest(ev) {
+  if (!_keyreqOn() || !_sess) return;
+  let c = null;
+  try { c = JSON.parse(ev.contentJson || '{}'); } catch (_) { c = null; }
+  if (!c || !c.conv_id || !c.session_id || !ev.senderUid || !ev.senderDeviceId) return;
+  const now = Date.now();
+  const tag = String(c.session_id) + '|' + ev.senderUid + '/' + ev.senderDeviceId;
+  const last = _keyreqServed.get(tag);
+  if (last && now - last < 60000) return;
+  if (now - _keyreqServeWin.t > 60000) _keyreqServeWin = { t: now, n: 0 };
+  if (++_keyreqServeWin.n > 30) return; // no máx 30 respostas/min por aparelho
+  _keyreqServed.set(tag, now);
+  if (_keyreqServed.size > 500) _keyreqServed.delete(_keyreqServed.keys().next().value);
+  if (typeof _C().shareRoomKey !== 'function') { _keyreqOff = true; return; }
+  try {
+    const r = await _C().shareRoomKey(String(c.conv_id), String(c.session_id), String(ev.senderUid), [String(ev.senderDeviceId)]);
+    if (r && r.sharedDevices > 0) _hcount('key_request_served');
+    _log('keyreq_serve', { conv: c.conv_id, shared: r && r.sharedDevices, reason: r && r.reason });
+  } catch (e) {
+    if (_keyreqUnsupported(e)) { _keyreqOff = true; return; }
+    if (_isTimeout(e)) _resetCore('keyshare_' + e.code);
+  }
 }
 
 // ───────────────────────────────────────────────────────────── linhas da conversa

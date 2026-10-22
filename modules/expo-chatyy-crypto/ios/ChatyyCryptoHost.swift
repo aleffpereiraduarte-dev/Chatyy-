@@ -312,6 +312,7 @@ public actor ChatyyCrypto {
     case .verified: return "verified"
     case .tofu: return "tofu"
     case .changed: return "changed"
+    case .deviceRemoved: return "device_removed"
     }
   }
 
@@ -326,6 +327,7 @@ public actor ChatyyCrypto {
     case .badEnvelope: return ("bad_envelope", false)
     case .corrupted: return ("corrupted", false)
     case .store: return ("store", true)
+    case .unverifiedSender: return ("unverified_sender", false)
     }
   }
 
@@ -439,6 +441,15 @@ public actor ChatyyCrypto {
                                               contentJson: ChatyyCryptoJSON.jsonArg(a["content"]))
       out = ["sentDevices": r.sentDevices, "withheld": r.withheld]
     case "rotateConversation": out = try await opened().rotateConversation(convId: S(a["convId"]))
+    // [e2ee5 1.7 keyreq] pedido de chave de sala (destinatário) / reenvio pelo dono da sessão (remetente)
+    case "requestRoomKey":
+      let r = try await opened().requestRoomKey(convId: S(a["convId"]), sessionId: S(a["sessionId"]),
+                                                senderUid: S(a["senderUid"]), serverMid: S(a["serverMid"]))
+      out = ["sent": r.sent, "dedup": r.dedup, "reqId": r.reqId, "sentDevices": r.sentDevices, "reason": r.reason]
+    case "shareRoomKey":
+      let r = try await opened().shareRoomKey(convId: S(a["convId"]), sessionId: S(a["sessionId"]),
+                                              targetUid: S(a["targetUid"]), targetDevices: ChatyyCryptoJSON.strs(a["targetDevices"]))
+      out = ["sharedDevices": r.sharedDevices, "refused": r.refused, "reason": r.reason]
     case "onMembersChanged":
       try await opened().onMembersChanged(convId: S(a["convId"]), memberUids: ChatyyCryptoJSON.strs(a["memberUids"]),
                                           removedUids: ChatyyCryptoJSON.strs(a["removedUids"]))
@@ -488,7 +499,8 @@ public actor ChatyyCrypto {
       let m = try opened().metricsSnapshot()
       out = ["encrypt": m.encrypt, "decryptOk": m.decryptOk, "utdJson": m.utdJson, "utdTotal": m.utdTotal,
              "toDeviceIn": m.toDeviceIn, "toDeviceUtd": m.toDeviceUtd, "droppedUntrusted": m.droppedUntrusted,
-             "storeReloads": m.storeReloads]
+             "storeReloads": m.storeReloads, "keyReqSent": m.keyReqSent, "keyReqServed": m.keyReqServed,
+             "keyReqOk": m.keyReqOk, "keyReqRefused": m.keyReqRefused]
     case "flushMetrics":
       try await opened().flushMetrics()
       out = [String: Any]()

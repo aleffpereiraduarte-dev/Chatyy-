@@ -81,6 +81,9 @@ pub enum Trust {
     Tofu,
     /// A identidade do dono mudou desde que foi fixada/verificada (mostrar aviso).
     Changed,
+    /// [1.7] Mensagem (histórico de backup/vínculo) enviada de um aparelho do dono que JÁ FOI
+    /// assinado por ele e hoje está desconectado: "enviada de um aparelho que não está mais conectado".
+    DeviceRemoved,
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +214,17 @@ const CV_CONVS: &str = "chatyy.convs";
 /// to-device — eventos `chatyy.*` e conversas com chave nova — fica guardado no store e é
 /// entregue no próximo `sync()` do papel App/Web (o cursor do servidor já avançou).
 const CV_PENDING: &str = "chatyy.pending_for_app";
+/// [1.7] cache dos aparelhos já desconectados (assinatura do dono conferida) por usuário.
+const CV_FORMER: &str = "chatyy.former_devices";
+const FORMER_TTL_MS: u64 = 10 * 60 * 1000;
+
+/// [1.7] Quem mandou a sessão importada.
+enum SenderCheck {
+    Current(OwnedDeviceId),
+    Former(OwnedDeviceId),
+    /// `definitive` = o servidor respondeu e nada confere (UTD não retentável).
+    Unknown { definitive: bool },
+}
 const PENDING_MAX_EVENTS: usize = 1000;
 const PENDING_MAX_AGE_MS: u64 = 7 * 24 * 3600 * 1000;
 
@@ -408,6 +422,12 @@ impl CryptoCore {
         let c: Value = serde_json::from_str(enc.content.json().get())?;
         let sid = c.get("session_id").and_then(Value::as_str).unwrap_or("").to_string();
         Self::remember_sessions(m, &[(conv_id.clone(), sid.clone())]).await?;
+        if !reqs.is_empty() {
+            // [1.7] com quem esta sessão saiu e a partir de qual índice (regra do pedido de chave)
+            if let Some(idx) = crate::keyreq::megolm_index(&c) {
+                Self::record_share(m, &conv_id, &sid, idx, &reqs).await?;
+            }
+        }
         let envelope_json = envelope::wrap(c);
         self.metrics.inc_encrypt();
         Ok(EncryptResult { envelope_json, session_id: sid, key_share_requests: reqs.len() as u32, key_share_bytes: bytes })
@@ -430,13 +450,35 @@ impl CryptoCore {
             drain(&op.m, self.transport.as_ref()).await?;
             r = op.m.decrypt_room_event(&raw, &room, &decryption_settings()).await;
         }
+        let mut former = false;
+        let mut unverified = false;
         if matches!(r, Err(MegolmError::SenderIdentityNotTrusted(_))) {
             // Sessões IMPORTADAS (vínculo, backup, export) não trazem a prova Olm do remetente.
             // Aceitamos só se as chaves da sessão (curve25519 + ed25519 declarada) são de um
-            // aparelho do remetente ASSINADO pelo dono — mesma garantia, verificada aqui.
+            // aparelho do remetente ASSINADO pelo dono — mesma garantia, verificada aqui. [1.7]
+            // Vale também aparelho JÁ desconectado, desde que a assinatura do dono (SSK atual)
+            // sobre as chaves dele confira (histórico não some quando o aparelho sai).
             let loose = DecryptionSettings { sender_device_trust_requirement: TrustRequirement::Untrusted };
-            if let Ok(d) = op.m.decrypt_room_event(&raw, &room, &loose).await {
-                if self.imported_session_ok(&op.m, &sender, &d.encryption_info).await? {
+            if let Ok(mut d) = op.m.decrypt_room_event(&raw, &room, &loose).await {
+                let chk = self.imported_session_sender(&op.m, &sender, &d.encryption_info).await?;
+                let dev = match chk {
+                    SenderCheck::Current(dev) => Some(dev),
+                    SenderCheck::Former(dev) => {
+                        former = true;
+                        Some(dev)
+                    }
+                    SenderCheck::Unknown { definitive } => {
+                        unverified = definitive;
+                        None
+                    }
+                };
+                if let Some(dev) = dev {
+                    // sessão importada não traz o aparelho: preenche com o aparelho conferido
+                    if d.encryption_info.sender_device.is_none() {
+                        let mut info = (*d.encryption_info).clone();
+                        info.sender_device = Some(dev);
+                        d.encryption_info = Arc::new(info);
+                    }
                     r = Ok(d);
                 }
             }
@@ -444,7 +486,8 @@ impl CryptoCore {
         let d = match r {
             Ok(d) => d,
             Err(e) => {
-                let reason = map_megolm_err(&e);
+                // [1.7] chave existe mas o aparelho remetente não confere de jeito nenhum: definitivo
+                let reason = if unverified { UtdReason::UnverifiedSender } else { map_megolm_err(&e) };
                 self.metrics.inc_utd(reason);
                 return Err(utd(reason, &sid));
             }
@@ -473,6 +516,7 @@ impl CryptoCore {
                 if changed { Trust::Changed } else { Trust::Tofu }
             }
         };
+        let trust = if former && trust != Trust::Changed { Trust::DeviceRemoved } else { trust };
         self.metrics.inc_decrypt();
         Ok(Decrypted {
             payload_json: payload.to_string(),
@@ -489,41 +533,16 @@ impl CryptoCore {
         if !event_type.starts_with("chatyy.") || event_type.len() > 64 {
             return Err(invalid("event_type", "deve começar com chatyy. (≤64)"));
         }
+        if event_type == crate::keyreq::EV_ROOM_KEY {
+            // [1.7] chave de sala só sai pelo `share_room_key` (regras de membro/índice).
+            return Err(invalid("event_type", "reservado ao share_room_key"));
+        }
         if content_json.len() > 32 * 1024 {
             return Err(invalid("content_json", "máx 32 KiB"));
         }
         let content: Value = serde_json::from_str(&content_json)?;
-        let uids: Vec<String> = targets.iter().map(|t| t.uid.clone()).collect();
-        let users = self.users_for(&uids)?;
         let op = self.op().await?;
-        let m = &op.m;
-        self.ensure_sessions(m, &users).await?;
-        let mut devices = vec![];
-        for t in &targets {
-            let u = user_id_for_uid(&t.uid)?;
-            let ds = m.get_user_devices(&u, None).await?;
-            for d in ds.devices() {
-                if u == self.user_id && d.device_id() == &*self.device_id {
-                    continue;
-                }
-                if !t.device_id.is_empty() && d.device_id().as_str() != t.device_id {
-                    continue;
-                }
-                devices.push((*d).clone());
-            }
-        }
-        let n = devices.len();
-        let (reqs, withheld) = m
-            .encrypt_content_for_devices(devices, &event_type, &content, CollectStrategy::IdentityBasedStrategy)
-            .await?;
-        for r in &reqs {
-            requests::send_to_device_req(m, self.transport.as_ref(), r, false).await?;
-        }
-        let withheld: Vec<String> = withheld
-            .iter()
-            .map(|(d, _)| format!("{}/{}", uid_from_user_id(d.user_id().as_str()).unwrap_or_default(), d.device_id()))
-            .collect();
-        Ok(SendToDeviceResult { sent_devices: (n - withheld.len().min(n)) as u32, withheld })
+        self.send_to_device_locked(&op.m, &event_type, &targets, &content).await
     }
 
     /// Força rotação da sessão Megolm de saída (ex.: alguém saiu, aparelho revogado).
@@ -642,6 +661,39 @@ impl CryptoCore {
 }
 
 impl CryptoCore {
+
+    /// Corpo do `send_to_device` com a OlmMachine já travada (também usado pelo pedido de chave).
+    pub(crate) async fn send_to_device_locked(&self, m: &OlmMachine, event_type: &str, targets: &[DeviceTarget], content: &Value) -> CoreResult<SendToDeviceResult> {
+        let uids: Vec<String> = targets.iter().map(|t| t.uid.clone()).collect();
+        let users = self.users_for(&uids)?;
+        self.ensure_sessions(m, &users).await?;
+        let mut devices = vec![];
+        for t in targets {
+            let u = user_id_for_uid(&t.uid)?;
+            let ds = m.get_user_devices(&u, None).await?;
+            for d in ds.devices() {
+                if u == self.user_id && d.device_id() == &*self.device_id {
+                    continue;
+                }
+                if !t.device_id.is_empty() && d.device_id().as_str() != t.device_id {
+                    continue;
+                }
+                devices.push((*d).clone());
+            }
+        }
+        let n = devices.len();
+        let (reqs, withheld) = m
+            .encrypt_content_for_devices(devices, event_type, content, CollectStrategy::IdentityBasedStrategy)
+            .await?;
+        for r in &reqs {
+            requests::send_to_device_req(m, self.transport.as_ref(), r, false).await?;
+        }
+        let withheld: Vec<String> = withheld
+            .iter()
+            .map(|(d, _)| format!("{}/{}", uid_from_user_id(d.user_id().as_str()).unwrap_or_default(), d.device_id()))
+            .collect();
+        Ok(SendToDeviceResult { sent_devices: (n - withheld.len().min(n)) as u32, withheld })
+    }
 
     pub(crate) async fn op(&self) -> CoreResult<Op<'_>> {
         let mut m = self.machine.lock().await;
@@ -802,6 +854,7 @@ impl CryptoCore {
                 &decryption_settings(),
             )
             .await?;
+        let mut new_key_convs: BTreeSet<String> = BTreeSet::new();
         let mut out = SyncResult { to_device_processed: n_events, more: d.get("more").and_then(Value::as_bool).unwrap_or(false), ..Default::default() };
         for p in processed {
             match p {
@@ -822,6 +875,14 @@ impl CryptoCore {
                         self.metrics.inc_dropped_untrusted();
                         continue;
                     }
+                    if t == crate::keyreq::EV_ROOM_KEY {
+                        // [1.7] chave de sala pedida: fica DENTRO do núcleo (nunca vai ao host).
+                        let content = v.get("content").cloned().unwrap_or(Value::Null);
+                        if let Some(c) = self.receive_room_key_share(m, &content, &encryption_info).await? {
+                            new_key_convs.insert(c);
+                        }
+                        continue;
+                    }
                     out.chatyy_events.push(ChatyyEvent {
                         event_type: t.to_string(),
                         sender_uid: uid_from_user_id(encryption_info.sender.as_str()).unwrap_or_default(),
@@ -837,7 +898,7 @@ impl CryptoCore {
                 ProcessedToDeviceEvent::PlainText(_) | ProcessedToDeviceEvent::Invalid(_) => {}
             }
         }
-        let mut convs = BTreeSet::new();
+        let mut convs = new_key_convs;
         let mut items = vec![];
         for k in keys {
             if let Some(c) = conv_from_room_id(k.room_id.as_str()) {
@@ -863,27 +924,86 @@ impl CryptoCore {
         Ok(())
     }
 
-    async fn imported_session_ok(
+    async fn imported_session_sender(
         &self,
         m: &OlmMachine,
         sender: &ruma::UserId,
         info: &matrix_sdk_common::deserialized_responses::EncryptionInfo,
-    ) -> CoreResult<bool> {
+    ) -> CoreResult<SenderCheck> {
         use matrix_sdk_common::deserialized_responses::AlgorithmInfo;
         let AlgorithmInfo::MegolmV1AesSha2 { curve25519_key, sender_claimed_keys, .. } = &info.algorithm_info else {
-            return Ok(false);
+            return Ok(SenderCheck::Unknown { definitive: true });
         };
         if info.sender != *sender {
-            return Ok(false);
+            return Ok(SenderCheck::Unknown { definitive: true });
         }
         let claimed_ed = sender_claimed_keys.get(&ruma::DeviceKeyAlgorithm::Ed25519).cloned().unwrap_or_default();
         let devs = m.get_user_devices(sender, None).await?;
-        let ok = devs.devices().any(|d| {
+        let ok = devs.devices().find(|d| {
             d.is_cross_signed_by_owner()
                 && d.curve25519_key().map(|k| k.to_base64()) == Some(curve25519_key.clone())
                 && d.ed25519_key().map(|k| k.to_base64()) == Some(claimed_ed.clone())
         });
-        Ok(ok)
+        if let Some(d) = ok {
+            return Ok(SenderCheck::Current(d.device_id().to_owned()));
+        }
+        // [1.7] aparelho já desconectado (revogado): o servidor devolve as chaves ASSINADAS dele e
+        // conferimos a assinatura com a SSK atual do dono.
+        match self.former_devices(m, sender).await? {
+            None => Ok(SenderCheck::Unknown { definitive: false }),
+            Some(list) => Ok(list
+                .into_iter()
+                .find(|(_, c, e)| *c == *curve25519_key && *e == claimed_ed)
+                .and_then(|(d, _, _)| OwnedDeviceId::try_from(d).ok())
+                .map(SenderCheck::Former)
+                .unwrap_or(SenderCheck::Unknown { definitive: true })),
+        }
+    }
+
+    /// [1.7] Aparelhos JÁ desconectados de `user`, conferidos contra a SSK atual (cache 10 min no
+    /// store). None = não deu para saber (rede, identidade do dono ainda desconhecida).
+    async fn former_devices(&self, m: &OlmMachine, user: &ruma::UserId) -> CoreResult<Option<Vec<(String, String, String)>>> {
+        type Cache = BTreeMap<String, (u64, Vec<(String, String, String)>)>;
+        let mut cache: Cache = Self::cv_get(m, CV_FORMER).await?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        let now = now_ms();
+        let key = user.to_string();
+        if let Some((t, l)) = cache.get(&key) {
+            if now.saturating_sub(*t) < FORMER_TTL_MS {
+                return Ok(Some(l.clone()));
+            }
+        }
+        let Some(identity) = m.get_identity(user, None).await? else { return Ok(None) };
+        let d = match call_json(self.transport.as_ref(), actions::DEVICES_FORMER, &json!({"user_ids": [user.as_str()]})).await {
+            Ok(d) => d,
+            Err(CoreError::Server { status, .. }) if status < 500 && status != 429 => json!({}),
+            Err(_) => return Ok(cache.get(&key).map(|(_, l)| l.clone())),
+        };
+        let mut out = vec![];
+        if let Some(map) = d.get("device_keys").and_then(|x| x.get(user.as_str())).and_then(Value::as_object) {
+            for (dev, v) in map.iter().take(200) {
+                let Ok(dk) = serde_json::from_value::<matrix_sdk_crypto::types::DeviceKeys>(v.clone()) else { continue };
+                if dk.user_id != *user || dk.device_id.as_str() != dev {
+                    continue;
+                }
+                let signed = match &identity {
+                    matrix_sdk_crypto::UserIdentity::Own(o) => o.self_signing_key().verify_device_keys(&dk).is_ok(),
+                    matrix_sdk_crypto::UserIdentity::Other(o) => o.self_signing_key().verify_device_keys(&dk).is_ok(),
+                };
+                if !signed {
+                    continue;
+                }
+                if let (Some(c), Some(e)) = (dk.curve25519_key(), dk.ed25519_key()) {
+                    out.push((dev.clone(), c.to_base64(), e.to_base64()));
+                }
+            }
+        }
+        cache.retain(|_, (t, _)| now.saturating_sub(*t) < 24 * 3600 * 1000);
+        if cache.len() > 500 {
+            cache.clear();
+        }
+        cache.insert(key, (now, out.clone()));
+        Self::cv_set(m, CV_FORMER, &serde_json::to_string(&cache)?).await?;
+        Ok(Some(out))
     }
 
     pub(crate) async fn import_keys_vec(&self, keys: Vec<matrix_sdk_crypto::olm::ExportedRoomKey>, backup_version: Option<&str>) -> CoreResult<ImportResult> {

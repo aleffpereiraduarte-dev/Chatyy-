@@ -570,3 +570,205 @@ async fn grava_exemplos_do_contrato() {
     }
     std::fs::write(format!("{out}/envelope.json"), serde_json::to_string_pretty(&serde_json::from_str::<Value>(&env).unwrap()).unwrap()).unwrap();
 }
+
+// ───────────────────────── [1.7] pedido de chave de sala ─────────────────────────
+
+fn key_requests(r: &SyncResult) -> Vec<(String, String, Value)> {
+    r.chatyy_events
+        .iter()
+        .filter(|e| e.event_type == "chatyy.key_request")
+        .map(|e| (e.sender_uid.clone(), e.sender_device_id.clone(), serde_json::from_str(&e.content_json).unwrap()))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn utd_pede_chave_remetente_reenvia_e_decifra() {
+    let s = FakeServer::new();
+    let a = Client::phone(&s, "7").await;
+    let at = Client::secondary(&s, &a, "T").await; // outro aparelho do remetente (não é dono da sessão)
+    let b = Client::phone(&s, "42").await;
+    s.set_conv("300", &["7", "42"]);
+    b.core.sync().await.unwrap();
+    let (e1, c1, r1) = a.send("300", &[&a, &b], "m1 que se perdeu").await;
+    s.post_message("300", "9001", "7", &e1);
+    let (e2, c2, _) = a.send("300", &[&a, &b], "m2 mesma sessão").await;
+    s.post_message("300", "9002", "7", &e2);
+    // a entrega da chave para o celular do bob se perde
+    assert!(s.drop_to_device("42", &b.device_id) >= 1);
+    let u = b.recv("300", &a, &e1, &c1, "9001").await;
+    assert_eq!(is_utd(&u), Some(UtdReason::MissingSession), "{u:?}");
+    // (1) pedido
+    let rq = b.core.request_room_key("300".into(), r1.session_id.clone(), "7".into(), "9001".into()).await.unwrap();
+    assert!(rq.sent && !rq.dedup, "{rq:?}");
+    assert!(rq.sent_devices >= 1);
+    // (2) remetente online recebe o pedido (autenticado por Olm, do aparelho do bob)
+    let sa = a.core.sync().await.unwrap();
+    let reqs = key_requests(&sa);
+    assert_eq!(reqs.len(), 1, "{:?}", sa.chatyy_events);
+    assert_eq!(reqs[0].0, "42");
+    assert_eq!(reqs[0].1, b.device_id);
+    assert_eq!(reqs[0].2["session_id"], r1.session_id.as_str());
+    // outro aparelho do remetente também recebe, mas não é dono da sessão
+    let st = at.core.sync().await.unwrap();
+    for (uid, dev, c) in key_requests(&st) {
+        let r = at.core.share_room_key(c["conv_id"].as_str().unwrap().into(), c["session_id"].as_str().unwrap().into(), uid, vec![dev]).await.unwrap();
+        assert_eq!(r.reason, "not_owner");
+        assert_eq!(r.shared_devices, 0);
+    }
+    let sh = a.core.share_room_key("300".into(), r1.session_id.clone(), "42".into(), vec![b.device_id.clone()]).await.unwrap();
+    assert_eq!(sh.shared_devices, 1, "{sh:?}");
+    // (3) destinatário importa DENTRO do núcleo e decifra m1 e m2
+    let sb = b.core.sync().await.unwrap();
+    assert!(sb.convs_with_new_keys.contains(&"300".to_string()), "{:?}", sb.convs_with_new_keys);
+    assert!(sb.chatyy_events.iter().all(|e| e.event_type != "chatyy.room_key"), "a chave nunca vai ao host");
+    let d1 = b.recv("300", &a, &e1, &c1, "9001").await.unwrap();
+    assert_eq!(body_of(&d1), "m1 que se perdeu");
+    assert_eq!(d1.sender_device_id, a.device_id);
+    assert_eq!(body_of(&b.recv("300", &a, &e2, &c2, "9002").await.unwrap()), "m2 mesma sessão");
+    let m = b.core.metrics_snapshot();
+    assert_eq!((m.key_req_sent, m.key_req_ok), (1, 1));
+    assert_eq!(a.core.metrics_snapshot().key_req_served, 1);
+    // servir de novo o mesmo aparelho logo em seguida: dedupe (e o servidor já marcou atendido)
+    let again = a.core.share_room_key("300".into(), r1.session_id.clone(), "42".into(), vec![b.device_id.clone()]).await.unwrap();
+    assert_eq!(again.shared_devices, 0);
+    // o host não consegue mandar chatyy.room_key por fora das regras
+    assert!(a.core.send_to_device("chatyy.room_key".into(), vec![DeviceTarget { uid: "42".into(), device_id: String::new() }], "{}".into()).await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quem_entrou_depois_nao_recebe_chave_do_passado() {
+    let s = FakeServer::new();
+    let a = Client::phone(&s, "1").await;
+    let b = Client::phone(&s, "2").await;
+    let c = Client::phone(&s, "3").await;
+    s.set_conv("400", &["1", "2"]);
+    let (e1, c1, r1) = a.send("400", &[&a, &b], "antes do c entrar").await;
+    s.post_message("400", "1", "1", &e1);
+    assert_eq!(body_of(&b.recv("400", &a, &e1, &c1, "1").await.unwrap()), "antes do c entrar");
+    // c entra; a sessão continua (entrada não rotaciona) e o c recebe a partir do índice atual
+    s.set_conv("400", &["1", "2", "3"]);
+    a.core.on_members_changed("400".into(), vec!["1".into(), "2".into(), "3".into()], vec![]).await.unwrap();
+    let (e2, c2, r2) = a.send("400", &[&a, &b, &c], "depois do c entrar").await;
+    s.post_message("400", "2", "1", &e2);
+    assert_eq!(r1.session_id, r2.session_id, "mesma sessão");
+    assert_eq!(body_of(&c.recv("400", &a, &e2, &c2, "2").await.unwrap()), "depois do c entrar");
+    assert!(is_utd(&c.recv("400", &a, &e1, &c1, "1").await).is_some());
+    // (a) servidor honesto: c não era membro na hora da m1 → pedido recusado
+    let rq = c.core.request_room_key("400".into(), r1.session_id.clone(), "1".into(), "1".into()).await.unwrap();
+    assert!(!rq.sent && rq.reason == "refused", "{rq:?}");
+    // (b) servidor MENTINDO (atesta tudo): o registro local do remetente segura o índice — o c
+    //     recebe só do índice em que entrou, e a m1 continua ilegível para ele
+    s.set_attest_all(true);
+    let sh = a.core.share_room_key("400".into(), r1.session_id.clone(), "3".into(), vec![c.device_id.clone()]).await.unwrap();
+    assert_eq!(sh.shared_devices, 1, "{sh:?}");
+    // a chave não foi pedida pelo c (o pedido foi recusado antes de sair) → descartada
+    c.core.sync().await.unwrap();
+    assert!(c.core.metrics_snapshot().key_req_refused >= 1);
+    // d nunca esteve no compartilhamento desta sessão → recusa local mesmo com o servidor mentindo
+    let d = Client::phone(&s, "4").await;
+    s.set_conv("400", &["1", "2", "3", "4"]);
+    a.core.sync().await.unwrap();
+    let sd = a.core.share_room_key("400".into(), r1.session_id.clone(), "4".into(), vec![d.device_id.clone()]).await.unwrap();
+    assert_eq!((sd.shared_devices, sd.reason.as_str()), (0, "not_member_at_share"), "{sd:?}");
+    assert!(is_utd(&d.recv("400", &a, &e1, &c1, "1").await).is_some());
+    assert!(is_utd(&c.recv("400", &a, &e1, &c1, "1").await).is_some(), "quem entrou depois nunca lê o passado");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pedido_de_chave_dedupe_e_limite() {
+    let s = FakeServer::new();
+    let a = Client::phone(&s, "7").await;
+    let b = Client::phone(&s, "42").await;
+    s.set_conv("500", &["7", "42"]);
+    b.core.sync().await.unwrap();
+    let (e1, _c1, r1) = a.send("500", &[&a, &b], "x").await;
+    s.post_message("500", "77", "7", &e1);
+    s.drop_to_device("42", &b.device_id);
+    let first = b.core.request_room_key("500".into(), r1.session_id.clone(), "7".into(), "77".into()).await.unwrap();
+    assert!(first.sent);
+    // repetido em < 30 s: não sai nada (nem chamada ao servidor)
+    let n_srv = s.calls("key_request");
+    let dup = b.core.request_room_key("500".into(), r1.session_id.clone(), "7".into(), "77".into()).await.unwrap();
+    assert!(dup.dedup && !dup.sent, "{dup:?}");
+    assert_eq!(s.calls("key_request"), n_srv);
+    // mensagem que não é dessa sessão/remetente: o servidor recusa
+    let bad = b.core.request_room_key("500".into(), "outra-sessao".into(), "7".into(), "77".into()).await.unwrap();
+    assert_eq!(bad.reason, "refused");
+    // remetente: atende uma vez; pedir de novo o mesmo aparelho não reenvia
+    a.core.sync().await.unwrap();
+    let sh = a.core.share_room_key("500".into(), r1.session_id.clone(), "42".into(), vec![]).await.unwrap();
+    assert_eq!(sh.shared_devices, 1);
+    let sh2 = a.core.share_room_key("500".into(), r1.session_id.clone(), "42".into(), vec![]).await.unwrap();
+    assert_eq!((sh2.shared_devices, sh2.reason.as_str()), (0, "not_attested"));
+    // entradas inválidas
+    assert!(b.core.request_room_key("500".into(), r1.session_id.clone(), "7".into(), "abc".into()).await.is_err());
+    assert!(a.core.share_room_key("500".into(), r1.session_id.clone(), "42".into(), vec!["lixo".into()]).await.is_err());
+}
+
+// [1.7] B1: histórico importado (backup) de um aparelho do remetente que JÁ foi desconectado
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn historico_de_aparelho_desconectado_continua_legivel() {
+    let s = FakeServer::new();
+    let a = Client::phone(&s, "7").await;
+    let at = Client::secondary(&s, &a, "T").await; // tablet da alice: manda e depois é desconectado
+    let b = Client::phone(&s, "42").await;
+    s.set_conv("13", &["7", "42"]);
+    let en = b.core.backup_enable(String::new()).await.unwrap();
+    let (e1, c1, _) = at.send("13", &[&a, &b], "do tablet que vai sair").await;
+    b.recv("13", &at, &e1, &c1, "1").await.unwrap();
+    let (e2, c2, _) = a.send("13", &[&a, &b], "do celular").await;
+    b.recv("13", &a, &e2, &c2, "2").await.unwrap();
+    b.core.backup_step(0).await.unwrap();
+    // a alice desconecta o tablet
+    assert!(a.core.forget_device(at.device_id.clone()).await.is_ok());
+    // o bob troca de celular e restaura o backup (store novo: nunca viu o tablet)
+    let nb = Client::open_at(&s, "42", &new_device_id("P").unwrap(), Arc::new(tempfile::tempdir().unwrap()), ProcessRole::App, "").await;
+    nb.core.sync().await.unwrap();
+    nb.core.backup_restore(en.recovery_key.clone()).await.unwrap();
+    let d1 = nb.recv("13", &a, &e1, &c1, "1").await.unwrap();
+    assert_eq!(body_of(&d1), "do tablet que vai sair");
+    assert_eq!(d1.trust, Trust::DeviceRemoved, "aviso próprio: aparelho não está mais conectado");
+    assert_eq!(d1.sender_device_id, at.device_id);
+    let d2 = nb.recv("13", &a, &e2, &c2, "2").await.unwrap();
+    assert_ne!(d2.trust, Trust::DeviceRemoved);
+    // servidor esconde os aparelhos antigos → UTD DEFINITIVO (o app não fica "aguardando" para sempre)
+    let s2 = FakeServer::new();
+    let a2 = Client::phone(&s2, "7").await;
+    let at2 = Client::secondary(&s2, &a2, "T").await;
+    let b2 = Client::phone(&s2, "42").await;
+    s2.set_conv("14", &["7", "42"]);
+    let en2 = b2.core.backup_enable(String::new()).await.unwrap();
+    let (f1, g1, _) = at2.send("14", &[&a2, &b2], "x").await;
+    b2.recv("14", &at2, &f1, &g1, "1").await.unwrap();
+    b2.core.backup_step(0).await.unwrap();
+    a2.core.forget_device(at2.device_id.clone()).await.unwrap();
+    s2.set_hide_former(true);
+    let nb2 = Client::open_at(&s2, "42", &new_device_id("P").unwrap(), Arc::new(tempfile::tempdir().unwrap()), ProcessRole::App, "").await;
+    nb2.core.sync().await.unwrap();
+    nb2.core.backup_restore(en2.recovery_key.clone()).await.unwrap();
+    let u = nb2.recv("14", &a2, &f1, &g1, "1").await;
+    assert_eq!(is_utd(&u), Some(UtdReason::UnverifiedSender), "{u:?}");
+    assert!(!UtdReason::UnverifiedSender.retryable());
+}
+
+// [1.7] B2: aparelho MEU que perdeu a chave pede aos meus outros aparelhos (matrix-sdk-crypto
+// automatic-room-key-forwarding: m.room_key_request → m.forwarded_room_key, só entre aparelhos próprios)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn meu_outro_aparelho_encaminha_a_chave_automaticamente() {
+    let s = FakeServer::new();
+    let a = Client::phone(&s, "7").await;
+    let b = Client::phone(&s, "42").await;
+    let bw = Client::secondary(&s, &b, "W").await;
+    s.set_conv("15", &["7", "42"]);
+    b.core.sync().await.unwrap();
+    bw.core.sync().await.unwrap();
+    let (e, c, _) = a.send("15", &[&a, &b], "a web perdeu esta").await;
+    s.drop_to_device("42", &bw.device_id);
+    assert_eq!(body_of(&b.recv("15", &a, &e, &c, "1").await.unwrap()), "a web perdeu esta");
+    assert!(is_utd(&bw.recv("15", &a, &e, &c, "1").await).is_some());
+    bw.core.sync().await.unwrap(); // sai o m.room_key_request (aos MEUS aparelhos)
+    b.core.sync().await.unwrap(); // o celular atende (abre sessão Olm se preciso)…
+    b.core.sync().await.unwrap(); // …e manda o m.forwarded_room_key
+    let d = bw.recv("15", &a, &e, &c, "1").await.unwrap();
+    assert_eq!(body_of(&d), "a web perdeu esta");
+}

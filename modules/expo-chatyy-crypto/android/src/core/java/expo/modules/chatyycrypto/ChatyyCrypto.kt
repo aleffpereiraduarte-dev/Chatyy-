@@ -257,7 +257,7 @@ object ChatyyCrypto {
   private fun importJson(r: ImportResult) = JSONObject().put("imported", r.imported.toLong()).put("total", r.total.toLong())
     .put("convs", ChatyyJson.list(r.convs))
 
-  private fun trustStr(t: Trust) = when (t) { Trust.VERIFIED -> "verified"; Trust.TOFU -> "tofu"; Trust.CHANGED -> "changed" }
+  private fun trustStr(t: Trust) = when (t) { Trust.VERIFIED -> "verified"; Trust.TOFU -> "tofu"; Trust.CHANGED -> "changed"; Trust.DEVICE_REMOVED -> "device_removed" }
 
   private fun utd(r: UtdReason): Pair<String, Boolean> = when (r) {
     UtdReason.MISSING_SESSION -> "missing_session" to true
@@ -269,6 +269,7 @@ object ChatyyCrypto {
     UtdReason.BAD_ENVELOPE -> "bad_envelope" to false
     UtdReason.CORRUPTED -> "corrupted" to false
     UtdReason.STORE -> "store" to true
+    UtdReason.UNVERIFIED_SENDER -> "unverified_sender" to false
   }
 
   private fun filter(o: JSONObject?): ExportFilter {
@@ -361,6 +362,14 @@ object ChatyyCrypto {
         JSONObject().put("sentDevices", r.sentDevices.toLong()).put("withheld", ChatyyJson.list(r.withheld))
       }
       "rotateConversation" -> opened().rotateConversation(s("convId"))
+      // [e2ee5 1.7 keyreq] pedido de chave de sala (destinatário) / reenvio pelo dono da sessão (remetente)
+      "requestRoomKey" -> opened().requestRoomKey(s("convId"), s("sessionId"), s("senderUid"), s("serverMid")).let {
+        JSONObject().put("sent", it.sent).put("dedup", it.dedup).put("reqId", it.reqId)
+          .put("sentDevices", it.sentDevices.toLong()).put("reason", it.reason)
+      }
+      "shareRoomKey" -> opened().shareRoomKey(s("convId"), s("sessionId"), s("targetUid"), ChatyyJson.strs(a, "targetDevices")).let {
+        JSONObject().put("sharedDevices", it.sharedDevices.toLong()).put("refused", ChatyyJson.list(it.refused)).put("reason", it.reason)
+      }
       "onMembersChanged" -> {
         opened().onMembersChanged(s("convId"), ChatyyJson.strs(a, "memberUids"), ChatyyJson.strs(a, "removedUids")); JSONObject()
       }
@@ -392,6 +401,8 @@ object ChatyyCrypto {
         JSONObject().put("encrypt", it.encrypt.toLong()).put("decryptOk", it.decryptOk.toLong()).put("utdJson", it.utdJson)
           .put("utdTotal", it.utdTotal.toLong()).put("toDeviceIn", it.toDeviceIn.toLong()).put("toDeviceUtd", it.toDeviceUtd.toLong())
           .put("droppedUntrusted", it.droppedUntrusted.toLong()).put("storeReloads", it.storeReloads.toLong())
+          .put("keyReqSent", it.keyReqSent.toLong()).put("keyReqServed", it.keyReqServed.toLong())
+          .put("keyReqOk", it.keyReqOk.toLong()).put("keyReqRefused", it.keyReqRefused.toLong())
       }
       "flushMetrics" -> { opened().flushMetrics(); JSONObject() }
 

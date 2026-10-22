@@ -263,6 +263,7 @@ public enum ChatyyE2EECrypto {
     case .verified: return "verified"
     case .tofu: return "tofu"
     case .changed: return "changed"
+    case .deviceRemoved: return "device_removed"
     }
   }
 

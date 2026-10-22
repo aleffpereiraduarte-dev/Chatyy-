@@ -1,5 +1,18 @@
 # Contrato E2EE v5 — histórico
 
+## e2ee5-contrato/1.7 — 22/10/2026 (keyreq + achados B1/B2 da matriz)
+- §3 `chatyy.key_request` / `chatyy.room_key` (reservado ao núcleo); `chatyy.key_resend` obsoleto.
+- §3 encaminhamento automático entre MEUS aparelhos: núcleo com `automatic-room-key-forwarding`
+  (o texto antigo dizia que a biblioteca já pedia, mas a feature estava desligada — B2).
+- §4.2.20 nomes aceitos no `e2ee5_metrics` (+`key_req_*`, `native_timeout`, `native_err`, `core_slow`,
+  `key_request_sent/served/ok`); §4.2.21 `e2ee5_key_request`; §4.2.22 `e2ee5_key_request_check`;
+  §4.2.23 `e2ee5_devices_former`; §4.3 `e2ee5_key_request_refused`; §4.5 limites.
+- §6.4 `request_room_key` / `share_room_key`; §6.12 regras (servidor atesta membro na hora da
+  mensagem + registro local de compartilhamento + índice mínimo).
+- §6.5 `Trust::DeviceRemoved` ("enviada de um aparelho que não está mais conectado") e UTD
+  `unverified_sender` NÃO retentável (B1: histórico de backup/vínculo de aparelho revogado).
+- §6.9 `MetricsSnapshot.key_req_*`; §9 flag `__chatyy_e2ee5_keyreq`.
+
 ## e2ee5-contrato/1.6 — 21/10/2026 (WP-00, pedidos WP-07/WP-06b/WP-13)
 - §2.5 `sender_uid` em toda linha/frame cifrado (PHP, hub, leaf, Rust); o cliente o usa no decrypt.
 - §2.7 códigos `{"sys":…}` estruturados (member_*, admin_set, owner_transfer, group_updated, pin,

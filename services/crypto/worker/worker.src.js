@@ -438,6 +438,19 @@
         return c.rotateConversation(S(a.convId));
       });
     },
+    // [e2ee5 1.7 keyreq] núcleo antigo (wasm sem os métodos) → 'unsupported' (o e2ee5.js ignora)
+    requestRoomKey: function (a) {
+      return call(function (c) {
+        if (typeof c.requestRoomKey !== 'function') throw E('unsupported', { what: 'requestRoomKey' });
+        return c.requestRoomKey(S(a.convId), S(a.sessionId), S(a.senderUid), S(a.serverMid));
+      });
+    },
+    shareRoomKey: function (a) {
+      return call(function (c) {
+        if (typeof c.shareRoomKey !== 'function') throw E('unsupported', { what: 'shareRoomKey' });
+        return c.shareRoomKey(S(a.convId), S(a.sessionId), S(a.targetUid), A(a.targetDevices));
+      });
+    },
     onMembersChanged: function (a) {
       return call(function (c) {
         return c.onMembersChanged(S(a.convId), A(a.memberUids), A(a.removedUids));

@@ -124,7 +124,8 @@ function call(op, args) {
 // deadlock do RustFuture no Android, ver E2eeNative.callSuspend) não pode prender a fila de envio
 // nem o `_inflight` do decrypt para sempre. Rede no núcleo (status/sync/keys_*) = até 15 s por ida.
 const _NET_OPS = new Set(['status', 'sync', 'syncWith', 'bootstrapIdentity', 'sendToDevice', 'flushMetrics', 'forgetDevice', 'signDevice',
-  'backupEnable', 'backupStep', 'backupRestore', 'backupDisable', 'linkAccept', 'linkPhonePoll', 'onMembersChanged', 'rotateConversation']);
+  'backupEnable', 'backupStep', 'backupRestore', 'backupDisable', 'linkAccept', 'linkPhonePoll', 'onMembersChanged', 'rotateConversation',
+  'requestRoomKey', 'shareRoomKey']);
 function opTimeoutMs(op) {
   if (op === 'encrypt') return 20000; // keys_query + keys_claim + to_device_send no 1º envio da sessão
   if (op === 'decryptFile' || op === 'encryptFile') return 60000;
@@ -322,6 +323,11 @@ export const sendToDevice = (eventType, targets, content) =>
     content: jsonArg(content),
   });
 export const rotateConversation = (convId) => call('rotateConversation', { convId: String(convId) });
+// [e2ee5 1.7 keyreq] build sem os métodos no núcleo → erro 'unsupported' do host (o e2ee5.js ignora)
+export const requestRoomKey = (convId, sessionId, senderUid, serverMid) =>
+  call('requestRoomKey', { convId: String(convId), sessionId: String(sessionId), senderUid: String(senderUid), serverMid: String(serverMid) });
+export const shareRoomKey = (convId, sessionId, targetUid, targetDevices) =>
+  call('shareRoomKey', { convId: String(convId), sessionId: String(sessionId), targetUid: String(targetUid), targetDevices: strs(targetDevices) });
 export const onMembersChanged = (convId, memberUids, removedUids) =>
   call('onMembersChanged', { convId: String(convId), memberUids: strs(memberUids), removedUids: strs(removedUids) }).then(() => ({}));
 export const forgetDevice = (deviceId) => call('forgetDevice', { deviceId: String(deviceId) });

@@ -91,6 +91,10 @@ export function recordResolved(key) {
   if (!p.counted && Date.now() - p.t0 >= UTD_GATE_MS) _inc('utd_60s');
 }
 
+// [e2ee5 1.7 keyreq] contadores nomeados (só os que o e2ee5_metrics aceita).
+const NAMED = new Set(['key_request_sent', 'key_request_served', 'key_request_ok', 'native_timeout', 'native_err', 'core_slow']);
+export function recordCounter(name, n = 1) { if (_on() && NAMED.has(String(name)) && n > 0) _inc(String(name), n); }
+
 export function recordPlaintextRefused() { if (_on()) _inc('plaintext_refused'); }
 export function recordNseFallback(n = 1) { if (_on() && n > 0) _inc('nse_fallback', n); }
 
@@ -128,5 +132,5 @@ function _appVersion() {
 // Só para testes/diagnóstico (sem conteúdo).
 export function _peek() { return { counters: { ..._counters }, pending: _pending.size }; }
 
-const e2eeHealth = { setTransport, recordEncrypt, recordDecrypt, recordResolved, recordPlaintextRefused, recordNseFallback, flush, _peek };
+const e2eeHealth = { setTransport, recordEncrypt, recordDecrypt, recordResolved, recordPlaintextRefused, recordNseFallback, recordCounter, flush, _peek };
 export default e2eeHealth;

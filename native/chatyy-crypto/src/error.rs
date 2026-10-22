@@ -25,6 +25,9 @@ pub enum UtdReason {
     Corrupted,
     /// Erro de store (disco, trava). Recuperável.
     Store,
+    /// [1.7] Sessão importada (backup/vínculo/export) cujo aparelho remetente não é — nem foi —
+    /// assinado pelo dono (nem na lista atual nem entre os aparelhos já desconectados). Definitivo.
+    UnverifiedSender,
 }
 
 impl UtdReason {
@@ -39,6 +42,7 @@ impl UtdReason {
             UtdReason::BadEnvelope => "bad_envelope",
             UtdReason::Corrupted => "corrupted",
             UtdReason::Store => "store",
+            UtdReason::UnverifiedSender => "unverified_sender",
         }
     }
     /// Vale a pena tentar de novo depois de um `sync()`?

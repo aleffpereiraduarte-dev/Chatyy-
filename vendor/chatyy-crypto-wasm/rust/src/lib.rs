@@ -109,6 +109,7 @@ fn trust_str(t: cc::Trust) -> &'static str {
         cc::Trust::Verified => "verified",
         cc::Trust::Tofu => "tofu",
         cc::Trust::Changed => "changed",
+        cc::Trust::DeviceRemoved => "device_removed",
     }
 }
 
@@ -312,6 +313,27 @@ impl WasmCore {
         promise!(ok_str(json!(c.rotate_conversation(conv_id).await.map_err(js_err)?)))
     }
 
+    /// [1.7] destinatário sem a chave → pede ao remetente. → `{sent, dedup, reqId, sentDevices, reason}`
+    #[wasm_bindgen(js_name = requestRoomKey)]
+    pub fn request_room_key(&self, conv_id: String, session_id: String, sender_uid: String, server_mid: String) -> Promise {
+        let c = self.inner.clone();
+        promise!({
+            let r = c.request_room_key(conv_id, session_id, sender_uid, server_mid).await.map_err(js_err)?;
+            ok_str(json!({"sent": r.sent, "dedup": r.dedup, "reqId": r.req_id, "sentDevices": r.sent_devices, "reason": r.reason}))
+        })
+    }
+
+    /// [1.7] remetente (dono da sessão) reenvia a chave. `target_devices_json` = `["W…"]` (vazio = quem pediu).
+    #[wasm_bindgen(js_name = shareRoomKey)]
+    pub fn share_room_key(&self, conv_id: String, session_id: String, target_uid: String, target_devices_json: String) -> Promise {
+        let c = self.inner.clone();
+        promise!({
+            let d = str_vec("target_devices", &target_devices_json)?;
+            let r = c.share_room_key(conv_id, session_id, target_uid, d).await.map_err(js_err)?;
+            ok_str(json!({"sharedDevices": r.shared_devices, "refused": r.refused, "reason": r.reason}))
+        })
+    }
+
     #[wasm_bindgen(js_name = onMembersChanged)]
     pub fn on_members_changed(&self, conv_id: String, member_uids_json: String, removed_uids_json: String) -> Promise {
         let c = self.inner.clone();
@@ -468,7 +490,8 @@ impl WasmCore {
         let m = self.inner.metrics_snapshot();
         json!({"encrypt": m.encrypt, "decryptOk": m.decrypt_ok, "utdJson": m.utd_json, "utdTotal": m.utd_total,
                "toDeviceIn": m.to_device_in, "toDeviceUtd": m.to_device_utd, "droppedUntrusted": m.dropped_untrusted,
-               "storeReloads": m.store_reloads})
+               "storeReloads": m.store_reloads, "keyReqSent": m.key_req_sent, "keyReqServed": m.key_req_served,
+               "keyReqOk": m.key_req_ok, "keyReqRefused": m.key_req_refused})
         .to_string()
     }
 
