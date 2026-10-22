@@ -738,13 +738,22 @@ export async function sealForSend(convId, content, type, fileUrl, cmid, opts) {
     // [e2ee5 WP-09] local/contato/GIF/figurinha por referência/pedido de local → payload v1 do tipo.
     // Mídia do aparelho NÃO chega aqui em claro: o upload cifrado (e2ee5Media) manda o envelope pronto.
     const P = require('./payload');
-    const f = P.fieldsFromLegacy(type, content, fileUrl);
+    // [2026-10-22 figurinha-e2ee] figurinha: pacote da loja/mascote = referência {pack,id,url} dentro do
+    // envelope; figurinha PESSOAL (/data/sticker-files fora de pacote) = anexo cifrado `media:[M]`;
+    // figurinha-emoji = ref.emoji. Antes: emoji caía em e2ee5_unsupported_type.
+    let f = null;
+    try {
+      f = (type === 'sticker' || type === 'lottie_sticker') ? await _stickerFields(k, type, content, fileUrl) : P.fieldsFromLegacy(type, content, fileUrl);
+    } catch (e) {
+      _log('sticker_fail', { conv: k, code: e && e.code });
+      return { refuse: { code: (e && e.code) || 'e2ee5_media_failed', message: 'Não foi possível enviar a figurinha protegida. Nada foi enviado.' } };
+    }
     if (!f || f.t === 'text' && (fileUrl || type !== 'text')) {
       return { refuse: { code: 'e2ee5_unsupported_type', message: 'Este tipo de mensagem ainda não pode ser enviado numa conversa protegida.' } };
     }
     try {
       const env = await sealPayload(k, f, { cmid, reply: opts && opts.reply, mentionAll: opts && opts.mentionAll, fwd: opts && opts.fwd });
-      return { content: env, extra: _extraOf(sealMetaOf(env) || {}), dropFile: true, coarse: P.coarseOf(f.t) };
+      return { content: env, extra: _extraOf(sealMetaOf(env) || {}), dropFile: true, coarse: P.coarseOf(f.t), fine: f.t };
     } catch (e) {
       return { refuse: { code: (e && e.code) || 'encrypt_failed', message: 'Não foi possível criptografar a mensagem. Nada foi enviado.' } };
     }
@@ -755,6 +764,103 @@ export async function sealForSend(convId, content, type, fileUrl, cmid, opts) {
   } catch (e) {
     return { refuse: { code: (e && e.code) || 'encrypt_failed', message: 'Não foi possível criptografar a mensagem. Nada foi enviado.' } };
   }
+}
+
+// ── [2026-10-22 figurinha-e2ee] figurinha → campos do payload (§2.4 sticker)
+const _stkMediaMemo = new Map(); // URL da figurinha pessoal → {M, at} (reenviar a mesma não sobe de novo)
+function _stkAbs(u) {
+  try { const a = require('../stickerCache').absStickerUrl(u); if (a) return a; } catch (_) {}
+  return /^\/?data\//.test(String(u || '')) ? 'https://chatyy.com.br/' + String(u).replace(/^\//, '') : String(u || '');
+}
+function _stkPackRef(abs) {
+  try {
+    const sc = require('../stickerCache');
+    const packs = sc.getStickerMeta('mkt_packs');
+    for (const pk of Array.isArray(packs) ? packs : []) {
+      const id = pk && pk.id;
+      if (id == null) continue;
+      const items = sc.getStickerMeta('pack_' + id);
+      for (const it of Array.isArray(items) ? items : []) {
+        const u = it && (it.url || it.image_url);
+        if (u && _stkAbs(u) === abs) return { pack: id, id: it.id != null ? it.id : '' };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+async function _stkLocalFile(abs) {
+  if (Platform.OS === 'web') {
+    const r = await fetch(abs, { credentials: 'omit' });
+    if (!r.ok) throw _err('sticker_http_' + r.status);
+    return { blob: await r.blob() };
+  }
+  let uri = null;
+  try { const sc = require('../stickerCache'); uri = sc.getStickerLocalSync(abs) || await sc.ensureStickerCached(abs, { priority: 'high' }); } catch (_) { uri = null; }
+  if (uri) return { uri };
+  const FS = require('expo-file-system/legacy');
+  const dst = FS.cacheDirectory + 'e2ee5-stk-' + Date.now().toString(36) + (/\.json(\?|#|$)/i.test(abs) ? '.json' : '.img');
+  const r = await FS.downloadAsync(abs, dst);
+  if (!r || r.status !== 200) { try { await FS.deleteAsync(dst, { idempotent: true }); } catch (_) {} throw _err('sticker_http_' + (r ? r.status : 0)); }
+  return { uri: dst, tmp: true };
+}
+function _stkMime(abs, blob) {
+  if (blob && blob.type && blob.type !== 'application/octet-stream') return blob.type;
+  if (/\.json(\?|#|$)/i.test(abs)) return 'application/json';
+  if (/\.png(\?|#|$)/i.test(abs)) return 'image/png';
+  if (/\.gif(\?|#|$)/i.test(abs)) return 'image/gif';
+  if (/\.jpe?g(\?|#|$)/i.test(abs)) return 'image/jpeg';
+  return 'image/webp';
+}
+async function _stickerFields(conv, type, content, fileUrl) {
+  const P = _P5();
+  const raw = String(fileUrl || content || '').trim();
+  if (!fileUrl && P.isStickerEmoji(raw)) return P.fieldsFromLegacy('sticker', raw, null);
+  if (!raw) return null;
+  const abs = _stkAbs(raw);
+  const lottie = type === 'lottie_sticker' || /\.json(\?|#|$)/i.test(abs);
+  // Só a figurinha PESSOAL (arquivo do usuário em /data/sticker-files/) vai como anexo; pacote = referência.
+  const personal = /\/data\/sticker-files\//.test(abs) || /^(file|content|blob):/i.test(raw);
+  const pk = personal ? _stkPackRef(abs) : null;
+  if (!personal || pk) return P.fieldsFromLegacy(type, abs, abs, pk || null);
+  const memo = _stkMediaMemo.get(abs);
+  let M = memo && Date.now() - memo.at < 6 * 3600 * 1000 ? memo.M : null;
+  if (!M) {
+    const src = /^(file|content|blob):/i.test(raw) ? { uri: raw } : await _stkLocalFile(abs);
+    const mime = _stkMime(abs, src.blob);
+    try {
+      if (lottie) {
+        const up = await _M5().encryptUpload(conv, src.blob ? { blob: src.blob } : { uri: src.uri }, {});
+        M = { kind: 'image', mime: 'application/json', name: 'sticker.json', url: up.url, file: up.file, size: up.size };
+        try { if (src.uri) await _M5().adoptLocal(M, src.uri); } catch (_) {}
+      } else {
+        M = await _M5().buildMedia(conv, 'sticker', { uri: src.uri, blob: src.blob || null, mime, name: 'sticker' + (mime === 'image/png' ? '.png' : mime === 'image/gif' ? '.gif' : '.webp') }, { noPreview: true });
+      }
+    } finally {
+      if (src.tmp) { try { await require('expo-file-system/legacy').deleteAsync(src.uri, { idempotent: true }); } catch (_) {} }
+    }
+    _stkMediaMemo.set(abs, { M, at: Date.now() });
+    if (_stkMediaMemo.size > 50) _stkMediaMemo.delete(_stkMediaMemo.keys().next().value);
+  }
+  const out = { t: 'sticker', media: [M] };
+  if (lottie) out.lottie = true;
+  return out;
+}
+
+/**
+ * [2026-10-22 viewer-e2ee] Arquivo LOCAL já decifrado da mídia de uma mensagem cifrada (o visualizador
+ * nativo/JS abre file:// — nunca a URL cifrada do R2). Baixa+decifra se ainda não está no aparelho.
+ * → Promise<{uri, poster}|null>. null = não é mídia cifrada desta sessão.
+ */
+export async function mediaFileFor(msgOrMid) {
+  if (!isOn()) return null;
+  const mid = msgOrMid != null && typeof msgOrMid === 'object' ? msgOrMid.id : msgOrMid;
+  const pe = mid != null ? _byMid.get(String(mid)) : null;
+  const M = pe && pe.payload ? _P5().mainMedia(pe.payload) : null;
+  if (!M || !M.url || !M.file) return null;
+  const meta = { conv: pe.conv, mid: String(mid) };
+  const l = _M5().localSync(M) || {};
+  const uri = l.uri || await _M5().ensure(M, meta);
+  return uri ? { uri, poster: l.poster || null } : null;
 }
 
 function _extraOf(m) {
@@ -1700,7 +1806,11 @@ export async function sealRichForOutbox(conv, type, content, fileUrl, cmid, repl
   const r = await sealForSend(conv, content, type, fileUrl, cmid, { reply: replyToId ? { id: replyToId } : null });
   if (!r) return null;
   if (r.refuse) return r;
-  return { content: r.content, type: r.coarse || (type === 'text' ? 'text' : _P5().coarseOf(_P5().fineOfAppType(type))), fileUrl: null };
+  // [2026-10-22 figurinha-e2ee] tipo da linha da fila: GIF/figurinha NUNCA como 'image' — o sendWorker trata
+  // 'image' como mídia a subir (sem local_uri → "no_local_uri" e a figurinha nunca saía). O envelope já está
+  // pronto (anexo cifrado já subiu); o servidor reduz ao tipo grosso (e2ee5ChatCoarseType).
+  const _fine = r.fine === 'sticker' ? (type === 'lottie_sticker' ? 'lottie_sticker' : 'sticker') : (r.fine === 'gif' ? 'gif' : null);
+  return { content: r.content, type: _fine || r.coarse || (type === 'text' ? 'text' : _P5().coarseOf(_P5().fineOfAppType(type))), fileUrl: null };
 }
 
 /**
@@ -1781,6 +1891,7 @@ export function previewText(lastMsg, t, convId) {
   if (typeof c !== 'string') return null;
   const s = c.trim();
   if (sysKind(s)) return sysText(t, s);
+  if (s.startsWith('{"sys":"gift"')) { try { return require('../../components/gifts/giftCatalog').giftPreviewText(t, s); } catch (_) { return _tx(t, 'gifts.previewPrefix', 'Presente'); } } // [2026-10-22 presente-e2ee] cartão D7
   if (!isV5Family(s)) return null;
   if (envVersion(s) !== 5 || !isOn()) return stateText(t, 'update_to_read');
   const e = _plain.get(keyOf(s));
@@ -1968,6 +2079,6 @@ const e2ee5 = {
   decryptRow, applyToRow, foldEdits, rowNeedsRefresh, sysKind, sysText, previewText, searchLocal, forwardClient,
   outboxScrub, relayScrub, afterSend, editViaSend, editOf, listLocal, willRetryRejected, sessionSync, deviceIdSync, myUidSync, isReadySync,
   sealPayload, reactionsView, reactViaE2ee, createPoll, votePoll, createMeetup, meetupRsvp, isE2eeMessage, // [e2ee5 WP-09/WP-11]
-  liveLocationUpdate, liveLocationStop, allowsServerVoiceSession, sealRichForOutbox,
+  liveLocationUpdate, liveLocationStop, allowsServerVoiceSession, sealRichForOutbox, mediaFileFor,
 };
 export default e2ee5;

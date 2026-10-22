@@ -1,5 +1,12 @@
 # Contrato E2EE v5 — histórico
 
+## e2ee5-contrato/1.7.2 — 22/10/2026 (figurinha, presente, visualizador)
+- §2.9.1 figurinha: `ref:{url, pack?, id?}` (pacote), `ref.emoji` (figurinha-emoji), figurinha pessoal =
+  anexo cifrado `media:[M]` (+`lottie`); fila durável guarda `sticker`/`gif`, nunca `image`.
+- §2.9.2 presente em conversa cifrada: cartão D7 `{"sys":"gift"}` desenhado como a bolha de presente;
+  recado vai cifrado como resposta ao cartão (nunca no `diamond_gift_send`). Servidor/financeiro inalterados.
+- §2.9.3 visualizador (nativo e JS) abre só o arquivo decifrado local. §2.9.4 lista de tipos.
+
 ## e2ee5-contrato/1.7.1 — 22/10/2026 (rollout por conta)
 - §4.1/§8.2/§9: `E2EE5_PCT` passa a ser coorte **por conta** (sha256 do e-mail canônico, baldes de
   0,01 %), compondo com a allowlist (linha vence) — antes: `conv_id % 100` e "PCT > 0 libera todos no

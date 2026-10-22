@@ -649,6 +649,21 @@ function renderMarkdownLite(text, baseStyle) {
 // `new Date(...)` is unambiguous everywhere.
 // view-once messages must never join an album or the swipe-able media list —
 // the viewer would show/cache them without consuming the view.
+// [2026-10-22 viewer-e2ee] Mídia de mensagem cifrada (E2EE v5): a linha não tem file_url (a URL do R2
+// é ciphertext). O visualizador (nativo iOS/Android ou pager JS) abre o ARQUIVO LOCAL já decifrado
+// (e2ee5Media: cache de exibição file://, web blob:). _e5LocalSrc = síncrono (já pronto); _e5EnsureSrc
+// = baixa+decifra se preciso (Promise<uri|null>). Nunca devolve a URL cifrada.
+function _e5LocalSrc(m) {
+  if (!m || !m._e5Media || m.file_url) return null;
+  const u = m._localUri;
+  return typeof u === 'string' && /^(file|content|blob):/i.test(u) ? u : null;
+}
+function _e5EnsureSrc(m) {
+  const l = _e5LocalSrc(m);
+  if (l) return Promise.resolve(l);
+  if (!m || !m._e5Media || m.file_url) return Promise.resolve(null);
+  try { return require('../services/e2ee/e2ee5').mediaFileFor(m).then((r) => (r && r.uri) || null, () => null); } catch { return Promise.resolve(null); }
+}
 function _isViewOnceMsg(m) {
   const v = m && (m.is_view_once ?? m.isViewOnce ?? m.view_once);
   return v === true || v === 1 || v === '1' || v === 't' || v === 'true';
@@ -16493,6 +16508,11 @@ function ChatConversationInnerBody() {
         if (typeof jsonData.e2e === 'number' && jsonData.e2e >= 5) { // [e2ee5]
           return decryptMessages([{ ...msg, _e2eRaw: contentTrimmed }])[0];
         }
+        // [2026-10-22 presente-e2ee] conversa cifrada: o servidor grava o presente como cartão D7
+        // {"sys":"gift",gift_id,sku,amount,…} (só metadado da transação) → mesma bolha de presente.
+        if (t === 'system' && jsonData.sys === 'gift') {
+          return { ...msg, type: 'gift', _e5SysGift: true };
+        }
         // [e2ee5] mensagem de sistema {"sys":"e2ee_on"|"e2ee_off"} → divisor (nunca o JSON cru)
         if (t === 'system' && typeof jsonData.sys === 'string' && jsonData.sys.indexOf('e2ee_') === 0) {
           return { ...msg, _e2eSys: jsonData.sys };
@@ -26199,6 +26219,24 @@ function ChatConversationInnerBody() {
     if (readDebounceRef.current) { clearTimeout(readDebounceRef.current); readDebounceRef.current = null; }
   }, []);
 
+  // [2026-10-22 viewer-e2ee] abre o visualizador com o arquivo DECIFRADO local de uma mídia cifrada
+  // (extra = campos de álbum/remetente). Só usa setters/refs estáveis (seguro dentro de useCallback []).
+  const _e5OpenViewer = (m, extra) => {
+    if (!m || m.deleted_at) return;
+    _e5EnsureSrc(m).then((uri) => {
+      if (!uri || !mountedRef.current) return;
+      const b64 = m.thumb_b64 || null;
+      setMediaViewer({
+        visible: true, fileUrl: uri, fileName: m.file_name || (m.type === 'video' ? 'video.mp4' : 'image.jpg'), fileSize: m.file_size || 0,
+        type: m.type === 'video' || m.type === 'short_video' ? 'video' : 'image', messageId: m.id,
+        blurhash: m.blurhash || null, placeholderUri: b64 ? `data:image/jpeg;base64,${b64}` : null,
+        senderName: m.sender_name || (m.sender_email || '').split('@')[0] || '', senderEmail: m.sender_email || '',
+        createdAt: m.created_at || m.createdAt || null,
+        ...(m.type === 'video' && (m.width || m.image_width) ? { videoWidth: m.width || m.image_width, videoHeight: m.height || m.image_height, videoDuration: m.duration || 0 } : {}),
+        ...(extra || {}),
+      });
+    }).catch(() => {});
+  };
   const handleDoubleTap = useCallback((msg) => {
     // Privacy guard: never react/open a deleted message. Even if the outer
     // bubble handler accidentally lets the tap through (e.g. stale Stack
@@ -26216,6 +26254,8 @@ function ChatConversationInnerBody() {
       const _vo = !!(msg.is_view_once || msg.isViewOnce);
       if (!_vo && (msg.type === 'image' || msg.type === 'video') && !msg._uploading && msg.file_url) {
         setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || msg.type, fileSize: msg.file_size || 0, type: msg.type, messageId: msg.id });
+      } else if (!_vo && (msg.type === 'image' || msg.type === 'video') && !msg._uploading && msg._e5Media) {
+        _e5OpenViewer(msg); // [2026-10-22 viewer-e2ee]
       }
       return;
     }
@@ -26252,9 +26292,10 @@ function ChatConversationInnerBody() {
       // Sender + already-expired must never re-open. (User reported: sender
       // could tap the pill and re-open their own view-once.)
       const isViewOnce = !!(msg.is_view_once || msg.isViewOnce);
-      if (!isViewOnce && (msg.type === 'image' || msg.type === 'video') && !msg._uploading && msg.file_url) {
+      if (!isViewOnce && (msg.type === 'image' || msg.type === 'video') && !msg._uploading && (msg.file_url || msg._e5Media)) {
         lastTapTimerRef.current[msg.id] = setTimeout(() => {
           delete lastTapTimerRef.current[msg.id];
+          if (!msg.file_url) { _e5OpenViewer(msg); return; } // [2026-10-22 viewer-e2ee]
           setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || msg.type, fileSize: msg.file_size || 0, type: msg.type, messageId: msg.id });
         }, 310);
       }
@@ -31748,6 +31789,12 @@ function ChatConversationInnerBody() {
               // (or whose entire bundle is tombstoned) must never re-open
               // the original media via tap on the cell.
               if (m.deleted_at) return;
+              // [2026-10-22 viewer-e2ee] álbum cifrado: abre o arquivo decifrado local (swipe entre os itens do álbum)
+              if (!m.file_url && m._e5Media) {
+                _e5OpenViewer(m, { thumbUri: _cellThumbUri, albumIds: items.filter(x => x && !x.deleted_at && (x.file_url || x._e5Media)).map(x => x.id), fromAlbum: true,
+                  albumClientIds: items.map(x => x && (x._client_id || x.client_message_id)).filter(Boolean), clientId: m._client_id || m.client_message_id || null });
+                return;
+              }
               if (m.file_url) setMediaViewer({
                 visible: true,
                 fileUrl: m.file_url,
@@ -32409,6 +32456,7 @@ function ChatConversationInnerBody() {
               onPress={() => {
                 // Selection mode: tap toggles checkbox instead of opening viewer
                 if (selectionMode) return toggleSelection(msg.id);
+                if (!msg._uploading && !msg.file_url && msg._e5Media) { _e5OpenViewer(msg, { thumbUri: thumbUri || null, placeholderUri: lqipUri || null }); return; } // [2026-10-22 viewer-e2ee]
                 if (!msg._uploading && msg.file_url) setMediaViewer({
                   visible: true,
                   // [WAVE 72 2026-05-21] Pass `fullUri` instead of raw
@@ -33108,6 +33156,7 @@ function ChatConversationInnerBody() {
               ref={_heroRef(msg.id, 12)}
               onPress={() => {
                 if (selectionMode) return toggleSelection(msg.id);
+                if (!msg._uploading && !msg.file_url && msg._e5Media) { _e5OpenViewer(msg); return; } // [2026-10-22 viewer-e2ee]
                 if (msg._uploading || !msg.file_url) return;
                 if (vidNeedsDl && !vidIsDownloading) { startVidDownload(); return; }
                 setMediaViewer({
@@ -34091,8 +34140,18 @@ function ChatConversationInnerBody() {
           // for own messages (WhatsApp/Telegram parity).
           // [2026-10-12 sticker-instant] Caminho relativo (/data/sticker-files/…)
           // também é imagem — antes caía no ramo de TEXTO e o caminho cru aparecia.
-          if (msg.file_url || (typeof msg.content === 'string' && /^(https?:\/\/|\/?data\/)/i.test(msg.content))) {
-            const _stickerUri = msg.file_url || msg.content;
+          // [2026-10-22 figurinha-e2ee] figurinha pessoal cifrada: arquivo decifrado local (_localUri);
+          // ainda baixando → quadro vazio do tamanho da figurinha (repinta no e2ee5_plain).
+          if (msg._e5Media && !msg.file_url && !msg._localUri) {
+            return (
+              <View>
+                <View style={{ width: 120, height: 120 }} accessibilityLabel={t('chat.sticker') || 'Figurinha'} />
+                <MediaStatusFooter msg={msg} isOwn={isOwn} variant="sticker" />
+              </View>
+            );
+          }
+          if (msg.file_url || (msg._e5Media && msg._localUri) || (typeof msg.content === 'string' && /^(https?:\/\/|\/?data\/)/i.test(msg.content))) {
+            const _stickerUri = msg.file_url || (msg._e5Media ? msg._localUri : '') || msg.content;
             return (
               <View>
                 {/* [2026-10-10 stickers-import] toque → folha da figurinha
@@ -34102,7 +34161,10 @@ function ChatConversationInnerBody() {
                   onPress={() => {
                     if (selectionMode) return toggleSelection(msg.id);
                     if (msg._uploading) return;
-                    const _sid = Number(msg.id);
+                    // [2026-10-22 figurinha-e2ee] cifrada: o servidor não sabe qual figurinha é (busca pela URL
+                    // da referência); pessoal cifrada (arquivo local) não tem folha.
+                    if (msg._e5T && !/^https?:/i.test(String(msg.file_url || ''))) return;
+                    const _sid = msg._e5T ? NaN : Number(msg.id);
                     setStickerSheet({ messageId: Number.isFinite(_sid) && _sid > 0 ? _sid : null, url: (msg.file_url && /^https?:/i.test(msg.file_url)) ? msg.file_url : _stickerUri });
                   }}
                   onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
@@ -34140,7 +34202,7 @@ function ChatConversationInnerBody() {
           // Animated sticker (Lottie/TGS/JSON). Native-only to avoid the
           // web bundle pulling @lottiefiles/dotlottie-react (transitive
           // dep not installed). On web we show the emoji fallback.
-          const lottieUrl = resolveMediaUri(msg.file_url || msg.content);
+          const lottieUrl = (msg._e5Media && msg._localUri) ? msg._localUri : resolveMediaUri(msg.file_url || msg.content); // [2026-10-22 figurinha-e2ee] Lottie pessoal cifrado = .json decifrado local
           // [2026-10-16 mascote] Figurinha do mascote do Chatyy (saudação) →
           // desenha local (SVG animado, todas as plataformas, sem download).
           const _mPose = mascotPoseFromUrl(msg.file_url || msg.content);
@@ -37173,13 +37235,25 @@ function ChatConversationInnerBody() {
     const m = isAlbum ? its[Math.max(0, Math.min(its.length - 1, index || 0))] : item;
     // [2026-10-16 gif] GIF do seletor sem legenda: URL vem em content (file_url vazio)
     const _gifSrc = (m && m.type === 'gif' && !m.file_url && typeof m.content === 'string' && /^https?:\/\//i.test(m.content.trim())) ? m.content.trim() : '';
-    if (!m || m.deleted_at || (!m.file_url && !_gifSrc)) return;
+    if (!m || m.deleted_at || (!m.file_url && !_gifSrc && !m._e5Media)) return;
     if (m.type === 'sticker') {
-      const sid = Number(m.id);
+      if (m._e5T && !/^https?:/i.test(String(m.file_url || ''))) return; // [2026-10-22 figurinha-e2ee]
+      const sid = m._e5T ? NaN : Number(m.id);
       setStickerSheet({ messageId: Number.isFinite(sid) && sid > 0 ? sid : null, url: m.file_url || m.content });
       return;
     }
     if (m._uploading) return;
+    // [2026-10-22 viewer-e2ee] mídia cifrada (foto/vídeo/GIF, avulsa ou álbum): visualizador NATIVO com o
+    // arquivo decifrado local (e2ee5Media) — antes saía aqui (sem file_url) e nada abria no Android.
+    if (!m.file_url && !_gifSrc && m._e5Media) {
+      _e5OpenViewer(m.type === 'short_video' ? { ...m, type: 'video' } : m, isAlbum ? {
+        albumIds: its.filter(x => x && !x.deleted_at && (x.file_url || x._e5Media)).map(x => x.id),
+        fromAlbum: true,
+        albumClientIds: its.map(x => x && (x._client_id || x.client_message_id)).filter(Boolean),
+        clientId: m._client_id || m.client_message_id || null,
+      } : null);
+      return;
+    }
     if (!isAlbum && m.type !== 'gif') { _nlActRef.current.handleDoubleTap(m.type === 'short_video' ? { ...m, type: 'video' } : m); return; } // [native-cover] short_video = vídeo
     const b64 = m.thumb_b64 || getThumbB64Sync(m.id);
     setMediaViewer({

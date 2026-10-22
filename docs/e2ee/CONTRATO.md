@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Versão** | `e2ee5-contrato/1.7` (1.7.1) — 22/10/2026 (1.7.1: rollout por CONTA — `E2EE5_PCT` = hash do e-mail canônico, inscrito pegajoso, `client_flag` com núcleo+build, `blocked_reason` `reserved`/`group_size`, ROLLOUT.md; 1.7: pedido de chave de sala `chatyy.key_request`/`chatyy.room_key` + `e2ee5_key_request(_check)` (§3, §4.2.21–22, §6.12), encaminhamento automático entre MEUS aparelhos (`automatic-room-key-forwarding`), aparelhos já desconectados `e2ee5_devices_former` (§4.2.23) com `trust: device_removed` e UTD `unverified_sender`; 1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n; 1.3: códigos/campos do WP-07, `e2e_np` e flag NSE do WP-10, fila NSE→app do núcleo; 1.4: §2.8 tipos ricos e mídia cifrada do WP-09/WP-11; 1.5: §0.3bis privada inteira, §4.6 `e2ee5x_*` e denúncia do WP-16; 1.6: `sender_uid`, `members[].email`, códigos `{"sys"}`, leaf/`chat_send_rejected`, `gen` do `call_sdp`) |
+| **Versão** | `e2ee5-contrato/1.7` (1.7.2) — 22/10/2026 (1.7.2: §2.9 figurinha cifrada — `ref:{pack,id,url}`/`ref.emoji`/figurinha pessoal como anexo `media:[M]`, presente em conversa cifrada = cartão D7 `{"sys":"gift"}` + recado cifrado, visualizador abre só o arquivo decifrado local; 1.7.1: rollout por CONTA — `E2EE5_PCT` = hash do e-mail canônico, inscrito pegajoso, `client_flag` com núcleo+build, `blocked_reason` `reserved`/`group_size`, ROLLOUT.md; 1.7: pedido de chave de sala `chatyy.key_request`/`chatyy.room_key` + `e2ee5_key_request(_check)` (§3, §4.2.21–22, §6.12), encaminhamento automático entre MEUS aparelhos (`automatic-room-key-forwarding`), aparelhos já desconectados `e2ee5_devices_former` (§4.2.23) com `trust: device_removed` e UTD `unverified_sender`; 1.1: §6.11 API JS do host; 1.2: §5.3–5.5 WS do WP-06a, §10 i18n; 1.3: códigos/campos do WP-07, `e2e_np` e flag NSE do WP-10, fila NSE→app do núcleo; 1.4: §2.8 tipos ricos e mídia cifrada do WP-09/WP-11; 1.5: §0.3bis privada inteira, §4.6 `e2ee5x_*` e denúncia do WP-16; 1.6: `sender_uid`, `members[].email`, códigos `{"sys"}`, leaf/`chat_send_rejected`, `gen` do `call_sdp`) |
 | **Dono** | WP-00 (líder/arquiteto). Mudanças só por PR neste arquivo + entrada em `CHANGELOG.md`. |
 | **Implementação de referência** | `native/chatyy-crypto` (WP-01) e o servidor falso dos testes `native/chatyy-crypto/tests/common/fake_server.rs` (conformidade do WP-05). |
 | **Base** | `/root/e2ee-2026-10-21/PLANO.md` + DECISÕES DO FOUNDER (21/10: todas as recomendações aprovadas, "nível WhatsApp"). |
@@ -275,6 +275,39 @@ upload opaco, download+decifra), `api/e2ee5_media.php` (servidor). Notas: `/root
 6. **Fora desta versão (o app recusa localmente, nada sai em claro)**: visualização única de mídia,
    reação com figurinha, editar encontro, sessão de voz que sobe o áudio enquanto grava, prévia de link
    gerada no cliente, agendada/enviar-quando-online de mídia.
+
+### 2.9 Adendos 1.7.2 (22/10 — figurinha, presente e visualizador; todos aditivos)
+1. **Figurinha (`t:"sticker"`)** — três formas, todas dentro do envelope (o servidor vê só `type=image`):
+   - **pacote público** (loja / mascote / CDN pública): `ref:{url, pack?, id?}` — `pack`/`id` = ids do pacote
+     instalado e do item (≤ 40 chars cada) quando o app os conhece; `lottie:true` para `.json`. O servidor
+     não sabe qual figurinha foi enviada (nem o id do pacote).
+   - **figurinha-emoji** (pacotes embutidos do seletor): `ref:{emoji}` (1–16 chars, sem URL). Leitor: bolha
+     de figurinha com o caractere grande.
+   - **figurinha pessoal** (arquivo do usuário em `/data/sticker-files/…` que não é item de pacote instalado):
+     **anexo cifrado** `media:[M]` (§2.4.1, `M.kind="image"`, `mime` = `image/webp|png|gif` ou
+     `application/json` + `lottie:true`), sem `lqip`/`blurhash` (transparência). O remetente reaproveita o
+     mesmo `M` por 6 h ao reenviar a mesma figurinha. Sem rede para baixar o arquivo = o envio falha
+     (nada sai em claro).
+   - Fila durável do app: a linha guarda `type` `sticker`/`lottie_sticker`/`gif` (nunca `image` — a fila trata
+     `image` como upload pendente); o servidor reduz ao grosso (`e2ee5ChatCoarseType`).
+2. **Presente em conversa cifrada (D7, sem mudança no servidor)**: a transação continua toda no
+   `diamond_gift_send` (débito, crédito, ledger, idempotência por `client_id` — inalterados). A conversa
+   recebe só o cartão `type='system'` `{"sys":"gift", gift_id, sku, amount, currency, state, to_uid,
+   from_uid}` (lista branca `SYS_CARDS`; sem nomes, sem recado). O cliente desenha a MESMA bolha de presente
+   (quantidade = `amount` ÷ preço unitário do catálogo; prévia "Presente: X ×N"). O **recado** opcional não
+   vai no `diamond_gift_send` em conversa cifrada: sai como mensagem `t:"text"` cifrada respondendo ao
+   cartão (`reply_to_id` = `message_id` devolvido; `client_message_id` `dmdnote_<client_id>`). O
+   destinatário não precisa de outro registro: o crédito já está no ledger quando o cartão existe.
+3. **Visualizador de mídia** (foto, vídeo, GIF, álbum — iOS/Android nativo e pager JS): em mensagem cifrada
+   abre **só** o arquivo decifrado local (`e2ee5Media` cópia de exibição `file://`, web `blob:`), baixando
+   e decifrando antes se preciso (`e2ee5.mediaFileFor(msg)`); nunca recebe a URL `e2e/` do R2. Álbum = as
+   linhas com o mesmo `batch` já decifradas (swipe entre elas).
+4. **Tipos e o que acontece em conversa cifrada (lista de conferência)**: texto, edição, resposta, reação
+   emoji, foto, vídeo, vídeo-recado, voz, áudio, documento (`file` via `e2ee5Media`), GIF por referência,
+   figurinha (1.), localização (fixa e ao vivo), pedido de localização, contato, enquete, encontro = cifrados.
+   Jogos, assistir/ouvir junto, presente, card de ligação = cartão D7 do servidor (fora da criptografia, com
+   selo). Ainda recusados no aparelho (§2.8.6): visualização única, reação com figurinha, editar encontro,
+   agendar/enviar-quando-online.
 
 ## 3. Eventos to-device `chatyy.*` (cifrados Olm aparelho→aparelho)
 

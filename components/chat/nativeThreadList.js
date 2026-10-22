@@ -1636,6 +1636,12 @@ function _buildRowInner(item, key, ctx) {
     return row;
   }
   if (type === 'sticker') {
+    // [2026-10-22 figurinha-e2ee] figurinha pessoal cifrada: arquivo decifrado local (sem URL do R2);
+    // ainda baixando → quadro vazio do mesmo tamanho (repinta no e2ee5_plain).
+    if (item._e5Media && !item.file_url) {
+      row.media = { t: 'sticker', uri: typeof item._localUri === 'string' ? item._localUri : '', w: 120, h: 120 };
+      return row;
+    }
     if (item.file_url || /^(https?:\/\/|\/?data\/)/i.test(c)) {
       const r = (ctx.resolveSticker && ctx.resolveSticker(item)) || {};
       row.media = { t: 'sticker', uri: _stkLocal(r.uri || '', false), w: 120, h: 120 };

@@ -42,6 +42,14 @@ export function fineOfAppType(type) {
   }
 }
 
+// figurinha-emoji (pacotes embutidos do seletor): 1–16 chars, sem espaço/URL/JSON
+let _emojiRe;
+function _isStickerEmoji(s) {
+  if (typeof s !== 'string' || !s || s.length > 16 || /[\s{}<>]|:\/\//.test(s)) return false;
+  if (_emojiRe === undefined) { try { _emojiRe = new RegExp('\\p{Extended_Pictographic}|\\p{Regional_Indicator}', 'u'); } catch (_) { _emojiRe = null; } }
+  return _emojiRe ? _emojiRe.test(s) : /[\u2190-\u2BFF\uD83C-\uDBFF]/.test(s);
+}
+export function isStickerEmoji(s) { return _isStickerEmoji(s); }
 const _num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
 const _str = (v, max) => (typeof v === 'string' && v ? (max ? v.slice(0, max) : v) : undefined);
 function _json(s) {
@@ -63,7 +71,7 @@ function _clean(o) {
  * local/contato, URL de GIF/figurinha). → {t, ...campos} | null (tipo que não sabemos cifrar).
  * Mídia enviada pelo aparelho NÃO passa aqui (o e2ee5Media monta `media:[M]`).
  */
-export function fieldsFromLegacy(type, content, fileUrl) {
+export function fieldsFromLegacy(type, content, fileUrl, refExtra) {
   const t = fineOfAppType(type);
   if (!t) return null;
   if (t === 'text') return { t: 'text', body: String(content == null ? '' : content) };
@@ -99,9 +107,15 @@ export function fieldsFromLegacy(type, content, fileUrl) {
   }
   if (t === 'gif' || t === 'sticker') {
     // GIF do seletor (Giphy/Tenor) e figurinha de pacote: referência pública (§2.4 `ref`).
+    // [2026-10-22 figurinha-e2ee] `ref` aceita {pack, id} do pacote da loja e `emoji` (figurinha-emoji
+    // dos pacotes embutidos: só o caractere, sem URL). Figurinha PESSOAL vai como anexo cifrado
+    // (`media:[M]`, e2ee5.js monta) — esta função só cobre as referências.
     const url = String(fileUrl || content || '').trim();
+    if (t === 'sticker' && !fileUrl && _isStickerEmoji(url)) return { t, ref: { emoji: url } };
     if (!/^https?:\/\//i.test(url) && !/^\/?(data|stickers|public)\//i.test(url)) return null;
-    const out = { t, ref: { url } };
+    const ref = { url };
+    if (refExtra && refExtra.pack != null && refExtra.id != null) { ref.pack = String(refExtra.pack).slice(0, 40); ref.id = String(refExtra.id).slice(0, 40); }
+    const out = { t, ref };
     if (type === 'lottie_sticker' || /\.json(\?|#|$)/i.test(url)) out.lottie = true;
     return out;
   }
@@ -275,6 +289,11 @@ export function toRowFields(p, ctx) {
   }
   if (MEDIA_T.has(t)) {
     const caption = typeof p.caption === 'string' ? p.caption : '';
+    if (t === 'sticker' && p.ref && typeof p.ref.emoji === 'string' && p.ref.emoji && !mainMedia(p)) {
+      // [2026-10-22 figurinha-e2ee] figurinha-emoji: a bolha de figurinha desenha o caractere grande
+      out.type = 'sticker'; out.content = p.ref.emoji.slice(0, 16); out.file_url = '';
+      return out;
+    }
     if ((t === 'gif' || t === 'sticker') && p.ref && p.ref.url && !mainMedia(p)) {
       // referência pública (pacote / Giphy / Tenor): o app de hoje já desenha pela URL
       out.type = t === 'gif' ? 'gif' : (p.lottie ? 'lottie_sticker' : 'sticker');
@@ -298,8 +317,10 @@ export function toRowFields(p, ctx) {
     const dur = _num(M.dur != null ? M.dur : p.dur);
     if (dur > 0) out.duration = Math.round(dur);
     if (t === 'image' || t === 'gif' || t === 'sticker') {
-      out.type = t;
-      if (loc.uri || loc.thumb) out._localUri = loc.uri || loc.thumb;
+      // [2026-10-22 figurinha-e2ee] figurinha pessoal cifrada animada em Lottie (.json) → bolha Lottie
+      out.type = t === 'sticker' && p.lottie ? 'lottie_sticker' : t;
+      const _lu = t === 'sticker' ? loc.uri : (loc.uri || loc.thumb); // figurinha: nunca a miniatura JPEG (sem transparência)
+      if (_lu) out._localUri = _lu;
     } else if (t === 'video') {
       out.type = p.round ? 'video_note' : 'video';
       if (loc.uri) out._localUri = loc.uri;

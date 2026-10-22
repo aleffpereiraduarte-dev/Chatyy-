@@ -209,6 +209,11 @@ export async function sendGift({ context, targetId, sku, quantity = 1, comboId =
   // reenviam o MESMO id → o servidor devolve a resposta idempotente (nunca cobra 2x).
   const cid = clientId || newClientId();
   const nt = context === 'chat' ? String(note || '').trim().slice(0, 120) : '';
+  // [2026-10-22 presente-e2ee] Conversa cifrada (E2EE v5): o presente continua sendo a transação do
+  // servidor (débito/crédito/ledger iguais) e a conversa recebe só o cartão D7 {"sys":"gift",…} sem texto.
+  // O recado NUNCA vai em claro ao servidor: sai como mensagem cifrada respondendo ao cartão.
+  let _e5Conv = false;
+  if (context === 'chat' && nt) { try { _e5Conv = !!require('./e2ee/e2ee5').isConvE2eeSync(targetId); } catch { _e5Conv = false; } }
   const body = {
     context,
     target_id: String(targetId ?? ''),
@@ -217,7 +222,7 @@ export async function sendGift({ context, targetId, sku, quantity = 1, comboId =
     combo_id: comboId || undefined,
     combo_count: comboCount || undefined,
     client_id: cid,
-    note: nt || undefined,
+    note: (nt && !_e5Conv) ? nt : undefined,
   };
   try {
     let r = await apiCall('diamond_gift_send', body, 'POST');
@@ -228,6 +233,10 @@ export async function sendGift({ context, targetId, sku, quantity = 1, comboId =
     if (r && r.success) {
       const d = r.data || {};
       if (typeof d.diamond_balance === 'number') setDiamondBalance(d.diamond_balance);
+      if (_e5Conv && nt && !d.idempotent) {
+        // cifrado pelo chat_send (sealForSend); falha aqui não desfaz o presente (já cobrado)
+        try { require('./api').chatSend(targetId, nt, 'text', d.message_id || null, null, null, null, 'dmdnote_' + cid).catch(() => {}); } catch {}
+      }
       return { ok: true, data: d };
     }
     const code = errorCode(r);

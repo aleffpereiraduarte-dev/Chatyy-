@@ -102,13 +102,26 @@ export function humanizeCount(n) {
   return sign + (Math.floor(a / 100000) / 10).toString() + 'M';
 }
 
+/**
+ * [2026-10-22 presente-e2ee] Cartão D7 de conversa cifrada {"sys":"gift", gift_id, sku, amount,
+ * currency, state, to_uid, from_uid} (só metadado da transação, sem nomes/recado) → mesmo formato da
+ * bolha. Quantidade = amount ÷ preço unitário do catálogo (o cartão não leva texto livre).
+ */
+function _fromSysGift(j) {
+  if (!j || j.sys !== 'gift' || typeof j.sku !== 'string' || !j.sku) return null;
+  const meta = giftMeta(j.sku);
+  const amount = Math.max(0, Number(j.amount) || 0);
+  const unit = Number(meta.diamonds) || 0;
+  const qty = unit > 0 && amount >= unit ? Math.max(1, Math.round(amount / unit)) : 1;
+  return { v: 1, gift_id: j.gift_id, gift_sku: j.sku, quantity: qty, diamonds: amount || unit * qty, unit_diamonds: unit || undefined, e2e_card: true };
+}
 /** Conteúdo JSON da mensagem type 'gift' do chat → objeto (ou null). */
 export function parseGiftContent(content) {
   if (!content) return null;
-  if (typeof content === 'object') return content.gift_sku ? content : null;
+  if (typeof content === 'object') return content.gift_sku ? content : _fromSysGift(content);
   const s = String(content).trim();
   if (!s.startsWith('{')) return null;
-  try { const j = JSON.parse(s); return j && j.gift_sku ? j : null; } catch { return null; }
+  try { const j = JSON.parse(s); return j && j.gift_sku ? j : _fromSysGift(j); } catch { return null; }
 }
 
 /** "Presente: Rosa ×3" — prévia na lista de conversas / resposta. */

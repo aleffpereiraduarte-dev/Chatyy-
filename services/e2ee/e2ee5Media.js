@@ -50,7 +50,7 @@ function _extOf(F) {
   const m = /\.([a-z0-9]{1,5})$/i.exec(n);
   if (m) return '.' + m[1].toLowerCase();
   const mime = String((F && F.mime) || '').toLowerCase();
-  const map = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'image/heic': '.heic', 'video/mp4': '.mp4', 'video/quicktime': '.mov', 'audio/mp4': '.m4a', 'audio/m4a': '.m4a', 'audio/aac': '.aac', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'application/pdf': '.pdf' };
+  const map = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'image/heic': '.heic', 'video/mp4': '.mp4', 'video/quicktime': '.mov', 'audio/mp4': '.m4a', 'audio/m4a': '.m4a', 'audio/aac': '.aac', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'application/pdf': '.pdf', 'application/json': '.json', 'image/heif': '.heif', 'video/3gpp': '.3gp', 'video/webm': '.webm', 'video/x-m4v': '.m4v' };
   if (map[mime]) return map[mime];
   if (F && F.kind === 't320' || F && F.kind === 'poster') return '.jpg';
   return '.bin';
@@ -440,8 +440,9 @@ export async function buildMedia(conv, kind, src, opts) {
     let w = Number(src.width) || 0; let h = Number(src.height) || 0;
     if (!(w > 0 && h > 0)) { const s = await _imgSize(uri); if (s) { w = s.w; h = s.h; } }
     if (w > 0 && h > 0) { M.w = w; M.h = h; }
-    const lq = await _lqip(uri); if (lq) M.lqip = lq;
-    const bh = await _blurhash(uri); if (bh) M.blurhash = bh;
+    // [2026-10-22 figurinha-e2ee] figurinha (transparente): sem LQIP/blurhash (JPEG pintaria um quadro de fundo)
+    if (!o.noPreview) { const lq = await _lqip(uri); if (lq) M.lqip = lq; }
+    if (!o.noPreview) { const bh = await _blurhash(uri); if (bh) M.blurhash = bh; }
     if (kind === 'image' && Math.max(w, h) > 400) {
       const t = await _resizeJpeg(uri, w >= h ? 320 : Math.round(320 * w / Math.max(1, h)), 0.7);
       if (t) {
