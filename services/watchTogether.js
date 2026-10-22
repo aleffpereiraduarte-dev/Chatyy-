@@ -15,7 +15,8 @@
 //     Enquanto a sala/mini-player está aberta há poll curto (5 s na sala, 20 s na conversa) p/ cobrir perdas.
 // Relógio: ping NTP-like (4 amostras, menor RTT; refaz a cada 5 min) → offset = server_ts - (t0 + rtt/2).
 // Kill switch OTA: globalThis.__chatyy_watch_together = false (some do "+", cabeçalho, cartão vira texto).
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
+import { makeClock, expectedPosition, PLAY_LEAD } from './watchSync';
 
 const _api = () => require('./api');
 const _ws = () => { try { return require('./websocket').default; } catch { return null; } };
@@ -26,15 +27,21 @@ export function watchEnabled() {
 }
 
 // ─── relógio ────────────────────────────────────────────────────────────────
+// [sync 22/10] amostras NTP-like (hub: watch_pong; HTTP: watch_time c/ t1/t2) → mediana da metade de menor
+// atraso (services/watchSync.makeClock). Rajada de 6 ao entrar/reconectar/voltar ao 1º plano; 1 amostra a
+// cada 30 s com sala aberta. Kill: globalThis.__chatyy_watch_sync2 = false → volta à 1 amostra de menor RTT.
+const _clock = makeClock();
 let _offset = null; // serverNow - Date.now()
 let _offsetAt = 0;
 let _clockP = null;
+function _sync2() { try { return globalThis.__chatyy_watch_sync2 !== false; } catch { return true; } }
 export function serverNow() {
   if (_offset !== null && Math.abs(_offset) < 365 * 86400000) return Date.now() + _offset;
   try { const w = _ws(); if (w && typeof w.serverNow === 'function') return w.serverNow(); } catch {}
   return Date.now();
 }
 export function clockOffset() { return _offset; }
+export function clockInfo() { return _clock.estimate(); }
 
 function _hubPing() {
   return new Promise((resolve) => {
@@ -43,10 +50,10 @@ function _hubPing() {
     const t0 = Date.now();
     let done = false;
     const off = ws.on('watch_pong', (d) => {
-      if (done || !d || Number(d.t0) !== t0) return;
+      const x = (d && d.t0 !== undefined ? d : (d && d.data)) || {};
+      if (done || Number(x.t0) !== t0) return;
       done = true; off && off();
-      const t1 = Date.now();
-      resolve({ rtt: t1 - t0, offset: Number(d.server_ts) - (t0 + (t1 - t0) / 2) });
+      resolve({ t0, t3: Date.now(), ts: Number(x.server_ts) });
     });
     try { ws.send({ type: 'watch.ping', t0 }); } catch {}
     setTimeout(() => { if (!done) { done = true; off && off(); resolve(null); } }, 1500);
@@ -55,32 +62,48 @@ function _hubPing() {
 async function _httpPing() {
   const t0 = Date.now();
   try {
-    const r = await _api().apiCall('watch_time', {}, 'GET');
-    const t1 = Date.now();
-    const ts = r && r.data && Number(r.data.server_ts);
+    const r = await _api().apiCall('watch_time', { t0 }, 'GET');
+    const t3 = Date.now();
+    const d = r && r.data;
+    const ts = d && Number(d.server_ts);
     if (!ts) return null;
-    return { rtt: t1 - t0, offset: ts - (t0 + (t1 - t0) / 2) };
+    return { t0, t3, ts, t1: Number(d.t1) || 0, t2: Number(d.t2) || 0 };
   } catch { return null; }
+}
+function _applyClock() {
+  const o = _clock.offset();
+  if (o !== null) { _offset = o; _offsetAt = Date.now(); }
+}
+/** Uma amostra (hub se disponível, senão HTTP). */
+async function _sampleOnce() {
+  const x = (_hub === true ? await _hubPing() : null) || await _httpPing();
+  if (!x) return false;
+  if (!_sync2()) {
+    const rtt = x.t3 - x.t0;
+    if (_offset === null || rtt <= (_clock.rtt() ?? 1e9)) { _clock.reset(); _clock.add(x); _applyClock(); }
+    return true;
+  }
+  _clock.add(x);
+  _applyClock();
+  return true;
 }
 export function syncClock(force = false) {
   if (!force && _offset !== null && Date.now() - _offsetAt < 5 * 60 * 1000) return Promise.resolve(_offset);
   if (_clockP) return _clockP;
   _clockP = (async () => {
-    const samples = [];
-    for (let i = 0; i < 4; i++) {
-      const s = (_hub === true ? await _hubPing() : null) || await _httpPing();
-      if (s) samples.push(s);
-      if (i === 0 && !s) break;
-    }
-    if (samples.length) {
-      samples.sort((a, b) => a.rtt - b.rtt);
-      _offset = samples[0].offset; _offsetAt = Date.now();
+    const n = _sync2() ? 6 : 4;
+    for (let i = 0; i < n; i++) {
+      const ok = await _sampleOnce();
+      if (i === 0 && !ok) break;
+      if (i < n - 1) await new Promise((r) => setTimeout(r, 60));
     }
     _clockP = null;
     return _offset;
   })();
   return _clockP;
 }
+/** Amostra solta (manutenção com a sala aberta). */
+export function clockTick() { if (!_clockP) _sampleOnce().catch(() => {}); }
 
 // ─── estado ─────────────────────────────────────────────────────────────────
 const _sessions = new Map(); // cid → state|null
@@ -158,9 +181,22 @@ function _attachWs() {
     ws.on('connection', (e) => {
       if (!e || e.status !== 'authenticated') return;
       _hub = null; // hub pode ter sido trocado (kit aplicado) → sonda de novo
-      for (const cid of Array.from(_open.keys())) refresh(cid).catch(() => {});
+      _resyncOpen('ws');
     });
   } catch {}
+  // [sync 22/10] voltou ao 1º plano → relógio (rajada) + estado das salas abertas (o WS pode ter caído)
+  try {
+    AppState.addEventListener('change', (st) => { if (st === 'active') _resyncOpen('fg'); });
+  } catch {}
+}
+let _resyncAt = 0;
+function _resyncOpen(why) {
+  if (!_open.size) return;
+  const now = Date.now();
+  if (now - _resyncAt < 1500) return; // fg + ws juntos
+  _resyncAt = now;
+  for (const cid of Array.from(_open.keys())) refresh(cid).catch(() => {});
+  syncClock(true).then(() => { for (const cid of Array.from(_open.keys())) refresh(cid).catch(() => {}); }).catch(() => {});
 }
 
 // ─── transporte ─────────────────────────────────────────────────────────────
@@ -250,7 +286,10 @@ function _optimistic(cid, cmd, args) {
   else if (cmd === 'pause') { n.pos = pos; n.playing = false; n.hold = null; }
   else if (cmd === 'seek') { n.pos = pos; n.hold = null; }
   else return;
-  n.server_ts = now; n.by = (args && args._me) || n.by; n.cmd = cmd; n._local = true;
+  // [sync 22/10] o hub carimba quando o comando CHEGA (≈ meia ida depois) → o otimista já mira esse carimbo,
+  // senão quem mandou fica adiantado meia ida em relação aos outros quando o eco chega
+  const half = _sync2() ? Math.min(400, Math.max(0, (_clock.rtt() || 0) / 2)) : 0;
+  n.server_ts = now + half; n.by = (args && args._me) || n.by; n.cmd = cmd; n._local = true;
   _sessions.set(_k(cid), n);
   _emit(cid, n, { origin: 'local' });
 }
@@ -284,18 +323,10 @@ export async function cmd(cid, name, args = {}) {
 
 // ─── posição ────────────────────────────────────────────────────────────────
 /** Posição (s) do estado no instante (ms de servidor) `at`. */
-export function positionAt(s, at) {
-  if (!s) return 0;
-  const pos = Number(s.pos) || 0;
-  if (!s.playing) return pos;
-  let from = Number(s.server_ts) || at;
-  const hold = s.hold && Number(s.hold.until);
-  if (hold) { if (at <= hold) return pos; from = Math.max(from, hold); }
-  const p = pos + Math.max(0, at - from) / 1000 * (Number(s.rate) || 1);
-  const dur = Number(s.item && s.item.dur) || 0;
-  return dur > 0 ? Math.min(p, dur) : p;
-}
+export function positionAt(s, at) { return expectedPosition(s, at); }
 export function positionNow(s) { return positionAt(s, serverNow()); }
+/** [sync 22/10] posição p/ mandar no "play": um pouco antes de onde parou → todos começam juntos (partida agendada). */
+export function playPos(s) { const p = positionNow(s); return _sync2() ? Math.max(0, p - PLAY_LEAD) : p; }
 export function isHeld(s) { return !!(s && s.playing && s.hold && Number(s.hold.until) > serverNow()); }
 export function canControl(s, me) {
   if (!s) return false;
@@ -314,6 +345,7 @@ function _tick(cid) {
   const needPoll = _hub !== true && (room || isLive(s));
   if (needPoll) refresh(cid).catch(() => {});
   if (room && isLive(s) && Date.now() - (o.hbAt || 0) > 45000) { o.hbAt = Date.now(); cmd(cid, 'join').catch(() => {}); }
+  if (room && isLive(s) && Date.now() - (o.clkAt || 0) > 30000) { o.clkAt = Date.now(); clockTick(); }
   clearTimeout(o.timer);
   o.timer = setTimeout(() => _tick(cid), room ? 5000 : 20000);
 }
@@ -336,8 +368,8 @@ export function enterRoom(cid) {
   const o = _open.get(k) || { room: 0, conv: 0 };
   o.room++;
   _open.set(k, o);
-  syncClock().catch(() => {});
-  o.hbAt = Date.now();
+  syncClock(o.room === 1).catch(() => {}); // [sync 22/10] entrou na sala → rajada nova
+  o.hbAt = Date.now(); o.clkAt = Date.now();
   if (isLive(getSession(cid))) cmd(cid, 'join').catch(() => {});
   clearTimeout(o.timer);
   o.timer = setTimeout(() => _tick(cid), 3000);

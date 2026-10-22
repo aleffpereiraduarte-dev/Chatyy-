@@ -176,7 +176,7 @@ export function WatchMiniBar({ cid, me, colors = {}, isDark, t, onOpen }) {
   const toggle = () => {
     if (!can) return;
     if (s.playing) WT.cmd(cid, 'pause', { pos: WT.positionNow(s), _me: me }).catch(() => {});
-    else WT.cmd(cid, 'play', { pos: WT.positionNow(s), _me: me }).catch(() => {});
+    else WT.cmd(cid, 'play', { pos: WT.playPos(s), _me: me }).catch(() => {});
   };
   return (
     <Pressable onPress={onOpen} style={[cs.mini, { backgroundColor: card, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)' }]}>

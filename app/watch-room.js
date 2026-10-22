@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Pressable, ScrollView, Image, Animated, ActivityIndicator, Linking, StatusBar,
-  TextInput, KeyboardAvoidingView, Platform, PanResponder, Easing, useWindowDimensions,
+  TextInput, KeyboardAvoidingView, Platform, PanResponder, Easing, useWindowDimensions, BackHandler, Keyboard,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,6 +20,7 @@ import WatchPlayer from '../components/watch/WatchPlayer';
 import {
   IconChevronDown, IconPlayFill, IconPauseFill, IconBack10, IconFwd10, IconNextTrack, IconPrevTrack, IconQueue,
   IconSync, IconCrown, SourceIcon, IconHeadphones, IconTogether, IconHeart, IconLaugh, IconFire, IconWow, IconPip, IconGrip,
+  IconFullscreen, IconFullscreenExit, IconRotate,
 } from '../components/watch/WatchIcons';
 import { IconPlus, IconX } from '../components/Icons';
 // [juntos repaginado 21/10] mockup aprovado preview-2026/juntos.html: player com as cores da capa
@@ -31,6 +32,30 @@ const REACTS = [['heart', IconHeart], ['laugh', IconLaugh], ['fire', IconFire], 
 const REACT_ICON = { heart: IconHeart, laugh: IconLaugh, fire: IconFire, wow: IconWow };
 const ROW_H = 60;
 const TIME_RE = /^(\d{1,2}:\d{2}(?::\d{2})?) · ([\s\S]+)$/;
+
+// [sync 22/10] Tela cheia deitada (vídeo). Com expo-screen-orientation no binário (precisa BUILD + Info.plist do
+// iPhone com paisagem) → rotação REAL: na sala de vídeo o aparelho gira livre (girar entra/sai da tela cheia),
+// botão trava em paisagem, sair trava em retrato, fechar a sala volta ao retrato. Sem o módulo (binário atual)
+// → "paisagem simulada": a área do vídeo gira 90° por cima da tela inteira (o mesmo player, sem recarregar),
+// a pessoa deita o celular; botão inverte o lado. Só em celular (tablet já gira sozinho).
+// Kill: globalThis.__chatyy_watch_fullscreen = false (some o botão) · __chatyy_watch_orient_native = false (só simulada).
+const OL = { ALL: 1, PORTRAIT_UP: 3, LANDSCAPE: 5 };
+let _orient;
+function orientMod() {
+  if (_orient !== undefined) return _orient;
+  try {
+    const m = require('expo-modules-core').requireOptionalNativeModule('ExpoScreenOrientation');
+    _orient = m && typeof m.lockAsync === 'function' ? m : null;
+  } catch { _orient = null; }
+  try { if (globalThis.__chatyy_watch_orient_native === false) _orient = null; } catch {}
+  return _orient;
+}
+function orientLock(v) {
+  const m = orientMod();
+  if (!m) return Promise.resolve(false);
+  try { return Promise.resolve(m.lockAsync(v)).then(() => true, () => false); } catch { return Promise.resolve(false); }
+}
+function fullscreenOn() { try { return globalThis.__chatyy_watch_fullscreen !== false; } catch { return true; } }
 
 function initials(n) {
   const p = String(n || '?').trim().split(/\s+/).filter(Boolean);
@@ -163,7 +188,21 @@ export default function WatchRoom() {
   const scrollRef = useRef(null);
   const sRef = useRef(s);
   sRef.current = s;
-  const { width: winW } = useWindowDimensions();
+  const { width: winW, height: winH } = useWindowDimensions();
+  // [sync 22/10] tela cheia deitada
+  const [fs, setFs] = useState(false);           // paisagem simulada ligada
+  const [fsFlip, setFsFlip] = useState(false);   // gira p/ o outro lado
+  const [fsNative, setFsNative] = useState(false); // rotação real disponível (BUILD)
+  const [rootSz, setRootSz] = useState(null);
+  const [fsTrackW, setFsTrackW] = useState(1);
+  const phone = Math.min(winW, winH) < 600;
+  const isVideoRoom = !!(s && s.kind !== 'music');
+  useEffect(() => {
+    if (!isVideoRoom || !phone || !orientMod()) return undefined;
+    let alive = true;
+    orientLock(OL.ALL).then((ok) => { if (alive && ok) setFsNative(true); });
+    return () => { alive = false; orientLock(OL.PORTRAIT_UP); };
+  }, [isVideoRoom, phone]);
 
   // [juntos 21/10] "Continuar assistindo" do catálogo: grava onde parou (vídeo) a cada 15 s e ao sair
   useEffect(() => {
@@ -316,6 +355,28 @@ export default function WatchRoom() {
   // iOS: o expo-video do binário atual troca a sessão de áudio p/ .playback e derruba o áudio do CallKit.
   // Na ligação o player só monta com o binário que tem o patch (liga por OTA: __chatyy_watch_call_ios = true).
   const callBlocked = callNow && WT.callPlaybackBlocked();
+  // [sync 22/10] tela cheia: rotação real → segue a janela; simulada → estado fs
+  const landscapeWin = winW > winH;
+  const fsOn = isVideoRoom && live && (fsNative ? landscapeWin : fs);
+  const enterFs = useCallback(() => {
+    try { Keyboard.dismiss(); } catch {}
+    setOverlay(true);
+    if (phone && orientMod()) {
+      orientLock(OL.LANDSCAPE).then((ok) => { if (ok) setFsNative(true); else { setFsNative(false); setFs(true); } });
+      return;
+    }
+    setFs(true);
+  }, [phone]);
+  const exitFs = useCallback(() => {
+    setFs(false);
+    if (fsNative) orientLock(OL.PORTRAIT_UP);
+  }, [fsNative]);
+  useEffect(() => { if (!live) setFs(false); }, [live]);
+  useEffect(() => {
+    if (!fsOn) return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => { exitFs(); return true; });
+    return () => { try { sub.remove(); } catch {} };
+  }, [fsOn, exitFs]);
 
   const deny = useCallback(() => showToast(WT.tr(t, 'watch.hostOnly', 'Só o anfitrião controla')), [showToast, t]);
   const doCmd = useCallback(async (name, args) => {
@@ -330,7 +391,7 @@ export default function WatchRoom() {
     if (!s) return;
     if (!canCtl) { deny(); return; }
     if (s.playing) { doCmd('pause', { pos: WT.positionNow(s) }); myEv(WT.tr(t, 'watch.ev.pause', '{who} pausou', { who: you })); }
-    else { doCmd('play', { pos: dur > 0 && pos >= dur - 0.5 ? 0 : WT.positionNow(s) }); myEv(WT.tr(t, 'watch.ev.play', '{who} continuou', { who: you })); }
+    else { doCmd('play', { pos: dur > 0 && pos >= dur - 0.5 ? 0 : WT.playPos(s) }); myEv(WT.tr(t, 'watch.ev.play', '{who} continuou', { who: you })); }
     setOverlay(true);
   };
   const seekBy = (d) => {
@@ -343,7 +404,7 @@ export default function WatchRoom() {
     showToast(txt + (peerLabel ? ' · ' + WT.tr(t, 'watch.syncedWithShort', 'sincronizado com {who}', { who: peerLabel }) : ''), { e: me, n: myName || you });
     setOverlay(true);
   };
-  const seekTo = (x) => { if (!s || !dur) return; if (!canCtl) { deny(); return; } const p = Math.max(0, Math.min(dur, (x / Math.max(1, trackW)) * dur)); doCmd('seek', { pos: p, delta: Math.round(p - WT.positionNow(s)) }); };
+  const seekTo = (x, w) => { if (!s || !dur) return; if (!canCtl) { deny(); return; } const p = Math.max(0, Math.min(dur, (x / Math.max(1, w || trackW)) * dur)); doCmd('seek', { pos: p, delta: Math.round(p - WT.positionNow(s)) }); };
   const setCtrl = (mode) => {
     if (!isHost) { deny(); return; }
     WT.cmd(cid, 'ctrl', { mode }).then((r) => {
@@ -394,7 +455,7 @@ export default function WatchRoom() {
     const d = Math.abs(Number(sync.diff) || 0);
     let loc = ''; try { loc = String(t('_locale') || ''); } catch {}
     const ds = d.toFixed(1).replace('.', loc.toLowerCase().startsWith('en') ? '.' : ',');
-    syncWait = d > 0.5;
+    syncWait = d > 0.3; // [sync 22/10] correção contínua deixa < 80 ms; acima de 0,3 s mostra a diferença
     // [juntos 21/10] linha discreta: "No mesmo segundo que X" / "Esperando X entrar"; diferença só quando dá p/ notar
     if (syncWait) syncTxt = peerLabel ? WT.tr(t, 'watch.syncedWith', 'Sincronizado com {who} · diferença {d} s', { who: peerLabel, d: ds }) : WT.tr(t, 'watch.synced', 'Sincronizado · diferença {d} s', { d: ds });
     else if (others.length) syncTxt = WT.tr(t, 'watch.sameSecondAs', 'No mesmo segundo que {who}', { who: peerLabel });
@@ -719,20 +780,73 @@ export default function WatchRoom() {
     );
   }
 
+  // [sync 22/10] tela cheia: caixa do player cobre a tela (girada 90° na paisagem simulada)
+  const RW = (rootSz && rootSz.w) || winW;
+  const RH = (rootSz && rootSz.h) || winH;
+  const fsRot = fsOn && !fsNative && RH > RW;
+  const fsBox = !fsOn ? null : (fsRot
+    ? { position: 'absolute', left: (RW - RH) / 2, top: (RH - RW) / 2, width: RH, height: RW, aspectRatio: undefined, zIndex: 100, elevation: 100, backgroundColor: '#000', transform: [{ rotate: fsFlip ? '-90deg' : '90deg' }] }
+    : { position: 'absolute', left: 0, top: 0, width: RW, height: RH, aspectRatio: undefined, zIndex: 100, elevation: 100, backgroundColor: '#000' });
+  // margens seguras na orientação do conteúdo (90°: esquerda = topo do aparelho/entalhe, direita = barra de início)
+  const fsPad = !fsOn ? { l: 0, r: 0, t: 0, b: 0 } : (fsRot
+    ? (fsFlip ? { l: insets.bottom, r: insets.top, t: 0, b: 0 } : { l: insets.top, r: insets.bottom, t: 0, b: 0 })
+    : { l: insets.left, r: insets.right, t: insets.top, b: insets.bottom });
+  const fsCtl = fsOn && (overlay || !s.playing || held);
+  const fsBars = fsCtl ? (
+    <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 6, paddingLeft: fsPad.l + 14, paddingRight: fsPad.r + 14, paddingTop: fsPad.t + 10, paddingBottom: fsPad.b + 10 }]}>
+      <View style={st.fsTop}>
+        <Pressable hitSlop={10} style={st.fsIb} onPress={exitFs} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.exitFullscreen', 'Sair da tela cheia')}>
+          <IconFullscreenExit size={22} color="#fff" />
+        </Pressable>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={st.hdTitle} numberOfLines={1}>{(item && item.title) || WT.tr(t, 'watch.title', 'Assistir junto')}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>{syncDot}<Text style={st.syncTx} numberOfLines={1}>{syncTxt}</Text></View>
+        </View>
+        {fsRot ? (
+          <Pressable hitSlop={10} style={st.fsIb} onPress={() => setFsFlip((f) => !f)} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.rotateSide', 'Virar para o outro lado')}>
+            <IconRotate size={22} color="#fff" />
+          </Pressable>
+        ) : null}
+      </View>
+      <View style={{ flex: 1 }} pointerEvents="none" />
+      <View style={st.fsBottom}>
+        <View style={{ flex: 1 }}>
+          <Pressable onLayout={(e) => setFsTrackW(e.nativeEvent.layout.width)} onPress={(e) => seekTo(e.nativeEvent.locationX, fsTrackW)} style={st.track} hitSlop={8}
+            accessibilityRole="adjustable" accessibilityLabel={WT.fmtTime(pos) + (dur > 0 ? ' / ' + WT.fmtTime(dur) : '')}>
+            <View style={st.trackBg} />
+            <View style={[st.trackFg, { width: `${pct * 100}%` }]} />
+            <View style={[st.knob, { left: `${pct * 100}%` }]} />
+          </Pressable>
+          <View style={st.tm}>
+            <Text style={st.tmTx}>{WT.fmtTime(pos)}</Text>
+            <Text style={st.tmTx}>{dur > 0 ? '-' + WT.fmtTime(Math.max(0, dur - pos)) : ''}</Text>
+          </View>
+        </View>
+        {REACTS.map(([r, Ic]) => (
+          <Pressable key={r} onPress={() => sendReact(r)} hitSlop={4} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.react.' + r, r)}>
+            <Glass style={st.rbtn} veil={0.14} intensity={30}><Ic size={19} color="#fff" /></Glass>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  ) : null;
+  const fsAllowed = fullscreenOn();
+
   return (
-    <KeyboardAvoidingView style={[st.root, { backgroundColor: '#17171a' }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <StatusBar barStyle="light-content" />
+    <KeyboardAvoidingView style={[st.root, { backgroundColor: '#17171a' }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      onLayout={(e) => { const { width, height } = e.nativeEvent.layout; setRootSz((p) => (p && p.w === width && p.h === height ? p : { w: width, h: height })); }}>
+      <StatusBar barStyle="light-content" hidden={fsOn} />
       {/* [juntos 21/10] fora do vídeo: cores do pôster desfocado (sem o preto chapado) */}
       <AmbientBackdrop uri={item && item.thumb} dim={0.55} />
       {header}
-      <Pressable onPress={() => setOverlay((o) => !o)} style={st.player}>
+      <Pressable onPress={() => setOverlay((o) => !o)} style={[st.player, fsBox]}>
         {callBlocked ? (
           <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
             <Text style={{ color: '#fff', fontSize: 14, textAlign: 'center' }}>{WT.tr(t, 'watch.callBlocked', 'Durante a ligação o vídeo fica pausado aqui. Termine a ligação para continuar assistindo.')}</Text>
           </View>
-        ) : <WatchPlayer cid={cid} state={s} me={me} style={StyleSheet.absoluteFill} onSync={setSync} duck={duck} />}
-        <View style={st.srcb} pointerEvents="none"><Badge t={t} item={item} light /></View>
-        <View pointerEvents="none" style={st.ovchat}>
+        ) : <WatchPlayer cid={cid} state={s} me={me} style={StyleSheet.absoluteFill} onSync={setSync} duck={duck} surfaceType={Platform.OS === 'android' ? 'textureView' : undefined} />}
+        <View style={[st.srcb, fsOn ? { left: fsPad.l + 14, top: fsPad.t + (fsCtl ? 62 : 12) } : null]} pointerEvents="none"><Badge t={t} item={item} light /></View>
+        <View pointerEvents="none" style={[st.ovchat, fsOn ? { left: fsPad.l + 14, bottom: fsPad.b + (fsCtl ? 76 : 16), maxWidth: '45%' } : null]}>
           {over.map((m) => <OverMsg key={m.k} m={m} onDone={() => setOver((o) => o.filter((x) => x.k !== m.k))} />)}
         </View>
         {floatLayer}
@@ -743,8 +857,14 @@ export default function WatchRoom() {
               {held ? <ActivityIndicator color="#fff" /> : (s.playing ? <IconPauseFill size={28} color="#fff" /> : <IconPlayFill size={28} color="#fff" />)}
             </Pressable>
             <Pressable hitSlop={10} onPress={() => seekBy(10)}><IconFwd10 size={36} color="#fff" /></Pressable>
+            {!fsOn && fsAllowed && !callBlocked ? (
+              <Pressable hitSlop={10} style={st.fsBtn} onPress={enterFs} accessibilityRole="button" accessibilityLabel={WT.tr(t, 'watch.fullscreen', 'Tela cheia')}>
+                <IconFullscreen size={22} color="#fff" />
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
+        {fsBars}
       </Pressable>
       {timeline}
       <View style={st.ctrl}>
@@ -782,6 +902,10 @@ const st = StyleSheet.create({
   hdTitle: { color: '#fff', fontSize: 15, fontWeight: '700' },
   hdSub: { color: GRAY, fontSize: 12 },
   player: { width: '100%', aspectRatio: 16 / 9, backgroundColor: '#111', overflow: 'hidden' },
+  fsBtn: { position: 'absolute', right: 10, bottom: 10, width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' },
+  fsTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  fsIb: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' },
+  fsBottom: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   srcb: { position: 'absolute', left: 10, top: 10, zIndex: 3 },
   ov: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 34, backgroundColor: 'rgba(0,0,0,0.28)' },
   big: { width: 62, height: 62, borderRadius: 31, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },

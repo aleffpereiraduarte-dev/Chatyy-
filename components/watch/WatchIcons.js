@@ -137,6 +137,21 @@ export function IconExpand({ size, color, style }) {
   return <I size={size} color={color} style={style} strokeWidth={2.2}><Path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" /></I>;
 }
 
+// [sync 22/10] tela cheia deitada (assistir com o celular na horizontal)
+export function IconFullscreen({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15" /></I>;
+}
+export function IconFullscreenExit({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M9 4v3.5A1.5 1.5 0 0 1 7.5 9H4M20 9h-3.5A1.5 1.5 0 0 1 15 7.5V4M15 20v-3.5a1.5 1.5 0 0 1 1.5-1.5H20M4 15h3.5A1.5 1.5 0 0 1 9 16.5V20" /></I>;
+}
+export function IconRotate({ size, color, style }) {
+  return (
+    <I size={size} color={color} style={style}>
+      <Rect x="7" y="3" width="10" height="18" rx="2" transform="rotate(90 12 12)" />
+      <Path d="M4.5 6.5A9 9 0 0 1 12 3M12 3l-2.2-1.8M12 3l-2 2" />
+    </I>
+  );
+}
 /** Ícone do selo da fonte (domínio público / CC / Jamendo / da conversa). */
 export function SourceIcon({ source, size = 12, color }) {
   if (source === 'pd') return <IconPd size={size} color={color} />;
