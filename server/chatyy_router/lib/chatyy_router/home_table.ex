@@ -114,13 +114,16 @@ defmodule ChatyyRouter.HomeTable do
         others = Net.alive_regions() -- [Net.me()]
         mine = {nil, local_acc(cid)}
 
+        # para assim que achar um registro comprometido ou tiver a maioria de respostas
+        q = Config.quorum()
+
         answers =
           [mine] ++
-            (others
-             |> Task.async_stream(fn r -> Net.call(r, __MODULE__, {:query, cid}, Net.tmo(r)) end,
-               timeout: 31_000, on_timeout: :kill_task, max_concurrency: 16)
+            (gather(others, fn _r -> {:query, cid} end, fn acc ->
+               Enum.any?(acc, &match?({:home, {_, _}, _}, &1)) or length(acc) + 1 >= q
+             end)
              |> Enum.flat_map(fn
-               {:ok, {:home, c, a}} -> [{c, a}]
+               {:home, c, a} -> [{c, a}]
                _ -> []
              end))
 
@@ -144,6 +147,49 @@ defmodule ChatyyRouter.HomeTable do
           true ->
             {:error, :unknown}
         end
+    end
+  end
+
+  # chama `msg_fun.(r)` em cada região em paralelo (timeout por par ∝ RTT) e devolve as respostas
+  # recebidas até `done?.(respostas)` ou até todas chegarem. Um coletor à parte recebe as respostas
+  # atrasadas (morre ao responder), então nada sobra na caixa de quem chamou.
+  defp gather([], _msg_fun, _done?), do: []
+
+  defp gather(regions, msg_fun, done?) do
+    caller = self()
+    ref = make_ref()
+
+    {pid, mref} =
+      spawn_monitor(fn ->
+        me = self()
+        for r <- regions, do: spawn(fn -> send(me, {:ans, Net.call(r, __MODULE__, msg_fun.(r), Net.tmo(r))}) end)
+        send(caller, {ref, collect(length(regions), [], done?)})
+      end)
+
+    receive do
+      {^ref, acc} ->
+        Process.demonitor(mref, [:flush])
+        acc
+
+      {:DOWN, ^mref, _, _, _} ->
+        []
+    after
+      31_000 ->
+        Process.exit(pid, :kill)
+        Process.demonitor(mref, [:flush])
+        []
+    end
+  end
+
+  defp collect(0, acc, _done?), do: acc
+
+  defp collect(left, acc, done?) do
+    receive do
+      {:ans, v} ->
+        acc = [v | acc]
+        if done?.(acc), do: acc, else: collect(left - 1, acc, done?)
+    after
+      31_000 -> acc
     end
   end
 
@@ -171,15 +217,16 @@ defmodule ChatyyRouter.HomeTable do
     others = Net.alive_regions() -- [Net.me()]
     me_res = GenServer.call(__MODULE__, {:accept, cid, region, epoch})
 
+    # volta assim que a maioria aceitou (não espera o par mais lento: SG↔BR = 390 ms)
+    q = Config.quorum()
+    n = length(others) + 1
+
     res =
       [me_res] ++
-        (others
-         |> Task.async_stream(fn r -> Net.call(r, __MODULE__, {:accept, cid, region, epoch}, Net.tmo(r)) end,
-           timeout: 31_000, on_timeout: :kill_task, max_concurrency: 16)
-         |> Enum.map(fn
-           {:ok, v} -> v
-           _ -> {:error, :timeout}
-         end))
+        gather(others, fn _r -> {:accept, cid, region, epoch} end, fn acc ->
+          oks = Enum.count([me_res | acc], &(&1 == :accepted))
+          oks >= q or oks + (n - 1 - length(acc)) < q
+        end)
 
     oks = Enum.count(res, &(&1 == :accepted))
     Telemetry.execute([:chatyy_router, :home, :propose], %{duration_us: System.monotonic_time(:microsecond) - t0})
