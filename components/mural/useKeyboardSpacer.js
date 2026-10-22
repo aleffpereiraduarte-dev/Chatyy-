@@ -9,7 +9,8 @@
 //            edge-to-edge sem resize → pad = teclado inteiro.
 // Teclado já aberto ao montar → Keyboard.metrics(). Uso: onLayout no View raiz
 // (que vai até o fundo da tela) + <View style={{ height: pad }} /> após o campo.
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useContext } from 'react';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { Keyboard, LayoutAnimation, Platform, Dimensions } from 'react-native';
 
 function _anim(duration) {
@@ -38,6 +39,11 @@ export default function useKeyboardSpacer({ enabled = true } = {}) {
   const restH = useRef(0); // altura da raiz sem teclado (Android: detectar adjustResize)
   const kbRef = useRef(kb);
   kbRef.current = kb;
+  // [2026-10-22 kb-navbar] Android edge-to-edge: a altura do teclado vem SEM a barra de navegação →
+  // o campo ficava meio coberto (print 20261022-075246, Comentários). Soma o inset de baixo, igual ao
+  // useKeyboardInset (components/chat/SheetKeyboardAvoider). null fora do provider (não lança).
+  const _ins = useContext(SafeAreaInsetsContext);
+  const navB = (_ins && _ins.bottom) || 0;
   useEffect(() => {
     if (!enabled || Platform.OS === 'web') return undefined;
     const subs = [];
@@ -76,7 +82,7 @@ export default function useKeyboardSpacer({ enabled = true } = {}) {
     if (Platform.OS === 'ios') pad = kb;
     else {
       const shrunk = restH.current && rootH ? Math.max(0, restH.current - rootH) : 0;
-      pad = Math.max(0, kb - shrunk);
+      pad = Math.max(0, kb + (shrunk > 0 ? 0 : navB) - shrunk);
     }
   }
   return { pad, kb, onLayout };
