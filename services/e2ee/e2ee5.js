@@ -269,30 +269,23 @@ export async function endSession({ wipe } = {}) {
   try { if (wipe) await _C().wipe(s.uid); else await _C().close(); } catch (_) {}
 }
 
-// [2026-10-21 android754] Chamada nativa estourou o prazo (services/crypto/index.native.js): no
-// Android 754 o núcleo pode ficar preso num deadlock do RustFuture (E2eeNative.callSuspend sem
-// dispatcher — corrigido no BUILD seguinte) segurando a OlmMachine para sempre. Recuperação OTA:
-// fecha o CryptoCore preso e reabre outro (mesmo store/aparelho, mesmo holder da trava) — as
-// caches de texto ficam; o que aguardava volta a tentar. No máx. 1x a cada 30 s.
-let _lastReset = 0;
+// [2026-10-21 android754] Chamada nativa estourou o prazo (services/crypto/index.native.js). Timeout NÃO
+// quer dizer "núcleo morto": o RustFuture antigo continua rodando (segura o tokio::Mutex da OlmMachine
+// e pode estar escrevendo no store) — o close() nativo não espera nem aborta futures pendentes, então
+// reabrir o CryptoCore aqui abriria o store 2x (risco de sessão duplicada/corrompida). Só backoff: a
+// linha fica "aguardando" e volta a tentar; o sync espera crescer (5 s → 60 s). O deadlock do Android
+// 754 (E2eeNative.callSuspend) é corrigido no BUILD (5640f8da).
+let _stuckN = 0;
+let _stuckUntil = 0;
 function _resetCore(why) {
-  if (!_sess || Date.now() - _lastReset < 30000) return;
-  _lastReset = Date.now();
-  _diag('core_reset', { code: why, os: Platform.OS });
-  _sess = null;
-  _syncRunning = false;
-  // _sessP = a própria reabertura: ninguém reabre em paralelo (o open nativo devolveria o núcleo preso)
-  const p = (async () => {
-    try { await _C().close(); } catch (_) {}
-    _sessP = null;
-    return ensureSession();
-  })();
-  _sessP = p;
-  p.then((s) => {
-    if (!s) return;
-    _diag('core_reset_ok', { code: why, os: Platform.OS });
-    requestSync(50);
-  }).catch(() => {});
+  _stuckN = Math.min(_stuckN + 1, 6);
+  _stuckUntil = Date.now() + Math.min(60000, 5000 * Math.pow(2, _stuckN - 1));
+  _diag('core_slow', { code: why, n: _stuckN, os: Platform.OS });
+}
+function _noteCoreOk() {
+  if (!_stuckN) return;
+  _stuckN = 0; _stuckUntil = 0;
+  try { for (const cid of Array.from(_waiting.keys())) _retryWaiting(cid); } catch (_) {} // o que estourou o prazo tenta de novo
 }
 function _isTimeout(e) { return !!(e && (e.code === 'timeout' || e.code === 'lock_busy')); }
 
@@ -339,6 +332,7 @@ export function requestSync(delayMs = 300) {
 
 async function _runSync() {
   if (_syncRunning) { _syncAgain = true; return; }
+  if (Date.now() < _stuckUntil) { requestSync(_stuckUntil - Date.now() + 50); return; }
   const s = await ensureSession();
   if (!s) return;
   _syncRunning = true;
@@ -346,6 +340,7 @@ async function _runSync() {
     for (let i = 0; i < 6; i++) {
       let r = null;
       try { r = await _C().sync(); } catch (e) { _log('sync_fail', { code: e && e.code }); if (_isTimeout(e)) _resetCore('sync_' + e.code); break; }
+      _noteCoreOk();
       _onSyncResult(r);
       if (!r || !r.more) break;
     }
