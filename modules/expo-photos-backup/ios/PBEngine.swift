@@ -96,6 +96,12 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
   private var sentWindow: [(Double, Int64)] = []
   private var lastProgressEmit: Double = 0
   private var scanning = false
+  // [2026-10-22 pbloop] sequência de deduped seguidos (cada um custou export+SHA-256 à toa)
+  private var dedupStreak = 0
+  private var reseeding = false
+  private static let reseedInsertMin = 50        // linhas novas numa varredura que pedem precheck em lote
+  private static let reseedStreakMin = 40        // deduped seguidos que pedem precheck em lote
+  private static let reseedMinGap: Double = 30 * 60
   private var uiTask: UIBackgroundTaskIdentifier = .invalid
 
   // sinais do aparelho
@@ -477,7 +483,7 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
               if skip.contains(a.localIdentifier) { return }
               items.append((a.localIdentifier, a.creationDate?.timeIntervalSince1970 ?? 0, a.mediaType == .video ? 2 : 1))
             }
-            _ = st.insertMissing(items, includeVideos: config.includeVideos)
+            noteInserted(st, st.insertMissing(items, includeVideos: config.includeVideos))
           }
           if !deleted.isEmpty { dropRows(st.remove(Array(deleted))) }
           handled = true
@@ -547,7 +553,7 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
       items.append((a.localIdentifier, a.creationDate?.timeIntervalSince1970 ?? 0, a.mediaType == .video ? 2 : 1))
       seen.insert(a.localIdentifier)
     }
-    _ = st.insertMissing(items, includeVideos: config.includeVideos)
+    noteInserted(st, st.insertMissing(items, includeVideos: config.includeVideos))
     let existing = st.allIds()
     // Biblioteca "vazia" de repente com muita coisa no banco = leitura suspeita
     // (permissão em transição) → não apaga nada.
@@ -567,11 +573,25 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
     for r in rows where !r.tempPath.isEmpty { try? FileManager.default.removeItem(atPath: r.tempPath) }
   }
 
-  /// 1ª vez por conta: pergunta ao servidor quais ids já estão salvos (backup antigo / outro motor).
+  /// [2026-10-22 pbloop] Muitas linhas novas DEPOIS da semente (varredura completa que removeu e
+  /// re-inseriu, permissão limitada→total, banco recriado...) = sem isso cada uma era exportada do
+  /// iCloud + SHA-256 só p/ o servidor responder deduped (~1/s por horas). Marca p/ novo precheck em lote.
+  private func noteInserted(_ st: PBStore, _ n: Int) {
+    if n >= PBEngine.reseedInsertMin && st.meta("seeded") == "1" { st.setMeta("reseed", "1") }
+  }
+
+  private func reseedDue(_ st: PBStore) -> Bool {
+    let last = Double(st.meta("seed_at") ?? "") ?? 0
+    return Date().timeIntervalSince1970 - last >= PBEngine.reseedMinGap
+  }
+
+  /// 1ª vez por conta (e de novo quando `reseed`): pergunta ao servidor quais ids já estão salvos.
   private func seedIfNeeded(_ st: PBStore, done: @escaping () -> Void) {
-    if st.meta("seeded") == "1" || token == nil { done(); return }
-    let ids = st.idsWithState([PBState.pending.rawValue, PBState.skipped.rawValue])
-    if ids.isEmpty { st.setMeta("seeded", "1"); done(); return }
+    if token == nil { done(); return }
+    if st.meta("seeded") == "1" && !(st.meta("reseed") == "1" && reseedDue(st)) { done(); return }
+    let ids = st.idsWithState([PBState.pending.rawValue, PBState.skipped.rawValue, PBState.exported.rawValue])
+    st.setMeta("seed_at", String(Int(Date().timeIntervalSince1970)))
+    if ids.isEmpty { st.setMeta("seeded", "1"); st.setMeta("reseed", nil); done(); return }
     let batches = stride(from: 0, to: ids.count, by: 5000).map { Array(ids[$0..<min($0 + 5000, ids.count)]) }
     Task {
       var ok = true
@@ -583,7 +603,8 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
       }
       let seeded = ok // [review] sem capturar `var` em closure @Sendable
       self.q.async {
-        if seeded { st.setMeta("seeded", "1") }
+        if seeded { st.setMeta("seeded", "1"); st.setMeta("reseed", nil) }
+        self.dedupStreak = 0
         self.emitProgress(force: true)
         done()
       }
@@ -633,6 +654,23 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
     guard let st = store else { return }
     if stopNew { resolveIdleWaiters(); return }
 
+    // [2026-10-22 pbloop] N deduped seguidos = o servidor já tem o que estamos exportando →
+    // precheck em lote (1 ida p/ até 5000 ids) em vez de exportar+hash foto a foto.
+    if dedupStreak >= PBEngine.reseedStreakMin && !scanning && reseedDue(st) {
+      dedupStreak = 0
+      st.setMeta("reseed", "1")
+      scanning = true
+      reseeding = true
+      seedIfNeeded(st) { [weak self] in
+        guard let self = self else { return }
+        self.scanning = false
+        self.reseeding = false
+        self.pump()
+      }
+      return
+    }
+    if reseeding { emitProgress(); return } // não inicia exportações enquanto o lote responde
+
     // confirmações pendentes (upload terminou mas o confirm falhou/não rodou)
     let now = Date().timeIntervalSince1970
     for r in st.rowsInState(.uploaded) where !inFlight.contains(r.localId) && r.nextAt <= now && inFlight.count < PBEngine.maxJobs + 2 {
@@ -672,7 +710,12 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
     q.async {
       self.inFlight.remove(id)
       for k in Array(self.bgEventHandlers.keys) { self.flushBackgroundEvents(k, force: false) }
-      self.pump()
+      // [2026-10-22 pbloop] fora da tomada, sequência de deduped → ritmo limitado (bateria/iCloud).
+      if self.dedupStreak >= 10 && !self.charging {
+        self.q.asyncAfter(deadline: .now() + 2.0) { self.pump() }
+      } else {
+        self.pump()
+      }
     }
   }
 
@@ -839,9 +882,11 @@ final class PBEngine: NSObject, URLSessionDataDelegate {
       return false
     }
     if (d["deduped"] as? Bool) == true {
+      q.async { self.dedupStreak += 1 }
       markDone(&r, st, fileId: PBEngine.int(d["file_id"]))
       return false
     }
+    q.async { self.dedupStreak = 0 }
     guard let url = d["upload_url"] as? String, url.hasPrefix("https://"),
           let key = d["object_key"] as? String, !key.isEmpty else {
       fail(&r, st, "init sem upload_url")
