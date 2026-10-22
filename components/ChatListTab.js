@@ -612,6 +612,23 @@ function _mergeServerConvRowBase(old, c, meLc) {
   }
   const oldLm = old.last_message && typeof old.last_message === 'object' ? old.last_message : null;
   const newLm = c.last_message && typeof c.last_message === 'object' ? c.last_message : null;
+  // [2026-10-22 reconexão-sem-vazio] Founder (reinícios edges/hub ~14:50Z): prévia "aparece →
+  // 'Nenhuma mensagem' → aparece". Snapshot do chat_list SEM last_message (réplica/edge
+  // reiniciando, preload parcial) trazia last_message_at = updated_at da conversa (>= hora da
+  // última msg) → keepOld=false e _rcMergeListRow devolvia a linha nula → prévia vazia até o
+  // próximo refresh. Agora "sem mensagem" só vale CONFIRMADO: o servidor viu a msg local
+  // (conv_max_message_id >= id dela → limpar/apagar p/ mim em outro aparelho) ou ela foi
+  // apagada/oculta aqui (_lmServerOwns). Limpar histórico local/WS chat_cleared já zeram antes.
+  // Kill: globalThis.__chatyy_keep_lm_on_null_off = true.
+  if (oldLm && !newLm && globalThis.__chatyy_keep_lm_on_null_off !== true && !_lmServerOwns(oldLm, c)) {
+    return {
+      ...c,
+      last_message: old.last_message,
+      last_message_at: old.last_message_at || c.last_message_at,
+      last_message_sender: old.last_message_sender ?? c.last_message_sender,
+      last_message_type: old.last_message_type ?? c.last_message_type,
+    };
+  }
   let keepOld = false;
   if (oldLm && !_sameLm(oldLm, newLm, meLc) && !_lmServerOwns(oldLm, c)) { // [prevapagada 2026-10-21]
     const oMs = _convActivityMs(old);
