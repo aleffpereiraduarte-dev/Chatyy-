@@ -264,11 +264,16 @@ export function regionsNear(geo, list, km = GEO_RADIUS_KM) {
     .map((r) => ({ id: r.id, d: distKm(geo, r) })).filter((x) => x.d <= km)
     .sort((a, b) => a.d - b.d).map((x) => x.id);
 }
-export function pickCandidates({ list, near, tz, current, lastGood, max = 4, remembered = null, geoBad = false, geo = null, netChange = false } = {}) {
+export function pickCandidates({ list, near, tz, current, lastGood, max = 4, remembered = null, geoBad = false, geo = null, netChange = false, phys = null } = {}) {
   const L = list || getList();
   const ok = (id) => isUsable(regionById(id, L));
   const out = [];
   const add = (id) => { if (id && !out.includes(id) && ok(id) && out.length < max) out.push(id); };
+  // [geo-fisica 2026-10-22] posição FÍSICA (GPS do SO, só c/ permissão já dada — services/physGeo.js)
+  // vence o IP: a região mais perto do aparelho é medida SEMPRE e primeiro (Chile c/ IP de roaming
+  // dos EUA → scl entra). A medição continua decidindo (home routing pode tornar o US melhor).
+  const physNear = phys ? regionsNear(phys, L) : [];
+  add(physNear[0]);
   // [client-lb 2026-10-22] melhor edge JÁ medido nesta rede vem primeiro; na troca de rede a
   // última boa e a atual entram SEMPRE (antes de qualquer palpite) e depois as regiões a até
   // GEO_RADIUS_KM da posição do IP (CF) — o país do CF pode mentir (roaming), a medição decide.
@@ -276,6 +281,7 @@ export function pickCandidates({ list, near, tz, current, lastGood, max = 4, rem
   if (netChange) {
     add(lastGood);
     add(current);
+    for (const id of physNear) add(id);
     for (const id of regionsNear(geo || L.geo, L)) add(id);
   }
   // País (CF) e fuso intercalados: VPN/roaming fazem um dos dois mentir — medir resolve.
@@ -292,6 +298,12 @@ export function pickCandidates({ list, near, tz, current, lastGood, max = 4, rem
   add(lastGood);
   if (!out.includes('us')) { if (out.length >= max) out.pop(); out.push('us'); }
   return out;
+}
+
+/** [geo-fisica 2026-10-22] Região utilizável (exceto US) mais perto da posição física, ou null. */
+export function physNearest(phys, list) {
+  if (!phys) return null;
+  return regionsNear(phys, list || getList())[0] || null;
 }
 
 /** Região utilizável mais próxima (lat/lon do servidor) de `id`, fora de `skip`. */
@@ -547,4 +559,5 @@ export default {
   getList, refreshList, isClientLbOn, isUsable, usableRegions, regionById, pickCandidates, decide,
   rankRegions, loadState, saveState, isEconomy, beacon, tzGuess, deviceTz, validateList, regionsNear, distKm,
   netSignature, netKeys, listNetStale, netMemGet, netMemPut, noteWsRtt, wsRttFor, blendScores, wsLeafFor, fnv1a, nearestTo,
+  physNearest,
 };

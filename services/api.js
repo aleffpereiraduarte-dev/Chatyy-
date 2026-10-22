@@ -786,9 +786,15 @@ async function _lbDetect(opts) {
     const st = _lbS();
     // [client-lb 2026-10-22] lista buscada em OUTRA rede → o hash do IP dela não vale aqui: força.
     const listStale = !!(L.listNetStale && L.listNetStale());
+    // [geo-fisica 2026-10-22] posição física (só c/ permissão de localização JÁ dada; nunca pede,
+    // nunca liga GPS) em paralelo c/ a lista → região mais perto do aparelho medida primeiro.
+    let _pgP = null;
+    try { if (_lbActive()) _pgP = require('./physGeo').refreshPhysGeo({ force: why === 'net' }); } catch {}
     await L.refreshList({ force: listStale || (why === 'net' && L.listAgeMs() > _LB_NET_REMEASURE_MS), altBase: _bestServer && _bestServer.region !== 'us' ? _bestServer.base : null });
     if (!L.isClientLbOn()) { legacy = true; return; }
     _lbSyncExtras();
+    let phys = null;
+    try { if (_pgP) await Promise.race([_pgP, new Promise(r => setTimeout(r, 400))]); phys = require('./physGeo').getPhysGeo(); } catch {}
     // [client-lb 2026-10-22] chave da rede = tipo + SSID/BSSID (se o SO der) ou hash do IP público
     // /24 (+ASN) visto pelo servidor; memória do melhor edge POR rede.
     const nk = L.netKeys ? L.netKeys() : null;
@@ -850,7 +856,7 @@ async function _lbDetect(opts) {
     // até _LB_NET_MAX_PROBES sondas (economia 3). Caso real: Android em SCL 11 ms trocou de rede,
     // o /health do SCL falhou na transição e ele caiu p/ BR 82 ms (só BR e US responderam).
     const netChange = !!(st.session.fresh || netChanged || why === 'net');
-    const cands = L.pickCandidates({ list, near, tz: L.deviceTz(), current: curUsable ? cur : (cur || null), lastGood: st.lastGood, max: eco ? 3 : (netChange ? _LB_NET_MAX_PROBES : 4), remembered: mem ? mem.reg : null, geoBad: !!(mem && mem.geoBad), geo: list.geo, netChange });
+    const cands = L.pickCandidates({ list, near, tz: L.deviceTz(), current: curUsable ? cur : (cur || null), lastGood: st.lastGood, max: eco ? 3 : (netChange ? _LB_NET_MAX_PROBES : 4), remembered: mem ? mem.reg : null, geoBad: !!(mem && mem.geoBad), geo: list.geo, netChange, phys });
     const results = await _lbMeasure(cands, eco ? 1 : 2);
     if (!_lbActive()) return; // [2026-10-21 lb-freeze] foi p/ 2º plano no meio da medição → não decide com ela
     // Quem não respondeu (rádio ainda trocando de rede) ganha 1 nova chance 1,5 s depois.
@@ -873,7 +879,8 @@ async function _lbDetect(opts) {
     // o edge lembrado desta rede, senão o palpite geo — e o geo perde se a medição contradiz).
     const freshNet = !!st.session.fresh;
     const decCur = (freshNet || (!st.session.picked && (!_bestServer || _bestServer.src === 'hint' || !_bestServer.src))) ? null : (curUsable ? cur : (cur || null));
-    const geoGuess = (near || L.tzGuess(L.deviceTz())).find(id => L.isUsable(L.regionById(id, list))) || 'us';
+    const physReg = L.physNearest ? L.physNearest(phys, list) : null; // [geo-fisica] vence país CF/fuso
+    const geoGuess = physReg || (near || L.tzGuess(L.deviceTz())).find(id => L.isUsable(L.regionById(id, list))) || 'us';
     const guess = mem ? mem.reg : geoGuess;
     const d = L.decide({ results: scores, current: decCur, pending: freshNet ? null : st.pending, session: st.session, cfg, list, base: guess });
     st.session.fresh = false;
@@ -910,7 +917,7 @@ async function _lbDetect(opts) {
     }
     _persistBestServer();
     _lbPersist();
-    const bdata = { reg: pickSrv.region, org: _originOf(pickSrv), prev: prev || '', src: why, why: d.why, rtt: results, net: (nk && nk.type) || _edgeNetKey() || '', n: Object.keys(results).length, sw: st.switches, nm: mem ? mem.hit : '', gb: geoBad ? 1 : 0, wsr: bl.ws };
+    const bdata = { reg: pickSrv.region, org: _originOf(pickSrv), prev: prev || '', src: why, why: d.why, rtt: results, net: (nk && nk.type) || _edgeNetKey() || '', n: Object.keys(results).length, sw: st.switches, nm: mem ? mem.hit : '', gb: geoBad ? 1 : 0, wsr: bl.ws, pg: physReg || '' };
     if (!st.session.picked || freshNet) { st.session.picked = true; L.beacon('pick', bdata); }
     else if (d.kind === 'switch' || d.kind === 'failover') L.beacon(d.kind, bdata);
     if (__DEV__) console.log('[API] LB ' + d.kind + ' ' + pickSrv.region + ' (' + d.why + ', ' + why + ') ' + cands.map(r => r + '=' + (results[r] ?? '-')).join(' '));
