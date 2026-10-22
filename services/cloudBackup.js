@@ -82,6 +82,8 @@ const MSG_FIELDS = [
   'reply_to_id', 'reply_to', 'reply_quote_text', 'forwarded_from',
   'edited', 'edited_at', 'created_at', 'deleted_at', 'mentions', 'reactions',
   'starred', 'pinned', 'client_message_id', 'topic_id', 'effect', 'poll_data', 'is_poll',
+  // cópia pessoal importada (WhatsApp → store local): só existe no aparelho; ausente = nada muda no JSON
+  'imported', 'is_imported', 'import_source', 'imported_at', 'original_sender', 'original_sender_name',
 ];
 
 // ─── flag ────────────────────────────────────────────────────────────────
@@ -114,6 +116,32 @@ function _keys(K) {
 }
 function _email(e) { let v = e; if (!v) { try { v = api.getActiveAccountEmail?.(); } catch {} } return String(v || '').trim().toLowerCase(); }
 function _tag(email) { return _hex(nacl.hash(decodeUTF8('chatyy-cbk4|' + email)).slice(0, 8)); }
+
+// MD5 (RFC 1321) do objeto CIFRADO → o servidor confere com o ETag do R2 (hash do que ficou guardado).
+const _MD5K = new Int32Array(64).map((_, i) => (Math.abs(Math.sin(i + 1)) * 4294967296) | 0);
+const _MD5S = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21];
+function _md5(u8) {
+  const n = u8.length; const words = ((n + 8) >>> 6) + 1; const W = new Int32Array(words * 16);
+  for (let i = 0; i < n; i++) W[i >> 2] |= u8[i] << ((i & 3) * 8);
+  W[n >> 2] |= 0x80 << ((n & 3) * 8);
+  W[words * 16 - 2] = (n * 8) | 0; W[words * 16 - 1] = Math.floor(n / 536870912) | 0;
+  let a0 = 0x67452301, b0 = 0xefcdab89 | 0, c0 = 0x98badcfe | 0, d0 = 0x10325476;
+  for (let o = 0; o < W.length; o += 16) {
+    let a = a0, b = b0, c = c0, d = d0;
+    for (let i = 0; i < 64; i++) {
+      let f, g; const r = i >> 4;
+      if (r === 0) { f = (b & c) | (~b & d); g = i; } else if (r === 1) { f = (d & b) | (~d & c); g = (5 * i + 1) & 15; }
+      else if (r === 2) { f = b ^ c ^ d; g = (3 * i + 5) & 15; } else { f = c ^ (b | ~d); g = (7 * i) & 15; }
+      const t = d; d = c; c = b;
+      const x = (a + f + _MD5K[i] + W[o + g]) | 0; const sh = _MD5S[(r << 2) | (i & 3)];
+      b = (b + ((x << sh) | (x >>> (32 - sh)))) | 0; a = t;
+    }
+    a0 = (a0 + a) | 0; b0 = (b0 + b) | 0; c0 = (c0 + c) | 0; d0 = (d0 + d) | 0;
+  }
+  let h = '';
+  for (const v of [a0, b0, c0, d0]) for (let k = 0; k < 4; k++) { const by = (v >>> (k * 8)) & 255; h += _HEX[by >> 4] + _HEX[by & 15]; }
+  return h;
+}
 
 function _ffl() { return require('./fflateLite'); }
 function _deflate(u8) { try { return _ffl().deflateSync(u8, { level: 6 }); } catch { return null; } }
@@ -337,9 +365,28 @@ function _e2m() { try { return require('./e2ee/e2ee5Media'); } catch { return nu
 function _mc() { try { return require('./mediaCache'); } catch { return null; } }
 function _ms() { try { return require('./mediaStore'); } catch { return null; } }
 
+/** SQL direto no chatyy.db (sem o LIMIT 200 da lista; mesma regra de conta do db.js). null = indisponível. */
+async function _sqlAll(sql, params) {
+  const db = _db();
+  const h = db?.getDb?.();
+  if (!h?.getAllAsync || typeof db.dbAcctClause !== 'function') return null;
+  const ac = db.dbAcctClause();
+  return h.getAllAsync(sql.replace('/*ACCT*/', ac.sql), [...params.slice(0, 1), ...ac.params, ...params.slice(1)]);
+}
+const _parse = (rows) => (rows || []).map((r) => { try { return JSON.parse(r.raw_json); } catch { return null; } }).filter(Boolean);
+
 async function _listConvs(serverFill) {
   const out = new Map();
-  try { const rows = await _db()?.dbGetConversations?.(true); for (const c of rows || []) { const id = c?.id ?? c?.conversation_id; if (id != null) out.set(String(id), c); } } catch {}
+  // Conversas do APARELHO — todas (inclusive arquivadas e as importadas, que só existem aqui).
+  let local = null;
+  try { const rows = await _sqlAll('SELECT raw_json FROM conversations WHERE 1 = ? /*ACCT*/', [1]); if (rows) local = _parse(rows); } catch { local = null; }
+  if (!local) { try { local = await _db()?.dbGetConversations?.(true); } catch { local = null; } }
+  for (const c of local || []) { const id = c?.id ?? c?.conversation_id; if (id != null) out.set(String(id), c); }
+  // Conversa com mensagens no aparelho mas sem linha em conversations (ex.: importação gravou só mensagens)
+  try {
+    const rows = await _sqlAll('SELECT DISTINCT conversation_id AS cid FROM messages WHERE 1 = ? /*ACCT*/', [1]);
+    for (const r of rows || []) { const id = r?.cid; if (id != null && !out.has(String(id))) out.set(String(id), { id: String(id), type: 'direct' }); }
+  } catch {}
   if (serverFill && typeof api.apiCall === 'function') {
     for (let pg = 0, off = 0; pg < 40; pg++, off += 500) {
       let d;
@@ -354,8 +401,21 @@ async function _listConvs(serverFill) {
   return [...out.values()];
 }
 
-/** Todas as mensagens locais da conversa, antiga → nova. */
+/** Todas as mensagens locais da conversa, antiga → nova (por id; vale p/ id negativo/importado). */
 async function _localMsgs(cid) {
+  try {
+    const out = []; let after = null;
+    for (let i = 0; i < 4000; i++) {
+      const rows = after == null
+        ? await _sqlAll('SELECT raw_json, id FROM messages WHERE conversation_id = ? /*ACCT*/ ORDER BY id ASC LIMIT ?', [cid, LOCAL_PAGE])
+        : await _sqlAll('SELECT raw_json, id FROM messages WHERE conversation_id = ? /*ACCT*/ AND id > ? ORDER BY id ASC LIMIT ?', [cid, after, LOCAL_PAGE]);
+      if (rows == null) { if (i === 0) throw _err('NO_SQL'); break; }
+      for (const m of _parse(rows)) out.push(m);
+      if (rows.length < LOCAL_PAGE) break;
+      after = rows[rows.length - 1].id;
+    }
+    return out;
+  } catch (e) { if (e?.code !== 'NO_SQL') { /* cai no caminho antigo */ } }
   const db = _db();
   if (!db?.dbGetMessages) return [];
   const pages = [];
@@ -366,7 +426,7 @@ async function _localMsgs(cid) {
     if (!rows?.length) break;
     pages.unshift(rows);
     let min = null;
-    for (const m of rows) { const n = Number(m?.id); if (Number.isFinite(n) && n > 0 && (min == null || n < min)) min = n; }
+    for (const m of rows) { const n = Number(m?.id); if (Number.isFinite(n) && n !== 0 && (min == null || n < min)) min = n; }
     if (rows.length < LOCAL_PAGE || min == null || String(min) === String(before)) break;
     before = min;
   }
@@ -508,6 +568,7 @@ function _convMeta(c) {
     id: String(c.id ?? c.conversation_id), type: c.type || 'direct', name: c.name || c.display_name || null,
     avatar: c.avatar || c.avatar_url || null, members: Array.isArray(c.members) ? c.members.map((x) => (typeof x === 'string' ? x : x?.email)).filter(Boolean) : null,
     archived: !!(c.archived ?? c.is_archived), e2ee: c.e2ee_v5 || c.e2ee5 || null,
+    ...(c.imported || c.is_imported ? { imported: 1, import_source: c.import_source || c.source || null } : {}),
   };
 }
 
@@ -527,7 +588,8 @@ function _appVersion() { try { return String(require('expo-constants').default?.
 export async function status() {
   if (!isOn()) return { enabled: false };
   const d = await _call('chat_cbk4_status', null, 'GET');
-  return { enabled: !!d.enabled, sets: d.sets || [], quota: d.quota || null, keep: d.keep || 3, media: !!d.media };
+  // [cbk4c] só o ÚLTIMO backup: sets = [atual]; previous = o anterior (ainda restaurável na janela de 24 h)
+  return { enabled: !!d.enabled, sets: d.sets || [], previous: d.previous || [], quota: d.quota || null, keep: d.keep || 1, media: !!d.media, window: d.window };
 }
 
 /** Faz o backup agora (incremental). opts.manual = botão "Fazer backup agora". */
@@ -596,13 +658,16 @@ async function _runBackup(opts) {
       const byId = new Map(part.map((x) => [x.id, x]));
       const put = d.put || [];
       reused += part.length - put.length;
+      const md5 = new Map();
       await _pool(put, UPLOAD_CONCURRENCY, async (p) => {
         const it = byId.get(p.o);
         if (!it) return;
-        await _retry(() => _putRaw(p.url, _seal(keys, it.inner), p.o));
+        const sealed = _seal(keys, it.inner);
+        md5.set(p.o, _md5(sealed));
+        await _retry(() => _putRaw(p.url, sealed, p.o));
         uploaded++; uploadedBytes += it.size;
       });
-      const done = put.map((p) => p.o);
+      const done = put.map((p) => ({ o: p.o, m: md5.get(p.o) }));
       for (let j = 0; j < done.length; j += 100) {
         const c = await _retry(() => _call('chat_cbk4_confirm', { uid, objs: done.slice(j, j + 100) }));
         if (c.missing?.length) throw _err('ERR_STORAGE', 'upload not confirmed', { missing: c.missing.length });
@@ -733,6 +798,7 @@ async function _runBackup(opts) {
 
   const r = await _retry(() => _call('chat_cbk4_commit', {
     uid, manifest: root.id, objs: [...allObjs], msg_count: msgCount, conv_count: manConvs.length, media_count: mediaCount, key_id: keys.kid, fmt: FMT,
+    verify: pageObjs.map((p) => p.id), // o servidor confere (ETag = MD5) manifesto + páginas + amostra ANTES de trocar o backup
   }));
   const now = new Date().toISOString();
   await _setState(tag, {
@@ -996,7 +1062,12 @@ async function _restore(set, opts) {
     : { uid: set.uid, kid: keys.kid, manifest: set.manifest, at: new Date().toISOString(), done: {}, msgs: 0, media: 0 };
   rs.state = 'running';
   await _setJ(_rstKey(tag), rs);
-  try { await db.dbSaveConversations?.(convs.map((c) => ({ id: c.id, type: c.type, name: c.name, avatar: c.avatar, archived: c.archived ? 1 : 0, members: c.members || undefined }))); } catch {}
+  try {
+    await db.dbSaveConversations?.(convs.map((c) => ({
+      id: c.id, type: c.type, name: c.name, avatar: c.avatar, archived: c.archived ? 1 : 0, members: c.members || undefined,
+      ...(c.imported ? { imported: 1, import_source: c.import_source || undefined } : {}),
+    })));
+  } catch {}
   const total = convs.reduce((a, c) => a + (c.blocks?.length || 0) + (c.media?.length || 0), 0);
   let done = convs.reduce((a, c) => a + (rs.done[c.id] ? (c.blocks?.length || 0) + (c.media?.length || 0) : 0), 0);
   let msgs = rs.msgs || 0; let media = rs.media || 0; let mediaFailed = 0;
@@ -1039,10 +1110,15 @@ export async function resumePendingRestore(email) {
   if (!rs?.uid || rs.state === 'done') return { skipped: 'none' };
   const K = await _rootKey(em);
   if (!K || _keys(K).kid !== rs.kid) return { skipped: 'no_key' };
-  let set = null;
-  try { const st = await status(); set = (st.sets || []).find((s) => s.uid === rs.uid) || null; } catch { return { skipped: 'network' }; }
+  let set = null; let restart = false;
+  try {
+    const st = await status();
+    set = [...(st.sets || []), ...(st.previous || [])].find((s) => s.uid === rs.uid) || null;
+    // o backup que estava sendo restaurado foi substituído e já saiu da janela → continua pelo atual (mesma chave)
+    if (!set && st.sets?.[0] && (!st.sets[0].key_id || st.sets[0].key_id === rs.kid)) { set = st.sets[0]; restart = true; }
+  } catch { return { skipped: 'network' }; }
   if (!set) { await _setJ(_rstKey(tag), null); return { skipped: 'gone' }; }
-  try { return { ran: true, result: await restore(set, { email: em, key: K }) }; } catch (e) { return { error: e?.code || 'ERR' }; }
+  try { return { ran: true, restart, result: await restore(set, { email: em, key: K, restart }) }; } catch (e) { return { error: e?.code || 'ERR' }; }
 }
 export async function pendingRestore(email) {
   const em = _email(email);
@@ -1067,7 +1143,7 @@ export async function localSummary(email) {
 }
 
 // Para testes (node): formato puro, sem rede.
-export const __test = { _keys, _prep, _seal, _open, _json, _blocks, _isBoundary, _mediaCands, K_BIN, K_JSON };
+export const __test = { _keys, _prep, _seal, _open, _json, _blocks, _isBoundary, _mediaCands, _md5, K_BIN, K_JSON };
 
 export default {
   isOn, status, runBackup, maybeRunAuto, startRunner, runBackgroundTask, defineBackgroundTask, findRestoreCandidate, unlock, restore,

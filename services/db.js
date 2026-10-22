@@ -56,6 +56,9 @@ export function dbSetLegacyOwner(email) { _legacyOwner = normAccount(email); }
 function _acctSql() { return acctClause(_activeAccount, _legacyOwner); }
 
 export function getDb() { return _db; }
+// [backup-nuvem 2026-10-22] filtro de conta das leituras (mesma regra do dbGetMessages) p/ quem varre o
+// banco inteiro em páginas (backup v4: todas as conversas, inclusive importadas, sem o LIMIT 200 da lista).
+export function dbAcctClause() { return _acctScoped() ? _acctSql() : { sql: '', params: [] }; }
 export function isDbReady() { return _ready; }
 export function waitForDb() { return _readyPromise; }
 
