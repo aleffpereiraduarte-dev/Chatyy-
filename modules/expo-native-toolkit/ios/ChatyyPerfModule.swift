@@ -395,7 +395,9 @@ final class ChatyyPerfCore: NSObject, MXMetricManagerSubscriber {
         if #available(iOS 17.0, *), let r = c.exceptionReason {
           x["exn"] = String("\(r.exceptionName): \(r.composedMessage)".prefix(110))
         }
-        let fr = ChatyyPerfCore.topFrames(c.callStackTree, max: 6)
+        // [2026-10-22 crash 766] 6 → 32: com 6 o abort do núcleo Rust (b766 12:49Z) parou no
+        // rust_panic_with_hook, sem o chamador. O servidor aceita até 80 itens por lista.
+        let fr = ChatyyPerfCore.topFrames(c.callStackTree, max: 32)
         if !fr.isEmpty { x["fr"] = fr }
         crashes.append(x)
       }
