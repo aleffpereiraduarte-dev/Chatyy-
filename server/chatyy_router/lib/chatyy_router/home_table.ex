@@ -1,19 +1,41 @@
 defmodule ChatyyRouter.HomeTable do
   @moduledoc """
-  Tabela de casa: cid -> {região, epoch}. Cache em ETS, cópia durável no
-  Store e difusão por mensagem a todos os nós (o maior epoch vence; empate
-  = maior nome de região, determinístico, os dois lados convergem).
+  Tabela de casa: cid -> {região, epoch}. Cache em ETS (`:rt_home_cache`, só
+  registros COMPROMETIDOS), cópia durável no Store (`:rt_home`).
 
-  Conversa sem registro explícito usa hash de rendezvous (HRW) sobre as
-  regiões configuradas — estável e sem coordenação; na 1ª escrita o dono
-  grava o registro explícito (epoch 1). Em produção a fonte da verdade vira
-  `conv_home(cid, region, epoch)` no PG replicado (PLANO §8.3) e a escolha
-  da casa uma decisão de produto (proximidade); o HRW fica só como padrão.
+  ## Toda criação/troca de casa passa por MAIORIA (correção 22/10, bug da carga r4)
 
-  Região em failover (`failed`) é pulada no padrão: vai para a sucessora.
+  Antes: `assign` era cast só às regiões vivas e, sem registro, o HRW padrão
+  deixava qualquer nó (até pelo caminho do ACK) criar a casa com epoch 1; o
+  empate de epoch era resolvido pelo maior nome de região. Com rota parcial
+  (SG sem TCP até o BR2) o SG criou uma 2ª casa da mesma conversa com o MESMO
+  epoch e seq recomeçando em 1.
+
+  Agora (Paxos de 1 decreto, simplificado — a fase 2 com o epoch como número):
+    * `propose(cid, região, epoch)` manda {:accept, …} a TODAS as regiões vivas
+      (chamada, não cast). Cada aceitadora aceita só se `epoch` > tudo o que ela
+      já aceitou/comprometeu para o cid (mesmo par repetido = idempotente) e
+      grava o aceite no Store (`:rt_home_acc`). Com `Config.quorum()` aceites
+      (contando a própria) a proposta está ESCOLHIDA: grava, faz cast do
+      {:commit} a todos e devolve :ok. Sem maioria: manda {:abort} p/ desfazer
+      os aceites dela e devolve {:conflict, região, epoch} (o que viu de maior)
+      ou {:error, :no_quorum}.
+    * Conversa NOVA só nasce com epoch 1 e só se a consulta à maioria (`resolve`)
+      não achou NADA. Quem já existe nunca é "atropelado" por uma casa nova.
+    * Epoch > 1 só por failover (casa fora + quórum), migração (com cópia do
+      estado) ou decisão de operador (/assign, conv_home_cas).
+    * O caminho do ACK e o de leitura NUNCA criam casa (`create: false`).
+    * Merge de registros vindos de outros nós/PG: epoch maior vence; MESMO
+      epoch com região diferente NÃO é desempatado pelo nome: fica o que já
+      está (métrica `home_conflict` + log). Com a maioria isso não acontece.
+    * Quem não tem o registro local pergunta à maioria (`resolve/1`): vale um
+      registro comprometido de qualquer um ou um aceite visto em ≥ quórum.
+
+  Região em failover (`failed`) é pulada no padrão HRW: vai para a sucessora.
+  O HRW só decide QUEM propõe a casa de uma conversa nova; não decide a casa.
   """
   use GenServer
-  alias ChatyyRouter.{Config, Net, Store}
+  alias ChatyyRouter.{Config, Net, Store, Telemetry}
   require Logger
 
   @ets :rt_home_cache
@@ -30,9 +52,9 @@ defmodule ChatyyRouter.HomeTable do
   end
 
   @doc """
-  Casa de conversa SEM registro. ROUTER_DEFAULT_HOME fixa uma região (R1: "us",
-  a casa externa = master; quem trata é o caminho de fan-out externo); sem ela,
-  HRW sobre as regiões do cluster (pulando região em failover).
+  Região que PROPÕE a casa de uma conversa sem registro. ROUTER_DEFAULT_HOME fixa
+  uma região (R1: "us", a casa externa = master); sem ela, HRW sobre as regiões do
+  cluster (pulando região em failover).
   """
   def default_region(cid) do
     case Config.get(:default_home) do
@@ -66,6 +88,7 @@ defmodule ChatyyRouter.HomeTable do
     (prefs ++ ring)
     |> Enum.uniq()
     |> Enum.reject(&(&1 == region))
+    |> Enum.reject(&(&1 in Config.never_sister()))
     |> Enum.find(&Net.alive?/1)
   end
 
@@ -75,23 +98,168 @@ defmodule ChatyyRouter.HomeTable do
     :ets.select(@ets, [{{:"$1", region, :"$2"}, [], [{{:"$1", :"$2"}}]}])
   end
 
-  # ---------- escrita ----------
+  # ---------- consulta à maioria ----------
 
-  @doc "Grava localmente e difunde a todos os nós vivos."
-  def assign(cid, region, epoch) do
-    GenServer.call(__MODULE__, {:merge, cid, region, epoch})
+  @doc """
+  Casa conhecida pelo cluster: local se houver; senão pergunta às regiões vivas.
+  {:ok, região, epoch} | :none (ninguém tem nada: pode nascer) |
+  {:error, :unknown} (há aceites sem maioria, ou sem quórum p/ afirmar :none).
+  """
+  def resolve(cid) do
+    case :ets.lookup(@ets, cid) do
+      [{_, r, e}] ->
+        {:ok, r, e}
 
-    for r <- Net.alive_regions(), r != Net.me() do
-      Net.cast(r, __MODULE__, {:merge, cid, region, epoch})
+      [] ->
+        others = Net.alive_regions() -- [Net.me()]
+        mine = {nil, local_acc(cid)}
+
+        answers =
+          [mine] ++
+            (others
+             |> Task.async_stream(fn r -> Net.call(r, __MODULE__, {:query, cid}, 2_000) end,
+               timeout: 3_000, on_timeout: :kill_task, max_concurrency: 16)
+             |> Enum.flat_map(fn
+               {:ok, {:home, c, a}} -> [{c, a}]
+               _ -> []
+             end))
+
+        committed = for {{r, e}, _} <- answers, do: {r, e}
+        accepted = for {_, {r, e}} <- answers, do: {r, e}
+
+        cond do
+          committed != [] ->
+            {r, e} = Enum.max_by(committed, &elem(&1, 1))
+            merge(cid, r, e)
+            {:ok, r, e}
+
+          (best = majority_acc(accepted)) != nil ->
+            {r, e} = best
+            merge(cid, r, e)
+            {:ok, r, e}
+
+          accepted == [] and length(answers) >= Config.quorum() ->
+            :none
+
+          true ->
+            {:error, :unknown}
+        end
     end
-
-    # fonte da verdade durável: conv_home no master (outbox com repetição;
-    # master fora => o epoch do cluster segue valendo e reconcilia depois)
-    if pg?(), do: ChatyyRouter.HomeSync.enqueue(cid, region, epoch)
-    :ok
   end
 
+  defp majority_acc(accepted) do
+    accepted
+    |> Enum.frequencies()
+    |> Enum.find_value(fn {re, n} -> if n >= Config.quorum(), do: re end)
+  end
+
+  defp local_acc(cid) do
+    case Store.get(:rt_home_acc, cid) do
+      {r, e} -> {r, e}
+      nil -> nil
+    end
+  end
+
+  # ---------- escrita (sempre por maioria) ----------
+
+  @doc """
+  Propõe {região, epoch}. :ok (escolhida e comprometida) |
+  {:conflict, região, epoch} (há algo igual/maior) | {:error, :no_quorum}.
+  """
+  def propose(cid, region, epoch) do
+    t0 = System.monotonic_time(:microsecond)
+    others = Net.alive_regions() -- [Net.me()]
+    me_res = GenServer.call(__MODULE__, {:accept, cid, region, epoch})
+
+    res =
+      [me_res] ++
+        (others
+         |> Task.async_stream(fn r -> Net.call(r, __MODULE__, {:accept, cid, region, epoch}, 3_000) end,
+           timeout: 4_000, on_timeout: :kill_task, max_concurrency: 16)
+         |> Enum.map(fn
+           {:ok, v} -> v
+           _ -> {:error, :timeout}
+         end))
+
+    oks = Enum.count(res, &(&1 == :accepted))
+    Telemetry.execute([:chatyy_router, :home, :propose], %{duration_us: System.monotonic_time(:microsecond) - t0})
+
+    if oks >= Config.quorum() do
+      commit(cid, region, epoch)
+      if pg?(), do: ChatyyRouter.HomeSync.enqueue(cid, region, epoch)
+      :ok
+    else
+      # desfaz os meus aceites (quem aceitou e não teve maioria não segura o cid)
+      GenServer.cast(__MODULE__, {:abort, cid, region, epoch})
+      for r <- others, do: Net.cast(r, __MODULE__, {:abort, cid, region, epoch})
+      Telemetry.execute([:chatyy_router, :home, :propose_fail], %{count: 1})
+
+      case for({:rejected, r, e} <- res, do: {r, e}) do
+        [] -> {:error, :no_quorum}
+        l -> l |> Enum.max_by(&elem(&1, 1)) |> then(fn {r, e} -> {:conflict, r, e} end)
+      end
+    end
+  end
+
+  @doc """
+  Atribuição explícita (operador/bench/failover/migração): epoch = maior visto + 1,
+  pela maioria. Compatível com a API antiga (o 3º argumento é o epoch mínimo).
+  """
+  def assign(cid, region, min_epoch) do
+    seen =
+      case resolve(cid) do
+        {:ok, _r, e} -> e
+        _ -> 0
+      end
+
+    e = max(min_epoch, seen + 1)
+
+    case propose(cid, region, e) do
+      {:conflict, _r, e2} when e2 >= e -> propose(cid, region, e2 + 1)
+      other -> other
+    end
+  end
+
+  @doc """
+  Conversa nova: só cria (epoch 1) se ninguém tem nada. {:ok, região, epoch} com a
+  casa que valer (minha ou de outro) | {:error, motivo}.
+  """
+  def claim(cid, region) do
+    case resolve(cid) do
+      {:ok, r, e} ->
+        {:ok, r, e}
+
+      :none ->
+        case propose(cid, region, 1) do
+          :ok ->
+            {:ok, region, 1}
+
+          {:conflict, r, e} ->
+            # outra proposta concorrente: espera um pouco e reconsulta (sem atropelar)
+            Process.sleep(50 + :rand.uniform(150))
+
+            case resolve(cid) do
+              {:ok, r2, e2} -> {:ok, r2, e2}
+              _ -> {:error, {:contended, r, e}}
+            end
+
+          err ->
+            err
+        end
+
+      err ->
+        err
+    end
+  end
+
+  @doc "Registro vindo de commit/sync/PG/moved: aplica a regra de merge (sem desempate por nome)."
   def merge(cid, region, epoch), do: GenServer.call(__MODULE__, {:merge, cid, region, epoch})
+
+  defp commit(cid, region, epoch) do
+    GenServer.call(__MODULE__, {:merge, cid, region, epoch})
+    for r <- Net.alive_regions(), r != Net.me(), do: Net.cast(r, __MODULE__, {:commit, cid, region, epoch})
+    :ok
+  end
 
   def set_failed(region, bool) do
     GenServer.call(__MODULE__, {:failed, region, bool})
@@ -118,14 +286,70 @@ defmodule ChatyyRouter.HomeTable do
   @impl true
   def handle_call({:merge, cid, region, epoch}, _from, s), do: {:reply, do_merge(cid, region, epoch), s}
 
+  def handle_call({:query, cid}, _from, s) do
+    c = case :ets.lookup(@ets, cid) do
+      [{_, r, e}] -> {r, e}
+      [] -> nil
+    end
+
+    {:reply, {:home, c, local_acc(cid)}, s}
+  end
+
+  # aceitadora: só aceita epoch MAIOR que tudo o que já viu (mesmo par = idempotente)
+  def handle_call({:accept, cid, region, epoch}, _from, s) do
+    cur =
+      [local_acc(cid), case(:ets.lookup(@ets, cid), do: ([{_, r, e}] -> {r, e}; [] -> nil))]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.max_by(&elem(&1, 1), fn -> nil end)
+
+    reply =
+      case cur do
+        nil -> :accept
+        {^region, ^epoch} -> :accept
+        {_r, e} when epoch > e -> :accept
+        {r, e} -> {:rejected, r, e}
+      end
+
+    case reply do
+      :accept ->
+        Store.put(:rt_home_acc, cid, {region, epoch})
+        {:reply, :accepted, s}
+
+      rej ->
+        {:reply, rej, s}
+    end
+  end
+
   def handle_call({:failed, region, bool}, _from, s) do
     do_failed(region, bool)
     {:reply, :ok, s}
   end
 
   @impl true
+  def handle_cast({:commit, cid, region, epoch}, s) do
+    do_merge(cid, region, epoch)
+    {:noreply, s}
+  end
+
+  # compat: nós antigos ainda difundem {:merge} por cast
   def handle_cast({:merge, cid, region, epoch}, s) do
     do_merge(cid, region, epoch)
+    {:noreply, s}
+  end
+
+  def handle_cast({:abort, cid, region, epoch}, s) do
+    case Store.get(:rt_home_acc, cid) do
+      {^region, ^epoch} ->
+        # só desfaz se ainda não virou registro comprometido aqui
+        case :ets.lookup(@ets, cid) do
+          [{_, ^region, ^epoch}] -> :ok
+          _ -> Store.delete(:rt_home_acc, cid)
+        end
+
+      _ ->
+        :ok
+    end
+
     {:noreply, s}
   end
 
@@ -155,24 +379,43 @@ defmodule ChatyyRouter.HomeTable do
   end
 
   defp do_merge(cid, region, epoch) do
-    newer? =
+    verdict =
       case :ets.lookup(@ets, cid) do
-        [] -> true
-        [{_, r0, e0}] -> epoch > e0 or (epoch == e0 and region > r0)
+        [] -> :newer
+        [{_, ^region, ^epoch}] -> :same
+        [{_, _r0, e0}] when epoch > e0 -> :newer
+        [{_, r0, e0}] when epoch == e0 -> {:conflict, r0}
+        _ -> :stale
       end
 
-    if newer? do
-      :ets.insert(@ets, {cid, region, epoch})
-      Store.put(:rt_home, cid, {region, epoch})
+    case verdict do
+      :newer ->
+        :ets.insert(@ets, {cid, region, epoch})
+        Store.put(:rt_home, cid, {region, epoch})
+        # o aceite pendente fica coberto pelo registro
+        case Store.get(:rt_home_acc, cid) do
+          {_, e} when e <= epoch -> Store.delete(:rt_home_acc, cid)
+          _ -> :ok
+        end
 
-      if region != Net.me() do
-        # se eu era o dono, o ConvServer local desce (vira seguidor)
-        ChatyyRouter.Home.home_moved(cid, region, epoch)
-      end
+        if region != Net.me() do
+          # se eu era o dono, o ConvServer local desce (vira seguidor)
+          ChatyyRouter.Home.home_moved(cid, region, epoch)
+        end
 
-      :updated
-    else
-      :stale
+        :updated
+
+      :same ->
+        :stale
+
+      {:conflict, r0} ->
+        # MESMO epoch, região diferente: não se desempata por nome (era a casa dupla)
+        ChatyyRouter.Metrics.inc(:home_conflict)
+        Logger.error("router: CONFLITO de casa #{inspect(cid)} epoch #{epoch}: tenho #{r0}, chegou #{region} — mantido #{r0}")
+        :stale
+
+      :stale ->
+        :stale
     end
   end
 end

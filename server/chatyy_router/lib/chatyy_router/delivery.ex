@@ -226,26 +226,41 @@ defmodule ChatyyRouter.AckOutbox do
   @moduledoc """
   Acks a caminho da casa. Coalesce por {cid, device} (fica o maior seq) e
   reenvia até a casa (ou a nova casa após failover) confirmar.
+
+  Backoff por linha (correção 22/10: antes reenviava TUDO a cada 20 ms para
+  sempre — 61–70 linhas presas custavam 11–14 % de 1 núcleo em repouso):
+    * falha → próxima tentativa em min(200 ms · 2^tentativas, 60 s) (+ jitter);
+    * `{:error, :no_home}` (ninguém no cluster tem casa p/ o cid: nada a
+      confirmar) → descarta na 3ª vez;
+    * linha com mais de ROUTER_ACK_TTL_MS (24 h) → descarta (o corpo na casa
+      expira pelo Janitor em 30 d de qualquer jeito);
+    * métricas: ack_outbox (gauge), ack_outbox_stuck (≥ 5 tentativas, alerta
+      no monitor), ack_outbox_dropped_total.
   """
   use GenServer
-  alias ChatyyRouter.Router
+  alias ChatyyRouter.{Config, Router}
 
   @ets :rt_ack_outbox
+  @max_backoff 60_000
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
+  # linha: {{cid, dev}, upto, tentativas, próxima_ms, criada_ms}
   def add(cid, device, upto) do
     key = {cid, device}
+    now = System.monotonic_time(:millisecond)
 
     case :ets.lookup(@ets, key) do
-      [{_, u}] when u >= upto -> :ok
-      _ -> :ets.insert(@ets, {key, upto})
+      [{_, u, _, _, _}] when u >= upto -> :ok
+      [{_, _u, _n, _nx, t0}] -> :ets.insert(@ets, {key, upto, 0, now, t0})
+      [] -> :ets.insert(@ets, {key, upto, 0, now, now})
     end
 
     :ok
   end
 
   def pending, do: :ets.info(@ets, :size)
+  def stuck, do: :ets.select_count(@ets, [{{:_, :_, :"$1", :_, :_}, [{:>=, :"$1", 5}], [true]}])
 
   @impl true
   def init(_) do
@@ -259,14 +274,30 @@ defmodule ChatyyRouter.AckOutbox do
 
   @impl true
   def handle_info(:flush, s) do
-    rows = :ets.tab2list(@ets)
+    now = System.monotonic_time(:millisecond)
+    ttl = Config.get(:ack_ttl_ms, 86_400_000)
+    due = :ets.select(@ets, [{{:_, :_, :_, :"$1", :_}, [{:"=<", :"$1", now}], [:"$_"]}])
 
-    rows
+    due
     |> Task.async_stream(
-      fn {{cid, dev} = key, upto} ->
+      fn {key = {cid, dev}, upto, n, _nx, t0} = row ->
         case Router.home_cast_ack(cid, dev, upto) do
-          :ok -> :ets.delete_object(@ets, {key, upto})
-          _ -> :keep
+          :ok ->
+            :ets.delete_object(@ets, row)
+
+          other ->
+            cond do
+              now - t0 > ttl or (other == {:error, :no_home} and n >= 2) ->
+                :ets.delete_object(@ets, row)
+                ChatyyRouter.Metrics.inc(:ack_outbox_dropped)
+
+              true ->
+                back = min(200 * Integer.pow(2, min(n, 12)), @max_backoff)
+                # só reagenda se ninguém mexeu na linha nesse meio tempo
+                :ets.select_replace(@ets, [
+                  {{key, upto, n, :_, t0}, [], [{{{:const, key}, upto, n + 1, now + back + :rand.uniform(div(back, 4) + 1), t0}}]}
+                ])
+            end
         end
       end,
       max_concurrency: 64,
@@ -275,7 +306,7 @@ defmodule ChatyyRouter.AckOutbox do
     )
     |> Stream.run()
 
-    Process.send_after(self(), :flush, if(rows == [], do: 100, else: 20))
+    Process.send_after(self(), :flush, if(due == [], do: 200, else: 50))
     {:noreply, s}
   end
 end

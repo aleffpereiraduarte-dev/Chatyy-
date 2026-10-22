@@ -16,7 +16,8 @@ defmodule ChatyyRouter.Store do
        :rt_pend    {cid, seq}  -> {devices_pendentes, regioes_nao_gravadas}
        :rt_dedupe  {cid, cmi}  -> {seq, ts}        (janela 7 d)
        :rt_meta    cid         -> %{last_seq, epoch}
-       :rt_home    cid         -> {region, epoch}  (cache durável da casa)
+       :rt_home    cid         -> {region, epoch}  (cache durável da casa, comprometida)
+       :rt_home_acc cid        -> {region, epoch}  (aceite pendente da proposta de casa por maioria)
      Ficam em RAM (alguns bytes por mensagem pendente); o tamanho sai em
      /metrics (chatyy_router_store_entries) com alerta no monitor.
      Mnesia não faz fsync por escrita: numa queda de ENERGIA pode perder os
@@ -27,7 +28,7 @@ defmodule ChatyyRouter.Store do
   require Logger
   alias ChatyyRouter.{Config, Seglog}
 
-  @mnesia [:rt_pend, :rt_dedupe, :rt_meta, :rt_home]
+  @mnesia [:rt_pend, :rt_dedupe, :rt_meta, :rt_home, :rt_home_acc]
   @logs [:rt_msg, :rt_replica, :rt_inbox]
 
   def tables, do: @mnesia ++ @logs

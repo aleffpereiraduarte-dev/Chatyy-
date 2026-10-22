@@ -42,7 +42,7 @@ defmodule ChatyyRouter.Config do
     end
   end
 
-  @ints ~w(quorum failover_ms tick_ms redeliver_ms retention_ms dedupe_ms ctl_port idle_ms janitor_ms replica_timeout_ms hot_ms seg_max_bytes log_max_mb ping_ms fanout_ttl_ms)a
+  @ints ~w(quorum failover_ms tick_ms redeliver_ms retention_ms dedupe_ms ctl_port idle_ms janitor_ms replica_timeout_ms hot_ms seg_max_bytes log_max_mb ping_ms fanout_ttl_ms ack_ttl_ms)a
   defp parse(k, v) when k in @ints, do: String.to_integer(v)
   defp parse(:regions, v), do: parse_regions(v)
   defp parse(:sisters, v), do: parse_sisters(v)
@@ -70,6 +70,14 @@ defmodule ChatyyRouter.Config do
   def regions, do: get(:regions, [{region(), node()}])
   def region_names, do: Enum.map(regions(), &elem(&1, 0))
   def sisters, do: get(:sisters, %{})
+
+  @doc "Regiões que nunca servem de irmã/sucessora de outras (ROUTER_NEVER_SISTER=\"us\": o US só observa/recebe)."
+  def never_sister do
+    case get(:never_sister, []) do
+      l when is_list(l) -> l
+      s -> String.split(to_string(s), ",", trim: true)
+    end
+  end
   def quorum, do: get(:quorum) || div(length(regions()), 2) + 1
   def failover_ms, do: get(:failover_ms, 60_000)
   def tick_ms, do: get(:tick_ms, 1_000)

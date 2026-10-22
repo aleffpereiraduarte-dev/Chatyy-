@@ -154,6 +154,7 @@ defmodule ChatyyRouter.Metrics do
       "chatyy_router_fanout_enabled #{b.(ChatyyRouter.Flags.fanout?())}\n",
       "chatyy_router_ack_mode_sister #{b.(Config.ack_mode() == "sister")}\n",
       "chatyy_router_ack_outbox #{safe.(fn -> ChatyyRouter.AckOutbox.pending() end) || 0}\n",
+      "chatyy_router_ack_outbox_stuck #{safe.(fn -> ChatyyRouter.AckOutbox.stuck() end) || 0}\n",
       "chatyy_router_fanout_pending #{safe.(fn -> ChatyyRouter.Fanout.pending() end) || 0}\n",
       "chatyy_router_mnesia_bytes #{safe.(fn -> Store.mnesia_bytes() end) || 0}\n",
       "chatyy_router_beam_memory_bytes #{:erlang.memory(:total)}\n",
@@ -163,6 +164,10 @@ defmodule ChatyyRouter.Metrics do
     ]
   end
 
-  defp fmt({a, b}), do: "#{a}_#{b}"
-  defp fmt(a), do: to_string(a)
+  # nomes de métrica vêm de termos (ex.: {:send, {:replica, :unreachable}}): achata e limpa p/ [a-z0-9_]
+  defp fmt(t), do: t |> slug() |> String.replace(~r/[^a-zA-Z0-9_]+/, "_") |> String.trim("_")
+  defp slug(t) when is_tuple(t), do: t |> Tuple.to_list() |> Enum.map_join("_", &slug/1)
+  defp slug(l) when is_list(l), do: Enum.map_join(l, "_", &slug/1)
+  defp slug(a) when is_atom(a) or is_binary(a) or is_number(a), do: to_string(a)
+  defp slug(o), do: inspect(o)
 end

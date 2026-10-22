@@ -24,7 +24,7 @@ defmodule ChatyyRouter.Bench do
     cids = for i <- 1..convs, do: "bench:#{Net.me()}:#{run_id}:#{i}"
     devs = for i <- 1..convs, do: "bdev:#{run_id}:#{i}"
 
-    for c <- cids, do: HomeTable.assign(c, home, 1)
+    cids |> Task.async_stream(&HomeTable.assign(&1, home, 1), max_concurrency: 32, timeout: 30_000) |> Stream.run()
 
     for d <- devs do
       :ok = sub(target, d)

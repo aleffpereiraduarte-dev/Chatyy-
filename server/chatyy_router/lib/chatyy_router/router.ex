@@ -59,31 +59,33 @@ defmodule ChatyyRouter.Router do
   def fetch(device), do: ChatyyRouter.Delivery.fetch(device)
 
   @doc "Migra a casa da conversa para `to` (drena, copia, CAS epoch+1)."
-  def migrate(cid, to), do: attempt(cid, {:migrate, to}, 20_000, 2)
+  def migrate(cid, to), do: attempt(cid, {:migrate, to}, 20_000, 2, false)
 
   @doc false
   def home_cast_ack(cid, device, upto) do
-    case attempt(cid, {:acked, device, upto}, 3_000, 2) do
+    # ack NUNCA cria casa (bug da carga r4: o ack no SG criou uma 2ª casa)
+    case attempt(cid, {:acked, device, upto}, 3_000, 2, false) do
       :ok -> :ok
       other -> other
     end
   end
 
-  defp attempt(_cid, _msg, _timeout, 0), do: {:error, :retries}
+  defp attempt(cid, msg, timeout, n, create \\ true)
+  defp attempt(_cid, _msg, _timeout, 0, _create), do: {:error, :retries}
 
-  defp attempt(cid, msg, timeout, n) do
-    case conv_pid(cid) do
+  defp attempt(cid, msg, timeout, n, create) do
+    case conv_pid(cid, create) do
       {:ok, pid} ->
         case Net.call_pid(pid, msg, timeout) do
           {:moved, r, e} ->
             HomeTable.merge(cid, r, e)
             :ets.delete(@cache, cid)
-            attempt(cid, msg, timeout, n - 1)
+            attempt(cid, msg, timeout, n - 1, create)
 
           {:error, err} when err in [:noproc, :retry] ->
             :ets.delete(@cache, cid)
             Process.sleep(10)
-            attempt(cid, msg, timeout, n - 1)
+            attempt(cid, msg, timeout, n - 1, create)
 
           {:error, :unreachable} ->
             :ets.delete(@cache, cid)
@@ -95,32 +97,50 @@ defmodule ChatyyRouter.Router do
 
       {:moved, r, e} ->
         HomeTable.merge(cid, r, e)
-        attempt(cid, msg, timeout, n - 1)
+        attempt(cid, msg, timeout, n - 1, create)
 
       {:error, _} = err ->
         err
     end
   end
 
-  defp conv_pid(cid) do
+  defp conv_pid(cid, create) do
     case :ets.lookup(@cache, cid) do
       [{_, pid}] ->
-        if Net.pid_alive?(pid), do: {:ok, pid}, else: (:ets.delete(@cache, cid); conv_pid(cid))
+        if Net.pid_alive?(pid), do: {:ok, pid}, else: (:ets.delete(@cache, cid); conv_pid(cid, create))
 
       [] ->
-        {region, _, _} = HomeTable.lookup(cid)
+        region =
+          case HomeTable.lookup(cid) do
+            {r, _, :explicit} ->
+              r
+
+            {proposer, _, :default} ->
+              # sem registro local: pergunta à maioria antes de qualquer coisa
+              case HomeTable.resolve(cid) do
+                {:ok, r, _} -> r
+                :none -> if create, do: proposer, else: :no_home
+                {:error, _} -> :unknown
+              end
+          end
 
         res =
           cond do
+            region == :no_home ->
+              {:error, :no_home}
+
+            region == :unknown ->
+              {:error, :home_unknown}
+
             # casa fora do cluster (R1: "us"): escrita continua pelo caminho de hoje
             region not in ChatyyRouter.Config.region_names() ->
               {:error, :external_home}
 
-            region == Net.me() -> 
-              Home.ensure(cid)
+            region == Net.me() ->
+              Home.ensure(cid, create: create)
 
             true ->
-              case Net.call(region, Home, {:ensure, cid}, 10_000) do
+              case Net.call(region, Home, {:ensure_remote, cid, create}, 10_000) do
                 {:error, :unreachable} -> {:error, :home_unreachable}
                 r -> r
               end

@@ -11,10 +11,31 @@ defmodule ChatyyRouter.Home do
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  def ensure(cid) do
+  @doc """
+  Acha/sobe o dono local. Conversa sem registro: `create: true` (envio) faz a
+  consulta à maioria e, se ninguém tem nada, propõe esta região com epoch 1
+  (`HomeTable.claim`); `create: false` (ack, migração, leitura) NUNCA cria.
+  A consulta/proposta roda no processo de quem chama, não no GenServer Home.
+  """
+  def ensure(cid, opts \\ []) do
     case Registry.lookup(ChatyyRouter.ConvRegistry, cid) do
-      [{pid, _}] -> {:ok, pid}
-      [] -> GenServer.call(__MODULE__, {:ensure, cid}, 15_000)
+      [{pid, _}] ->
+        {:ok, pid}
+
+      [] ->
+        case HomeTable.lookup(cid) do
+          {_, _, :explicit} ->
+            GenServer.call(__MODULE__, {:ensure, cid}, 15_000)
+
+          {_, _, :default} ->
+            res = if Keyword.get(opts, :create, true), do: HomeTable.claim(cid, Net.me()), else: HomeTable.resolve(cid)
+
+            case res do
+              {:ok, _r, _e} -> GenServer.call(__MODULE__, {:ensure, cid}, 15_000)
+              :none -> {:error, :no_home}
+              {:error, _} = err -> err
+            end
+        end
     end
   end
 
@@ -34,6 +55,10 @@ defmodule ChatyyRouter.Home do
 
     reply =
       case HomeTable.lookup(cid) do
+        {_, _, :default} ->
+          # nunca cria casa aqui dentro: a criação passa por ensure/2 (maioria)
+          {:error, :no_home}
+
         {r, e, _} when r != me ->
           {:moved, r, e}
 
@@ -45,6 +70,22 @@ defmodule ChatyyRouter.Home do
       end
 
     {:reply, reply, s}
+  end
+
+  # vindo de outra região: a consulta/proposta à maioria roda fora deste processo
+  def handle_call({:ensure_remote, cid, create}, from, s) do
+    spawn(fn ->
+      r =
+        try do
+          ensure(cid, create: create)
+        catch
+          kind, e -> {:error, {kind, e}}
+        end
+
+      GenServer.reply(from, r)
+    end)
+
+    {:noreply, s}
   end
 
   def handle_call({:import, cid, epoch, rows}, _from, s) do
@@ -109,17 +150,20 @@ defmodule ChatyyRouter.ConvServer do
       {r, e, _} when r != me ->
         {:stop, {:moved, r, e}}
 
-      {^me, e0, kind} ->
+      {_, _, :default} ->
+        {:stop, {:error, :no_home}}
+
+      {^me, e0, _kind} ->
         meta = Store.get(:rt_meta, cid) || %{last_seq: 0, epoch: 0}
         promoted = promote_replica(cid)
         last = max(meta.last_seq, max_msg_seq(cid))
         epoch = Enum.max([e0, meta.epoch, promoted.epoch])
 
         epoch =
-          if kind == :default or promoted.epoch > e0 or epoch > e0 do
-            # registro explícito (ou epoch novo após failover/promoção)
+          if promoted.epoch > e0 or epoch > e0 do
+            # estado local mais novo que o registro (promoção da cópia): epoch novo pela maioria
             new = max(epoch, e0 + 1)
-            HomeTable.assign(cid, me, new)
+            :ok = HomeTable.propose(cid, me, new)
             new
           else
             epoch
