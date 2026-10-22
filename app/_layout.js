@@ -527,6 +527,8 @@ import { registerBackgroundSync } from '../services/backgroundSync';
 // plano que manda o ✓✓ cinza (chat_push_delivered com o d_ack do push) — cobre
 // binários antigos sem device-ack nativo. Precisa ser top-level (headless).
 import '../services/pushDeliveryTask';
+// [backup-nuvem 2026-10-22] tarefa de 2º plano do backup v4 (top-level p/ o executor headless; no-op c/ flag off).
+import '../services/cloudBackupTask';
 // Side-effect module — patches expo-audio RecordingPresets.HIGH_QUALITY to
 // the WhatsApp Opus profile (32kbps mono 16/22kHz) before any chat screen
 // reads it. Mutates the live preset object so chat-conversation's inline

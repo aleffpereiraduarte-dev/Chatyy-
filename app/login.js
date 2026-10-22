@@ -249,6 +249,18 @@ export default function LoginScreen() {
     // [2026-10-09 own-backup] Backup E2E no servidor do Chatyy (principal):
     // aparelho sem a chave desta conta + backup no servidor → oferece
     // "Restaurar backup de DD/MM (N mensagens)". Também no web. Nunca bloqueia.
+    // [backup-nuvem 2026-10-22] 1º o backup v4 (conversas + mídia cifradas na nuvem do Chatyy,
+    // services/cloudBackup, flag __chatyy_cloud_backup); sem v4 → o v3 logo abaixo. Mesmo prompt.
+    try {
+      const cb = require('../services/cloudBackup');
+      if (cb.isOn()) {
+        const c4 = await Promise.race([
+          cb.findRestoreCandidate(accountEmail),
+          new Promise((res) => setTimeout(() => res(null), 6000)),
+        ]);
+        if (c4 && mountedRef.current) { setOwnRestore(c4); return; }
+      }
+    } catch {}
     try {
       const ob = require('../services/ownBackup');
       const cand = await Promise.race([

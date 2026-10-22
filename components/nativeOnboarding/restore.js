@@ -1,6 +1,6 @@
 // [2026-10-15 native-onboarding] Depois de entrar/criar conta: há algo para
 // restaurar? Mesmos portões e mesma ordem do /login (maybePromptRestoreThenGo):
-//   1. backup E2E no servidor do Chatyy (services/ownBackup) — também na web
+//   1. backup E2E no servidor do Chatyy (v4 services/cloudBackup, senão v3 services/ownBackup) — também na web
 //   2. backup CYB2 no servidor / iCloud / Drive (RestoreBackupPrompt) — nativo
 //   3. baixar o histórico completo do servidor (RestoreHistoryPrompt) — nativo
 // Nunca bloqueia: qualquer falha → null (segue para o app).
@@ -18,8 +18,13 @@ function _timeout(p, ms) {
 // escolhido. Pior caso ≈ 14 s (iCloud), típico = 1 ida e volta.
 export async function probeRestore(accountEmail) {
   const email = String(accountEmail || '').toLowerCase().trim();
-  // 1. backup próprio (E2E) no servidor
+  // 1. backup próprio (E2E) no servidor — [backup-nuvem 2026-10-22] 1º o v4 (conversas cifradas na
+  //    nuvem do Chatyy, services/cloudBackup; flag __chatyy_cloud_backup), depois o v3 (ownBackup).
   const ownP = (async () => {
+    try {
+      const cb = require('../../services/cloudBackup');
+      if (cb.isOn()) { const c4 = await _timeout(cb.findRestoreCandidate(email), 6000); if (c4) return c4; }
+    } catch {}
     try {
       const ob = require('../../services/ownBackup');
       return (await _timeout(ob.findRestoreCandidate(email), 6000)) || null;

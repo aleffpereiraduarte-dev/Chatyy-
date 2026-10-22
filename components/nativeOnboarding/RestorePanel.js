@@ -19,6 +19,12 @@ export default function RestorePanel({ candidate, colors, t, reduced, onFinished
   const [result, setResult] = useState(null);
   const bar = useRef(new Animated.Value(0)).current;
   const passwordMode = !!candidate?.hasPassword && !useKey;
+  // [backup-nuvem 2026-10-22] candidato v4 (backup da conversa na nuvem, services/cloudBackup): mesma
+  // senha/chave do backup; chave já no aparelho → nem pede. Restauração com barra real e retomável.
+  const v4 = candidate?.v === 4;
+  const needSecret = !(v4 && candidate?.hasKey);
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
 
   const pct = progress.total ? Math.max(0.03, Math.min(1, (progress.done || 0) / progress.total)) : (stage === 'done' ? 1 : 0.04);
   useEffect(() => {
@@ -29,8 +35,28 @@ export default function RestorePanel({ candidate, colors, t, reduced, onFinished
   }, [pct, stage, reduced, bar]);
 
   const restore = useCallback(async () => {
-    if (!set || !secret || stage === 'restoring') return;
+    if (!set || (needSecret && !secret) || stage === 'restoring') return;
     setError(''); setStage('restoring'); setProgress({ done: 0, total: set.msg_count || 0 });
+    if (v4) {
+      const cb = require('../../services/cloudBackup');
+      const unsub = cb.subscribe((p) => { if (aliveRef.current && p && (p.phase === 'restore' || p.phase === 'restored') && p.total) setProgress({ done: p.done || 0, total: p.total || 0 }); });
+      try {
+        const isKey = !passwordMode || !!ownBackup.parseRecoveryKey(secret);
+        const cred = secret ? (isKey ? { recoveryKey: secret } : { password: secret }) : {};
+        await cb.unlock(set, { email: candidate.email, ...cred }); // chave errada falha aqui, antes de baixar conversas
+        const r = await cb.restore(set, { email: candidate.email });
+        if (!aliveRef.current) return;
+        setResult({ restored: r.msg_count, media: r.media_count }); setStage('done');
+        try { require('../../services/haptics').success?.(); } catch {}
+      } catch (e) {
+        if (!aliveRef.current) return;
+        const left = e?.attemptsLeft;
+        setError(errorText(t, e) + (left != null && e?.code === 'ERR_BAD_PASSWORD' ? ` ${t('ownBackup.attemptsLeft', { n: left })}` : ''));
+        setStage('ask');
+        try { require('../../services/haptics').error?.(); } catch {}
+      } finally { unsub(); }
+      return;
+    }
     try {
       const isKey = !passwordMode || !!ownBackup.parseRecoveryKey(secret);
       const u = await ownBackup.unlockBackup({
@@ -61,7 +87,7 @@ export default function RestorePanel({ candidate, colors, t, reduced, onFinished
       setStage('ask');
       try { require('../../services/haptics').error?.(); } catch {}
     }
-  }, [set, secret, stage, passwordMode, candidate, t, onFinished]);
+  }, [set, secret, stage, passwordMode, candidate, t, onFinished, v4, needSecret]);
 
   if (!set) return null;
   const busy = stage === 'restoring';
@@ -78,12 +104,13 @@ export default function RestorePanel({ candidate, colors, t, reduced, onFinished
         </Text>
         <Text style={[st.sub, { color: colors.textSecondary }]} maxFontSizeMultiplier={1.5}>
           {stage === 'done'
-            ? t('ownBackup.restoredNotice', { n: result?.restored || 0 })
+            ? (v4 ? t('cbk4.restoredMedia', '{n} mensagens e {m} arquivos de mídia restaurados.').replace('{n}', String(result?.restored || 0)).replace('{m}', String(result?.media || 0))
+              : t('ownBackup.restoredNotice', { n: result?.restored || 0 }))
             : t('ownBackup.restorePromptBody', { date: fmtDate(set.created_at), n: set.msg_count, size: fmtBytes(set.size_bytes) })}
         </Text>
       </View>
 
-      {stage !== 'done' && (
+      {stage !== 'done' && needSecret && (
         <View style={{ marginTop: 22 }}>
           <View style={st.row}>
             <IconLock size={14} color={colors.textSecondary} />
@@ -141,8 +168,13 @@ export default function RestorePanel({ candidate, colors, t, reduced, onFinished
         <Primary label={t('ownBackup.continue')} onPress={() => onFinished?.('restored')} testID="nob-restore-continue" />
       ) : (
         <>
-          <Primary label={t('ownBackup.restore')} onPress={restore} loading={busy} disabled={!secret} testID="nob-restore-go" />
-          <Secondary label={t('ownBackup.notNow')} onPress={() => onFinished?.('skipped')} disabled={busy} testID="nob-restore-skip" />
+          <Primary label={t('ownBackup.restore')} onPress={restore} loading={busy} disabled={needSecret && !secret} testID="nob-restore-go" />
+          {v4 && busy ? (
+            // a restauração v4 continua sozinha (e retoma se o app fechar) — dá para entrar já
+            <Secondary label={t('cbk4.continueInApp', 'Continuar usando o app')} onPress={() => onFinished?.('restoring')} testID="nob-restore-bg" />
+          ) : (
+            <Secondary label={t('ownBackup.notNow')} onPress={() => onFinished?.('skipped')} disabled={busy} testID="nob-restore-skip" />
+          )}
         </>
       )}
     </View>

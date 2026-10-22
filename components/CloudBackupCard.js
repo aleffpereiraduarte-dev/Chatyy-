@@ -17,6 +17,9 @@ function errText(t, code) {
     ERR_NETWORK: t('cbk4.errNetwork', 'Sem conexão. Tente de novo.'),
     ERR_NETWORK_POLICY: t('cbk4.errWifi', 'Aguardando Wi-Fi (ou ligue "Usar dados móveis").'),
     ERR_QUOTA: t('cbk4.errQuota', 'Sem espaço no seu plano para o backup.'),
+    ERR_MISSING: t('cbk4.errMissing', 'Parte do backup não está mais na nuvem. Faça um backup novo.'),
+    ERR_DECRYPT: t('cbk4.errBadKey', 'Essa chave não abre este backup.'),
+    ERR_TOO_LARGE: t('cbk4.errTooLarge', 'O backup ficou grande demais. Desligue "Incluir vídeos" e tente de novo.'),
     ERR_NOT_SETUP: t('cbk4.errNoKey', 'Configure a chave do backup no bloco acima.'),
     ERR_NEED_KEY: t('cbk4.errNeedKey', 'Digite a chave ou a senha do backup no bloco acima.'),
     ERR_BAD_KEY: t('cbk4.errBadKey', 'Essa chave não abre este backup.'),
@@ -43,12 +46,14 @@ export default function CloudBackupCard() {
   const [progress, setProgress] = useState(cloud.getProgress());
   const [busy, setBusy] = useState(cloud.isRunning());
   const [msg, setMsg] = useState('');
+  const [pendingRst, setPendingRst] = useState(null);
 
   const load = useCallback(async () => {
     if (!cloud.isOn()) return;
     try { setSrv(await cloud.status()); } catch { setSrv({ enabled: false }); }
     try { setPrefsState(await cloud.getPrefs()); } catch {}
     try { setLocal(await cloud.localSummary()); } catch {}
+    try { setPendingRst(await cloud.pendingRestore()); } catch {}
   }, []);
   useEffect(() => { load(); return cloud.subscribe((p) => { setProgress(p); setBusy(cloud.isRunning()); }); }, [load]);
 
@@ -60,7 +65,9 @@ export default function CloudBackupCard() {
     setMsg(''); setBusy(true);
     try {
       const r = await cloud.runBackup({ manual: true });
-      setMsg(t('cbk4.done', 'Backup concluído: {n} mensagens.').replace('{n}', String(r.msg_count)));
+      let m = t('cbk4.doneMedia', 'Backup concluído: {n} mensagens e {m} arquivos de mídia.').replace('{n}', String(r.msg_count)).replace('{m}', String(r.media_count || 0));
+      if (r.quota_hit) m += ' ' + t('cbk4.mediaQuota', 'Parte da mídia ficou de fora: acabou o espaço do backup.');
+      setMsg(m);
     } catch (e) { setMsg(errText(t, e?.code)); }
     setBusy(false); load();
   };
@@ -71,9 +78,21 @@ export default function CloudBackupCard() {
       t('cbk4.restore', 'Restaurar'), t('common.cancel', 'Cancelar'));
     if (!ok) return;
     setMsg(''); setBusy(true);
-    try { const r = await cloud.restore(last); setMsg(t('cbk4.restored', '{n} mensagens restauradas.').replace('{n}', String(r.msg_count))); }
-    catch (e) { setMsg(errText(t, e?.code)); }
-    setBusy(false);
+    try {
+      const r = await cloud.restore(last);
+      setMsg(t('cbk4.restoredMedia', '{n} mensagens e {m} arquivos de mídia restaurados.').replace('{n}', String(r.msg_count)).replace('{m}', String(r.media_count || 0)));
+    } catch (e) { setMsg(errText(t, e?.code)); }
+    setBusy(false); load();
+  };
+  const resumeNow = async () => {
+    setMsg(''); setBusy(true);
+    try {
+      const r = await cloud.resumePendingRestore();
+      if (r?.ran) setMsg(t('cbk4.restoredMedia', '{n} mensagens e {m} arquivos de mídia restaurados.').replace('{n}', String(r.result?.msg_count || 0)).replace('{m}', String(r.result?.media_count || 0)));
+      else if (r?.error) setMsg(errText(t, r.error));
+      else if (r?.skipped === 'no_key') setMsg(errText(t, 'ERR_NEED_KEY'));
+    } catch (e) { setMsg(errText(t, e?.code)); }
+    setBusy(false); load();
   };
   const delAll = async () => {
     const ok = await confirmAsync(t('cbk4.deleteTitle', 'Apagar backup da nuvem'),
@@ -101,11 +120,18 @@ export default function CloudBackupCard() {
         {last
           ? t('cbk4.last', 'Último backup: {d} · {s} · {n} mensagens')
             .replace('{d}', fmtDate(last.created_at)).replace('{s}', fmtBytes(last.size_bytes)).replace('{n}', String(last.msg_count))
+            + (last.media_count ? ' · ' + t('cbk4.lastMedia', '{m} de mídia').replace('{m}', String(last.media_count)) : '')
           : t('cbk4.never', 'Ainda não há backup na nuvem.')}
       </Text>
+      {local?.quotaHit ? (
+        <Text style={[st.small, { color: colors.textSecondary }]} testID="cbk4-quota-hit">
+          {t('cbk4.mediaQuota', 'Parte da mídia ficou de fora: acabou o espaço do backup.')}
+        </Text>
+      ) : null}
       {srv.quota ? (
         <Text style={[st.small, { color: colors.textSecondary }]}>
           {t('cbk4.used', 'Espaço usado pelo backup: {s}').replace('{s}', fmtBytes(srv.quota.backup_used))}
+          {srv.quota.cap ? ' ' + t('cbk4.capOf', 'de {s}').replace('{s}', fmtBytes(srv.quota.cap)) : ''}
         </Text>
       ) : null}
 
@@ -113,7 +139,7 @@ export default function CloudBackupCard() {
         <View style={{ marginTop: Spacing.md }}>
           <View style={[st.barTrack, { backgroundColor: colors.border }]}><View style={[st.barFill, { backgroundColor: fg, width: `${Math.round(pct * 100)}%` }]} /></View>
           <Text style={[st.small, { color: colors.textSecondary }]}>
-            {(progress.phase === 'restore' ? t('cbk4.phaseRestore', 'Restaurando') : t('cbk4.phaseBackup', 'Fazendo backup'))} · {progress.done || 0}/{progress.total}
+            {(progress.phase === 'restore' ? t('cbk4.phaseRestore', 'Restaurando') : progress.phase === 'media' ? t('cbk4.phaseMedia', 'Copiando fotos, áudios e documentos') : t('cbk4.phaseBackup', 'Fazendo backup'))} · {progress.done || 0}/{progress.total}
           </Text>
         </View>
       ) : null}
@@ -134,6 +160,14 @@ export default function CloudBackupCard() {
         <Text style={[st.body, { color: fg, flex: 1 }]}>{t('cbk4.cellular', 'Usar dados móveis')}</Text>
         <Switch value={!!prefs?.allowCellular} onValueChange={(v) => setP({ allowCellular: v })} testID="cbk4-cellular" />
       </View>
+      <View style={st.toggleRow}>
+        <Text style={[st.body, { color: fg, flex: 1 }]}>{t('cbk4.includeMedia', 'Incluir fotos, áudios e documentos')}</Text>
+        <Switch value={prefs?.includeMedia !== false} onValueChange={(v) => setP({ includeMedia: v })} testID="cbk4-media" />
+      </View>
+      <View style={st.toggleRow}>
+        <Text style={[st.body, { color: fg, flex: 1 }]}>{t('cbk4.includeVideos', 'Incluir vídeos')}</Text>
+        <Switch value={!!prefs?.includeVideos} disabled={prefs?.includeMedia === false} onValueChange={(v) => setP({ includeVideos: v })} testID="cbk4-videos" />
+      </View>
 
       {local && !local.hasKey ? <Text style={[st.small, { color: colors.textSecondary }]}>{errText(t, 'ERR_NOT_SETUP')}</Text> : null}
       {msg ? <Text style={[st.small, { color: fg }]} testID="cbk4-msg">{msg}</Text> : null}
@@ -143,6 +177,13 @@ export default function CloudBackupCard() {
         <IconCloudUpload size={16} color={colors.background} />
         <Text style={[st.btnText, { color: colors.background }]}>{t('cbk4.runNow', 'Fazer backup agora')}</Text>
       </TouchableOpacity>
+      {pendingRst ? (
+        <TouchableOpacity accessibilityRole="button" disabled={busy} onPress={resumeNow} testID="cbk4-resume"
+          style={[st.btn, { borderColor: fg, borderWidth: 1 }, busy && { opacity: 0.45 }]}>
+          <IconRefresh size={16} color={fg} />
+          <Text style={[st.btnText, { color: fg }]}>{t('cbk4.resume', 'Continuar a restauração')}</Text>
+        </TouchableOpacity>
+      ) : null}
       {last ? (
         <TouchableOpacity accessibilityRole="button" disabled={busy} onPress={restoreNow} testID="cbk4-restore"
           style={[st.btn, { borderColor: fg, borderWidth: 1 }, busy && { opacity: 0.45 }]}>

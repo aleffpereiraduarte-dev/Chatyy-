@@ -26,12 +26,31 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
 
   const set = candidate?.set || null;
   const passwordMode = !!candidate?.hasPassword && !useKey;
+  // [backup-nuvem 2026-10-22] candidato v4 (services/cloudBackup): mesma senha/chave; chave no aparelho → não pede.
+  const v4 = candidate?.v === 4;
+  const needSecret = !(v4 && candidate?.hasKey);
 
   useEffect(() => { if (visible) { setStage('ask'); setError(null); setSecret(''); setResult(null); setUseKey(!candidate?.hasPassword); } }, [visible, candidate]);
 
   const restore = useCallback(async () => {
-    if (!set || !secret) return;
+    if (!set || (needSecret && !secret)) return;
     setError(null); setStage('restoring'); setProgress({ phase: 'restore', done: 0, total: set.msg_count || 0 });
+    if (v4) {
+      const cb = require('../services/cloudBackup');
+      const unsub = cb.subscribe((p) => { if (p && (p.phase === 'restore' || p.phase === 'restored') && p.total) setProgress({ phase: 'restore', done: p.done || 0, total: p.total || 0 }); });
+      try {
+        const isKey = !passwordMode || !!ownBackup.parseRecoveryKey(secret);
+        const cred = secret ? (isKey ? { recoveryKey: secret } : { password: secret }) : {};
+        await cb.unlock(set, { email: candidate.email, ...cred });
+        const r = await cb.restore(set, { email: candidate.email });
+        setResult({ restored: r.msg_count, media: r.media_count }); setStage('done');
+      } catch (e) {
+        const left = e?.attemptsLeft;
+        setError(errorText(t, e) + (left != null && e?.code === 'ERR_BAD_PASSWORD' ? ` ${t('ownBackup.attemptsLeft', { n: left })}` : ''));
+        setStage('ask');
+      } finally { unsub(); }
+      return;
+    }
     try {
       const u = await ownBackup.unlockBackup({
         uid: set.uid, manifest: set.manifest,
@@ -51,7 +70,7 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
       setError(errorText(t, e) + (left != null && e?.code === 'ERR_BAD_PASSWORD' ? ` ${t('ownBackup.attemptsLeft', { n: left })}` : ''));
       setStage('ask');
     }
-  }, [set, secret, passwordMode, candidate, t, onClose]);
+  }, [set, secret, passwordMode, candidate, t, onClose, v4, needSecret]);
 
   if (!visible || !set) return null;
   const busy = stage === 'restoring';
@@ -69,13 +88,15 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
 
           {stage === 'done' ? (
             <Text style={[st.body, { color: colors.text }]} testID="ownbk-restore-done">
-              {t('ownBackup.restoredNotice', { n: result?.restored || 0 })}
+              {v4 ? t('cbk4.restoredMedia', '{n} mensagens e {m} arquivos de mídia restaurados.').replace('{n}', String(result?.restored || 0)).replace('{m}', String(result?.media || 0))
+                : t('ownBackup.restoredNotice', { n: result?.restored || 0 })}
             </Text>
           ) : (
             <>
               <Text style={[st.body, { color: colors.text }]} testID="ownbk-restore-summary">
                 {t('ownBackup.restorePromptBody', { date: fmtDate(set.created_at), n: set.msg_count, size: fmtBytes(set.size_bytes) })}
               </Text>
+              {needSecret ? (<>
               <View style={[st.row, { marginTop: Spacing.sm }]}>
                 {passwordMode ? <IconLock size={14} color={colors.textSecondary} /> : <IconKey size={14} color={colors.textSecondary} />}
                 <Text style={[st.small, { color: colors.textSecondary, flex: 1 }]}>
@@ -100,6 +121,7 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
                   <Text style={[st.link, { color: colors.text }]}>{useKey ? t('ownBackup.usePasswordInstead') : t('ownBackup.useKeyInstead')}</Text>
                 </TouchableOpacity>
               ) : null}
+              </>) : null}
               {busy ? <ProgressBar progress={progress || { phase: 'restore' }} colors={colors} t={t} /> : null}
               {error ? (
                 <View style={[st.row, { marginTop: Spacing.sm }]} testID="ownbk-restore-error">
@@ -117,10 +139,10 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
               </TouchableOpacity>
             ) : (
               <>
-                <TouchableOpacity testID="ownbk-restore-skip" disabled={busy} style={[st.btn, { borderWidth: 1, borderColor: colors.text, opacity: busy ? 0.4 : 1 }]} onPress={onClose}>
-                  <Text style={[st.btnText, { color: colors.text }]}>{t('ownBackup.notNow')}</Text>
+                <TouchableOpacity testID="ownbk-restore-skip" disabled={busy && !v4} style={[st.btn, { borderWidth: 1, borderColor: colors.text, opacity: busy && !v4 ? 0.4 : 1 }]} onPress={onClose}>
+                  <Text style={[st.btnText, { color: colors.text }]}>{v4 && busy ? t('cbk4.continueInApp', 'Continuar usando o app') : t('ownBackup.notNow')}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity testID="ownbk-restore-go" disabled={busy || !secret} style={[st.btn, { backgroundColor: colors.text, opacity: busy || !secret ? 0.45 : 1 }]} onPress={restore}>
+                <TouchableOpacity testID="ownbk-restore-go" disabled={busy || (needSecret && !secret)} style={[st.btn, { backgroundColor: colors.text, opacity: busy || (needSecret && !secret) ? 0.45 : 1 }]} onPress={restore}>
                   {busy ? <ActivityIndicator color={colors.background} /> : <Text style={[st.btnText, { color: colors.background }]}>{t('ownBackup.restore')}</Text>}
                 </TouchableOpacity>
               </>
