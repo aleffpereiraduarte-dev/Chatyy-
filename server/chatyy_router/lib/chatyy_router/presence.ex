@@ -13,8 +13,8 @@ defmodule ChatyyRouter.Presence do
     others = Net.alive_regions() -- [Net.me()]
 
     others
-    |> Task.async_stream(fn r -> {r, Net.call(r, __MODULE__, {:local, device}, 1_500)} end,
-      timeout: 2_000, on_timeout: :kill_task, max_concurrency: 16, ordered: false)
+    |> Task.async_stream(fn r -> {r, Net.call(r, __MODULE__, {:local, device}, Net.tmo(r, 3_000))} end,
+      timeout: 31_000, on_timeout: :kill_task, max_concurrency: 16, ordered: false)
     |> Enum.find_value({:error, :offline}, fn
       {:ok, {r, true}} -> {:ok, r}
       _ -> nil

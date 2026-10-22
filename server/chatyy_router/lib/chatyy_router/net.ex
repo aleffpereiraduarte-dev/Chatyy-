@@ -99,6 +99,22 @@ defmodule ChatyyRouter.Net do
     end
   end
 
+  @doc """
+  Timeout de uma chamada à região proporcional ao RTT medido (pares Ásia↔América do Sul
+  têm 350–450 ms e jitter): max(mínimo, 8 × RTT), teto 30 s. Sem medida ainda = mínimo
+  (≥ 3 s). A DETECÇÃO de nó fora não usa isto: é a distribuição (net_ticktime 20 s) +
+  60 s de failover + quórum.
+  """
+  def tmo(region, min_ms \\ 3_000) do
+    rtt =
+      case ChatyyRouter.Net.Cluster.rtts()[region] do
+        {us, _} -> div(us, 1000)
+        _ -> 0
+      end
+
+    min(max(max(min_ms, 3_000), rtt * 8), 30_000)
+  end
+
   @doc "RTT de ida e volta de uma chamada vazia ao nó da região (µs)."
   def ping_us(region) do
     t0 = System.monotonic_time(:microsecond)

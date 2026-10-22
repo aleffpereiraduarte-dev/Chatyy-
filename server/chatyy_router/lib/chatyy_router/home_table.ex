@@ -117,8 +117,8 @@ defmodule ChatyyRouter.HomeTable do
         answers =
           [mine] ++
             (others
-             |> Task.async_stream(fn r -> Net.call(r, __MODULE__, {:query, cid}, 2_000) end,
-               timeout: 3_000, on_timeout: :kill_task, max_concurrency: 16)
+             |> Task.async_stream(fn r -> Net.call(r, __MODULE__, {:query, cid}, Net.tmo(r)) end,
+               timeout: 31_000, on_timeout: :kill_task, max_concurrency: 16)
              |> Enum.flat_map(fn
                {:ok, {:home, c, a}} -> [{c, a}]
                _ -> []
@@ -174,8 +174,8 @@ defmodule ChatyyRouter.HomeTable do
     res =
       [me_res] ++
         (others
-         |> Task.async_stream(fn r -> Net.call(r, __MODULE__, {:accept, cid, region, epoch}, 3_000) end,
-           timeout: 4_000, on_timeout: :kill_task, max_concurrency: 16)
+         |> Task.async_stream(fn r -> Net.call(r, __MODULE__, {:accept, cid, region, epoch}, Net.tmo(r)) end,
+           timeout: 31_000, on_timeout: :kill_task, max_concurrency: 16)
          |> Enum.map(fn
            {:ok, v} -> v
            _ -> {:error, :timeout}

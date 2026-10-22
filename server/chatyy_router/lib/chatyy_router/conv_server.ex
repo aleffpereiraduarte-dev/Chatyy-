@@ -347,7 +347,7 @@ defmodule ChatyyRouter.ConvServer do
 
             rep =
               if rep_task,
-                do: Task.await(rep_task, Config.get(:replica_timeout_ms, 3_000) + 2_000),
+                do: Task.await(rep_task, 32_000),
                 else: replicate(msg)
 
             case rep do
@@ -404,7 +404,7 @@ defmodule ChatyyRouter.ConvServer do
         if Config.ack_mode() == "sister" do
           t0 = System.monotonic_time(:microsecond)
 
-          case Net.call(sister, ChatyyRouter.Replica, {:put, msg}, Config.get(:replica_timeout_ms, 3_000)) do
+          case Net.call(sister, ChatyyRouter.Replica, {:put, msg}, Net.tmo(sister, Config.get(:replica_timeout_ms, 3_000))) do
             :ok ->
               Telemetry.execute([:chatyy_router, :replica, :lag], %{lag_us: System.monotonic_time(:microsecond) - t0})
               :ok

@@ -69,9 +69,13 @@ defmodule ChatyyRouter.Failover do
   defp quorum_down?(r) do
     others = Net.alive_regions() -- [Net.me(), r]
 
+    # votos em paralelo (pares a 400 ms não somam latência), timeout por par proporcional ao RTT
     votes =
       1 +
-        Enum.count(others, fn o -> Net.call(o, ChatyyRouter.Net.Cluster, {:sees_down?, r}, 3_000) == true end)
+        (others
+         |> Task.async_stream(fn o -> Net.call(o, ChatyyRouter.Net.Cluster, {:sees_down?, r}, Net.tmo(o, 5_000)) end,
+           timeout: 31_000, on_timeout: :kill_task, max_concurrency: 16)
+         |> Enum.count(&(&1 == {:ok, true})))
 
     votes >= Config.quorum()
   end
