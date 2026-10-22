@@ -274,11 +274,25 @@ export async function openProfilePhotoGallery({ email, name, photos, avatarUrl, 
     try {
       const nmo = require('./nativeMediaOpen');
       if (nmo.nativeMediaAlways()) {
+        // [2026-10-22 print-local] Foto de perfil de outra pessoa: viewer nativo
+        // com FLAG_SECURE no próprio Dialog (só enquanto aberto) + aviso no
+        // Android 14+ quando o SO avisa a tentativa de print.
+        let shotSub = null;
+        const stopShot = () => { try { shotSub && shotSub.remove(); } catch {} shotSub = null; };
         const sid = await nmo.openNativeMediaList({
-          list, index: at, t, allowShare: true, allowSave: true,
+          list, index: at, t, allowShare: true, allowSave: true, secure: true,
           toItem: (x) => ({ uri: String(x.url), thumbUri: String(x.thumb || x.url), type: 'image', senderName: String(name || ''), caption: '' }),
+          onClose: stopShot,
         });
-        if (sid) return true;
+        if (sid) {
+          try {
+            const cp = require('./chatPrivacy');
+            if (cp.canDetectBlockedCapture()) {
+              shotSub = cp.addScreenshotListener(() => cp.showCaptureBlockedNotice(t, { kind: 'profile_photo', overDialog: true }));
+            }
+          } catch {}
+          return true;
+        }
       }
     } catch {}
   }

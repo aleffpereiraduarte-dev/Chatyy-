@@ -3659,6 +3659,7 @@ export default function Profile({
       email={lightboxUri ? null : (identity?.email || null)}
       uri={lightboxUri || identity?.avatar_url || null}
       name={identity?.name || identity?.username || identity?.email || ''}
+      isSelf={!!actions?.is_self}
       onClose={() => { setAvatarLightboxOpen(false); setLightboxUri(null); }}
     />
   );

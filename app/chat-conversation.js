@@ -15207,19 +15207,16 @@ function ChatConversationInnerBody() {
   // iOS can't prevent screenshots — Apple won't expose the flag — but
   // expo-screen-capture still lets us hook a screenshot listener if we
   // ever want to inform the peer.
+  // [2026-10-22 print-local] Só com a conversa EM FOCO (antes valia enquanto a
+  // tela estivesse montada — telas empilhadas por cima saíam pretas no print) e
+  // pelo acquireCaptureProtection (hub nativo com contagem de refs no Android).
   useEffect(() => {
     if (Platform.OS === 'web') return;
-    if (!chatLocked) return;
-    let SC;
-    try { SC = require('expo-screen-capture'); } catch { return; }
-    (async () => {
-      try { await SC.preventScreenCaptureAsync('chatyy-chat-private'); } catch {}
-    })();
-    return () => {
-      try { SC.allowScreenCaptureAsync?.('chatyy-chat-private')?.catch?.(() => {}); } catch {}
-      try { require('../services/screenProtect').reassertScreenProtect?.(); } catch {} // [2026-10-15 screen-protect-all]
-    };
-  }, [chatLocked]);
+    if (!chatLocked || !isScreenFocused) return;
+    let release = null;
+    try { release = require('../services/chatPrivacy').acquireCaptureProtection('chatyy-chat-private', { iosSecureField: true }); } catch { release = null; }
+    return () => { try { release && release(); } catch {} };
+  }, [chatLocked, isScreenFocused]);
 
   // Lock a chat. WhatsApp parity: try Face ID / fingerprint first
   // (much faster + matches OS expectations), fall back to password only

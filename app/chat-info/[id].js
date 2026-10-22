@@ -6,7 +6,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, StatusBar, StyleSheet, Platform } from 'react-native';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
-import { StackActions, useRoute } from '@react-navigation/native';
+import { StackActions, useRoute, useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import NativeChatInfo from '../../components/chat/NativeChatInfo';
 import { ProfilePhotoGalleryHost } from '../../components/profile/ProfilePhotoGallery'; // [perfil-fotos 2026-10-19] galeria JS de reserva
@@ -16,15 +16,25 @@ import { getInfo, subscribeInfo, screenMounted, screenGone } from '../../service
 import ChatyySecureView from '../../components/chat/ChatyySecureView'; // [2026-10-19 secure-view]
 import TgContactInfo, { tgContactInfoOn } from '../../components/profile/TgContactInfo'; // [mural 2026-10-20]
 import { useCaptureScope, secureViewAvailable } from '../../services/captureBlock';
-import { acquireCaptureProtection, addScreenshotListener, sendScreenshotNotice } from '../../services/chatPrivacy';
+import { acquireCaptureProtection, addScreenshotListener, sendScreenshotNotice, canDetectBlockedCapture, showCaptureBlockedNotice } from '../../services/chatPrivacy';
 
 // [2026-10-19 secure-view] Aberto por cima de uma conversa protegida
 // (privacidade avançada / modo temporário / "Bloquear capturas de tela nas
 // conversas") → mesma proteção: iOS print = "Captura de tela bloqueada" + aviso
 // na conversa; Android FLAG_SECURE.
-function useInfoCaptureProtect(t) {
-  const scope = useCaptureScope();
-  const cid = scope ? scope.cid : '';
+// [2026-10-22 print-local] Escopo da PRÓPRIA conversa (chave contact:<id> /
+// group:<id>) — antes, sem id, valia "qualquer conversa protegida montada na
+// pilha" (Dados de outra conversa saíam pretos) — e só com esta tela em foco
+// (telas empurradas por cima ficavam pretas no print).
+function _infoCid(key) {
+  const m = /^(?:contact|group):(\d+)$/.exec(String(key || ''));
+  return m ? m[1] : '';
+}
+function useInfoCaptureProtect(t, key) {
+  const ownCid = _infoCid(key);
+  const scope = useCaptureScope(ownCid || undefined);
+  const focused = useIsFocused();
+  const cid = scope && focused ? scope.cid : '';
   const notify = !!scope && scope.reasons.some((r) => r === 'adv' || r === 'vanish' || r === 'global' || r === 'member');
   useEffect(() => {
     if (!cid) return undefined;
@@ -36,6 +46,13 @@ function useInfoCaptureProtect(t) {
     if (Platform.OS === 'ios' && notify) {
       const sc = scope.reasons.includes('adv') ? 'adv' : (scope.reasons.includes('vanish') ? 'vanish' : 'global');
       sub = addScreenshotListener(() => sendScreenshotNotice(cid, { kind: 'screenshot', blocked: secureViewAvailable(), scope: sc }));
+    } else if (canDetectBlockedCapture()) {
+      // [2026-10-22 print-local] Android 14+: tentativa detectada (print preto).
+      const sc = scope.reasons.includes('adv') ? 'adv' : (scope.reasons.includes('vanish') ? 'vanish' : 'global');
+      sub = addScreenshotListener(() => {
+        showCaptureBlockedNotice(t, { notified: notify });
+        if (notify) sendScreenshotNotice(cid, { kind: 'screenshot', blocked: true, scope: sc });
+      });
     }
     return () => { try { release(); } catch {} try { sub && sub.remove(); } catch {} };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -55,7 +72,7 @@ export default function ChatInfoRouteScreen() {
   const routeKeyRef = useRef(route?.key);
   routeKeyRef.current = route?.key;
   const poppedRef = useRef(false);
-  const _capProt = useInfoCaptureProtect(t);
+  const _capProt = useInfoCaptureProtect(t, key);
   // [mural 2026-10-20] "Dados do contato" no perfil novo (Telegram + Mural, JS).
   // Grupo segue na ChatyyChatInfo nativa. Falha → nativa (tgFailed).
   const [tgFailed, setTgFailed] = useState(false);

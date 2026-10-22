@@ -51,6 +51,15 @@ import { BlurBackdrop } from './NativeBlur';
 // iniciais embaixo de tudo, miniatura, depois a grande.
 import { avatarViewerSources, prefetchAvatarFull, avatarSource } from '../services/avatar';
 import { getCachedAvatarUriOrNull } from '../services/avatarCache';
+import { useCaptureProtectedSurface } from '../services/chatPrivacy'; // [2026-10-22 print-local]
+
+function _isMe(email) {
+  try {
+    const me = String(require('../services/api').getActiveAccountEmail?.() || '').trim().toLowerCase();
+    const e = String(email || '').trim().toLowerCase();
+    return !!me && !!e && me === e;
+  } catch { return false; }
+}
 
 let ExpoImage = null;
 if (Platform.OS !== 'web') {
@@ -89,6 +98,10 @@ export default function AvatarLightbox({
   const { colors, isDark } = useTheme();
   const tt = useCallback((k, fb) => { try { const v = t(k); return (v && v !== k) ? v : fb; } catch { return fb; } }, [t]);
   const { width: winW, height: winH } = useWindowDimensions();
+  // [2026-10-22 print-local] Foto de perfil de OUTRA pessoa = sem print
+  // (Android FLAG_SECURE só enquanto aberto; Android 14+ avisa a tentativa).
+  const _protect = !!visible && !isSelf && !_isMe(email);
+  const _secReady = useCaptureProtectedSurface(_protect, 'chatyy-profile-photo', { t, kind: 'profile_photo' });
 
   const cardEnabled = variant === 'card' && !globalThis.__chatyy_avatar_card_off;
   const [view, setView] = useState(cardEnabled ? 'card' : 'full'); // 'card' | 'full'
@@ -460,7 +473,7 @@ export default function AvatarLightbox({
 
   return (
     <Modal
-      visible={!!visible}
+      visible={!!visible && _secReady}
       transparent
       animationType="none"
       onRequestClose={view === 'full' ? fullBack : requestClose}

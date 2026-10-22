@@ -19,6 +19,7 @@ import AdvancedPrivacySheet from './AdvancedPrivacySheet';
 import {
   useAdvancedPrivacy, fetchAdvancedPrivacy, setAdvancedPrivacyRemote,
   acquireCaptureProtection, addScreenshotListener, sendScreenshotNotice, markProtectedOpen,
+  canDetectBlockedCapture, showCaptureBlockedNotice,
 } from '../../services/chatPrivacy';
 import { useCaptureBlockGlobal, setCaptureScope, secureViewAvailable } from '../../services/captureBlock'; // [2026-10-19 secure-view]
 
@@ -140,6 +141,13 @@ export default function useConversationPrivacy({ conversationId, conversationTyp
     let sub = null;
     if (Platform.OS === 'ios' && screenshotNotice) {
       sub = addScreenshotListener(() => sendScreenshotNotice(cid, { kind: 'screenshot', blocked: secureViewAvailable(), scope: 'adv' }));
+    } else if (canDetectBlockedCapture()) {
+      // [2026-10-22 print-local] Android 14+: o SO avisa a tentativa (o print
+      // sai preto) → aviso no app + "tentou fazer uma captura de tela" na conversa.
+      sub = addScreenshotListener(() => {
+        showCaptureBlockedNotice(t, { notified: !!screenshotNotice });
+        if (screenshotNotice) sendScreenshotNotice(cid, { kind: 'screenshot', blocked: true, scope: 'adv' });
+      });
     }
     return () => {
       try { release(); } catch {}
@@ -165,6 +173,13 @@ export default function useConversationPrivacy({ conversationId, conversationTyp
     let sub = null;
     if (Platform.OS === 'ios' && cid && conversationType !== 'saved') {
       sub = addScreenshotListener(() => sendScreenshotNotice(cid, { kind: 'screenshot', blocked: secureViewAvailable(), scope: globalBlock ? 'global' : 'member' }));
+    } else if (canDetectBlockedCapture()) {
+      // [2026-10-22 print-local] Android 14+: tentativa detectada (print preto).
+      const notify = !!cid && conversationType !== 'saved';
+      sub = addScreenshotListener(() => {
+        showCaptureBlockedNotice(t, { notified: notify });
+        if (notify) sendScreenshotNotice(cid, { kind: 'screenshot', blocked: true, scope: globalBlock ? 'global' : 'member' });
+      });
     }
     return () => {
       try { release(); } catch {}

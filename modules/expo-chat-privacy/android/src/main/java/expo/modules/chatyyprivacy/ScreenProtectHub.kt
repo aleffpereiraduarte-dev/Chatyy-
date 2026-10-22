@@ -4,12 +4,23 @@ import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Color
+import android.graphics.Typeface
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import java.util.Collections
 import java.util.WeakHashMap
 
@@ -43,15 +54,29 @@ import java.util.WeakHashMap
  * apagado por engano. Limpa só nas transições ligado→desligado (conta liberada,
  * compartilhamento começou), e mesmo assim respeita as tags locais do JS
  * (conversa protegida aberta) e o `secure` local de cada Dialog.
+ *
+ * [2026-10-22 print-local] Founder: "print sai preto no app todo". O app
+ * inteiro NÃO é mais protegido por padrão: `global` nasce DESLIGADO (chave nova
+ * `enabled_v2` — a antiga `enabled`=true persistida pela versão anterior é
+ * ignorada) e só liga com a flag remota explícita (screen_protect_android).
+ * O FLAG_SECURE fica só com as tags LOCAIS (conversa protegida em foco,
+ * visualizador da foto de perfil, view-once). Tags do runtime anterior do JS
+ * (reload/OTA no meio de uma conversa protegida) são zeradas no OnCreate do
+ * módulo e por resetLocalTags(keep) no boot do JS.
+ * Recentes: com a janela protegida, Android 13+ não tira a foto da tela
+ * (setRecentsScreenshotEnabled(false) → o sistema mostra o ícone do app em vez
+ * de preto) e, ao sair para o fundo, uma capa da marca ("Chatyy · Conteúdo
+ * protegido") cobre o conteúdo durante a animação de Recentes.
  */
 object ScreenProtectHub {
   private const val TAG = "ChatyyScreenProtect"
   private const val PREFS = "chatyy_screen_protect_v1"
-  private const val K_ENABLED = "enabled"
+  private const val K_ENABLED = "enabled_v2"
+  private const val COVER_TAG = "chatyy_secure_cover"
 
   private val main = Handler(Looper.getMainLooper())
   @Volatile private var installed = false
-  @Volatile private var global = true
+  @Volatile private var global = false
   private var prefs: SharedPreferences? = null
 
   private val sharing = Collections.synchronizedSet(HashSet<String>())
@@ -71,7 +96,7 @@ object ScreenProtectHub {
     installed = true
     try {
       prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-      global = prefs?.getBoolean(K_ENABLED, true) ?: true
+      global = prefs?.getBoolean(K_ENABLED, false) ?: false
     } catch (_: Throwable) {}
     try {
       app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
@@ -83,8 +108,15 @@ object ScreenProtectHub {
         override fun onActivityResumed(activity: Activity) {
           activities[activity] = true
           applyWindow(activity.window, activityLocal(), false)
+          removeCover(activity)
         }
-        override fun onActivityPaused(activity: Activity) {}
+        override fun onActivityPaused(activity: Activity) {
+          // [2026-10-22 print-local] capa da marca nos Recentes (só tela protegida).
+          try {
+            val secure = (activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE) != 0
+            if (secure && !activity.isFinishing && !inPipOrMulti(activity)) addCover(activity)
+          } catch (_: Throwable) {}
+        }
         override fun onActivityStopped(activity: Activity) {}
         override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
         override fun onActivityDestroyed(activity: Activity) {
@@ -115,6 +147,22 @@ object ScreenProtectHub {
       try { prefs?.edit()?.putBoolean(K_ENABLED, enabled)?.apply() } catch (_: Throwable) {}
     }
     if (before != effective()) onEffectiveMaybeChanged(false) else reapplyAll(false)
+  }
+
+  /**
+   * [2026-10-22 print-local] Boot do JS: fica só com `keep` (tags que o runtime
+   * novo já pediu); o resto (órfãs do runtime anterior) sai e a flag é limpa
+   * se ninguém mais quiser.
+   */
+  @JvmStatic
+  fun resetLocalTags(keep: Collection<String>) {
+    var changed = false
+    synchronized(localTags) {
+      val it = localTags.iterator()
+      while (it.hasNext()) { if (!keep.contains(it.next())) { it.remove(); changed = true } }
+    }
+    if (changed) Log.i(TAG, "resetLocalTags: órfãs removidas (keep=${keep.size})")
+    reapplyAll(true)
   }
 
   @JvmStatic
@@ -192,9 +240,84 @@ object ScreenProtectHub {
       } else if (!want && has && allowClear) {
         w.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
       }
+      syncRecents(w)
     } catch (t: Throwable) {
       Log.w(TAG, "applyWindow: ${t.message}")
     }
+  }
+
+  // ─── [2026-10-22 print-local] Recentes: ícone do app / capa em vez de preto ──
+  private fun activityOf(w: Window): Activity? {
+    for (a in activities.keys) { try { if (a.window === w) return a } catch (_: Throwable) {} }
+    return null
+  }
+
+  private fun syncRecents(w: Window) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    val a = activityOf(w) ?: return
+    try {
+      val secure = (w.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE) != 0
+      a.setRecentsScreenshotEnabled(!secure)
+    } catch (_: Throwable) {}
+  }
+
+  private fun inPipOrMulti(a: Activity): Boolean {
+    return try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) a.isInPictureInPictureMode || a.isInMultiWindowMode else false
+    } catch (_: Throwable) { false }
+  }
+
+  private fun coverLabel(): String {
+    val lang = try { java.util.Locale.getDefault().language } catch (_: Throwable) { "pt" }
+    return when (lang) {
+      "pt" -> "Conteúdo protegido"
+      "es" -> "Contenido protegido"
+      else -> "Protected content"
+    }
+  }
+
+  private fun addCover(a: Activity) {
+    val decor = a.window?.decorView as? ViewGroup ?: return
+    if (decor.findViewWithTag<View>(COVER_TAG) != null) return
+    val ctx = a
+    val dp = { v: Float -> TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, ctx.resources.displayMetrics).toInt() }
+    val root = FrameLayout(ctx).apply {
+      tag = COVER_TAG
+      setBackgroundColor(Color.parseColor("#0E0F14"))
+      isClickable = true
+      layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+    }
+    val col = LinearLayout(ctx).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.CENTER_HORIZONTAL
+    }
+    try {
+      val icon = ctx.packageManager.getApplicationIcon(ctx.applicationInfo)
+      col.addView(ImageView(ctx).apply { setImageDrawable(icon) }, LinearLayout.LayoutParams(dp(72f), dp(72f)))
+    } catch (_: Throwable) {}
+    col.addView(TextView(ctx).apply {
+      text = "Chatyy"
+      setTextColor(Color.WHITE)
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+      typeface = Typeface.DEFAULT_BOLD
+      gravity = Gravity.CENTER
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16f) })
+    col.addView(TextView(ctx).apply {
+      text = coverLabel()
+      setTextColor(Color.parseColor("#A3A7B3"))
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+      gravity = Gravity.CENTER
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6f) })
+    root.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+    try { decor.addView(root) } catch (_: Throwable) {}
+  }
+
+  private fun removeCover(a: Activity) {
+    try {
+      val decor = a.window?.decorView as? ViewGroup ?: return
+      val v = decor.findViewWithTag<View>(COVER_TAG) ?: return
+      decor.removeView(v)
+    } catch (_: Throwable) {}
   }
 
   private inline fun onMain(crossinline block: () -> Unit) {

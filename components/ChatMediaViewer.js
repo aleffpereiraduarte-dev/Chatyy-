@@ -2153,7 +2153,10 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // view-once, privacidade avançada, ou aberto de uma conversa protegida (modo
   // temporário / "Bloquear capturas de tela nas conversas").
   const _capScope = useCaptureScope(conversationId);
-  const _capProt = _locked || !!_capScope;
+  // [2026-10-22 print-local] Sem conversationId (mural/perfil/arquivos) o
+  // getCaptureScope devolvia "a conversa protegida mais recente da pilha" →
+  // visualizador de outra coisa saía preto. Só a PRÓPRIA conversa conta.
+  const _capProt = _locked || (!!conversationId && !!_capScope);
   // iOS com <ChatyySecureView>: pager JS dentro da camada segura (o viewer
   // nativo é outro view controller, fora dela).
   const _capJsPager = _capProt && Platform.OS === 'ios' && secureViewAvailable();

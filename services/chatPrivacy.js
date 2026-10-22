@@ -26,7 +26,7 @@
 // da conversa (o switch da folha). WS `conversation_privacy_member` → re-busca
 // as conversas abertas.
 
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { Platform, DeviceEventEmitter } from 'react-native';
 
 const STORE_KEY = 'chat_adv_privacy_v1';
@@ -358,15 +358,21 @@ export function acquireCaptureProtection(tag, opts) {
   const o = opts || {};
   let released = false;
   const sc = _sc();
-  const useSc = !!sc && (Platform.OS === 'android' || (Platform.OS === 'ios' && o.iosSecureField));
+  // [2026-10-22 print-local] Android com o hub nativo (expo-chat-privacy ≥ 2):
+  // o hub é a ÚNICA fonte do FLAG_SECURE (tag local com contagem de refs em
+  // services/screenProtect.js). O expo-screen-capture fica só para binário sem
+  // o hub — misturar os dois deixava a flag presa (o allow do expo e o hub
+  // brigavam e um reload do JS perdia o Set de tags do expo).
+  let hubRelease = null;
+  if (Platform.OS === 'android') {
+    try {
+      const sp = require('./screenProtect');
+      if (sp.isScreenProtectSupported?.() && typeof sp.holdScreenProtect === 'function') hubRelease = sp.holdScreenProtect(tag);
+    } catch { hubRelease = null; }
+  }
+  const useSc = !!sc && ((Platform.OS === 'android' && !hubRelease) || (Platform.OS === 'ios' && o.iosSecureField));
   if (useSc) {
     try { sc.preventScreenCaptureAsync?.(tag)?.catch?.(() => {}); } catch {}
-  }
-  // [2026-10-15 screen-protect-all] Android: tag local no hub nativo — a
-  // conversa protegida continua com FLAG_SECURE mesmo com a proteção do app
-  // desligada (conta liberada / compartilhando a tela numa chamada).
-  if (Platform.OS === 'android') {
-    try { require('./screenProtect').setScreenProtectLocalTag?.(tag, true); } catch {}
   }
   // [2026-10-19 secure-view] iOS com <ChatyySecureView> (o.secureView): a
   // gravação já sai com "Captura de tela bloqueada" — sem a janela preta por
@@ -376,19 +382,114 @@ export function acquireCaptureProtection(tag, opts) {
     try { if (require('./captureBlock').secureViewAvailable()) cp = null; } catch {}
   }
   if (cp) cp.setShield(tag, true, o.labels || {});
-  return () => {
+  let armed = null;
+  if (hubRelease) armed = hubRelease.armed;
+  else if (useSc) { try { armed = Promise.resolve(); } catch { armed = null; } }
+  const release = () => {
     if (released) return;
     released = true;
     if (useSc) {
       try { sc.allowScreenCaptureAsync?.(tag)?.catch?.(() => {}); } catch {}
     }
-    // Depois do allow do expo (que limpa o FLAG_SECURE da Activity): solta a
-    // tag local e re-aplica a proteção do app inteiro.
-    if (Platform.OS === 'android') {
-      try { require('./screenProtect').setScreenProtectLocalTag?.(tag, false); } catch {}
-    }
+    if (hubRelease) { try { hubRelease(); } catch {} }
     if (cp) cp.setShield(tag, false, o.labels || {});
   };
+  // [2026-10-22 print-local] Promessa "a proteção já chegou ao nativo" (Android:
+  // o <Modal> do RN só copia o FLAG_SECURE da Activity ao CRIAR o Dialog).
+  release.armed = armed || Promise.resolve();
+  return release;
+}
+
+/**
+ * [2026-10-22 print-local] Superfície protegida (visualizador da foto de
+ * perfil etc.): enquanto `active`, segura o FLAG_SECURE (Android) / escudo de
+ * gravação (iOS) com a tag `tag`, e no Android 14+ mostra o aviso quando o SO
+ * avisa a tentativa de print. Devolve `ready`: no Android só fica true depois
+ * que a flag chegou ao nativo — passe `visible={visible && ready}` ao <Modal>.
+ * Inativo → ready = true (nada a esperar).
+ */
+export function useCaptureProtectedSurface(active, tag, opts) {
+  const o = opts || {};
+  const isAndroid = Platform.OS === 'android';
+  const [armedTag, setArmedTag] = useState('');
+  const on = !!active && Platform.OS !== 'web';
+  const key = on ? String(tag || 'surface') : '';
+  useEffect(() => {
+    if (!key) return undefined;
+    let alive = true;
+    const release = acquireCaptureProtection(key, { labels: o.labels || {} });
+    if (isAndroid) {
+      const tmo = new Promise((r) => setTimeout(r, 300));
+      Promise.race([Promise.resolve(release.armed).catch(() => {}), tmo])
+        .then(() => new Promise((r) => setTimeout(r, 16)))
+        .then(() => { if (alive) setArmedTag(key); });
+    }
+    let sub = null;
+    if (canDetectBlockedCapture()) {
+      sub = addScreenshotListener(() => showCaptureBlockedNotice(o.t, { kind: o.kind || 'profile_photo', overDialog: true }));
+    }
+    return () => {
+      alive = false;
+      try { release(); } catch {}
+      try { sub && sub.remove(); } catch {}
+      if (isAndroid) setArmedTag('');
+    };
+  }, [key]);
+  if (!on || !isAndroid) return true;
+  return armedTag === key;
+}
+
+/**
+ * [2026-10-22 print-local] Android 14+ (API 34, Activity.ScreenCaptureCallback,
+ * registrado pelo expo-screen-capture com a permissão DETECT_SCREEN_CAPTURE):
+ * o SO avisa que o usuário TENTOU o print — com FLAG_SECURE a imagem sai preta.
+ * Android ≤ 13 não tem aviso confiável (o observador da galeria nem vê o print
+ * bloqueado) → false, e não se inventa aviso.
+ */
+export function canDetectBlockedCapture() {
+  if (Platform.OS !== 'android') return false;
+  const v = Number(Platform.Version) || 0;
+  return v >= 34 && !!_sc();
+}
+
+let _lastBlockedToast = 0;
+/**
+ * [2026-10-22 print-local] Aviso elegante no app quando um print foi bloqueado
+ * (Android: o print sai preto — aqui a pessoa entende o porquê). `who` = nome
+ * de quem é avisado (opcional). Anti-rajada 2,5 s.
+ */
+export function showCaptureBlockedNotice(t, opts) {
+  const now = Date.now();
+  if (now - _lastBlockedToast < 2500) return;
+  _lastBlockedToast = now;
+  const tt = (k, fb) => {
+    try { const v = typeof t === 'function' ? t(k) : ''; return typeof v === 'string' && v && v !== k ? v : fb; } catch { return fb; }
+  };
+  const o = opts || {};
+  const title = tt('capture.blockedTitle', 'Captura de tela bloqueada');
+  let body;
+  if (o.kind === 'profile_photo') body = tt('capture.blockedProfilePhoto', 'Fotos de perfil são protegidas no Chatyy.');
+  else body = o.notified === false
+    ? tt('capture.blockedConv', 'Esta conversa é protegida.')
+    : tt('capture.blockedConvNotified', 'Esta conversa é protegida. Quem conversa com você foi avisado.');
+  // Android com Dialog/Modal por cima (visualizador): o toast do app ficaria
+  // ATRÁS da janela do Dialog → toast do sistema (sempre por cima).
+  if (o.overDialog && Platform.OS === 'android') {
+    try { require('react-native').ToastAndroid.show(`${title}\n${body}`, require('react-native').ToastAndroid.LONG); return; } catch {}
+  }
+  try {
+    const { showToast } = require('../components/ui/Toast');
+    let icon;
+    try { icon = require('../components/Icons').IconShield; } catch { icon = undefined; }
+    let message = `${title}\n${body}`;
+    try {
+      const React = require('react');
+      const { Text } = require('react-native');
+      message = React.createElement(React.Fragment, null,
+        React.createElement(Text, { style: { fontWeight: '700' } }, title), `\n${body}`);
+    } catch {}
+    showToast({ message, kind: 'info', ...(icon ? { icon } : {}), duration: 4000 });
+  } catch {}
 }
 
 /** Listener de print (iOS sempre; Android 14+ quando o SO avisa). */

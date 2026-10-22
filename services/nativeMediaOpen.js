@@ -74,6 +74,7 @@ export function setNativeReturnRect(index, rect) {
 export async function openNativeMediaList({
   list, index = 0, toItem, t, sourceRect,
   allowShare = true, allowSave = true, allowStar = false, allowDelete = false,
+  secure = false, // [2026-10-22 print-local] FLAG_SECURE no Dialog (Android) / escudo (iOS)
   onAction, onIndexChange, onClose,
 }) {
   if (!nativeMediaAlways()) return 0;
@@ -108,6 +109,7 @@ export async function openNativeMediaList({
       allowForward: false,
       allowStar: !!allowStar,
       ...(allowDelete ? { allowDelete: true } : {}),
+      ...(secure ? { secure: true } : {}),
       ...(sourceRect ? { sourceRect, sourceRadius: 0 } : {}),
     });
   } catch { sid = 0; }

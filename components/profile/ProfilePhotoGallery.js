@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   GALLERY_OPEN_EVENT, registerGalleryHost, ppT, setMainProfilePhoto, removeProfilePhoto, galleryList,
 } from '../../services/profilePhotos';
+import { useCaptureProtectedSurface } from '../../services/chatPrivacy'; // [2026-10-22 print-local]
 
 function CloseGlyph({ size = 22, color = '#fff' }) {
   return (
@@ -51,6 +52,8 @@ export function ProfilePhotoGallery({ visible, list, index = 0, isSelf = false, 
   const [page, setPage] = useState(index || 0);
   const [busy, setBusy] = useState(false);
   const listRef = useRef(null);
+  // [2026-10-22 print-local] Fotos de perfil de outra pessoa: sem print.
+  const _secReady = useCaptureProtectedSurface(!!visible && !isSelf, 'chatyy-profile-photo', { t, kind: 'profile_photo' });
 
   useEffect(() => {
     if (!visible) return;
@@ -101,7 +104,7 @@ export function ProfilePhotoGallery({ visible, list, index = 0, isSelf = false, 
     try { require('../../services/alerts').safeAlert(ppT(t, 'photos'), '', opts); } catch {}
   }, [cur, busy, t, email, applyServer]);
 
-  if (!visible) return null;
+  if (!visible || !_secReady) return null;
   const n = items.length;
   return (
     <Modal visible transparent={false} animationType="fade" onRequestClose={onClose} statusBarTranslucent supportedOrientations={['portrait', 'landscape']}>

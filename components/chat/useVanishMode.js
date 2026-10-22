@@ -14,7 +14,7 @@ import { ForceDarkTheme } from '../../context/ThemeContext';
 import {
   vanishGateOn, setVanishActive, useVanishActive, purgeVanishLocal, vanishSeenClose, rememberVanish,
 } from '../../services/vanishMode';
-import { acquireCaptureProtection, addScreenshotListener, sendScreenshotNotice } from '../../services/chatPrivacy';
+import { acquireCaptureProtection, addScreenshotListener, sendScreenshotNotice, canDetectBlockedCapture, showCaptureBlockedNotice } from '../../services/chatPrivacy';
 import { secureViewAvailable } from '../../services/captureBlock'; // [2026-10-19 secure-view]
 
 function _tt(t, key, fb) {
@@ -108,6 +108,13 @@ export default function useVanishMode({
     });
     let sub = null;
     if (Platform.OS === 'ios') sub = addScreenshotListener(() => sendScreenshotNotice(cid, { kind: 'screenshot', blocked: secureViewAvailable(), scope: 'vanish' }));
+    else if (canDetectBlockedCapture()) {
+      // [2026-10-22 print-local] Android 14+: tentativa detectada (print preto).
+      sub = addScreenshotListener(() => {
+        showCaptureBlockedNotice(t, { notified: true });
+        sendScreenshotNotice(cid, { kind: 'screenshot', blocked: true, scope: 'vanish' });
+      });
+    }
     return () => {
       try { release && release(); } catch {}
       try { sub && sub.remove(); } catch {}

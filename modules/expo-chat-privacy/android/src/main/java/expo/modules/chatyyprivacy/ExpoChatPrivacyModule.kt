@@ -10,6 +10,7 @@ import expo.modules.kotlin.modules.ModuleDefinition
 //   getAppProtection() → { supported, enabled, effective, sharing }
 //   setLocalTag(tag, on)  — conversa protegida/visualizador (vale mesmo com o global desligado)
 //   reassert()            — re-aplica depois de um allowScreenCaptureAsync do expo-screen-capture
+//   resetLocalTags(keep)  — [2026-10-22 print-local] boot do JS: solta as tags órfãs
 //   evento onProtectChange { effective, sharing }
 // O escudo de gravação (setShield) é só iOS — aqui é no-op (o FLAG_SECURE já
 // deixa a gravação preta).
@@ -27,7 +28,9 @@ class ExpoChatPrivacyModule : Module() {
       ScreenProtectHub.listener = { effective, sharing ->
         try { sendEvent("onProtectChange", mapOf("effective" to effective, "sharing" to sharing)) } catch (_: Throwable) {}
       }
-      ScreenProtectHub.reassert()
+      // [2026-10-22 print-local] runtime do JS novo (cold start, reload, OTA):
+      // tags locais do runtime anterior ficaram órfãs → zera (o JS pede de novo).
+      ScreenProtectHub.resetLocalTags(emptyList())
     }
 
     OnDestroy {
@@ -58,6 +61,12 @@ class ExpoChatPrivacyModule : Module() {
 
     AsyncFunction("setLocalTag") { tag: String, on: Boolean ->
       ScreenProtectHub.setLocalTag(tag, on)
+      true
+    }
+
+    // [2026-10-22 print-local] boot do JS: fica só com `keep`.
+    AsyncFunction("resetLocalTags") { keep: List<String> ->
+      ScreenProtectHub.resetLocalTags(keep)
       true
     }
 
