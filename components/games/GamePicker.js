@@ -24,6 +24,7 @@ import { ScoreboardList, ScoreStrip } from './GameScoreboard';
 import { RulesBody } from './RulesSheet';
 import GameSheet, { sheetScrollFill } from './GameSheet';
 import { GameCover, coverTint, continueGradient, isNewGame, COVER_ORDER, COVER_TITLE_FB, COVER_BLURB_FB } from './GameCovers';
+import { FlyHero, openFly } from '../flyGame/FlyHero'; // [voar 2026-10-22]
 import AvatarCircle from '../AvatarCircle';
 import { IconTrash } from '../Icons';
 import { gamePalette, hTap, hOk, hErr } from './fx';
@@ -443,6 +444,7 @@ export default function GamePicker({ visible, onClose, conversationId, conversat
               t={t} isDark={isDark} refreshKey={scoreKey} onPress={() => go('score')} />
             {tab === 'play' ? (
               <>
+                <FlyHero t={t} onOpen={() => { hTap(); onClose && onClose(); openFly(null, true); }} />{/* [voar 2026-10-22] Brisa solo + ranking */}
                 {contRow ? <Text style={[st.section, { color: G.muted }]}>{tr(t, 'games.panel.continue', 'Continue')}</Text> : null}
                 {contRow}
                 <Text style={[st.section, { color: G.muted }]}>{tr(t, 'games.panel.playNow', 'Jogar agora')}</Text>

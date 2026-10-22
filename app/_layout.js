@@ -2395,6 +2395,8 @@ export default function RootLayout() {
                   <Stack.Screen name="r/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._DARK_BG }} />
                   <Stack.Screen name="game/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true, fullScreenGestureEnabled: true, gestureDirection: 'horizontal' }} />{/* [jogos 2026-10-18] tela do jogo · [jogos 2026-10-19] swipe-back de tela cheia (push nativo) */}
                   <Stack.Screen name="listen-catalog" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true }} />{/* [assistir-junto 20/10] Ouvir junto: tela própria de música */}
+                  <Stack.Screen name="voar" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true, fullScreenGestureEnabled: false }} />{/* [voar 2026-10-22] Brisa: jogo */}
+                  <Stack.Screen name="voar-ranking" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true }} />{/* [voar 2026-10-22] Brisa: ranking */}
                   <Stack.Screen name="watch-catalog" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true }} />{/* [assistir-junto 2026-10-20] catálogo */}
                   <Stack.Screen name="watch-room" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_bottom', gestureEnabled: true, gestureDirection: 'vertical' }} />{/* [assistir-junto 2026-10-20] sala (desce = minimiza) */}
                   <Stack.Screen name="search" options={{ headerShown: false, animation: _PUSH }} />

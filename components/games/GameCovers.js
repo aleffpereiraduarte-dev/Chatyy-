@@ -6,21 +6,25 @@
 import React from 'react';
 import Svg, { Rect, Circle, Path, G, Line } from 'react-native-svg';
 import { ChessShape } from './boards/chessPieces'; // [jogos3]
+import { BODY_D as FLY_BODY, WING_D as FLY_WING, PAL as FLY_PAL } from '../../services/flyGame/renderer'; // [voar 2026-10-22]
 
 /** Chaves dos 8 jogos novos (selo NOVO na grade). */
 export const NEW_GAMES = { ligue4: 1, naval: 1, domino: 1, memoria: 1, termo: 1, ppt: 1, stop: 1, desenho: 1 };
 Object.assign(NEW_GAMES, { xadrez: 1, conhece: 1 }); // [jogos3 2026-10-22]
+NEW_GAMES.voar = 1; // [voar 2026-10-22]
 export function isNewGame(type) { return !!NEW_GAMES[type]; }
 
 /** Ordem da grade (o que não estiver aqui vai para o fim, na ordem do catálogo). */
 export const COVER_ORDER = ['ligue4', 'damas', 'cartas', 'naval', 'termo', 'velha', 'ppt', 'quiz', 'memoria', 'forca', 'domino', 'stop', 'desenho'];
 COVER_ORDER.splice(2, 0, 'xadrez'); COVER_ORDER.splice(6, 0, 'conhece'); // [jogos3]
+COVER_ORDER.unshift('voar'); // [voar 2026-10-22] desafio do Brisa primeiro na grade
 
 /** Títulos de reserva (pt) dos jogos novos, usados só se o app ainda não tiver a tradução. */
 export const COVER_TITLE_FB = {
   ligue4: 'Ligue 4', naval: 'Batalha Naval', domino: 'Dominó', memoria: 'Jogo da Memória',
   termo: 'Termo em dupla', ppt: 'Pedra, papel e tesoura', stop: 'Stop', desenho: 'Desenha e Adivinha',
   xadrez: 'Xadrez', conhece: 'Quem me conhece mais?', // [jogos3]
+  voar: 'Brisa', // [voar]
 };
 /** Frase curta de reserva (pt) — chave i18n games.blurb.<tipo>. */
 export const COVER_BLURB_FB = {
@@ -28,6 +32,7 @@ export const COVER_BLURB_FB = {
   memoria: 'Vire pares, acerto joga de novo', termo: 'Adivinhe a palavra de 5 letras', ppt: 'Melhor de 3, jogada secreta',
   stop: 'Letra sorteada e... STOP', desenho: 'Um desenha, o outro chuta',
   xadrez: 'Regras completas, xeque-mate', conhece: 'Quem acerta mais sobre o outro', // [jogos3]
+  voar: 'Bata o recorde, mesma fase', // [voar]
 };
 
 // tinta do fundo da capa: claro (mockup) / escuro (mesmo matiz, bem baixo)
@@ -36,6 +41,7 @@ const TINT = {
   termo: ['#E2F1E5', '#18271C'], ppt: ['#F6E5EE', '#2B1C24'], memoria: ['#ECE6F8', '#231E31'], stop: ['#FBE3E1', '#2E1C1B'],
   desenho: ['#FCF1D6', '#2C2717'], domino: ['#ECEBE6', '#25252A'],
   xadrez: ['#E6E8EC', '#1F2228'], conhece: ['#F7E4EA', '#2C1C22'], // [jogos3]
+  voar: ['#DCEBF7', '#18222E'], // [voar]
 };
 /** Fundo da capa. Jogos sem tinta própria usam a superfície 2 do Grafite. */
 export function coverTint(type, isDark) {
@@ -44,7 +50,7 @@ export function coverTint(type, isDark) {
   return isDark ? '#232327' : '#EAEAE6';
 }
 // cartões "Continue": grafite (padrão) ou grafite azulado/esverdeado por jogo — sempre escuros, texto branco
-const CONT = { quiz: ['#2F3A5A', '#151A2A'], naval: ['#23404F', '#111C24'], ligue4: ['#2B3566', '#141833'], termo: ['#27412F', '#121E16'] };
+const CONT = { voar: ['#2C3A4E', '#141A24'], quiz: ['#2F3A5A', '#151A2A'], naval: ['#23404F', '#111C24'], ligue4: ['#2B3566', '#141833'], termo: ['#27412F', '#121E16'] };
 export function continueGradient(type) { return CONT[type] || ['#3A3A40', '#17171A']; }
 
 const SQ = [0, 1, 2, 3];
@@ -238,6 +244,30 @@ function Conhece() {
     </G>
   );
 }
+// [voar 2026-10-22] Brisa: céu do entardecer, torre de sinal e a Bolhinha (mesmos caminhos do jogo)
+function Voar() {
+  return (
+    <G>
+      <Rect x={5} y={5} width={60} height={60} rx={12} fill={FLY_PAL.sky1} />
+      <Rect x={5} y={38} width={60} height={27} rx={0} fill={FLY_PAL.sky2} opacity={0.7} />
+      <Circle cx={53} cy={16} r={5} fill={FLY_PAL.moon} />
+      <Rect x={44} y={5} width={13} height={17} rx={3} fill={FLY_PAL.pipeCap} />
+      <Rect x={45} y={20} width={11} height={2} fill={FLY_PAL.pipeEdge} />
+      <Rect x={44} y={44} width={13} height={21} rx={3} fill={FLY_PAL.pipeCap} />
+      <Rect x={45} y={44} width={11} height={2} fill={FLY_PAL.pipeEdge} />
+      <Rect x={5} y={58} width={60} height={7} fill={FLY_PAL.ground} />
+      <G transform="translate(24 33) scale(0.6)">
+        <G transform="translate(-4 2) rotate(-6)"><Path d={FLY_WING} fill={FLY_PAL.wingDark} /></G>
+        <Path d={FLY_BODY} fill={FLY_PAL.body} />
+        <Circle cx={9} cy={-6} r={4.6} fill={FLY_PAL.eye} />
+        <Circle cx={-8} cy={12} r={2.3} fill={FLY_PAL.dots} />
+        <Circle cx={-1} cy={11} r={2.3} fill={FLY_PAL.dots} />
+        <Circle cx={6} cy={12} r={2.3} fill={FLY_PAL.dots} />
+        <G transform="translate(-2 4) rotate(-30)"><Path d={FLY_WING} fill={FLY_PAL.wing} /></G>
+      </G>
+    </G>
+  );
+}
 function Generic() {
   return (
     <G fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
@@ -249,7 +279,7 @@ function Generic() {
   );
 }
 
-const ART = { damas: Damas, velha: Velha, cartas: Cartas, quiz: Quiz, forca: Forca, ligue4: Ligue4, naval: Naval, termo: Termo, ppt: Ppt, memoria: Memoria, stop: Stop, desenho: Desenho, domino: Domino, xadrez: Xadrez, conhece: Conhece };
+const ART = { damas: Damas, velha: Velha, cartas: Cartas, quiz: Quiz, forca: Forca, ligue4: Ligue4, naval: Naval, termo: Termo, ppt: Ppt, memoria: Memoria, stop: Stop, desenho: Desenho, domino: Domino, xadrez: Xadrez, conhece: Conhece, voar: Voar };
 export function hasCover(type) { return !!ART[type]; }
 
 /** Capa do jogo (só a arte; o fundo tingido fica no contêiner). `color` = currentColor (traços neutros). */

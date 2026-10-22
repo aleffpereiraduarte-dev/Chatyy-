@@ -237,6 +237,17 @@ export function openPickerInChat(cid) {
  */
 export function openGameInChat(gid, cid, router, hint) {
   if (!gid) return;
+  // [voar 2026-10-22] Brisa: desafio em andamento abre a tela do jogo (fora do painel/folha)
+  try {
+    const v0 = getGameView(gid);
+    const ty = (hint && hint.type) || (v0 && v0.type);
+    const stt = (hint && hint.status) || (v0 && v0.status);
+    if (ty === 'voar' && stt === 'active' && globalThis.__chatyy_fly_game !== false) {
+      const go = () => { try { (router || require('expo-router').router).push({ pathname: '/voar', params: { game: String(gid), cid: String(cid || '') } }); } catch {} };
+      try { require('../components/NativeSheet').runAfterNativeSheet(go); } catch { go(); }
+      return;
+    }
+  } catch {}
   const host = _hosts[_hosts.length - 1];
   if (gamesInlineOn() && host) {
     if (host.dock && hint && !hint.fromList) {

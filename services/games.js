@@ -164,6 +164,9 @@ Object.assign(TITLE_FB, { ligue4: 'Ligue 4', naval: 'Batalha Naval', domino: 'Do
 // [jogos3 2026-10-22] Xadrez / Quem me conhece mais? (servidor: games_engine_<tipo>.php)
 EXTRA_TYPES.forEach((x) => { if (!GAME_TYPES.includes(x)) GAME_TYPES.push(x); });
 Object.assign(TITLE_FB, EXTRA_TITLES);
+// [voar 2026-10-22] Brisa (desafio "Bata meu recorde" na mesma fase; servidor: games_engine_fly.php). Kill: __chatyy_fly_game=false
+try { if (globalThis.__chatyy_fly_game !== false && !GAME_TYPES.includes('voar')) GAME_TYPES.push('voar'); } catch {}
+TITLE_FB.voar = 'Brisa';
 export function tr(t, k, fb, vars) {
   let s = fb;
   try { const v = t ? t(k, vars ? { ...vars, defaultValue: fb } : fb) : fb; if (v && v !== k) s = v; } catch {}
@@ -176,6 +179,7 @@ export function gameSubtitle(t, type) {
   Object.assign(fb, NOVOS_SUBS); // [jogos2b]
   Object.assign(fb, SUB_J2); // [jogos2]
   Object.assign(fb, EXTRA_SUBS); // [jogos3]
+  fb.voar = 'Bata o recorde na mesma fase'; // [voar]
   return tr(t, 'games.sub.' + type, fb[type] || '');
 }
 export function parseGameContent(c) {
@@ -297,6 +301,7 @@ export function gameStatusLine(t, g, meEmail, now) {
   if (g.status === 'pending') {
     if (isInviteExpired(g, now)) return tr(t, 'games.status.expired', 'Convite expirado');
     const mine = myStatusIn(g, meEmail);
+    if (mine === 'invited' && g.type === 'voar' && !g.rematch_of) return tr(t, 'fly.card.invited', 'Desafiou você no Brisa'); // [voar]
     if (mine === 'invited') return g.rematch_of ? tr(t, 'games.status.rematchYou', 'Quer uma revanche') : tr(t, 'games.status.invitedYou', 'Convidou você para jogar');
     const waiting = (g.players || []).filter((p) => p.s === 'invited');
     if (g.open && !waiting.length) return tr(t, 'games.status.openWaiting', 'Aberto: toque em Entrar para jogar');
@@ -316,11 +321,35 @@ export function gameStatusLine(t, g, meEmail, now) {
     if (g.type === 'naval' && !g.turn && g.info && g.info.ph === 'place') return tr(t, 'games.naval.placing', 'Posicionando os barcos');
     { const nx = novosStatusLine(t, g, meEmail, tr, nameOf); if (nx) return nx; } // [jogos2b] termo/ppt/stop/desenho (sem vez)
     { const nx = extraStatusLine(t, g, meEmail, tr, nameOf); if (nx) return nx; } // [jogos3] xadrez/conhece
+    if (g.type === 'voar') return voarStatusLine(t, g, meEmail); // [voar 2026-10-22]
     if (!g.turn) return tr(t, 'games.status.playing', 'Em andamento');
     if (_lc(g.turn) === me) return tr(t, 'games.status.yourTurn', 'Sua vez');
     return tr(t, 'games.status.turnOf', 'Vez de {name}', { name: nameOf(g, g.turn, meEmail, t) });
   }
   return '';
+}
+// [voar 2026-10-22] cartão do desafio: "Bata meu recorde: 23" / "Ana fez 31 · você 2/3"
+function voarStatusLine(t, g, meEmail) {
+  const I = g.info || {};
+  const seats = Array.isArray(g.seats) ? g.seats : [];
+  const mi = seats.findIndex((e) => _lc(e) === _lc(meEmail));
+  const sc = Array.isArray(I.sc) ? I.sc.map(Number) : [];
+  const tries = Array.isArray(I.tries) ? I.tries.map(Number) : [];
+  const mt = Number(I.mt) || 3;
+  if (I.ch != null && mi !== 0) {
+    const by = nameOf(g, seats[0] || g.by, meEmail, t);
+    if (mi > 0) return tries[mi] ? tr(t, 'fly.card.beatProgress', 'Bata {n} de {name} · você {s} ({i}/{m})', { n: I.ch, name: by, s: sc[mi] || 0, i: tries[mi], m: mt })
+      : tr(t, 'fly.card.beat', 'Bata meu recorde: {n}', { n: I.ch });
+    return tr(t, 'fly.card.beat', 'Bata meu recorde: {n}', { n: I.ch });
+  }
+  if (I.ch != null && mi === 0) {
+    let bestO = -1; let who = null;
+    for (let i = 1; i < seats.length; i++) if (tries[i] && sc[i] > bestO) { bestO = sc[i]; who = seats[i]; }
+    return who ? tr(t, 'fly.card.mineVs', 'Seu recorde {n} · {name} fez {s}', { n: I.ch, name: nameOf(g, who, meEmail, t), s: bestO })
+      : tr(t, 'fly.card.mine', 'Seu recorde {n} · aguardando', { n: I.ch });
+  }
+  if (mi >= 0) return tr(t, 'fly.card.free', 'Mesma fase para todos · você {s} ({i}/{m})', { s: sc[mi] || 0, i: tries[mi] || 0, m: mt });
+  return tr(t, 'fly.card.spect', 'Desafio em andamento');
 }
 /** Frase do cartão de resultado: "Ana venceu a partida de Damas!" */
 export function resultHeadline(t, g, meEmail) {
@@ -369,6 +398,7 @@ const ERR_FB = {
 };
 Object.assign(ERR_FB, NOVOS_ERRORS); // [jogos2b]
 Object.assign(ERR_FB, EXTRA_ERRORS); // [jogos3]
+Object.assign(ERR_FB, { fly_run_invalid: 'Essa partida não pode virar desafio', fly_run_old: 'Partida antiga demais para desafiar', bad_receipt: 'Tentativa inválida', seed_used: 'Esta tentativa já foi enviada' }); // [voar]
 export function gameErrorText(t, r) {
   const code = String((r && (r.message || (r.data && r.data.error))) || '');
   if (ERR_FB[code]) return tr(t, 'games.err.' + code, ERR_FB[code]);

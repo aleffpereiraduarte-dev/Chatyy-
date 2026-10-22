@@ -37,6 +37,7 @@ import * as muralStore from '../../../services/muralStore'; // [mural-rt 2026-10
 import { getDefaultAudience, loadDefaultAudience, setDefaultAudience, subscribeDefaultAudience } from '../../../services/muralPrefs';
 import { useAnchoredMenu, AnchoredMenuButton, AnchoredMenuHost, sfSymbolFor } from '../../AnchoredMenu'; // [2026-10-21 menu-ancorado]
 import { useFollowRequestState } from '../../../services/followRequests'; // [privado 2026-10-22]
+import { FlyProfileBadge } from '../../flyGame/FlyHero'; // [voar 2026-10-22]
 
 export function isTgProfileEnabled() {
   try { if (globalThis.__chatyy_profile_tg === false) return false; } catch {}
@@ -562,6 +563,7 @@ export default function TgProfileView(props) {
         <Text style={[s.h1, { color: th.text }]} numberOfLines={2}>{name}</Text>
         {handle ? <Text style={[s.un, { color: th.muted }]}>@{handle}</Text> : null}
         {presence ? <Text style={[s.seen, { color: th.muted }]} numberOfLines={1}>{presence}</Text> : null}
+        {em ? <FlyProfileBadge email={em} th={th} /> : null}{/* [voar 2026-10-22] selo top da semana no Brisa */}
         {note && note.text ? (
           <Pressable onPress={() => setNoteSheet(true)} style={[s.note, { backgroundColor: th.card }, shadow]} accessibilityRole="button" testID="tg-profile-note">
             <View style={[s.noteDot, { backgroundColor: th.text }]} />

@@ -282,6 +282,17 @@ export function IconGameConhece(p) {
   );
 }
 const EXTRA_ICONS = { xadrez: IconGameXadrez, conhece: IconGameConhece };
+// [voar 2026-10-22] Brisa: a Bolhinha (balão de conversa com asa)
+export function IconGameVoar(p) {
+  return (
+    <S {...p}>
+      <Path d="M14 4.5a7 7 0 1 1-3.9 12.8L6.5 19l1-3.6A7 7 0 0 1 14 4.5z" />
+      <Path d="M12.5 11.5c-1.6-2.6-5.4-3.2-7-1.4-.9 1.1.2 2.8 2.6 2.9 1.8.1 3.4-.4 4.4-1.5z" />
+      <Circle cx="16.2" cy="10" r="0.9" />
+    </S>
+  );
+}
+EXTRA_ICONS.voar = IconGameVoar;
 
 export function GameTypeIcon({ type, ...p }) {
   switch (type) {
@@ -295,7 +306,7 @@ export function GameTypeIcon({ type, ...p }) {
     case 'domino': return <IconGameDomino {...p} />;
     case 'memoria': return <IconGameMemoria {...p} />;
     case 'termo': case 'ppt': case 'stop': case 'desenho': { const N = NOVOS_ICONS[type]; return <N {...p} />; } // [jogos2b]
-    case 'xadrez': case 'conhece': { const N = EXTRA_ICONS[type]; return <N {...p} />; } // [jogos3]
+    case 'xadrez': case 'conhece': case 'voar': { const N = EXTRA_ICONS[type]; return <N {...p} />; } // [jogos3] [voar]
     default: return <IconGamepad {...p} />;
   }
 }

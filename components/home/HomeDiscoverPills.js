@@ -10,6 +10,7 @@ import React from 'react';
 import { ScrollView, Text, StyleSheet, Platform } from 'react-native';
 import PressableScale from '../PressableScale';
 import { PressScale } from '../../constants/motion';
+import { FlyPill } from '../flyGame/FlyHero'; // [voar 2026-10-22] atalho do Brisa
 
 function Pill({ label, onPress, isDark, color }) {
   return (
@@ -43,6 +44,7 @@ export default function HomeDiscoverPills({ t, isDark, colors, onOpen, style, co
     >
       <Pill label={t('community.title') || 'Comunidades'} onPress={() => onOpen?.('communities')} isDark={isDark} color={fg} />
       <Pill label={t('channel.title') || 'Canais'} onPress={() => onOpen?.('channels')} isDark={isDark} color={fg} />
+      <FlyPill t={t} isDark={isDark} color={fg} />
     </ScrollView>
   );
 }

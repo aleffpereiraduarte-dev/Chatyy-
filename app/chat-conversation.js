@@ -22822,6 +22822,9 @@ function ChatConversationInnerBody() {
     if (!g || !g.g) return;
     // [jogos 2026-10-19 inline] abre na folha por cima da conversa (kill __chatyy_games_inline=false → rota antiga)
     const open = (id, hint) => { try { require('../services/gamesInline').openGameInChat(id, conversationId, router, hint); } catch { try { router.push({ pathname: '/game/[id]', params: { id: String(id), cid: String(conversationId) } }); } catch {} } };
+    // [voar 2026-10-22] Brisa: partida ativa abre a TELA do jogo (mesma seed do desafio), não o painel
+    const flyOpen = (id) => { try { router.push({ pathname: '/voar', params: { game: String(id), cid: String(conversationId) } }); } catch {} };
+    if (g.type === 'voar' && (act === 'play' || act === 'watch' || act === 'open') && g.status === 'active') { flyOpen(g.g); return; }
     if (act === 'open' || act === 'play' || act === 'watch') { open(g.g, g); return; } // [2026-10-20 dock] pendente/Velha/Forca/Quiz = no cartão
     const fn = { accept: G.gameAccept, join: G.gameJoin, decline: G.gameDecline, start: G.gameStart, cancel: G.gameCancel || G.gameResign, rematch: G.gameRematch }[act]; // [jogos 2026-10-19] cancelar = chat_game_cancel
     if (!fn) { open(g.g, g); return; }
@@ -22838,7 +22841,7 @@ function ChatConversationInnerBody() {
     if (gv && gv.message_id) { try { _gamePatchCardRef.current(gv.message_id, G.cardContentFromView(gv)); } catch {} }
     const nv = r.data && (r.data.rematch || r.data.game);
     if (act === 'rematch' && nv) { try { require('../services/gamesInline').afterGameCreated(nv, conversationId, router); } catch { open(nv.g); } return; }
-    if (nv && nv.status === 'active' && (act === 'accept' || act === 'join' || act === 'start')) open(nv.g, nv);
+    if (nv && nv.status === 'active' && (act === 'accept' || act === 'join' || act === 'start')) { if (nv.type === 'voar') flyOpen(nv.g); else open(nv.g, nv); } // [voar]
   };
   // [loc-pedido 2026-10-19] Pedido de localização na conversa (services/locationRequest.js):
   // envio pelo caminho normal (outbox), cartão Compartilhar/Recusar, WS + checagem de pendentes.
