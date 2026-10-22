@@ -15677,6 +15677,16 @@ function ChatConversationInnerBody() {
   // ============================================================
 
   const [e2eEnabled, setE2eEnabled] = _useStateT(false);
+  // [2026-10-22 cadeado-na-hora] Só VISUAL (cadeado do cabeçalho + aviso): último estado conhecido da
+  // conversa v5 neste aparelho (MMKV e5lock_<cid>) → aparece no 1º quadro, sem esperar o
+  // e2ee5_conversation_state. NÃO mexe no envio (e2eEnabled/e2eKeys seguem o estado real).
+  const [e2eLockHint, setE2eLockHint] = _useStateT(() => {
+    try {
+      if (!conversationId || !require('../services/e2ee/e2ee5').isOn()) return false;
+      return require('../services/mmkv').getString('e5lock_' + conversationId) === '1';
+    } catch { return false; }
+  });
+  const e2eShown = e2eEnabled || e2eLockHint;
   const [e2eKeys, setE2eKeys] = _useStateT(null);
   // [e2ee5 QA 2026-10-22] "Toque para verificar" numa conversa v5 direct → SafetyNumberScreen (WP-15).
   // Memo estável (a tela recarrega quando `load` muda). Grupo: a tela é 1×1, segue o alerta informativo.
@@ -15802,6 +15812,9 @@ function ChatConversationInnerBody() {
     if (!_e5 || !_e5.isOn() || !conversationId) return undefined;
     const offConv = _e5.watchConversation(conversationId, (st) => {
       if (!mountedRef.current || !st) return;
+      // [2026-10-22 cadeado-na-hora] lembra o estado real p/ a próxima abertura
+      try { const _mm = require('../services/mmkv'); if (st.mode === 1) { if (_mm.getString('e5lock_' + conversationId) !== '1') _mm.setString('e5lock_' + conversationId, '1'); } else if (_mm.getString('e5lock_' + conversationId)) _mm.remove('e5lock_' + conversationId); } catch {}
+      if (st.mode !== 1) setE2eLockHint(false);
       if (st.mode === 1) {
         e2eV4Ref.current = { ...st, v5: true, enabled: true, allowed: true, supported: true };
         setE2eEnabled(true); setE2eKeys({ v4: true, v5: true }); setE2eBundles(null);
@@ -38031,7 +38044,7 @@ function ChatConversationInnerBody() {
           <ConvHeaderTitleStack
             typingStore={typingStore} conversationType={conversationType} presenceStore={presenceStore} members={members}
             t={t} wsConnected={wsConnected} currentEmail={currentEmail} presenceUpdatedAtRef={presenceUpdatedAtRef}
-            colors={colors} conversationName={conversationName} e2eEnabled={e2eEnabled} advPrivEnabled={!!_advPriv.enabled}
+            colors={colors} conversationName={conversationName} e2eEnabled={e2eShown} advPrivEnabled={!!_advPriv.enabled}
             netReachable={netReachable} wsReconnecting={!wsConnected && hasEverConnectedRef.current}
           />
           </_HdrBox>
@@ -38212,7 +38225,7 @@ function ChatConversationInnerBody() {
           Direct chats open the full SafetyNumberSheet (60-digit code + QR
           + scan); group chats keep the simple info alert (per-pair
           verification isn't surfaced here, mirroring WhatsApp/Signal). */}
-      {e2eEnabled && !vanishMode && disappearingTimer === 0 && !e2eBannerDismissed && (
+      {e2eShown && !vanishMode && disappearingTimer === 0 && !e2eBannerDismissed && (
         <TouchableOpacity
           onPress={() => {
             if (conversationType === 'direct') {
