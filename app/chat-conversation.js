@@ -15643,6 +15643,12 @@ function ChatConversationInnerBody() {
 
   const [e2eEnabled, setE2eEnabled] = _useStateT(false);
   const [e2eKeys, setE2eKeys] = _useStateT(null);
+  // [e2ee5 QA 2026-10-22] "Toque para verificar" numa conversa v5 direct → SafetyNumberScreen (WP-15).
+  // Memo estável (a tela recarrega quando `load` muda). Grupo: a tela é 1×1, segue o alerta informativo.
+  const _safetyV5Props = useMemo(() => {
+    if (!e2eKeys?.v5 || conversationType !== 'direct' || !conversationId) return null;
+    try { if (!require('../components/e2ee/e2eeUi').isE2eeUiEnabled()) return null; return require('../services/e2ee/safetyV5').screenProps(conversationId); } catch { return null; }
+  }, [e2eKeys?.v5, conversationType, conversationId]);
   const [e2eBundles, setE2eBundles] = _useStateT(null);
   const [keyChangedPeers, setKeyChangedPeers] = _useStateT([]);
   const e2eSecretKeyRef = useRef(null);
@@ -41261,12 +41267,21 @@ function ChatConversationInnerBody() {
       {/* Safety-number / E2E verification sheet — direct chats only.
           The sheet itself handles loading + key fetch + QR scan; we just
           wire the open/close state from the encryption banner tap. */}
-      <LazyMount when={showSafetyNumber}>{(_lmV) => (<SafetyNumberSheet
+      {/* [e2ee5 QA 2026-10-22] conversa v5 (e2ee_mode=1) → tela nova do WP-15 (núcleo chatyy-crypto);
+          a v4 (SafetyNumberSheet) mostrava "— — —"/"Aguardando chaves" porque não há chave v4. Legadas seguem no v4. */}
+      <LazyMount when={showSafetyNumber}>{(_lmV) => (_safetyV5Props ? (() => { const SafetyNumberScreen = require('../components/e2ee/SafetyNumberScreen').default; return (<SafetyNumberScreen
+        visible={_lmV}
+        onClose={() => setShowSafetyNumber(false)}
+        peerName={params?.name || ''}
+        load={_safetyV5Props.load}
+        onVerifyScanned={_safetyV5Props.onVerifyScanned}
+        onMarkVerified={_safetyV5Props.onMarkVerified}
+      />); })() : (<SafetyNumberSheet
         visible={_lmV}
         onClose={() => setShowSafetyNumber(false)}
         peerEmail={params?.email || ''}
         peerName={params?.name || ''}
-      />)}</LazyMount>
+      />))}</LazyMount>
 
       {/* AI Leak / Tone Warnings */}
       {chatLeakWarning && (
