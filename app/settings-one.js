@@ -17,7 +17,9 @@ export default function SettingsOneScreen() {
   const { plan } = usePlanState();
   const title = plan && plan.isPaid && plan.planId !== 'free' ? planDisplayName(plan.planId, t) : (t('chatyyOne.title') || PLAN_NAME);
   return (
-    <SettingsScreen title={title} contentStyle={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
+    // [2026-10-22] título pequeno: o cartão do plano já mostra 'Chatyy Pro' grande (o título grande
+    // ficava preso sobre o cartão ao rolar, print 20261022-075733).
+    <SettingsScreen title={title} largeTitle={false} contentStyle={{ maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }}>
       <ChatyyOnePanel />
     </SettingsScreen>
   );

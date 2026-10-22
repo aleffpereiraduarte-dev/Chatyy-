@@ -460,7 +460,7 @@ const IOS_NATIVE = USE_NATIVE_HEADER && Platform.OS === 'ios';
 // vidro/transparente) com o título grande que colapsa — o conteúdo nunca passa
 // por baixo do título/voltar (no iOS 26 o vidro transparente deixava as linhas
 // visíveis atrás do título grande). A rota no _layout nasce com a mesma config.
-export function SettingsScreen({ title, children, headerRight, onBack, contentStyle, overlay, testID, opaqueHeader = false }) {
+export function SettingsScreen({ title, children, headerRight, onBack, contentStyle, overlay, testID, opaqueHeader = false, largeTitle = true }) {
   const _lang = useLanguageOptional();
   const g = useGroupedColors();
   const { colors = {}, isDark } = useTheme() || {};
@@ -485,7 +485,8 @@ export function SettingsScreen({ title, children, headerRight, onBack, contentSt
           title,
           blur: !opaqueHeader,
           // [2026-10-17 settings-polish] título grande que colapsa (igual à rota no _layout).
-          largeTitle: true,
+          // [2026-10-22] largeTitle=false: tela que já tem o título grande no próprio cartão (plano).
+          largeTitle: largeTitle !== false,
           contentStyle: { backgroundColor: g.pageBg },
           ...(opaqueHeader ? {
             headerStyle: { backgroundColor: g.pageBg },
