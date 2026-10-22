@@ -37,7 +37,9 @@ import GiftSheet from './gifts/GiftSheet';
 import LiveGiftGlyph from './live/LiveGiftGlyph';
 import { cachedVideoSource } from '../services/videoCacheSource'; // [2026-10-10 native-audit] native video disk cache
 // [reels-v1 2026-10-13] sinais de comportamento (só dentro do Reels) + cold start de interesses
-import { trackReelEvent, trackReelView, flushReelSignals } from '../services/reelsSignals';
+import { trackReelEvent, trackReelView, flushReelSignals, setReelSignalsGuest } from '../services/reelsSignals';
+// [guest-reels 2026-10-22] Reels SEM LOGIN: feed público + sessão anônima (services/guestReels)
+import { guestReelsFeed, guestReelGet, guestReelUrl } from '../services/guestReels';
 import ReelsInterestPicker from './ReelsInterestPicker';
 // [2026-10-15 native-reels] Feed vertical 100% NATIVO (modules/expo-reels-feed: UICollectionView +
 // pool de 3 AVPlayer / RecyclerView + pool de 3 ExoPlayer). Binário sem o módulo, web, kill switch
@@ -392,6 +394,24 @@ function _reelsToast(msg) {
 }
 const BASE_URL = 'https://chatyy.com.br';
 const isWeb = Platform.OS === 'web';
+// [guest-reels 2026-10-22] Modo convidado: o ReelItem pergunta aqui antes de curtir/salvar/
+// seguir/enviar/presentear. null = conta normal (nada muda). Função = abre "Entre ou crie sua conta".
+const ReelsGuestCtx = React.createContext(null);
+// Reel do link (/r/<id>). Com conta: feed_get_post (dados completos); sem conta (ou falhou): público.
+async function _fetchInitialReel(id, guest) {
+  if (!id) return null;
+  if (!guest) {
+    try {
+      const r = await api.apiCall('feed_get_post', { id }, 'GET');
+      const p = r && r.success && r.data && r.data.post;
+      if (p && String(p.media_type || '') === 'video') {
+        return { ...p, like_count: Number(p.like_count ?? p.likes_count) || 0, comment_count: Number(p.comment_count ?? p.comments_count) || 0 };
+      }
+    } catch {}
+  }
+  try { const g = await guestReelGet(id); if (g && g.success && g.data && g.data.post) return g.data.post; } catch {}
+  return null;
+}
 // [2026-10-13 reels-visual] Linha do cabeçalho (abas/criar/interesses): logo abaixo da
 // status bar — o vídeo agora começa atrás dela (chat.js tira o paddingTop na aba Reels).
 const REEL_HEADER_H = 44;
@@ -1441,6 +1461,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   // Safe-area insets so the bottom info block (username/caption/music row)
   // doesn't sit on top of the iOS home indicator or Android gesture pill.
   const insets = useSafeAreaInsets();
+  const guestGate = React.useContext(ReelsGuestCtx); // [guest-reels 2026-10-22]
   // Reels P0 — more-sheet visibility (Not interested / Duet / Stitch / Use sound)
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const [whyOpen, setWhyOpen] = useState(false); // [reels-v1 2026-10-13]
@@ -1572,10 +1593,11 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     setFollowed(f);
     if (!f) { setFollowBadgeOn(true); setFollowCheck(false); followBadgeScale.setValue(1); }
   }, [reel.user_following, reel.is_following, reel.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const isOtherUser = !!reel.author_email
-    && String(reel.author_email).toLowerCase() !== String(user?.email || '').toLowerCase();
+  const isOtherUser = (!!guestGate && !reel.is_catalog) || (!!reel.author_email
+    && String(reel.author_email).toLowerCase() !== String(user?.email || '').toLowerCase());
   const followInFlightRef = useRef(false);
   const handleFollow = useCallback(async () => {
+    if (guestGate) { guestGate('follow', reel); return; } // [guest-reels 2026-10-22]
     if (followInFlightRef.current) return;
     if (!reel?.author_email) return;
     followInFlightRef.current = true;
@@ -1599,7 +1621,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     } finally {
       followInFlightRef.current = false;
     }
-  }, [reel?.author_email]);
+  }, [reel?.author_email, guestGate]);
 
   const pushDiamondBurst = useCallback((label, icon) => {
     burstSeqRef.current += 1;
@@ -1640,14 +1662,16 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   // session_id; for a reel-tip we instead call feedPostTip.
   const handleOpenTip = useCallback(() => {
     if (!reel?.id) return;
+    if (guestGate) { guestGate('generic', reel); return; } // [guest-reels 2026-10-22]
     setTipSheetOpen(true);
-  }, [reel?.id]);
+  }, [reel?.id, guestGate]);
 
   // Save / unsave the reel's sound to chat_user_saved_sounds. When
   // sound_id is empty (Original) we synthesize "<email>/<id>" to keep the
   // favorites table self-consistent.
   const handleToggleSoundSave = useCallback(async () => {
     if (!reel) return;
+    if (guestGate) { guestGate('sound', reel); return; } // [guest-reels 2026-10-22]
     const sid = reel.sound_id || `${reel.author_email}/${reel.id}`;
     const label = reel.sound_label || `${reel.author_name || reel.author_email?.split('@')[0]} — ${t?.('feed.originalAudio') || 'Áudio original'}`;
     if (soundSaved) {
@@ -1701,7 +1725,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       if (viewedRef.current.has(reel.id)) return;
       viewedRef.current.add(reel.id);
       setViewCount(prev => prev + 1);
-      api.feedView?.(reel.id).catch(() => {});
+      if (!guestGate) api.feedView?.(reel.id).catch(() => {}); // [guest-reels] convidado não conta visualização pública
     }, 1500);
     return () => clearTimeout(timer);
   }, [isActive, reel.id]);
@@ -1853,6 +1877,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
 
   const likeInFlightRef = useRef(false);
   const toggleLike = useCallback(async () => {
+    if (guestGate) { guestGate('like', reel); return; } // [guest-reels 2026-10-22] curtir exige conta
     // Race guard — without this, rapid double-tap fires N parallel requests
     // and the like state desyncs (icon flickers or count jumps wildly).
     if (likeInFlightRef.current) return;
@@ -1915,11 +1940,12 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     } finally {
       likeInFlightRef.current = false;
     }
-  }, [liked, likeCount, reel.id, likeScale, onLikeChange, containerWidth, containerHeight]);
+  }, [liked, likeCount, reel.id, likeScale, onLikeChange, containerWidth, containerHeight, guestGate]);
 
   const handleDoubleTap = useCallback((e) => {
     const now = Date.now();
     if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
+      if (guestGate) { lastTapRef.current = 0; guestGate('like', reel); return; } // [guest-reels 2026-10-22]
       // Double tap = like (with medium haptic + particle burst). Always
       // burst even when already liked — the affordance feels good and
       // matches TikTok behavior of always firing the heart on double-tap.
@@ -1945,9 +1971,10 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
         }
       }, DOUBLE_TAP_DELAY + 50);
     }
-  }, [liked, toggleLike, showHeartAnimation, togglePause]);
+  }, [liked, toggleLike, showHeartAnimation, togglePause, guestGate]);
 
   const toggleBookmark = useCallback(async () => {
+    if (guestGate) { guestGate('save', reel); return; } // [guest-reels 2026-10-22]
     const was = bookmarked;
     setBookmarked(!was);
     try { trackReelEvent(reel.id, was ? 'unsave' : 'save'); } catch {} // [reels-v1]
@@ -1974,7 +2001,7 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
         setBookmarked(was);
       }
     }
-  }, [bookmarked, reel.id, bookmarkScale]);
+  }, [bookmarked, reel.id, bookmarkScale, guestGate]);
 
   const handleShare = useCallback(() => {
     setShareSheetOpen(true);
@@ -1983,18 +2010,18 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   const handleShareExternal = useCallback(async () => {
     setShareSheetOpen(false);
     try { trackReelEvent(reel.id, 'share'); } catch {} // [reels-v1]
-    const url = `${BASE_URL}/feed/${reel.id}`;
+    const url = guestGate ? (reel.share_url || guestReelUrl(reel.id)) : `${BASE_URL}/feed/${reel.id}`; // [guest-reels] link público /r/<id>
     if (isWeb && typeof navigator !== 'undefined' && navigator.share) {
       try { await navigator.share({ title: reel.caption || '', url }); } catch {}
     } else if (!isWeb) {
       try { await Share.share({ message: url }); } catch {}
     }
-  }, [reel.id, reel.caption]);
+  }, [reel.id, reel.caption, guestGate]);
 
   const handleShareCopyLink = useCallback(async () => {
     setShareSheetOpen(false);
     try { trackReelEvent(reel.id, 'share'); } catch {} // [reels-v1]
-    const url = `${BASE_URL}/feed/${reel.id}`;
+    const url = guestGate ? (reel.share_url || guestReelUrl(reel.id)) : `${BASE_URL}/feed/${reel.id}`; // [guest-reels]
     try {
       if (isWeb && typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(url);
@@ -2011,10 +2038,11 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       try { require('../services/haptics').HapticsCompat.notificationAsync('success'); } catch {}
       _reelsToast(t?.('chat.linkCopied') || 'Link copiado');
     } catch {}
-  }, [reel.id, t]);
+  }, [reel.id, t, guestGate]);
 
   const handleShareRepost = useCallback(() => {
     setShareSheetOpen(false);
+    if (guestGate) { guestGate('send', reel); return; } // [guest-reels 2026-10-22]
     try { trackReelEvent(reel.id, 'share'); } catch {} // [reels-v1]
     // Mirror FeedPost.handleRepost — defer to the feed surface with a
     // ?repost_of=… query so the existing CreatePostModal flow can pick it up.
@@ -2026,16 +2054,17 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
     } catch {}
     // Web/standalone fallback: just copy the link so the user can paste it.
     handleShareCopyLink();
-  }, [reel.id, router, handleShareCopyLink]);
+  }, [reel.id, router, handleShareCopyLink, guestGate]);
 
   // [reels-v1 2026-10-13] Compartilhar NO CHAT: abre o seletor de conversas (/share-receive)
   // com o link do reel como texto — mesmo fluxo do "compartilhar da galeria".
   const handleShareToChat = useCallback(() => {
     setShareSheetOpen(false);
+    if (guestGate) { guestGate('send', reel); return; } // [guest-reels 2026-10-22]
     try { trackReelEvent(reel.id, 'share'); } catch {}
     const url = `${BASE_URL}/feed/${reel.id}`;
     try { router?.push({ pathname: '/share-receive', params: { text: url } }); } catch {}
-  }, [reel.id, router]);
+  }, [reel.id, router, guestGate]);
 
   const height = containerHeight || SCREEN_HEIGHT;
   // [2026-10-13 reels-visual] web desktop → coluna 9:16 + trilho ao lado
@@ -2272,11 +2301,11 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
               broadcasting. Tap routes via onAvatarTap (wired in parent). */}
           {showLiveRing && (reel.is_live || reel.live_id) ? (
             <LiveBadgeRing size={40} t={t}>
-              <AvatarCircle email={reel.author_email} name={reel.author_name} size={36} />
+              <AvatarCircle email={reel.author_email} name={reel.author_name} uri={reel.author_avatar_url || undefined} size={36} />
             </LiveBadgeRing>
           ) : (
             <View style={styles.profileAvatarRing}>
-              <AvatarCircle email={reel.author_email} name={reel.author_name} size={42} />
+              <AvatarCircle email={reel.author_email} name={reel.author_name} uri={reel.author_avatar_url || undefined} size={42} />
             </View>
           )}
           {/* Plus-badge only when not yet followed and is another user. */}
@@ -2898,7 +2927,31 @@ function EmptyReels({ colors, isDark, t, error = false, following = false, onRet
 }
 
 // ── Main ReelsViewer ──
-export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp, parentActive = true, onCreate, recommended = true, hideHeaderTabs = false }) {
+export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp, parentActive = true, onCreate, recommended = true, hideHeaderTabs: hideHeaderTabsProp = false,
+  // [guest-reels 2026-10-22] guest = sem conta (feed público + sessão anônima; ações pedem conta
+  // via onGuestAuth(kind, reel); comentários só leitura via onGuestComments(reel)).
+  // initialReelId = abre neste reel (link /r/<id>). onCurrentReel(reel) = reel na tela (volta pós-login).
+  // externalOverlayOpen = folha do pai por cima → pausa.
+  guest = false, onGuestAuth, onGuestComments, initialReelId = null, onCurrentReel, externalOverlayOpen = false }) {
+  const isGuest = !!guest && !soundIdProp;
+  const hideHeaderTabs = hideHeaderTabsProp || isGuest; // convidado: só "Para você" (o pai desenha a barra)
+  const onGuestAuthRef = useRef(onGuestAuth);
+  onGuestAuthRef.current = onGuestAuth;
+  const onGuestCommentsRef = useRef(onGuestComments);
+  onGuestCommentsRef.current = onGuestComments;
+  const guestGateFn = useCallback((kind, reel) => {
+    try { haptic.select(); } catch {}
+    try { onGuestAuthRef.current?.(kind || 'generic', reel || null); } catch {}
+    return true;
+  }, []);
+  const guestCtx = isGuest ? guestGateFn : null;
+  useEffect(() => {
+    if (!isGuest) return undefined;
+    try { setReelSignalsGuest(true); } catch {}
+    return () => { try { flushReelSignals(); } catch {} try { setReelSignalsGuest(false); } catch {} };
+  }, [isGuest]);
+  const guestPopCursorRef = useRef(null);
+  const initialDoneRef = useRef(false);
   // [reels-v1 2026-10-13] "Para você" vem do ranking do servidor (reels_rec_feed) — com
   // fallback automático pro feedList antigo se o servidor ainda não tem o endpoint.
   const useRec = !!recommended && !soundIdProp;
@@ -3018,7 +3071,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // [2026-10-14 offline-first] 1ª página salva no aparelho (por conta) → a aba
   // pinta na hora com os últimos reels; o fresco chega em 2º plano e entra
   // DEPOIS do reel que está tocando (não troca o vídeo debaixo do dedo).
-  const _rcKey = soundIdProp ? null : ['reels_p1', useRec ? 'rec' : 'feed'];
+  const _rcKey = (soundIdProp || isGuest || initialReelId) ? null : ['reels_p1', useRec ? 'rec' : 'feed']; // [guest-reels] convidado/link não usa a cópia da conta
   const [_rcInit] = useState(() => (_rcKey ? peekCached(_rcKey) : null));
   const rcShownRef = useRef(!!(_rcInit && ((_rcInit.reels || []).length || (_rcInit.following || []).length)));
   const [reels, setReels] = useState(() => (Array.isArray(_rcInit?.reels) ? _rcInit.reels : []));
@@ -3055,7 +3108,9 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   const [containerWidth, setContainerWidth] = useState(SCREEN_WIDTH);
   // [2026-10-15 native-reels] Estado do caminho nativo. Fora dele tudo fica null/false
   // (overlayOpen e os efeitos abaixo se comportam exatamente como antes).
-  const [nativeOn, setNativeOn] = useState(() => !isWeb && isNativeReelsAvailable());
+  // [guest-reels 2026-10-22] convidado usa o feed JS (mesmo prefetch/HLS): o trilho nativo
+  // alterna curtir/salvar sozinho e não teria como desfazer quando a ação pede conta.
+  const [nativeOn, setNativeOn] = useState(() => !isWeb && !isGuest && isNativeReelsAvailable());
   const [nGiftReel, setNGiftReel] = useState(null);
   const [nShareReel, setNShareReel] = useState(null);
   const [nMoreReel, setNMoreReel] = useState(null);
@@ -3137,6 +3192,24 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
 
   // [reels-v1 2026-10-13] Uma página do ranking. null = indisponível (usa o feed antigo).
   const fetchRecPage = async (reset) => {
+    if (isGuest) {
+      // [guest-reels 2026-10-22] "Para você" anônimo (sessão do aparelho) → "Populares" se falhar
+      try {
+        const exclude = reset ? [] : (reelsRef.current || []).map((p) => p.id);
+        const r = await guestReelsFeed({ cursor: reset ? null : recCursorRef.current, limit: 10, excludeIds: exclude, popularCursor: reset ? null : guestPopCursorRef.current });
+        if (!r || r.success === false) {
+          _reportReels('rec_feed_error', { state: reset ? 'guest_first' : 'guest_more', code: _reelErrCode(String(r?.error || r?.message || 'no_response')) });
+          return null;
+        }
+        const d = r.data || {};
+        if (d.mode === 'popular') guestPopCursorRef.current = d.next_cursor || null;
+        else recCursorRef.current = d.next_cursor || null;
+        return { posts: Array.isArray(d.posts) ? d.posts : [], hasMore: !!d.has_more, onboarding: false };
+      } catch (e) {
+        _reportReels('rec_feed_error', { state: 'guest', code: _reelErrCode(e?.message) });
+        return null;
+      }
+    }
     if (!recSupportedRef.current) return null;
     try {
       const exclude = reset ? [] : (reelsRef.current || []).map((p) => p.id);
@@ -3209,12 +3282,26 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       } else {
         // Fire both feeds in parallel so switching tabs is instant.
         // [reels-v1 2026-10-13] "Para você" = ranking (reels_rec_feed); feedList só de fallback.
-        let [allR, followR, recR] = await Promise.all([
-          useRec ? Promise.resolve(null) : api.feedList({ page: 1, limit: 50 }),
-          api.feedList({ page: 1, limit: 50, type: 'following' }),
-          useRec ? fetchRecPage(true) : Promise.resolve(null),
+        // [guest-reels 2026-10-22] convidado: só o feed público; + o reel do link (/r/<id>) na frente.
+        const wantFirst = !!initialReelId && !initialDoneRef.current && !isRefresh;
+        let [allR, followR, recR, firstR] = await Promise.all([
+          (useRec || isGuest) ? Promise.resolve(null) : api.feedList({ page: 1, limit: 50 }),
+          isGuest ? Promise.resolve(null) : api.feedList({ page: 1, limit: 50, type: 'following' }),
+          (useRec || isGuest) ? fetchRecPage(true) : Promise.resolve(null),
+          wantFirst ? _fetchInitialReel(initialReelId, isGuest) : Promise.resolve(null),
         ]);
-        if (useRec && !recR) allR = await api.feedList({ page: 1, limit: 50 });
+        if (wantFirst) initialDoneRef.current = true;
+        if (useRec && !recR && !isGuest) allR = await api.feedList({ page: 1, limit: 50 });
+        if (firstR) {
+          const fk = String(firstR.id);
+          if (recR) recR = { ...recR, posts: [firstR, ...recR.posts.filter((p) => String(p.id) !== fk)] };
+          else if (isGuest) recR = { posts: [firstR], hasMore: false, onboarding: false };
+          else if (allR && allR.success && allR.data) {
+            const raw0 = allR.data.posts || allR.data;
+            const arr0 = Array.isArray(raw0) ? raw0 : [];
+            allR = { ...allR, data: { ...allR.data, posts: [firstR, ...arr0.filter((p) => String(p.id) !== fk)] } };
+          } else recR = { posts: [firstR], hasMore: false, onboarding: false };
+        }
         recModeRef.current = !!recR;
         setRecActive(!!recR);
         if (recR) {
@@ -3334,12 +3421,14 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   }, [reelTab, page, followingPage, hasMore, followingHasMore, soundIdProp, reels.length, followingReels.length]);
 
   const handleOpenComments = useCallback((reel) => {
+    if (isGuest) { try { onGuestCommentsRef.current?.(reel); } catch {} return; } // [guest-reels] só leitura
     setCommentsReel(reel);
-  }, []);
+  }, [isGuest]);
 
   const handleOpenLikers = useCallback((reel) => {
+    if (isGuest) { guestGateFn('like', reel); return; } // [guest-reels] lista de pessoas = conta
     setLikersReel(reel);
-  }, []);
+  }, [isGuest, guestGateFn]);
 
   // FeedComments fires this whenever a comment is added/removed so the
   // right-rail count (reads reel.comment_count at ~2030) refreshes live.
@@ -3460,6 +3549,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
 
   const handleOpenProfile = useCallback((email, item) => {
     if (item?.is_catalog) { const u = item.credit?.author_url || item.credit?.page_url; if (u) { try { require('../services/openLink').openLink(u); } catch {} } return; } // [reels-v1]
+    if (isGuest) { guestGateFn('profile', item); return; } // [guest-reels 2026-10-22]
     // If the parent wired onAvatarTap (ChatReelsTab does for live routing),
     // give it the first shot so tapping a live creator opens the live viewer
     // instead of their profile.
@@ -3469,28 +3559,31 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     }
     if (!email || !router) return;
     router.push(`/u/${encodeURIComponent(email)}`);
-  }, [router, onAvatarTap]);
+  }, [router, onAvatarTap, isGuest, guestGateFn]);
 
   // ── Reels P0: "Use this sound" — route to a sound-feed instance of the
   // viewer. The /reels-sound route renders <ReelsViewer soundId={id} /> so
   // every clip using that audio shows up in the same vertical pager.
   const handleUseSound = useCallback((reel) => {
+    if (isGuest) { guestGateFn('sound', reel); return; } // [guest-reels 2026-10-22]
     if (!reel?.sound_id) return;
     try {
       router?.push(`/reels-sound?sound_id=${encodeURIComponent(reel.sound_id)}&label=${encodeURIComponent(reel.sound_label || '')}`);
     } catch {}
-  }, [router]);
+  }, [router, isGuest, guestGateFn]);
 
   // ── Reels P0: Duet / Stitch — bounce into the create-post screen with the
   // parent post id pre-loaded so the recorder boots into split/stitch mode.
   const handleDuet = useCallback((reel) => {
     if (!reel?.id) return;
+    if (isGuest) { guestGateFn('generic', reel); return; } // [guest-reels 2026-10-22]
     try { router?.push(`/post-create?duet_of=${reel.id}`); } catch {}
-  }, [router]);
+  }, [router, isGuest, guestGateFn]);
   const handleStitch = useCallback((reel) => {
     if (!reel?.id) return;
+    if (isGuest) { guestGateFn('generic', reel); return; }
     try { router?.push(`/post-create?stitch_of=${reel.id}`); } catch {}
-  }, [router]);
+  }, [router, isGuest, guestGateFn]);
 
   // ── Reels P0/P2: Not interested — soft-hide for the current viewer.
   // The backend feed_hide_post action may not be live yet, so we ALSO persist
@@ -3500,6 +3593,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // across refreshes regardless of whether the server recorded the signal.
   const handleHidePost = useCallback(async (reel, signal = 'not_interested') => {
     if (!reel?.id) return;
+    if (isGuest && signal === 'reported') { guestGateFn('report', reel); return; } // [guest-reels] denunciar = conta
     try { trackReelEvent(reel.id, 'not_interested'); } catch {} // [reels-v1] sinal negativo forte no perfil
     // [2026-10-21 reels-audit] some NA HORA: antes esperava a resposta do servidor (e o disco)
     // antes de tirar o reel da lista → em rede lenta o vídeo seguia tocando segundos.
@@ -3507,7 +3601,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     setReels(prev => prev.filter(p => p.id !== reel.id));
     setFollowingReels(prev => prev.filter(p => p.id !== reel.id));
     // Best-effort server signal — ignore failures, the local hide is authoritative.
-    try { Promise.resolve(api.feedHidePost?.(reel.id, signal)).catch(() => {}); } catch {}
+    if (!isGuest) { try { Promise.resolve(api.feedHidePost?.(reel.id, signal)).catch(() => {}); } catch {} }
     // Persist locally so the reel stays hidden across sessions.
     AsyncStorage.setItem(REELS_HIDDEN_KEY, JSON.stringify([...hiddenIdsRef.current])).catch(() => {});
     // Visible confirmation (toast) — auto-dismisses after ~2s.
@@ -3520,7 +3614,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     setHideToast(msg);
     if (hideToastTimerRef.current) clearTimeout(hideToastTimerRef.current);
     hideToastTimerRef.current = setTimeout(() => setHideToast(''), 2200);
-  }, [t]);
+  }, [t, isGuest, guestGateFn]);
   // [2026-10-21 reels-audit] mesmo aviso p/ "Link copiado" (iOS/web) + timer limpo ao sair.
   useEffect(() => {
     const show = (msg) => {
@@ -3536,7 +3630,18 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   }, []);
 
   const overlayOpen = !!commentsReel || !!likersReel || !!pickerMode
-    || !!nGiftReel || !!nShareReel || !!nMoreReel || nSpeedOpen; // [2026-10-15 native-reels] sheets do caminho nativo
+    || !!nGiftReel || !!nShareReel || !!nMoreReel || nSpeedOpen // [2026-10-15 native-reels] sheets do caminho nativo
+    || !!externalOverlayOpen; // [guest-reels 2026-10-22] folha de conta/comentários do pai
+
+  // [guest-reels 2026-10-22] reel na tela → pai (link de volta depois de entrar)
+  const onCurrentReelRef = useRef(onCurrentReel);
+  onCurrentReelRef.current = onCurrentReel;
+  const _curReelForParent = Array.isArray(activeReels) ? activeReels[currentIndex] : null;
+  const _curReelIdForParent = _curReelForParent ? _curReelForParent.id : null;
+  useEffect(() => {
+    if (_curReelIdForParent == null) return;
+    try { onCurrentReelRef.current?.(_curReelForParent); } catch {}
+  }, [_curReelIdForParent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // [reels-v1 2026-10-13] Tempo assistido por impressão (relógio de parede enquanto o reel
   // está ativo, a aba visível, o app em 1º plano e sem sheet por cima). Ao trocar de reel ou
@@ -4051,6 +4156,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   }
 
   return (
+    <ReelsGuestCtx.Provider value={guestCtx}>
     <View ref={setRootRef} style={styles.reelsRoot} onLayout={onLayout}>
       {/* [2026-10-13 reels-visual] Cabeçalho único (TikTok/Instagram): abas centralizadas com
           indicador; à direita interesses + criar, espaçados. Mudo saiu do topo (canto inferior). */}
@@ -4089,7 +4195,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           </Pressable>
         </View>
         <View style={styles.reelHeaderRight} pointerEvents="box-none">
-          {recActive && reelTab === 'forYou' ? (
+          {recActive && reelTab === 'forYou' && !isGuest ? (
             <Pressable
               onPress={() => { try { haptic.select(); } catch {} setPickerMode('manage'); }}
               hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
@@ -4203,6 +4309,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           threading, voice/sticker/video replies, WS live comments, count
           sync). Visibility still keyed off commentsReel so overlayOpen keeps
           auto-pausing the active reel while the sheet is open. */}
+      {!isGuest ? (
       <FeedComments
         visible={!!commentsReel}
         post={commentsReel}
@@ -4213,6 +4320,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         onClose={() => setCommentsReel(null)}
         onCommentCountChange={handleCommentCountChange}
       />
+      ) : null}
 
       {/* [reels-v1 2026-10-13] cold start (1º acesso) / "Seus interesses" */}
       <ReelsInterestPicker visible={!!pickerMode} mode={pickerMode || 'onboarding'} t={t} onDone={handlePickerDone} onClose={() => setPickerMode(null)} />
@@ -4283,6 +4391,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         </View>
       )}
     </View>
+    </ReelsGuestCtx.Provider>
   );
 }
 

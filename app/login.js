@@ -2405,6 +2405,22 @@ export default function LoginScreen() {
           })}
           {/* [phone-obrigatorio 2026-10-15] "Criar conta sem número" REMOVIDO: 1 conta = 1 número verificado
               (servidor recusa username_signup/signup sem telefone com 403 phone_required). */}
+          {/* [guest-reels 2026-10-22] Assistir Reels SEM conta (como o TikTok). Kill: __chatyy_guest_reels=false */}
+          {(() => { try { return require('../services/guestReels').isGuestReelsEnabled(); } catch { return false; } })() && (
+            <TouchableOpacity
+              onPress={() => { hSelection(); router.push('/reels'); }}
+              activeOpacity={0.6}
+              accessibilityRole="button"
+              accessibilityLabel={t('guestReels.watchReels')}
+              style={[s.igGhostBtn, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 10 }]}
+            >
+              <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.text} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <Rect x="3" y="3" width="18" height="18" rx="5" />
+                <Path d="M10 8.5v7l5.5-3.5z" fill={colors.text} />
+              </Svg>
+              <Text style={[s.igGhostBtnLabel, { color: colors.text, fontSize: 15, fontWeight: '600' }]}>{t('guestReels.watchReels')}</Text>
+            </TouchableOpacity>
+          )}
         </>
       )}
     </View>

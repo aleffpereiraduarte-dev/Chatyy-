@@ -812,6 +812,17 @@ function useDeepLinking() {
         return;
       }
 
+      // [guest-reels 2026-10-22] /r/:id e /reels → Reels (abre sem conta, como o TikTok).
+      const reelMatch = pathname.match(/^\/r\/(\d{1,12})\/?$/);
+      if (reelMatch) {
+        router.push('/r/' + reelMatch[1]);
+        return;
+      }
+      if (pathname === '/reels' || pathname === '/reels/') {
+        router.push('/reels');
+        return;
+      }
+
       // /stickers/store?install=<handle> → sticker pack share link.
       // Auto-opens the install modal for the pack referenced by the handle.
       // The handle is the share slug minted by sticker_pack_create.
@@ -947,7 +958,7 @@ function AppInit({ onNotification, setOtaToast }) {
     try { _bgLiteProvideSwitch(_switchAcct ? (e) => _switchAcct(e) : null); } catch {}
   }, [_switchAcct]);
   useEffect(() => {
-    const PUBLIC_ROUTES = ['/login', '/signup', '/signup-phone', '/signup-username', '/forgot', '/verify-phone-required', '/onboarding', '/privacy', '/feed'];
+    const PUBLIC_ROUTES = ['/login', '/signup', '/signup-phone', '/signup-username', '/forgot', '/verify-phone-required', '/onboarding', '/privacy', '/feed', '/reels', '/r']; // [guest-reels 2026-10-22] /reels e /r/<id> sem login
     if (authLoading) return;
     if (authUser) return;
     if (!pathname || pathname === '/' || pathname === '') return;
@@ -2379,6 +2390,9 @@ export default function RootLayout() {
                   <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: _PUSH, ..._NATIVE_HDR_GLASS /* [2026-10-09 native-headers] · [2026-10-14] nasce c/ o vidro do SettingsScreen */ }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, ..._DARK_BG }} />
                   <Stack.Screen name="feed/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  {/* [guest-reels 2026-10-22] Reels sem login (card, nunca modal: a folha "Entre" é camada própria) */}
+                  <Stack.Screen name="reels" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._DARK_BG }} />
+                  <Stack.Screen name="r/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH, ..._DARK_BG }} />
                   <Stack.Screen name="game/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true, fullScreenGestureEnabled: true, gestureDirection: 'horizontal' }} />{/* [jogos 2026-10-18] tela do jogo · [jogos 2026-10-19] swipe-back de tela cheia (push nativo) */}
                   <Stack.Screen name="listen-catalog" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true }} />{/* [assistir-junto 20/10] Ouvir junto: tela própria de música */}
                   <Stack.Screen name="watch-catalog" options={{ headerShown: false, presentation: 'card', animation: _PUSH, gestureEnabled: true }} />{/* [assistir-junto 2026-10-20] catálogo */}

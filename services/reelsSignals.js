@@ -17,6 +17,16 @@ let timer = null;
 let flushing = false;
 let disabled = false;
 let appStateSub = null;
+// [guest-reels 2026-10-22] Modo convidado (sem conta): só view/share/not_interested vão, para a
+// sessão ANÔNIMA (reels_public_events). Curtir/salvar/seguir/comentar exigem conta → nunca chegam.
+let guestMode = false;
+const GUEST_TYPES = { view: 1, share: 1, not_interested: 1 };
+export function setReelSignalsGuest(on) {
+  const next = !!on;
+  if (next === guestMode) return;
+  queue = []; // não mistura sinais de convidado com os da conta (e vice-versa)
+  guestMode = next;
+}
 
 function ensureListeners() {
   if (appStateSub) return;
@@ -31,9 +41,10 @@ function schedule() {
 }
 
 export function trackReelEvent(postId, type, extra = {}) {
-  if (disabled) return;
+  if (disabled && !guestMode) return;
   const id = Number(postId);
   if (!id || id <= 0 || !type) return;
+  if (guestMode && !GUEST_TYPES[type]) return;
   ensureListeners();
   queue.push({ post_id: id, type, ...extra, _try: 0 });
   if (queue.length > MAX_QUEUE) queue = queue.slice(-MAX_QUEUE);
@@ -51,20 +62,25 @@ export function trackReelView(postId, watchMs, durationMs) {
 }
 
 export async function flushReelSignals() {
-  if (flushing || disabled || queue.length === 0) return;
+  if (flushing || (disabled && !guestMode) || queue.length === 0) return;
   flushing = true;
   if (timer) { clearTimeout(timer); timer = null; }
   const batch = queue.splice(0, BATCH);
+  const asGuest = guestMode;
   try {
-    const r = await api.reelsEvents(batch.map(({ _try, ...e }) => e));
+    const r = asGuest
+      ? await require('./guestReels').guestReelsEvents(batch.map(({ _try, ...e }) => e))
+      : await api.reelsEvents(batch.map(({ _try, ...e }) => e));
+    if (asGuest) { if (!r || r.success === false) throw new Error(String(r?.error || 'guest_events_failed')); return; }
     const msg = String(r?.message || r?.error || '');
     if (r && r.success === false && /unknown/i.test(msg)) { disabled = true; queue = []; return; }
     if (!r || r.success === false) throw new Error(msg || 'reels_events_failed');
   } catch {
+    if (asGuest !== guestMode) return; // trocou convidado↔conta no meio: descarta (não mistura)
     const retry = batch.filter((e) => (e._try = (e._try || 0) + 1) <= 3);
     queue = retry.concat(queue).slice(-MAX_QUEUE);
   } finally {
     flushing = false;
-    if (queue.length && !disabled) schedule();
+    if (queue.length && (!disabled || guestMode)) schedule();
   }
 }

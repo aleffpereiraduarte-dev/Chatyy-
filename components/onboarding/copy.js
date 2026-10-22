@@ -11,6 +11,7 @@ const PT = {
   'welcome.value': 'Conversas, chamadas e e-mail.\nTudo num app só.',
   'welcome.start': 'Começar',
   'welcome.haveAccount': 'Já tenho conta',
+  'welcome.watchReels': 'Assistir Reels sem conta', // [guest-reels 2026-10-22]
   'welcome.terms': 'Ao continuar, você concorda com os Termos e a Política de Privacidade.',
   'welcome.s1.title': 'Mensagens na hora',
   'welcome.s1.sub': 'Texto, voz, fotos e vídeos — com aviso de entregue e lido.',
@@ -75,6 +76,7 @@ const EN = {
   'welcome.value': 'Chats, calls and email.\nAll in one app.',
   'welcome.start': 'Get started',
   'welcome.haveAccount': 'I already have an account',
+  'welcome.watchReels': 'Watch Reels without an account', // [guest-reels 2026-10-22]
   'welcome.terms': 'By continuing you agree to the Terms and Privacy Policy.',
   'welcome.s1.title': 'Instant messages',
   'welcome.s1.sub': 'Text, voice, photos and videos — with delivered and read receipts.',
@@ -137,6 +139,7 @@ const ES = {
   'welcome.value': 'Chats, llamadas y correo.\nTodo en una sola app.',
   'welcome.start': 'Empezar',
   'welcome.haveAccount': 'Ya tengo cuenta',
+  'welcome.watchReels': 'Ver Reels sin cuenta', // [guest-reels 2026-10-22]
   'welcome.terms': 'Al continuar, aceptas los Términos y la Política de Privacidad.',
   'welcome.s1.title': 'Mensajes al instante',
   'welcome.s1.sub': 'Texto, voz, fotos y videos — con aviso de entregado y leído.',

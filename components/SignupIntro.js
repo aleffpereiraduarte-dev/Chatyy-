@@ -27,6 +27,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Path } from 'react-native-svg';
+import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useReducedMotion } from './reducedMotion';
@@ -49,7 +50,12 @@ function _markSeen() {
   try { AsyncStorage.setItem('chatyy_intro_seen', '1').catch(() => {}); } catch {}
 }
 
+function _guestReelsOn() {
+  try { return require('../services/guestReels').isGuestReelsEnabled(); } catch { return false; }
+}
+
 export default function SignupIntro({ onFinish, onLogin }) {
+  const router = useRouter(); // [guest-reels 2026-10-22]
   const { isDark } = useTheme();
   const c = useOnbCopy();
   const reduceMotion = useReducedMotion();
@@ -190,6 +196,22 @@ export default function SignupIntro({ onFinish, onLogin }) {
         >
           <Text style={[st.secondaryText, { color: fg }]} maxFontSizeMultiplier={1.3}>{c('welcome.haveAccount')}</Text>
         </Pressable>
+        {/* [guest-reels 2026-10-22] Reels sem conta (como o TikTok). Kill: __chatyy_guest_reels=false */}
+        {_guestReelsOn() ? (
+          <Pressable
+            onPress={() => { _markSeen(); try { router.push('/reels'); } catch {} }}
+            style={({ pressed }) => [st.tertiary, { opacity: pressed ? 0.55 : 1 }]}
+            accessibilityRole="button"
+            accessibilityLabel={c('welcome.watchReels')}
+            hitSlop={6}
+          >
+            <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={sub} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <Path d="M8 3h8a5 5 0 0 1 5 5v8a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5V8a5 5 0 0 1 5-5z" />
+              <Path d="M10 8.5v7l5.5-3.5z" fill={sub} />
+            </Svg>
+            <Text style={[st.tertiaryText, { color: sub }]} maxFontSizeMultiplier={1.3}>{c('welcome.watchReels')}</Text>
+          </Pressable>
+        ) : null}
       </View>
     </Animated.View>
   );
@@ -215,4 +237,6 @@ const st = StyleSheet.create({
   primaryText: { fontSize: 17, fontWeight: '700', letterSpacing: 0.1 },
   secondary: { minHeight: 50, alignItems: 'center', justifyContent: 'center', marginTop: 6 },
   secondaryText: { fontSize: 16, fontWeight: '600' },
+  tertiary: { minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 2 },
+  tertiaryText: { fontSize: 14, fontWeight: '600' },
 });
