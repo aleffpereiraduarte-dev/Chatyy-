@@ -81,6 +81,25 @@ class ChatyyChatStoreModule : Module() {
       store()?.e2ePlainMany(account, conv, ids) ?: "{}"
     }
 
+    /**
+     * [e2ee5 reload-ota 2026-10-22] o JS grava o que ELE decifrou na mesma tabela `e2e_plain`
+     * (noBackupFilesDir, mesmo arquivo do store), fora da thread do JS. rows = JSON "[{conv, id, cmid?, payload, trust?}]".
+     */
+    AsyncFunction("e2ePlainPut") { account: String, json: String ->
+      val st = store() ?: return@AsyncFunction false
+      if (account.isEmpty()) return@AsyncFunction false
+      val a = try { org.json.JSONArray(json) } catch (_: Throwable) { return@AsyncFunction false }
+      var n = 0
+      for (i in 0 until minOf(a.length(), 500)) {
+        val r = a.optJSONObject(i) ?: continue
+        val conv = r.optString("conv"); val id = r.optLong("id"); val payload = r.optString("payload")
+        if (conv.isEmpty() || id <= 0 || payload.isEmpty()) continue
+        st.e2ePlainPut(account, conv, id, r.optString("cmid"), payload, r.optString("trust"))
+        n++
+      }
+      n > 0
+    }
+
     /** Eventos `chatyy.*` recebidos num sync NATIVO (JS parado) — entrega e apaga. */
     Function("e2eEventsDrain") { account: String -> store()?.e2eEventsDrain(account) ?: "[]" }
 

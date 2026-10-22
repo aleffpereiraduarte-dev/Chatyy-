@@ -70,6 +70,23 @@ public class ChatyyChatStoreModule: Module {
       return ChatyyStoreDB.shared.e2ePlainJSONSync(account: account, conv: conv, ids: ids)
     }
 
+    /// [e2ee5 reload-ota 2026-10-22] o JS grava o que ELE decifrou (histórico HTTP, enviadas pelo JS) na
+    /// mesma tabela `e2e_plain` (mesmo arquivo/proteção). rows = JSON "[{conv, id, cmid?, payload, trust?}]".
+    /// Assíncrono na fila do store; `ok` nunca regride. Sem payload/id = ignorado.
+    Function("e2ePlainPut") { (account: String, json: String) -> Bool in
+      guard !account.isEmpty, let d = json.data(using: .utf8),
+            let a = (try? JSONSerialization.jsonObject(with: d)) as? [[String: Any]], !a.isEmpty else { return false }
+      var rows: [[String: Any]] = []
+      for r in a.prefix(500) {
+        guard let p = r["payload"] as? String, !p.isEmpty else { continue }
+        var o = r; o["state"] = "ok"; o["payload"] = p
+        rows.append(o)
+      }
+      if rows.isEmpty { return false }
+      ChatyyStoreDB.shared.e2ePut(account: account, rows: rows)
+      return true
+    }
+
     Function("threadNewestSync") { (account: String, conv: String) -> String in
       return ChatyyStoreDB.shared.newestSync(account: account, conv: conv)
     }

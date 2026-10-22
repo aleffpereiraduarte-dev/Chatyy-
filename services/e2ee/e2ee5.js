@@ -33,10 +33,20 @@ const BODY_MAX = 16 * 1024;
 
 // ───────────────────────────────────────────────────────────── utilitários
 
+let _bootPeeked = false;
+const _bootAt = Date.now();
 export function isOn() {
   try {
     const g = typeof globalThis !== 'undefined' ? globalThis : global;
-    return g.__chatyy_e2ee5 === true;
+    if (g.__chatyy_e2ee5 === true) return true;
+    // [e2ee5 reload-ota 2026-10-22] boot (reload do OTA): flag ainda não decidida nesta sessão do JS →
+    // último valor conhecido da conta (mmkv, síncrono) em vez de "desligada" no 1º paint.
+    if (g.__chatyy_e2ee5 === undefined && !_bootPeeked) {
+      const af = require('./accountFlag');
+      if (af && af.bootPeek) { const on = af.bootPeek(); if (on || (af.bootTried && af.bootTried())) _bootPeeked = true; return on; }
+      _bootPeeked = true;
+    }
+    return false;
   } catch (_) {
     return false;
   }
@@ -236,6 +246,7 @@ export function ensureSession() {
     }
     _sess = { uid: String(st.uid), deviceId: String(op.deviceId || ''), bearer, email, status: st, signed: !!(td && td.signedByOwner), at: Date.now() };
     _acctDisabled = false;
+    _webUidRemember(_sess);
     try { _health()?.setTransport((action, body) => _http('e2ee5_' + action, body).then((r) => { if (!r.ok) throw _err(r.code || 'server'); return r.data; })); } catch (_) {}
     _wireOnce();
     _wireNative();
@@ -910,9 +921,9 @@ export async function localEntries(convId, rows) {
     for (let i = 0; i < need.length; i += 200) {
       const part = need.slice(i, i + 200);
       let j = {};
-      try { j = JSON.parse(st.e2ePlainSync(_me(), conv, JSON.stringify(part.map((x) => Number(x[0])))) || '{}') || {}; } catch (_) { j = {}; }
+      try { j = JSON.parse(st.e2ePlainSync(_storeAcct(), conv, JSON.stringify(part.map((x) => Number(x[0])))) || '{}') || {}; } catch (_) { j = {}; }
       for (const [id, r, raw] of part) {
-        const np = j[id];
+        const np = _npNorm(j[id]);
         if (!(np && np.state === 'ok' && np.payload)) continue;
         let payload = null;
         try { payload = JSON.parse(np.payload) || null; } catch (_) { payload = null; }
@@ -1180,23 +1191,82 @@ async function _decVal(uid, bytes) {
 }
 function _pkey(uid, conv, k) { return 'm|' + uid + '|' + conv + '|' + k; }
 
+// [e2ee5 reload-ota 2026-10-22] celular: o texto que o JS decifrou (histórico HTTP, minhas enviadas pelo
+// caminho JS, sync) vai para o MESMO store nativo protegido onde a ingestão nativa já grava (`e2e_plain`,
+// SQLite do app — iOS Application Support/File Protection, Android noBackupFilesDir). Antes ficava só na
+// memória: depois de cada reload (OTA) tudo esperava a sessão do núcleo + rede para aparecer de novo.
+// Precisa do binário com ChatyyChatStore.e2ePlainPut (BUILD); sem ele = como antes (nenhuma cópia nova).
+let _npQ = null;
+let _npTm = null;
+function _nativePutFlush() {
+  _npTm = null;
+  const q = _npQ; _npQ = null;
+  if (!q) return;
+  const st = _nativeMod('ChatyyChatStore');
+  if (!st || typeof st.e2ePlainPut !== 'function') return;
+  for (const [acct, rows] of q) {
+    try { const r = st.e2ePlainPut(acct, JSON.stringify(Array.from(rows.values()))); if (r && typeof r.catch === 'function') r.catch(() => {}); } catch (_) {}
+  }
+}
+function _nativePut(entry) {
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return;
+  try { if (_g().__chatyy_e2ee5_plain_put === false) return; } catch (_) {} // kill (OTA)
+  if (!entry || !entry.conv || entry.mid == null || !/^\d+$/.test(String(entry.mid)) || !entry.payload) return;
+  const st = _nativeMod('ChatyyChatStore');
+  if (!st || typeof st.e2ePlainPut !== 'function') return;
+  const acct = _storeAcct();
+  if (!acct) return;
+  let payload = '';
+  try { payload = JSON.stringify(entry.payload); } catch (_) { return; }
+  if (!_npQ) _npQ = new Map();
+  let rows = _npQ.get(acct);
+  if (!rows) { rows = new Map(); _npQ.set(acct, rows); }
+  const conv = String(entry.conv); const id = String(entry.mid);
+  rows.set(conv + '|' + id, { conv, id: Number(id), cmid: String(entry.cmid || ''), payload, trust: String(entry.trust || '') });
+  const cm = _npConv.get(conv);
+  if (cm) cm.set(id, { state: 'ok', payload, cmid: String(entry.cmid || ''), trust: entry.trust });
+  if (!_npTm) _npTm = setTimeout(_nativePutFlush, 250);
+}
+try { AppState.addEventListener('change', (s) => { if (s !== 'active' && _npQ) { if (_npTm) { clearTimeout(_npTm); } _nativePutFlush(); } }); } catch (_) {}
+
 function _persistPut(k, entry) {
+  _nativePut(entry);
   if (!_idbOk() || !_sess || !entry || !entry.conv) return;
   const uid = _sess.uid;
   const v = { conv: entry.conv, mid: entry.mid, cmid: entry.cmid, text: entry.text, t: entry.t, payload: entry.payload, sender: entry.sender, ts: entry.ts };
   _encVal(uid, v).then((b) => _idbReq('readwrite', (st) => st.put(b, _pkey(uid, entry.conv, k)))).catch(() => {});
 }
+// [e2ee5 reload-ota 2026-10-22] web: o cache local (IndexedDB) não espera a sessão do núcleo (rede) — o uid
+// da conta fica no próprio IndexedDB ('u|email', só o número) e a chave AES continua não-exportável.
+let _webUidP = null;
+function _webUid() {
+  if (_sess && _sess.uid) return Promise.resolve(String(_sess.uid));
+  const em = _me();
+  if (!em) return Promise.resolve('');
+  if (!_webUidP || _webUidP.em !== em) {
+    const p = _idbReq('readonly', (st) => st.get('u|' + em)).then((v) => (typeof v === 'string' ? v : '')).catch(() => '');
+    _webUidP = { em, p };
+    p.then((v) => { if (!v && _webUidP && _webUidP.p === p) _webUidP = null; });
+  }
+  return _webUidP.p;
+}
+function _webUidRemember(s) {
+  if (!_idbOk() || !s || !s.uid || !s.email) return;
+  _idbReq('readwrite', (st) => st.put(String(s.uid), 'u|' + _norm(s.email))).catch(() => {});
+}
 async function _persistGet(conv, k) {
-  if (!_idbOk() || !_sess) return null;
+  if (!_idbOk()) return null;
   try {
-    const uid = _sess.uid;
+    const uid = await _webUid();
+    if (!uid) return null;
     const b = await _idbReq('readonly', (st) => st.get(_pkey(uid, conv, k)));
     return b ? await _decVal(uid, b) : null;
   } catch (_) { return null; }
 }
 async function _persistScan(conv) {
-  if (!_idbOk() || !_sess) return [];
-  const uid = _sess.uid;
+  if (!_idbOk()) return [];
+  const uid = await _webUid();
+  if (!uid) return [];
   const lo = 'm|' + uid + '|' + conv + '|';
   try {
     const vals = await _idbReq('readonly', (st) => st.getAll(IDBKeyRange.bound(lo, lo + '￿'), 5000));
@@ -1211,13 +1281,56 @@ function _nativeMod(name) {
   if (Platform.OS !== 'ios' && Platform.OS !== 'android') return null;
   try { const { requireOptionalNativeModule } = require('expo'); return requireOptionalNativeModule(name) || null; } catch (_) { return null; }
 }
+// [e2ee5 reload-ota 2026-10-22] forma das linhas do e2ePlainSync: iOS {id: {state, payload, cmid, trust}},
+// Android (ChatyyStoreDB.e2ePlainMany) {id: "payloadJson"} — antes o JS só entendia a do iOS e no
+// Android NUNCA achava o texto já decifrado pelo nativo (tudo voltava a esperar a sessão do núcleo).
+function _npNorm(v) {
+  if (typeof v === 'string') return v ? { state: 'ok', payload: v, cmid: '' } : null;
+  return v && typeof v === 'object' ? v : null;
+}
+// Conta do store nativo: no boot (reload do OTA) o api ainda pode não saber a conta → a do accountFlag.
+function _storeAcct() {
+  const m = _me();
+  if (m) return m;
+  try { return _norm(require('./accountFlag').bootAccount()); } catch (_) { return ''; }
+}
+// Lote por conversa (1 ida ao SQLite nativo p/ a tela inteira): conv → Map(id → np | null)
+const _npConv = new Map();
+/** Lê do store nativo, em UMA chamada síncrona, o texto já decifrado das linhas v5 que faltam na memória. */
+export function primeRows(convId, rows) {
+  if (!isOn() || convId == null || !Array.isArray(rows) || !rows.length) return 0;
+  const conv = String(convId);
+  const acct = _storeAcct();
+  const st = acct ? _nativeMod('ChatyyChatStore') : null;
+  if (!st || typeof st.e2ePlainSync !== 'function') return 0;
+  let cm = _npConv.get(conv);
+  const ids = [];
+  for (const m of rows) {
+    if (!m || m.id == null || !/^\d+$/.test(String(m.id))) continue;
+    const raw = typeof m._e2eRaw === 'string' ? m._e2eRaw : m.content;
+    if (!isEnvelope(raw) || _plain.has(keyOf(raw)) || (cm && cm.has(String(m.id)))) continue;
+    ids.push(Number(m.id));
+    if (ids.length >= 500) break;
+  }
+  if (!ids.length) return 0;
+  let j = {};
+  try { j = JSON.parse(st.e2ePlainSync(acct, conv, JSON.stringify(ids)) || '{}') || {}; } catch (_) { return 0; }
+  if (!cm) { cm = new Map(); _npConv.set(conv, cm); if (_npConv.size > 50) _npConv.delete(_npConv.keys().next().value); }
+  let n = 0;
+  for (const id of ids) { const np = _npNorm(j[String(id)]); cm.set(String(id), np); if (np && np.state === 'ok') n += 1; }
+  return n;
+}
 function _nativePlain(conv, id) {
   if (id == null || !/^\d+$/.test(String(id))) return null;
+  const cm = _npConv.get(String(conv));
+  if (cm && cm.has(String(id))) { const v = cm.get(String(id)); if (v) return v; }
+  const acct = _storeAcct();
+  if (!acct) return null;
   const st = _nativeMod('ChatyyChatStore');
   if (!st || typeof st.e2ePlainSync !== 'function') return null;
   try {
-    const j = JSON.parse(st.e2ePlainSync(_me(), String(conv), JSON.stringify([Number(id)])) || '{}') || {};
-    return j[String(id)] || null;
+    const j = JSON.parse(st.e2ePlainSync(acct, String(conv), JSON.stringify([Number(id)])) || '{}') || {};
+    return _npNorm(j[String(id)]);
   } catch (_) { return null; }
 }
 function _nativeNoteConv(conv, mode) {
@@ -1233,6 +1346,7 @@ function _wireNative() {
     _nativeSub = m.addListener('onE2EEPlain', (ev) => {
       if (!isOn() || !ev || !Array.isArray(ev.items)) return;
       _nativeTried.clear(); // a ingestão nativa gravou texto novo: applyToRow/prévia voltam a olhar o store
+      _npConv.clear();
       for (const it of ev.items) {
         if (!it || it.conv == null) continue;
         _emitLocal('e2ee5_plain', { conversation_id: String(it.conv), id: it.id, native: true });
@@ -1491,6 +1605,7 @@ export function applyToRow(msg, raw, convId, t) {
   if (!msg || typeof raw !== 'string' || !isV5Family(raw)) return null;
   const v = envVersion(raw);
   if (v !== 5 || !isOn()) {
+    if (v === 5) _latOff += 1; // [e2ee5 reload-ota] v5 pintada como "Atualize" com a flag desligada (boot)
     return { ...msg, content: stateText(t, 'update_to_read'), _e2e: true, _e2eRaw: raw, _e5State: 'update_to_read' };
   }
   if (msg.id != null && /^\d+$/.test(String(msg.id))) { _lastRows.set(String(msg.id), msg); if (_lastRows.size > 3000) _lastRows.delete(_lastRows.keys().next().value); } // [e2ee5 WP-09]
@@ -1541,6 +1656,8 @@ function _holdLeft(k, conv, id) {
   return left;
 }
 function _plainFromNative(conv, msg, k) {
+  if (!_storeAcct()) return null; // [e2ee5 reload-ota] conta ainda desconhecida: tenta de novo no próximo paint
+  _wireNative(); // ingestão nativa repinta já no boot (antes só depois da sessão do núcleo)
   _nativeTried.add(k);
   if (_nativeTried.size > 4000) _nativeTried.delete(_nativeTried.values().next().value);
   const np = _nativePlain(conv, msg.id);
@@ -1550,11 +1667,14 @@ function _plainFromNative(conv, msg, k) {
   const e = { conv, mid: String(msg.id), cmid: String(payload.cmid || np.cmid || ''), text: _textOfPayload(payload), t: String(payload.t || 'text'), payload, sender: _norm(msg.sender_email), ts: _rowTs(msg), trust: np.trust };
   _plain.set(k, e); _byMid.set(e.mid, e); _fail.delete(k); _unwait(conv, k); _noteEdit(e);
   _latNative += 1;
+  // [e2ee5 reload-ota] texto do store no 1º paint = latência 0 (entra no p50 do plain_lat)
+  if (!_seenAt.has(k)) { _lat.push(0); if (_lat.length >= 20) _flushLat(); }
   return e;
 }
 let _lat = [];
 let _latMiss = 0;
 let _latNative = 0;
+let _latOff = 0;
 let _latSent = 0;
 function _notePlainLat(k) {
   const t0 = _seenAt.get(k);
@@ -1571,9 +1691,9 @@ function _flushLat() {
   const q = (p) => a[Math.min(a.length - 1, Math.floor(p * (a.length - 1)))];
   _latSent += 1;
   try {
-    require('../nativeTelemetry').nativeBeacon('e2ee5', 'plain_lat', 'n=' + a.length + ' p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + a[a.length - 1] + ' miss=' + _latMiss + ' native=' + _latNative + ' hold=' + HOLD_MS + ' os=' + Platform.OS);
+    require('../nativeTelemetry').nativeBeacon('e2ee5', 'plain_lat', 'n=' + a.length + ' p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + a[a.length - 1] + ' miss=' + _latMiss + ' native=' + _latNative + ' off=' + _latOff + ' up_s=' + Math.round((Date.now() - _bootAt) / 1000) + ' hold=' + HOLD_MS + ' os=' + Platform.OS);
   } catch (_) {}
-  _lat = []; _latMiss = 0; _latNative = 0;
+  _lat = []; _latMiss = 0; _latNative = 0; _latOff = 0;
 }
 
 function _rowFromEntry(msg, raw, e) {

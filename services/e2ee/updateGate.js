@@ -71,10 +71,32 @@ export function modeOf(cid) {
 /** A conversa é sabidamente cifrada (para o relay não mandar texto). */
 export function knownE2ee(cid) { return modeOf(cid) === 1; }
 
+function _AF() { try { return require('./accountFlag'); } catch (_) { return null; } }
+// [e2ee5 reload-ota 2026-10-22] "não consegue cifrar" tem de ser SABIDO, nunca o estado do boot: depois do
+// reload do OTA a flag pode estar só esperando o accountFlag. Bloqueia quando (a) o binário não tem o
+// núcleo, (b) o servidor já respondeu o e2ee5_client_flag desta conta nesta sessão e a flag está
+// desligada, ou (c) o servidor recusou texto em claro nesta conversa. Desconhecido = não bloqueia (o
+// relay/servidor continuam recusando texto em claro: knownE2ee + 409 e2ee5_plaintext_refused).
+function _knownIncapable(k) {
+  if (!coreLinked()) return true;
+  const e = _E();
+  if (e && e.isOn()) return false;
+  try { const af = _AF(); if (af && af.decided && af.decided()) return true; } catch (_) {}
+  const s = _mode.get(k);
+  return !!(s && s.src === 'refused');
+}
+
 /** Mostrar "Atualize para continuar nesta conversa" no lugar do composer. */
 export function needsUpdate(cid) {
   if (_off() || cid == null) return false;
-  return modeOf(cid) === 1 && !capable();
+  return modeOf(cid) === 1 && _knownIncapable(String(cid));
+}
+
+// flag mudou (boot → conta confirmada / servidor desligou) → quem assiste recalcula
+let _afSub = null;
+function _wireFlag() {
+  if (_afSub) return;
+  try { const af = _AF(); if (af && af.onChange) _afSub = af.onChange(() => { for (const k of Array.from(_subs.keys())) _emit(k); }); } catch (_) {}
 }
 
 /** Resultado de chat_send (HTTP/hub/Rust) ou frame chat_send_rejected / message_ack do relay. */
@@ -124,6 +146,7 @@ export function watch(cid, cb) {
   let set = _subs.get(k);
   if (!set) { set = new Set(); _subs.set(k, set); }
   set.add(cb);
+  _wireFlag();
   let offE5 = null;
   try { const e = _E(); if (e && e.isOn()) offE5 = e.watchConversation(k, () => _emit(k)); } catch (_) {}
   return () => { try { set.delete(cb); if (!set.size) _subs.delete(k); if (offE5) offE5(); } catch (_) {} };

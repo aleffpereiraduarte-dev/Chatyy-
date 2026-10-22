@@ -6826,6 +6826,21 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
           return hit ? next : prev;
         });
       }));
+      // [e2ee5 reload-ota 2026-10-22] flag ligou/desligou depois do 1º paint → prévias v5 recalculam
+      try {
+        unsubs.push(require('../services/e2ee/accountFlag').onChange(() => {
+          setConversations(prev => {
+            let hit = false;
+            const next = prev.map(c => {
+              const lm = c && c.last_message;
+              if (!lm || typeof lm !== 'object' || typeof lm.content !== 'string' || !lm.content.startsWith('{"e2e":')) return c;
+              hit = true;
+              return { ...c, last_message: { ...lm, _e5v: Date.now() } };
+            });
+            return hit ? next : prev;
+          });
+        }));
+      } catch {}
 
       // [2026-10-18 relogio-lista] ACK do envio → a prévia sai do relógio (ou vai
       // p/ "não enviada") no MESMO momento que a bolha. Fontes: 'chat_local_ack'

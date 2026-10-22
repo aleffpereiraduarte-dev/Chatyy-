@@ -54,23 +54,84 @@ function _clientInfo() {
   return out;
 }
 
+// [e2ee5 reload-ota 2026-10-22] o último valor conhecido por conta mora TAMBÉM no services/mmkv (memória
+// hidratada no splash, leitura SÍNCRONA): depois do reload do OTA o boot já sai com a flag certa no 1º
+// paint, sem esperar o AsyncStorage nem o AuthContext. Só o booleano por conta (nada de conteúdo).
+const MM_KEY = 'e2ee5_acct_on_v2';
+function _mm() { try { return require('../mmkv'); } catch (_) { return null; } }
+function _mmGet() {
+  try { const m = _mm(); const v = m && JSON.parse(m.getString(MM_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch (_) { return {}; }
+}
+function _mmSet(v) { try { const m = _mm(); if (!m) return; if (v && Object.keys(v).length) m.setString(MM_KEY, JSON.stringify(v)); else m.remove(MM_KEY); } catch (_) {} }
 async function _cacheGet() {
+  const mm = _mmGet();
+  if (Object.keys(mm).length) return mm;
   try { const v = JSON.parse((await AsyncStorage.getItem(CACHE_KEY)) || '{}'); return v && typeof v === 'object' ? v : {}; } catch (_) { return {}; }
 }
 async function _cacheSet(email, on) {
   try {
     const v = await _cacheGet();
     if (on) v[email] = 1; else delete v[email];
+    _mmSet(v);
     await AsyncStorage.setItem(CACHE_KEY, JSON.stringify(v));
   } catch (_) {}
 }
-async function _cacheClear() { try { await AsyncStorage.removeItem(CACHE_KEY); } catch (_) {} }
+async function _cacheClear() { _mmSet(null); try { await AsyncStorage.removeItem(CACHE_KEY); } catch (_) {} }
+
+// Ouvintes da flag (tela da conversa / lista / updateGate repintam quando ela muda depois do 1º paint).
+const _subs = new Set();
+function _notify() { const on = _g().__chatyy_e2ee5 === true; for (const cb of Array.from(_subs)) { try { cb(on); } catch (_) {} } }
+/** Assina mudanças da flag global (on/off). → cancelar. */
+export function onChange(cb) { if (typeof cb !== 'function') return () => {}; _subs.add(cb); return () => { _subs.delete(cb); }; }
+
+// Resposta do servidor (e2ee5_client_flag) para a conta atual NESTA sessão do JS. Antes disso o estado é
+// "desconhecido" e o updateGate nunca bloqueia o composer por causa da flag.
+let _decided = false;
+export function decided() { return _decided; }
+
+let _bootEmail = '';   // conta ligada pelo bootPeek (antes do setAccount)
+let _bootTried = false;
+function _bootAccount() {
+  let e = '';
+  try { const a = require('../api'); e = (a.getActiveAccountEmail && a.getActiveAccountEmail()) || (a.getTokenMeta && a.getTokenMeta().email) || ''; } catch (_) {}
+  if (!e) { try { const m = _mm(); e = (m && m.getString('omc_cache_owner')) || ''; } catch (_) {} }
+  return _canon(e);
+}
+export function bootTried() { return _bootTried; }
+/** Conta da flag ligada no boot (o e2ee5 usa p/ ler o store nativo antes do api saber a conta). */
+export function bootAccount() { return _bootEmail || _email; }
+/**
+ * Boot SÍNCRONO (1ª chamada de e2ee5.isOn()/require deste módulo): liga a flag global a partir do último
+ * valor conhecido da conta no mmkv. O setAccount/_ask reconcilia logo depois (servidor manda desligar →
+ * desliga; conta diferente → desliga). Nunca desliga nada; QA que mexeu à mão na flag manda.
+ */
+export function bootPeek() {
+  if (_bootTried) return _g().__chatyy_e2ee5 === true;
+  if (_disabledHere()) { _bootTried = true; return false; }
+  const g = _g();
+  if (g.__chatyy_e2ee5 === true || g.__chatyy_e2ee5 === false) { _bootTried = true; return g.__chatyy_e2ee5 === true; }
+  const m = _mm();
+  try { if (m && typeof m.isCacheReady === 'function' && !m.isCacheReady()) return false; } catch (_) {} // splash: tenta de novo
+  _bootTried = true;
+  const e = _bootAccount();
+  if (!e || _mmGet()[e] !== 1) return false;
+  g.__chatyy_e2ee5 = true;
+  _remoteOn = true;
+  _bootEmail = e;
+  _notify();
+  return true;
+}
 
 function _turnOn() {
   const g = _g();
-  if (g.__chatyy_e2ee5 === true) return;
+  if (g.__chatyy_e2ee5 === true) {
+    // ligada pelo bootPeek: agora com a conta confirmada abre a sessão (idempotente)
+    if (_remoteOn) { try { _E().onWsAuth(); } catch (_) {} }
+    return;
+  }
   g.__chatyy_e2ee5 = true;
   _remoteOn = true;
+  _notify();
   try { _E().onWsAuth(); } catch (_) {} // abre a sessão do núcleo + sync (o WS seguinte já leva e2ee5_device)
 }
 async function _turnOff(force) {
@@ -79,6 +140,7 @@ async function _turnOff(force) {
   try { await _E().endSession({ wipe: false }); } catch (_) {} // fecha o núcleo ANTES de desligar (endSession exige a flag)
   g.__chatyy_e2ee5 = false;
   _remoteOn = false;
+  _notify();
 }
 
 async function _ask(gen, tries = 0) {
@@ -103,6 +165,7 @@ async function _ask(gen, tries = 0) {
   } catch (_) { return; } // sem rede: mantém o que está (cache)
   if (gen !== _gen || !j || j.success !== true || !j.data) return; // servidor antigo/erro: mantém
   const d = j.data;
+  _decided = true;
   if (Number(d.ttl) >= 60) _ttlMs = Math.min(Number(d.ttl), 3600) * 1000;
   if (d.kill === true) { await _cacheClear(); await _turnOff(true); return; }
   if (d.e2ee5 === true) { await _cacheSet(_email, true); if (gen === _gen) _turnOn(); }
@@ -128,15 +191,30 @@ function _arm() {
 export async function setAccount(email) {
   if (_disabledHere()) return;
   const e = _canon(email);
+  // [e2ee5 reload-ota] '' antes de qualquer conta = AuthContext ainda hidratando: mantém o boot.
+  if (!e && !_email) return;
+  // flag ligada no boot (bootPeek) para OUTRA conta → desliga já
+  const boot = _bootEmail;
+  _bootEmail = '';
+  _bootTried = true;
+  if (boot && boot !== e) await _turnOff(false);
   if (e === _email) return;
   const gen = ++_gen;
   const prev = _email;
   _email = e;
+  _decided = false;
   if (prev) await _turnOff(false); // nunca herda a flag da conta anterior
   if (!e) { if (_timer) { clearInterval(_timer); _timer = null; } return; }
-  try { const c = await _cacheGet(); if (gen === _gen && c[e] === 1) _turnOn(); } catch (_) {}
+  try {
+    const c = await _cacheGet();
+    if (c[e] === 1 && _mmGet()[e] !== 1) _mmSet(c); // 1º boot desta versão: AsyncStorage antigo → mmkv (boot síncrono no próximo reload)
+    if (gen === _gen && c[e] === 1) _turnOn();
+  } catch (_) {}
   _arm();
   _ask(gen).catch(() => {});
 }
 
-export default { setAccount };
+// boot: o mmkv hidrata no splash; quem importar este módulo cedo já liga a flag do último valor conhecido
+try { bootPeek(); if (!_bootTried) { const m = _mm(); if (m && m.waitForCacheReady) m.waitForCacheReady().then(() => { bootPeek(); }).catch(() => {}); } } catch (_) {}
+
+export default { setAccount, bootPeek, bootAccount, onChange, decided };

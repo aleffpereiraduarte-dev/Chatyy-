@@ -15801,12 +15801,26 @@ function ChatConversationInnerBody() {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [conversationId, currentEmail, members.length]);
 
+  // [e2ee5 reload-ota 2026-10-22] a flag pode ligar DEPOIS da tela montar (1º boot sem cache): sem isto o
+  // efeito abaixo nunca assinava o e2ee5_plain e as linhas ficavam "Atualize…" até reabrir a conversa.
+  const [e5FlagTick, setE5FlagTick] = _useStateT(0);
+  useEffect(() => {
+    let off = null;
+    try { off = require('../services/e2ee/accountFlag').onChange(() => { if (mountedRef.current) setE5FlagTick(x => x + 1); }); } catch {}
+    return () => { try { off && off(); } catch {} };
+  }, []);
   // [e2ee5] Estado da conversa ao vivo (WS conv_e2ee / recusas) + texto decifrado chegando
   // (evento LOCAL e2ee5_plain: núcleo JS ou ingestão nativa) + edições t:edit (edit_of).
   useEffect(() => {
     let _e5 = null;
     try { _e5 = require('../services/e2ee/e2ee5'); } catch {}
-    if (!_e5 || !_e5.isOn() || !conversationId) return undefined;
+    if (!_e5 || !_e5.isOn() || !conversationId) {
+      // flag desligou: linhas v5 voltam ao estado da flag (nunca texto decifrado com o núcleo fechado)
+      if (_e5 && conversationId && e5FlagTick > 0) {
+        setMessages(prev => _mapKeep(prev, m => (m && typeof m._e2eRaw === 'string' && _e5.isEnvelope(m._e2eRaw) ? (_e5.applyToRow(m, m._e2eRaw, conversationId, t) || m) : m)));
+      }
+      return undefined;
+    }
     const offConv = _e5.watchConversation(conversationId, (st) => {
       if (!mountedRef.current || !st) return;
       // [2026-10-22 cadeado-na-hora] lembra o estado real p/ a próxima abertura
@@ -15822,7 +15836,7 @@ function ChatConversationInnerBody() {
     let offPlain = null;
     try {
       const mailWs = require('../services/websocket').default;
-      offPlain = mailWs.on('e2ee5_plain', (d) => {
+      const _onPlain = (d) => {
         if (!mountedRef.current || !d || String(d.conversation_id) !== String(conversationId)) return;
         setMessages(prev => {
           let touched = false;
@@ -15836,7 +15850,9 @@ function ChatConversationInnerBody() {
           });
           return touched ? _e5.foldEdits(next) : prev;
         });
-      });
+      };
+      offPlain = mailWs.on('e2ee5_plain', _onPlain);
+      if (e5FlagTick > 0) _onPlain({ conversation_id: conversationId }); // flag ligou com a tela aberta: repinta tudo
     } catch {}
     // [e2ee5 WP-06b] reenvio automático depois de recusa E2EE no dreno regional: resultado na bolha.
     let offResent = null;
@@ -15852,7 +15868,7 @@ function ChatConversationInnerBody() {
       });
     } catch {}
     return () => { try { offConv(); } catch {} try { offPlain && offPlain(); } catch {} try { offResent && offResent(); } catch {} };
-  }, [conversationId]);
+  }, [conversationId, e5FlagTick]);
   // [e2ee5] linhas t:edit que chegaram já decifradas (cache) → aplica no alvo e some da lista.
   useEffect(() => {
     if (!e2eKeys?.v5) return;
@@ -16201,6 +16217,9 @@ function ChatConversationInnerBody() {
   // looks like an envelope. If we don't have a key yet, leaves the
   // "..." placeholder so a later run can decrypt.
   const decryptMessages = useCallback((msgs) => {
+    // [e2ee5 reload-ota 2026-10-22] texto já decifrado neste aparelho (store nativo e2e_plain) em 1 leitura
+    // síncrona para a tela inteira, antes do map (sem sessão do núcleo nem rede).
+    try { if (Array.isArray(msgs) && msgs.length) { const _m0 = msgs.find(m => m && m.conversation_id != null); require('../services/e2ee/e2ee5').primeRows(_m0 ? _m0.conversation_id : conversationId, msgs); } } catch {}
     return msgs.map(msg => {
       // Null/undefined guard — match normalizeMessageTypes (line ~9041).
       // On reconnect, delta re-sync / echoed-queued-message merges can feed a
