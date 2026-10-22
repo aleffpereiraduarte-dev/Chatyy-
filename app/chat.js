@@ -1020,6 +1020,9 @@ function ChatHub() {
         if (cancelled) return;
         const n = Number(r?.data?.unread || r?.data?.count || 0);
         setEmailBadge(Number.isFinite(n) && n > 0 ? n : 0);
+        // [badge-email 2026-10-22] mesma contagem alimenta o ícone do app (regra única em
+        // services/unreadBadge: chat + INBOX quando o servidor manda icon_email).
+        if (r && r.success && Number.isFinite(n)) { try { require('../services/unreadBadge').noteEmailUnread(Math.max(0, n)); } catch {} }
       } catch {}
     };
     // [perf 2026-10-17 boot-fanout] folder_counts (p50 145 ms) não é da 1ª tela:

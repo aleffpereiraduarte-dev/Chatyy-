@@ -37,14 +37,79 @@ function _notify() {
   for (const fn of Array.from(_subs)) { try { fn(_total); } catch {} }
 }
 
-let _lastIcon = -1;
-function _applyIcon(n) {
-  if (Platform.OS === 'web') return; // web: webBadge (title/setAppBadge)
+// [badge-email 2026-10-22] Regra ÚNICA do ícone do app (igual ao servidor — firebase_push.php
+// fcmGetBadgeCount — e à NSE do iOS): chat não lido (não silenciadas) + e-mail não lido da
+// INBOX quando o servidor diz `icon_email: true` no chat_unread_count (CHAT_BADGE_EMAIL=1);
+// senão só chat. Antes cada ponto contava de um jeito (push = só chat, abrir o app = 0 e
+// depois N, "-N banners" ao limpar) → o número oscilava. Kill local:
+// globalThis.__chatyy_badge_email = false (força só chat).
+let _iconEmail = false;        // regra vinda do servidor (icon_email)
+let _email = null;             // INBOX não lida (null = desconhecido)
+let _emailAt = 0;
+let _emailStale = true;
+let _chatIcon = null;          // última parcela de chat aplicada no ícone
+
+export function noteIconRule(on) {
+  const v = !!on;
+  if (v === _iconEmail) return;
+  _iconEmail = v;
+  if (_chatIcon != null) _applyIcon(_chatIcon);
+}
+export function iconIncludesEmail() {
+  try { if (globalThis.__chatyy_badge_email === false) return false; } catch {}
+  return _iconEmail;
+}
+/** n = não lidos da INBOX (folder_counts). opts.apply=false: só guarda (quem chama aplica). */
+export function noteEmailUnread(n, opts = null) {
   const v = Math.max(0, Math.floor(Number(n) || 0));
-  if (v === _lastIcon) return;
+  if (!Number.isFinite(v)) return;
+  const prev = _email;
+  _email = v; _emailAt = Date.now(); _emailStale = false;
+  if (opts && opts.apply === false) return;
+  if (prev !== v && _chatIcon != null && iconIncludesEmail()) _applyIcon(_chatIcon);
+  // INBOX zerada → banners de e-mail na central já foram lidos (Android: o
+  // launcher conta os banners; ficavam lá até o usuário limpar na mão).
+  if (v === 0 && prev !== 0 && Platform.OS !== 'web') {
+    try { require('./pushNotifications').dismissEmailNotifications?.()?.catch?.(() => {}); } catch {}
+  }
+}
+/** Valor da INBOX se conhecido e recente (ms); null = buscar de novo. */
+export function getEmailUnreadFresh(maxAgeMs = 20000) {
+  if (_email == null || _emailStale) return null;
+  return Date.now() - _emailAt <= maxAgeMs ? _email : null;
+}
+export function markEmailUnreadStale() { _emailStale = true; }
+/** Parcela de chat → número do ícone pela regra única. */
+export function iconTotalFor(chat) {
+  const c = Math.max(0, Math.floor(Number(chat) || 0));
+  return c + (iconIncludesEmail() && _email ? _email : 0);
+}
+
+let _lastIcon = -1;
+function _applyIcon(chat, force) {
+  if (Platform.OS === 'web') return; // web: webBadge (title/setAppBadge)
+  _chatIcon = Math.max(0, Math.floor(Number(chat) || 0));
+  const v = iconTotalFor(_chatIcon);
+  if (v === _lastIcon && !force) return;
   _lastIcon = v;
   try { require('./pushNotifications').setBadgeCount?.(v)?.catch?.(() => {}); } catch {}
 }
+/** refreshBadgeCount: parcela de chat do servidor → aplica pela regra (com dedupe). */
+// force: o push (aps.badge / NSE) pode ter mudado o ícone sem passar por aqui.
+export function applyChatIcon(chat) { _applyIcon(chat, true); return iconTotalFor(chat); }
+
+// E-mail lido/apagado/movido em qualquer tela (services/api emite) → a parcela
+// de e-mail fica velha; quem reconta (app/chat.js) chama noteEmailUnread.
+try {
+  if (Platform.OS !== 'web') {
+    const { DeviceEventEmitter } = require('react-native');
+    DeviceEventEmitter.addListener?.('mail:unread-changed', (ev) => {
+      const d = Number(ev && ev.delta);
+      if (Number.isFinite(d) && d < 0 && _email != null) noteEmailUnread(Math.max(0, _email + d));
+      _emailStale = true; // estimativa local: o próximo refreshBadgeCount reconta no servidor
+    });
+  }
+} catch {}
 
 /** ChatListTab publica o estado da lista sempre que `conversations` muda. */
 export function publishListUnread(conversations) {
@@ -145,7 +210,7 @@ export function markConversationReadLocal(cid, opts = {}) {
     _notify();
   }
   if (_listKnown) _applyIcon(_total);
-  else if (prev && prev.unread && !prev.muted && _lastIcon > 0) _applyIcon(_lastIcon - prev.unread);
+  else if (prev && prev.unread && !prev.muted && _chatIcon != null && _chatIcon > 0) _applyIcon(_chatIcon - prev.unread);
   if (opts.emitList !== false) {
     try {
       const mailWs = require('./websocket').default;
@@ -165,5 +230,7 @@ export function noteIconBadge(n) {
 }
 
 export function resetUnreadStore() {
-  _conv.clear(); _recentReads.clear(); _listKnown = false; _total = 0; _lastIcon = -1; _notify();
+  _conv.clear(); _recentReads.clear(); _listKnown = false; _total = 0; _lastIcon = -1;
+  _email = null; _emailAt = 0; _emailStale = true; _chatIcon = null; // [badge-email 2026-10-22] troca de conta
+  _notify();
 }

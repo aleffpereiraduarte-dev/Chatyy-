@@ -221,10 +221,10 @@ export async function dismissConversationNotifications(conversationId, opts = nu
     // estado local (services/unreadBadge) — "-N banners" aqui o desalinharia.
     if (cleared > 0 && !(opts && opts.keepBadge) && Notifications.getBadgeCountAsync && Notifications.setBadgeCountAsync) {
       try {
+        // [badge-email 2026-10-22] via setBadgeCount: no Android o 0 direto = cancelAll (apagava e-mail).
         const cur = await Notifications.getBadgeCountAsync();
         const next = Math.max(0, (cur || 0) - cleared);
-        await Notifications.setBadgeCountAsync(next);
-        _mirrorBadge(next);
+        await setBadgeCount(next);
       } catch {}
     }
   } catch {}
@@ -302,10 +302,10 @@ export async function applyNotifClear(raw) {
     // older servers don't → trim locally like dismissConversationNotifications.
     if (cleared > 0 && kind === 'read' && d.badge == null && Notifications.getBadgeCountAsync && Notifications.setBadgeCountAsync) {
       try {
+        // [badge-email 2026-10-22] via setBadgeCount (Android: 0 direto = cancelAll).
         const cur = await Notifications.getBadgeCountAsync();
         const next = Math.max(0, (cur || 0) - cleared);
-        await Notifications.setBadgeCountAsync(next);
-        _mirrorBadge(next);
+        await setBadgeCount(next);
       } catch {}
     } else if (kind === 'read' && d.badge != null && Number.isFinite(Number(d.badge))) {
       _mirrorBadge(Math.max(0, Number(d.badge)));
@@ -3970,13 +3970,62 @@ function _mirrorBadge(count) {
   } catch {}
 }
 
+// [badge-email 2026-10-22] "Abriu o app" NÃO zera mais o ícone: zerar e depois o
+// refreshBadgeCount pôr N de volta = o número piscava 0→N a cada abertura, e no
+// Android setBadgeCountAsync(0) do expo-notifications faz NotificationManager.cancelAll()
+// (BadgeHelper.kt) → TODOS os banners sumiam (e-mail, ligação perdida, upload...).
+// Agora reconta pela regra única (chat + INBOX quando o servidor manda icon_email).
 export async function clearBadge() {
+  try { await refreshBadgeCount(); } catch {}
+}
+
+// [badge-email 2026-10-22] Android: expo-notifications setBadgeCountAsync(0) =
+// NotificationManager.cancelAll() — apagava os banners de e-mail não lido (e os de
+// ligação perdida / upload / social) sempre que o chat zerava. Agora: tira só os
+// banners já lidos (chat; e-mail só se o ícone conta e-mail = INBOX também zerada)
+// e só chama o 0 "de verdade" (que zera o ShortcutBadger) se a central ficou vazia.
+async function _androidZeroIconSafe() {
+  let rest = 0;
   try {
-    const loaded = await loadModules();
-    if (!loaded) return;
-    await Notifications.setBadgeCountAsync(0);
-    _mirrorBadge(0);
-  } catch {}
+    if (!Notifications?.getPresentedNotificationsAsync) return false;
+    let ub = null;
+    try { ub = require('./unreadBadge'); } catch {}
+    // e-mail: só se o ícone conta e-mail E a INBOX está comprovadamente zerada
+    const mailRead = !!(ub && ub.iconIncludesEmail?.() && ub.getEmailUnreadFresh?.(60000) === 0);
+    const presented = (await Notifications.getPresentedNotificationsAsync()) || [];
+    for (const n of presented) {
+      const info = _notifConvInfo(n);
+      const isMail = info.type === 'new_email' || info.type === 'email';
+      // chat: só banner de conversa que a lista local mostra LIDA (0 vindo de conta velha não apaga nada)
+      const st = info.cid && ub ? ub.getConvReadState?.(info.cid) : null;
+      const chatRead = !!info.cid && (!info.type || /^chat_/.test(info.type)) && !!st && !(st.unread > 0);
+      if (info.id && (chatRead || (isMail && mailRead))) {
+        try { await Notifications.dismissNotificationAsync(info.id); continue; } catch {}
+      }
+      rest++;
+    }
+  } catch { return false; }
+  if (rest > 0) { try { _diagPush('badge_zero_keep', `rest=${rest}`); } catch {} return false; }
+  try { await Notifications.setBadgeCountAsync(0); } catch {}
+  return true;
+}
+
+/** [badge-email 2026-10-22] Banners de e-mail novo na central (INBOX zerou). */
+export async function dismissEmailNotifications() {
+  try {
+    if (Platform.OS === 'web') return 0;
+    if (!Notifications) { try { Notifications = await import('expo-notifications'); } catch { return 0; } }
+    if (!Notifications?.getPresentedNotificationsAsync) return 0;
+    const presented = (await Notifications.getPresentedNotificationsAsync()) || [];
+    let n = 0;
+    for (const p of presented) {
+      const info = _notifConvInfo(p);
+      if ((info.type === 'new_email' || info.type === 'email') && info.id) {
+        try { await Notifications.dismissNotificationAsync(info.id); n++; } catch {}
+      }
+    }
+    return n;
+  } catch { return 0; }
 }
 
 /**
@@ -3987,10 +4036,35 @@ export async function setBadgeCount(count) {
   try {
     const loaded = await loadModules();
     if (!loaded) return;
-    await Notifications.setBadgeCountAsync(Math.max(0, count));
-    _mirrorBadge(count);
-    try { require('./unreadBadge').noteIconBadge(count); } catch {}
+    const v = Math.max(0, Math.floor(Number(count) || 0));
+    if (Platform.OS === 'android' && v === 0) await _androidZeroIconSafe();
+    else await Notifications.setBadgeCountAsync(v);
+    _mirrorBadge(v);
+    try { require('./unreadBadge').noteIconBadge(v); } catch {}
   } catch {}
+}
+
+// [badge-email 2026-10-22] parcela de e-mail do ícone (INBOX não lida) — single-flight.
+let _mailIconInflight = null;
+async function _emailUnreadForIcon(force) {
+  let ub = null;
+  try { ub = require('./unreadBadge'); } catch { return 0; }
+  if (!ub.iconIncludesEmail?.()) return 0;
+  if (!force) { const f = ub.getEmailUnreadFresh?.(20000); if (f != null) return f; }
+  if (!_mailIconInflight) {
+    _mailIconInflight = (async () => {
+      try {
+        const { inboxUnreadCount } = require('./api');
+        const r = await inboxUnreadCount();
+        if (r && r.success) { ub.noteEmailUnread?.(r?.data?.unread ?? 0, { apply: false }); return Math.max(0, Number(r?.data?.unread) || 0); }
+      } catch {}
+      return null; // falhou: mantém o último valor conhecido (nunca cai p/ "só chat" por erro)
+    })().finally(() => { _mailIconInflight = null; });
+  }
+  const n = await _mailIconInflight;
+  if (n != null) return n;
+  const last = ub.getEmailUnreadFresh?.(24 * 3600 * 1000);
+  return last != null ? last : 0;
 }
 
 /**
@@ -4014,9 +4088,11 @@ export async function refreshBadgeCount(opts = null) {
       chatUnread = chatResp?.data?.unread_count ?? 0;
     } catch {}
 
-    // [2026-10-14] Ícone conta SÓ chat (founder: e-mail não entra no número, igual WhatsApp).
-    const total = chatUnread;
-    await setBadgeCount(total);
+    // [badge-email 2026-10-22] Regra única (services/unreadBadge): chat + INBOX não lida
+    // quando o servidor manda icon_email (CHAT_BADGE_EMAIL=1); senão só chat (14/10).
+    try { await _emailUnreadForIcon(!!(opts && opts.forceEmail)); } catch {}
+    let total = chatUnread;
+    try { total = require('./unreadBadge').applyChatIcon(chatUnread); } catch { await setBadgeCount(total); }
     return total;
   } catch (err) {
     console.warn('[Push] refreshBadgeCount failed:', err.message);
@@ -4070,7 +4146,7 @@ export function triggerBackgroundSync(data = {}) {
   } catch {}
 
   // Refresh badge count in the background after sync
-  refreshBadgeCount().catch(() => {});
+  refreshBadgeCount(syncType !== 'chat' ? { forceEmail: true } : null).catch(() => {});
 }
 
 // ============================================================

@@ -4795,8 +4795,19 @@ export async function aliasRemove(aliasEmail) {
   return apiCall('alias_remove', { alias_email: aliasEmail }, 'POST');
 }
 
+// [badge-email 2026-10-22] Ler/apagar/mover e-mail muda o "não lido" da INBOX → avisa
+// (app/chat.js reconta a aba E-mail e o ícone do app; services/unreadBadge marca a parcela
+// de e-mail como velha). Antes ninguém emitia 'mail:unread-changed' → aba e ícone só
+// mudavam no poll de 5 min / volta ao 1º plano. Só depois do servidor confirmar (synced).
+function _mailUnreadChanged(r, folder) {
+  try {
+    if (r && r.success) require('react-native').DeviceEventEmitter.emit('mail:unread-changed', { synced: true, folder: folder || 'INBOX' });
+  } catch {}
+  return r;
+}
+
 export async function deleteEmail(uid, folder = 'INBOX') {
-  return apiCall('delete', { uid, folder }, 'POST');
+  return _mailUnreadChanged(await apiCall('delete', { uid, folder }, 'POST'), folder);
 }
 
 // draftSave — draft_save that survives tab close on web. The compose
@@ -4858,16 +4869,18 @@ export async function markRead(uid, folder = 'INBOX') {
   // Refresh the app-icon badge so the unread count drops immediately on
   // iOS/Android lockscreens — without this the badge lags until the next
   // foreground sync.
-  try { require('./pushNotifications').refreshBadgeCount?.(); } catch {}
+  // [badge-email 2026-10-22] reconta a parcela de e-mail (a INBOX acabou de mudar).
+  _mailUnreadChanged(result, folder);
+  try { require('./pushNotifications').refreshBadgeCount?.({ forceEmail: true }); } catch {}
   return result;
 }
 
 export async function markUnread(uid, folder = 'INBOX') {
-  return apiCall('mark_unread', { uid, folder }, 'POST');
+  return _mailUnreadChanged(await apiCall('mark_unread', { uid, folder }, 'POST'), folder);
 }
 
 export async function moveEmail(uid, toFolder, fromFolder = 'INBOX') {
-  return apiCall('move', { uid, folder: fromFolder, to_folder: toFolder }, 'POST');
+  return _mailUnreadChanged(await apiCall('move', { uid, folder: fromFolder, to_folder: toFolder }, 'POST'), fromFolder);
 }
 
 export async function verifySend(phone, channel = 'sms') {
@@ -4954,24 +4967,24 @@ export async function unstarEmail(uid, folder = 'INBOX') {
 
 // Archive
 export async function archiveEmail(uid, folder = 'INBOX') {
-  return apiCall('move', { uid, folder, to_folder: 'Archive' }, 'POST');
+  return _mailUnreadChanged(await apiCall('move', { uid, folder, to_folder: 'Archive' }, 'POST'), folder);
 }
 
-// Bulk operations
+// Bulk operations ([badge-email 2026-10-22] todas avisam 'mail:unread-changed')
 export async function bulkMarkRead(uids, folder = 'INBOX') {
-  return apiCall('bulk_mark_read', { uids, folder }, 'POST');
+  return _mailUnreadChanged(await apiCall('bulk_mark_read', { uids, folder }, 'POST'), folder);
 }
 
 export async function bulkMarkUnread(uids, folder = 'INBOX') {
-  return apiCall('bulk_mark_unread', { uids, folder }, 'POST');
+  return _mailUnreadChanged(await apiCall('bulk_mark_unread', { uids, folder }, 'POST'), folder);
 }
 
 export async function bulkDelete(uids, folder = 'INBOX') {
-  return apiCall('bulk_delete', { uids, folder }, 'POST');
+  return _mailUnreadChanged(await apiCall('bulk_delete', { uids, folder }, 'POST'), folder);
 }
 
 export async function bulkArchive(uids, folder = 'INBOX') {
-  return apiCall('bulk_archive', { uids, folder }, 'POST');
+  return _mailUnreadChanged(await apiCall('bulk_archive', { uids, folder }, 'POST'), folder);
 }
 
 // Snooze
@@ -9777,6 +9790,8 @@ function _chatUnreadCountLight() {
   if (_ucInflight) return _ucInflight;
   _ucInflight = apiCall('chat_unread_count', { by_conv: 1 }).then((r) => {
     if (r && r.success) _ucLast = { at: Date.now(), r };
+    // [badge-email 2026-10-22] regra do ícone vem do servidor (CHAT_BADGE_EMAIL): ausente = só chat.
+    if (r && r.success && r.data) { try { require('./unreadBadge').noteIconRule(r.data.icon_email === true); } catch {} }
     return r;
   }).finally(() => { _ucInflight = null; });
   return _ucInflight;
@@ -14575,7 +14590,7 @@ export async function emailBundles(folder = 'INBOX', limit = 80) {
 // Mark every unread in the entire current folder as read in one IMAP
 // command (not just the visible UIDs in the email list).
 export async function bulkMarkReadFolder(folder = 'INBOX') {
-  return apiCall('bulk_mark_read_folder', { folder }, 'POST');
+  return _mailUnreadChanged(await apiCall('bulk_mark_read_folder', { folder }, 'POST'), folder); // [badge-email 2026-10-22]
 }
 
 // ──────────────────────────────────────────────────────────────────
