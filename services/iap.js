@@ -16,10 +16,10 @@
  *      Google auto-refunds within 3 days if not acknowledged)
  *
  * Products:
- *   com.onemundo.mail.one_monthly   (R$14.99/mo, 30-day free trial)
- *   com.onemundo.mail.one_annual    (R$149.90/yr, 30-day free trial)
- *   com.onemundo.mail.family_monthly (R$29.99/mo)
- *   com.onemundo.mail.family_annual  (R$279.90/yr)
+ *   com.onemundo.mail.one_monthly   (R$12,90/mo)  [precos 2026-10-22]
+ *   com.onemundo.mail.one_annual    (R$129,00/yr)
+ *   com.onemundo.mail.family_monthly (R$24,90/mo)
+ *   com.onemundo.mail.family_annual  (R$249,00/yr)
  *   com.onemundo.mail.storage_500/1000/2000
  */
 import { Platform, Linking } from 'react-native';

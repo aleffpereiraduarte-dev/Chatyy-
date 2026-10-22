@@ -411,8 +411,9 @@ function formatBRL(centavos) {
 // screen rendering. Legacy `one` and `family` keys are kept as
 // aliases so the rest of the app (storage chooser, IAP receipts,
 // subscription rows) keeps working during the rename window.
-// Pricing reuses the ASC-approved legacy SKUs (one_monthly R$14.99 +
-// family_monthly R$29.99) so we don't need a new App Store review.
+// Pricing reuses the legacy SKUs (one_monthly + family_monthly).
+// [precos 2026-10-22] Fallback = preços aprovados nas lojas: Plus R$12,90/R$129,00,
+// Pro R$24,90/R$249,00. A tela mostra o preço da LOJA (storePrice) quando disponível.
 // Plus = legacy "one" tier; Pro = legacy "family" tier. Tier names
 // were rebranded to feel modern; pricing stays exactly what the
 // store already accepted.
@@ -422,24 +423,24 @@ function formatBRL(centavos) {
 // Pro = 1 TB (era 500 GB aqui e divergia do backend).
 const PLANS = {
   free:   { price: 0,     storage: 20,   maxFile: 2, mediaRetention: null, label: 'Chatyy Free', maxMembers: 1, backupDays: 30 },
-  plus:   { price: 14.99, storage: 200,  maxFile: 2, mediaRetention: null, label: 'Chatyy Plus', maxMembers: 1, backupDays: 30 },
-  pro:    { price: 29.99, storage: 1024, maxFile: 5, mediaRetention: null, label: 'Chatyy Pro', maxMembers: 6, backupDays: 90 },
+  plus:   { price: 12.90, storage: 200,  maxFile: 2, mediaRetention: null, label: 'Chatyy Plus', maxMembers: 1, backupDays: 30 },
+  pro:    { price: 24.90, storage: 1024, maxFile: 5, mediaRetention: null, label: 'Chatyy Pro', maxMembers: 6, backupDays: 90 },
   // Legacy aliases — same entitlement, old name routes here.
-  one:    { price: 14.99, storage: 200,  maxFile: 2, mediaRetention: null, label: 'Chatyy Plus', maxMembers: 1, backupDays: 30 },
-  family: { price: 29.99, storage: 1024, maxFile: 5, mediaRetention: null, label: 'Chatyy Pro', maxMembers: 6, backupDays: 90 },
+  one:    { price: 12.90, storage: 200,  maxFile: 2, mediaRetention: null, label: 'Chatyy Plus', maxMembers: 1, backupDays: 30 },
+  family: { price: 24.90, storage: 1024, maxFile: 5, mediaRetention: null, label: 'Chatyy Pro', maxMembers: 6, backupDays: 90 },
 };
 
 // Pricing in centavos. Monthly + annual values match the ASC-approved
-// products (one_*: R$14.99/R$12.49 ; family_*: R$29.99/R$23.33). Annual
+// products (one_*: R$12,90 / R$129,00 ano ; family_*: R$24,90 / R$249,00 ano). Annual
 // rates are the per-month equivalent that StoreKit charges yearly:
-//   plus.annual  = 1249 → R$12.49/mo  → R$149.88 billed yearly
-//   pro.annual   = 2333 → R$23.33/mo  → R$279.96 billed yearly
+//   plus.annual  = 1075 → R$10,75/mo  → R$129,00 billed yearly
+//   pro.annual   = 2075 → R$20,75/mo  → R$249,00 billed yearly
 const PRICING = {
-  plus:   { monthly: 1499, annual: 1249 },
-  pro:    { monthly: 2999, annual: 2333 },
+  plus:   { monthly: 1290, annual: 1075 },
+  pro:    { monthly: 2490, annual: 2075 },
   // Legacy keys still receive the same prices.
-  one:    { monthly: 1499, annual: 1249 },
-  family: { monthly: 2999, annual: 2333 },
+  one:    { monthly: 1290, annual: 1075 },
+  family: { monthly: 2490, annual: 2075 },
 };
 
 // Storage add-on prices (Apple tier prices)
@@ -776,7 +777,7 @@ export default function PlansScreen() {
           try {
             const pmBp = paymentModal.billingPeriod || 'monthly';
             const storageExtra = paymentModal.storage?.extra || 0;
-            const pmBase = PRICING[paymentModal.plan]?.[pmBp] || (paymentModal.plan === 'family' ? 1999 : 1299);
+            const pmBase = PRICING[paymentModal.plan]?.[pmBp] || (paymentModal.plan === 'family' ? 2490 : 1290);
             const planPrice = pmBp === 'annual' ? ((pmBase + storageExtra) * 12) : (pmBase + storageExtra);
             const planLabel = paymentModal.plan === 'family' ? 'Chatyy Pro' : 'Chatyy Plus';
             const pr = stripe.paymentRequest({
@@ -1669,7 +1670,7 @@ export default function PlansScreen() {
   const modalMode = paymentModal?.mode || 'subscribe';
   const modalBillingPeriod = paymentModal?.billingPeriod || 'monthly';
   const modalStorageExtra = paymentModal?.storage?.extra || 0;
-  const modalBaseCents = modalPlan ? (PRICING[modalPlan]?.[modalBillingPeriod] || (modalPlan === 'family' ? 1999 : 1299)) : 0;
+  const modalBaseCents = modalPlan ? (PRICING[modalPlan]?.[modalBillingPeriod] || (modalPlan === 'family' ? 2490 : 1290)) : 0;
   const modalTotalCents = modalBaseCents + modalStorageExtra;
   // [2026-10-09 plans-intl] modal = Stripe (web/Android) → sempre BRL, formatado no idioma.
   const modalPrice = brlLabel(modalTotalCents);

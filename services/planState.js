@@ -16,8 +16,8 @@ const TTL_MS = 60 * 1000;
 
 export const FALLBACK_CATALOG = {
   free: { id: 'free', name_key: 'planName.free', storage_gb: 20,   max_file_gb: 2, backup_retention_days: 30, max_members: 1, price_cents: 0,    price_annual_cents: 0 },
-  plus: { id: 'plus', name_key: 'planName.plus', storage_gb: 200,  max_file_gb: 2, backup_retention_days: 30, max_members: 1, price_cents: 1499, price_annual_cents: 14990 },
-  pro:  { id: 'pro',  name_key: 'planName.pro',  storage_gb: 1024, max_file_gb: 5, backup_retention_days: 90, max_members: 6, price_cents: 2999, price_annual_cents: 27990 },
+  plus: { id: 'plus', name_key: 'planName.plus', storage_gb: 200,  max_file_gb: 2, backup_retention_days: 30, max_members: 1, price_cents: 1290, price_annual_cents: 12900 },
+  pro:  { id: 'pro',  name_key: 'planName.pro',  storage_gb: 1024, max_file_gb: 5, backup_retention_days: 90, max_members: 6, price_cents: 2490, price_annual_cents: 24900 },
 };
 
 /** Nome gravado no banco é legado ('one' = Plus, 'family' = Pro). */
