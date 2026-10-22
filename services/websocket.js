@@ -383,6 +383,23 @@ function _pickWsUrl(email) {
     return US_WS_URL;
   }
 }
+// [2026-10-22 ws-follow-lb] O socket segue a região escolhida pelo client-lb. Antes a URL só era
+// escolhida no connect(): com o app aberto, o client-lb trocava (ex.: usw → scl) e o WS ficava na
+// região antiga até cair (visto 22/10: iOS no usw e Android no br com o lb em scl). Agora, a cada
+// LB_FOLLOW_TICK_MS em 1º plano: (a) repassa a região ao nativo (setWsEndpoint/setWsRegion — o
+// binário com ChatyyChatCore.wsEndpointApi() >= 3 troca sozinho, suave); (b) socket JS, ou nativo
+// < 3, com a região diferente em 2 ticks seguidos e OCIOSO (sem ligação, fila, envio pendente,
+// digitando, resume, nem frame nos últimos LB_FOLLOW_QUIET_MS) → reconecta (o resume por
+// last_event_id cobre o intervalo). Freios: 1 troca a cada LB_FOLLOW_GAP_MS; se depois da troca o
+// socket continuar fora da região pedida (nativo recusou a URL), a região fica bloqueada 30 min.
+// Kill OTA: globalThis.__chatyy_ws_follow_lb = false.
+const LB_FOLLOW_TICK_MS = 20000;
+const LB_FOLLOW_MIN_AUTHED_MS = 60000;
+const LB_FOLLOW_GAP_MS = 5 * 60 * 1000;
+const LB_FOLLOW_QUIET_MS = 4000;
+const LB_FOLLOW_BLOCK_MS = 30 * 60 * 1000;
+const _lbFollowBlocked = {}; // região → epoch ms
+
 // [P0 2026-05-25 auth-reject storm] After this many consecutive
 // refreshed-but-still-rejected auth attempts, stop auto-reconnecting and
 // force a real re-login instead of storming the server. A single transient
@@ -1557,6 +1574,7 @@ class MailWebSocket {
 
   disconnect() {
     this.destroyed = true;
+    if (this._lbFollowTimer) { try { clearInterval(this._lbFollowTimer); } catch {} this._lbFollowTimer = null; } // [ws-follow-lb]
     // Clear all pending outgoing message timers
     for (const [, entry] of this._pendingOutgoing) {
       clearTimeout(entry.timer);
@@ -3577,6 +3595,50 @@ class MailWebSocket {
     }
   }
 
+  // [2026-10-22 ws-follow-lb] ver LB_FOLLOW_* (topo). Armado a cada auth_success.
+  _lbFollowArm() {
+    this._lbAuthedAt = Date.now();
+    this._lbFollowPend = null;
+    if (this._lbFollowTimer || Platform.OS === 'web') return;
+    this._lbFollowTimer = setInterval(() => { try { this._lbFollowTick(); } catch {} }, LB_FOLLOW_TICK_MS);
+  }
+
+  _lbFollowTick() {
+    const g = (typeof globalThis !== 'undefined') ? globalThis : {};
+    if (g.__chatyy_ws_follow_lb === false) return;
+    if (this.destroyed || this._loggedOut || this._hidden || !this.ws || !this.authenticated) return;
+    try { if (AppState.currentState !== 'active') return; } catch {}
+    const isNative = !!this.ws.__native;
+    const effBefore = _wsEffRegion;
+    let url = '';
+    // _pickWsUrl também repassa a região ao nativo (idempotente); não mexe na região efetiva.
+    try { url = _pickWsUrl(this.email); } finally { _wsEffRegion = effBefore; }
+    if (isNative && Number(_nativeWsApi) >= 3) { this._lbFollowPend = null; return; } // nativo troca sozinho
+    const want = _regionOfAnyWsUrl(url) || 'us';
+    const cur = isNative ? (effBefore || 'us') : (_regionOfAnyWsUrl(this._wsAttempt && this._wsAttempt.url) || 'us');
+    const now = Date.now();
+    const last = this._lbFollowLast;
+    if (want === cur) { this._lbFollowPend = null; if (last && last.want === want) this._lbFollowLast = null; return; }
+    // Troca anterior p/ a MESMA região não pegou (nativo recusou/ignorou a URL) → bloqueia 30 min.
+    if (last && last.want === want && this._lbAuthedAt > last.at) {
+      _lbFollowBlocked[want] = now + LB_FOLLOW_BLOCK_MS;
+      this._lbFollowLast = null;
+      try { this._logGhost?.('ws_lb_follow_stuck', { want, cur, native: isNative }); } catch {}
+    }
+    if ((_lbFollowBlocked[want] || 0) > now) return;
+    if (!this._lbFollowPend || this._lbFollowPend.want !== want) { this._lbFollowPend = { want, at: now }; return; }
+    if (now - (this._lbAuthedAt || 0) < LB_FOLLOW_MIN_AUTHED_MS) return;
+    if (last && now - last.at < LB_FOLLOW_GAP_MS) return;
+    if (this._callActive || g.__chatyy_inCall) return;
+    if (this._pendingOutgoing.size || this._messageQueue.length || this._typingStopTimers.size || this._resumeInFlight) return;
+    if (now - (this.lastInboundAt || 0) < LB_FOLLOW_QUIET_MS) return;
+    this._lbFollowPend = null;
+    this._lbFollowLast = { want, at: now };
+    try { this._logGhost?.('ws_lb_follow', { from: cur, to: want, native: isNative }); } catch {}
+    try { require('./crashReporter').reportStep?.('ws_lb_follow', cur + '>' + want + (isNative ? ' n' : ' js')); } catch {}
+    try { this.manualReconnect(); } catch {}
+  }
+
   // [2026-10-06 rt-client] Recibo de ENTREGA pelo socket. O hub persiste
   // ponta-a-ponta (handleDeliveryAck → PHP chat_delivery_ack com X-WS-Internal)
   // e NÃO responde com ack → sucesso do send em socket OPEN+autenticado+saudável
@@ -3670,6 +3732,7 @@ class MailWebSocket {
 
   // Replay queued messages and re-subscribe to tracked channels after reconnect
   _onAuthenticated() {
+    try { this._lbFollowArm(); } catch {} // [2026-10-22 ws-follow-lb]
     // [2026-10-19 http-fallback] duração do handshake (WebSocket JS; o nativo
     // reporta no estado 'authed', ver _onNativeState).
     if (!(this.ws && this.ws.__native) && this._hsStartAt) {

@@ -121,7 +121,7 @@ async function _postAck(tok) {
     const timer = ctl ? setTimeout(() => { try { ctl.abort(); } catch {} }, 8000) : null;
     // [apagar-ao-entregar F1 2026-10-22] + device_id e2ee5 (ack POR APARELHO na fila sombra; servidor antigo ignora).
     const ackBody = { d_ack: tok };
-    try { const d = await require('./dlvDevice').dlvDeviceIdAsync(); if (d) ackBody.device_id = d; } catch {}
+    try { const dd = require('./dlvDevice'); const d = await dd.dlvDeviceIdAsync(dd.acctOfDack(tok)); if (d) ackBody.device_id = d; } catch {} // [dlv-device 2] aparelho da conta do token
     const r = await fetch(ACK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
