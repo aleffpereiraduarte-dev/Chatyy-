@@ -347,7 +347,7 @@ async function _ensureDb() {
       // Re-use the same chatyy.db — single SQLite file, multiple tables.
       // openDatabaseSync if available (faster startup on iOS), else async.
       if (typeof _SQLite.openDatabaseAsync === 'function') {
-        _db = await _SQLite.openDatabaseAsync('chatyy.db');
+        _db = await _SQLite.openDatabaseAsync('chatyy.db', require('./sqliteWriteLane').chatyyDbOpenOptions());
       } else if (typeof _SQLite.openDatabase === 'function') {
         _db = _SQLite.openDatabase('chatyy.db');
       }

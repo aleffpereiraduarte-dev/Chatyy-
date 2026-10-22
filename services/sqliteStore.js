@@ -116,7 +116,7 @@ function _getDb() {
   try {
     // openDatabaseSync opens the SAME file db.js opened async. Under WAL this is
     // a fully independent connection safe for concurrent reads.
-    _db = SQLite.openDatabaseSync(DB_NAME);
+    _db = SQLite.openDatabaseSync(DB_NAME, require('./sqliteWriteLane').chatyyDbOpenOptions());
     try {
       // Match db.js pragmas. WAL is a DB-level setting (already on from db.js);
       // re-asserting is harmless. busy_timeout is per-connection — set it so our

@@ -303,7 +303,7 @@ export async function initDatabase() {
 
 async function _initOnce() {
   try {
-    _db = await SQLite.openDatabaseAsync(DB_FILE);
+    _db = await SQLite.openDatabaseAsync(DB_FILE, require('./sqliteWriteLane').chatyyDbOpenOptions());
 
     // Enable WAL mode for better concurrent read/write performance.
     //

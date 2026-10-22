@@ -363,7 +363,7 @@ async function _doInit() {
     if (Platform.OS === 'web') return;
     const SQLite = require('expo-sqlite');
     // Timeout: if SQLite doesn't open in 3s, give up (native module may not exist in this build)
-    const dbPromise = SQLite.openDatabaseAsync('chatyy.db');
+    const dbPromise = SQLite.openDatabaseAsync('chatyy.db', require('./sqliteWriteLane').chatyyDbOpenOptions());
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('SQLite timeout')), 3000));
     db = await Promise.race([dbPromise, timeoutPromise]);
     await _createTables();

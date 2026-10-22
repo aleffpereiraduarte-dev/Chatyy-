@@ -40,6 +40,32 @@ const G = (() => {
   }
 })();
 
+// [2026-10-22 crash 766] Opções de abertura ÚNICAS do chatyy.db (db.js, localDb.js, sqliteStore.js,
+// messageOutbox.js). O padrão do expo-sqlite (finalizeUnusedStatementsBeforeClosing=true) faz, no
+// close, um laço sqlite3_next_stmt→finalize em TODAS as statements da conexão — inclusive as
+// internas do FTS5 (messages_fts: pWriter/pDeleter… preparadas na MESMA conexão pelos triggers).
+// Em seguida o sqlite3_close desconecta o vtab e o FTS5 finaliza de novo os ponteiros já liberados
+// → use-after-free. MetricKit do iPhone do founder, build 766, 22/10 12:42Z: SIGSEGV
+// exsqlite3_finalize ← sqlite3Fts5IndexClose ← fts5FreeVtab ← xDisconnect ← sqlite3Close,
+// segundos depois do reloadAsync (ErrorBoundary "Reiniciar"): o OnDestroy do módulo fecha todos
+// os bancos no reload do JS (também no reload de OTA/"Ajuda"). Com false, o close deixa o FTS5
+// finalizar o que é dele; statement nossa ainda viva = close devolve BUSY (conexão vaza até o
+// processo morrer, sem crash). TODOS os abridores precisam passar as MESMAS opções: o expo-sqlite
+// só reaproveita a conexão em cache com opções iguais (senão abre uma 2ª conexão no mesmo arquivo).
+// Lido UMA vez por processo JS (globalThis) para nunca divergir entre abridores.
+// Kill (antes do boot): __chatyy_sqlite_finalize_all_on_close=true volta ao padrão do expo-sqlite.
+export function chatyyDbOpenOptions() {
+  try {
+    if (!G.openOpts) {
+      const legacy = typeof globalThis !== 'undefined' && globalThis.__chatyy_sqlite_finalize_all_on_close === true;
+      G.openOpts = legacy ? {} : { finalizeUnusedStatementsBeforeClosing: false };
+    }
+    return G.openOpts;
+  } catch {
+    return { finalizeUnusedStatementsBeforeClosing: false };
+  }
+}
+
 // A task that never settles (native call wedged) must not freeze every write
 // in the app forever: after this long the lane moves on (the task's own
 // promise still settles for its caller whenever it finishes).
