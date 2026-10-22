@@ -221,8 +221,16 @@ jobs:
           test -d modules/expo-chatyy-crypto || { echo "::error::modules/expo-chatyy-crypto (WP-03) ainda não existe"; exit 1; }
           export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)}}"
           bash native/chatyy-crypto/ci/fetch-prebuilt.sh android modules/expo-chatyy-crypto
-          # eas build --local só leva o que está no índice: stage (sem commit) dos gitignored.
-          git add -f modules/expo-chatyy-crypto/android/src/main/jniLibs modules/expo-chatyy-crypto/android/src/main/java/com/chatyy/crypto/core
+          # [2026-10-21 android752] O eas-cli (vcs/clients/git.js makeShallowCopyAsync) faz
+          # `git clone --no-checkout` e copia a ÁRVORE filtrada pelos .gitignore — o índice NÃO
+          # conta. O antigo `git add -f` não levava nada: o 752 saiu STUB ("núcleo ausente → stub",
+          # AAB sem libchatyy_crypto.so/libjnidispatch.so) e ainda fazia o passo "Commit bumped
+          # versionCode" commitar as .so no repo. Agora: libera SÓ neste runner as 2 linhas do
+          # Android no .gitignore do módulo (desfeito no passo de conferência após o build).
+          sed -i.bak -e '\#^android/src/main/jniLibs/$#d' -e '\#^android/src/main/java/com/chatyy/$#d' modules/expo-chatyy-crypto/.gitignore
+          rm -f modules/expo-chatyy-crypto/.gitignore.bak
+          ls modules/expo-chatyy-crypto/android/src/main/jniLibs/*/libchatyy_crypto.so
+          test -s modules/expo-chatyy-crypto/android/src/main/java/com/chatyy/crypto/core/chatyy_crypto.kt
 
       - name: Build Android .aab locally
         env:
@@ -243,6 +251,8 @@ jobs:
           _JAVA_OPTIONS: '-Xmx6144m'
           SENTRY_DISABLE_AUTO_UPLOAD: 'true'
           SENTRY_ALLOW_FAILURE: 'true'
+          # [2026-10-21 android752] com chatyy_crypto=true o Gradle do módulo FALHA se cair no stub.
+          CHATYY_CRYPTO_CORE: ${{ inputs.chatyy_crypto == 'true' && '1' || '' }}
         run: |
           # Kill any orphan gradle daemons that may still hold env from a
           # previous run without ANDROID_HOME — they'd crash with the same
@@ -267,6 +277,25 @@ jobs:
           git status --short | head -20
           if [ -f build.aab ]; then
             unzip -l build.aab | grep -E 'libchatyy_e2ee\.so|libjnidispatch\.so' || { echo "::error::AAB sem libchatyy_e2ee.so/JNA — o módulo não entrou"; exit 1; }
+          fi
+
+      - name: E2EE v5 — confere o núcleo no AAB e desfaz o .gitignore (só com chatyy_crypto=true)
+        # [2026-10-21 android752] Falha ANTES do submit se o AAB não levou a .so do núcleo + JNA
+        # (o 752 foi à faixa interna como stub e o app desistia calado). Roda mesmo se o build falhar.
+        if: ${{ always() && inputs.chatyy_crypto == 'true' }}
+        run: |
+          git checkout -- modules/expo-chatyy-crypto/.gitignore 2>/dev/null || true
+          git reset -q -- modules/expo-chatyy-crypto 2>/dev/null || true
+          git status --short | head -20
+          if [ -f build.aab ]; then
+            L=$(unzip -l build.aab)
+            miss=""
+            for abi in arm64-v8a armeabi-v7a x86_64; do
+              echo "$L" | grep -q "base/lib/$abi/libchatyy_crypto.so" || miss="$miss $abi/libchatyy_crypto.so"
+              echo "$L" | grep -q "base/lib/$abi/libjnidispatch.so" || miss="$miss $abi/libjnidispatch.so"
+            done
+            if [ -n "$miss" ]; then echo "::error::AAB SEM o núcleo E2EE v5 (stub):$miss"; exit 1; fi
+            echo "$L" | grep -E 'libchatyy_crypto\.so|libjnidispatch\.so'
           fi
 
       - name: Submit to Google Play

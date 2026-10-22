@@ -51,6 +51,39 @@ function _log(what, kv) {
   // console.warn: o build de produção remove console.log (transform-remove-console).
   try { if (_g().__chatyy_e2ee5_debug === true) console.warn('[e2ee5] ' + what + ' ' + (kv ? JSON.stringify(kv) : '')); } catch (_) {}
 }
+// [2026-10-21 android752] Beacon de diagnóstico da sessão (callkit_diag kind "e2ee5" →
+// /var/mail/_native_diag; leitura /root/nativo-telemetria.sh). Antes, falha ao abrir o núcleo
+// (ex.: binário Android sem a .so → stub → 'unsupported') morria calada no _log. Só códigos/
+// etapa/estado do módulo — nunca conteúdo, chave, bearer, uid ou e-mail. 1x por etapa+código.
+const _diagSent = new Set();
+function _diag(step, kv) {
+  try {
+    const key = step + ':' + String((kv && kv.code) || '');
+    if (_diagSent.has(key) || _diagSent.size >= 24) return;
+    _diagSent.add(key);
+    const parts = [];
+    for (const k of Object.keys(kv || {})) {
+      const v = kv[k];
+      if (v === undefined || v === null || v === '') continue;
+      parts.push(k + '=' + String(v).replace(/\s+/g, '_').slice(0, 80));
+    }
+    require('../nativeTelemetry').nativeBeacon('e2ee5', step, parts.join(' '));
+  } catch (_) {}
+}
+function _diagErr(step, e, extra) {
+  const base = Object.assign({
+    code: (e && e.code) || 'internal',
+    what: e && e.details && e.details.what,
+    msg: String((e && e.message) || '').slice(0, 80),
+    os: Platform.OS,
+  }, extra || {});
+  try {
+    Promise.resolve()
+      .then(() => { const c = _C(); return c && typeof c.isSupported === 'function' ? c.isSupported() : null; })
+      .then((s) => _diag(step, Object.assign(base, s ? { sup: s.ok ? 1 : 0, reason: s.reason, native: s.native ? 1 : 0, api: s.apiVersion, core: s.coreLinked ? 1 : 0 } : {})),
+        () => _diag(step, base));
+  } catch (_) { _diag(step, base); }
+}
 function _err(code, msg) { const e = new Error('e2ee5:' + code + (msg ? ' ' + msg : '')); e.code = code; return e; }
 function _emitLocal(ev, data) { try { _ws()?._emit?.(ev, data); } catch (_) {} }
 const _norm = (s) => String(s || '').trim().toLowerCase();
@@ -165,6 +198,7 @@ export function ensureSession() {
   if (_sessP) return _sessP;
   if (_acctDisabled && Date.now() - _sessFailAt < STATUS_TTL_MS) return Promise.resolve(null);
   if (!_acctDisabled && Date.now() - _sessFailAt < 20000) return Promise.resolve(null);
+  let stage = 'setAuth';
   _sessP = (async () => {
     const c = _C();
     const email = _me();
@@ -172,13 +206,16 @@ export function ensureSession() {
     const qa = _g().__chatyy_e2ee5_qa_transport;
     if (typeof qa === 'function') await c.setAuth({ mode: 'main', base: '', bearer, transport: qa });
     else await c.setAuth({ base: _base(), bearer, account: email });
+    stage = 'status';
     const st = await c.status();
-    if (!st || st.enabled !== true || st.kill === true) { _acctDisabled = !st || st.enabled !== true; throw _err('disabled'); }
+    if (!st || st.enabled !== true || st.kill === true) { _acctDisabled = !st || st.enabled !== true; throw _err('disabled', st ? (st.kill === true ? 'kill' : 'account') : 'no_status'); }
     if (_majorOf(st.contract) !== CONTRACT_MAJOR) throw _err('contract');
     if (Platform.OS !== 'web' && !(st.flags && st.flags.e2ee5_native === true)) throw _err('disabled', 'native');
+    stage = 'open';
     const op = await c.open(String(st.uid), _prefix());
+    stage = 'sync0';
     let s1 = null;
-    try { s1 = await c.sync(); } catch (e) { _log('sync0_fail', { code: e && e.code }); }
+    try { s1 = await c.sync(); } catch (e) { _log('sync0_fail', { code: e && e.code }); _diagErr('sync0_fail', e); }
     let td = null;
     try { td = await c.thisDevice(); } catch (_) {}
     if (!(td && td.signedByOwner)) {
@@ -194,7 +231,7 @@ export function ensureSession() {
           await c.bootstrapIdentity();
           try { await c.sync(); } catch (_) {}
           td = await c.thisDevice();
-        } catch (e) { _log('bootstrap_fail', { code: e && e.code }); }
+        } catch (e) { _log('bootstrap_fail', { code: e && e.code }); _diagErr('bootstrap_fail', e); }
       }
     }
     _sess = { uid: String(st.uid), deviceId: String(op.deviceId || ''), bearer, email, status: st, signed: !!(td && td.signedByOwner), at: Date.now() };
@@ -207,10 +244,12 @@ export function ensureSession() {
     if (s1) _onSyncResult(s1);
     for (const cid of Array.from(_waiting.keys())) _retryWaiting(cid); // "aguardando" de antes da sessão
     _log('session', { uid: _sess.uid, dev: _sess.deviceId, signed: _sess.signed });
+    _diag('session_ok', { code: _sess.signed ? 'signed' : 'unsigned', os: Platform.OS });
     return _sess;
   })().catch((e) => {
     _sessFailAt = Date.now();
     _log('session_fail', { code: e && e.code });
+    _diagErr('session_fail', e, { stage });
     return null;
   }).finally(() => { _sessP = null; });
   return _sessP;
