@@ -307,6 +307,7 @@ import { initialsOf, gradientIndex } from '../components/chatlist/nativeAdapter'
 import { shouldUseNativeProfile, ProfileScrollHost, NativeProfileMedia, NativeProfileList, profileTheme, profileInitials, avatarRefForEmail, avatarRefForUrl, hasRealPhoto, extractRecentLinks, profileColor } from '../components/chat/NativeProfileBridge'; // [2026-10-15 native-profile]
 // [2026-10-08 sticker-maker] toque longo numa foto → "Criar figurinha"
 import StickerMaker from '../components/stickers/StickerMaker';
+import { stickerMakeKind, makeStickerFromMessage } from '../components/stickers/makeStickerFromMessage'; // [2026-10-22 stkmake]
 // [2026-10-10 stickers-import] tocar na figurinha → favoritar/salvar/ver pacote; web: arrastar/colar .webp
 import StickerActionSheet, { StickerDropSheet } from '../components/stickers/StickerActionSheet';
 import MessageEffectPicker from '../components/MessageEffectPicker';
@@ -42520,22 +42521,24 @@ function ChatConversationInnerBody() {
               {/* [2026-10-08 sticker-maker] Criar figurinha a partir da foto
                   (WhatsApp: segurar a foto → "Criar figurinha"). Não vale p/
                   visualização única. */}
-              {!selectedMsg?.deleted_at && selectedMsg?.type === 'image' && selectedMsg?.file_url
-                && !(selectedMsg?.is_view_once || selectedMsg?.view_once || selectedMsg?.isViewOnce) && (
+              {/* [2026-10-22 stkmake] "Fazer figurinha" p/ foto, GIF (animada) e figurinha, de qualquer
+                  remetente; E2EE usa a mídia decifrada local (components/stickers/makeStickerFromMessage). */}
+              {stickerMakeKind(selectedMsg) && (
                 <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                   style={ctxS.ctxSecondaryItem}
                   onPress={() => {
-                    const fu = selectedMsg?.file_url;
+                    const _sm = selectedMsg;
                     setSelectedMsg(null);
-                    let src = fu;
-                    try { src = api.getMediaUrl ? api.getMediaUrl(fu) : fu; } catch {}
-                    if (src) setTimeout(() => setStickerMakerSrc(src), Platform.OS === 'ios' ? 450 : 0); // [2026-10-12] espera o menu fechar (iOS não apresenta o editor por cima de modal saindo)
+                    makeStickerFromMessage(_sm, {
+                      api, t, alert: safeAlert,
+                      openMaker: (src) => { setTimeout(() => setStickerMakerSrc(src), Platform.OS === 'ios' ? 450 : 0); }, // [2026-10-12] espera o menu fechar (iOS não apresenta o editor por cima de modal saindo)
+                    }).catch(() => {});
                   }}
                   activeOpacity={0.6}
                 >
                   <IconStickyNote size={18} color={colors.text} />
                   <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>
-                    {(() => { const v = t('stickerMaker.createFromImage'); return v && v !== 'stickerMaker.createFromImage' ? v : 'Criar figurinha'; })()}
+                    {(() => { const v = t('stickerMake.menu'); return v && v !== 'stickerMake.menu' ? v : 'Fazer figurinha'; })()}
                   </Text>
                 </PressableRow>
               )}

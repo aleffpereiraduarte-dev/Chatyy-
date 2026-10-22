@@ -13771,7 +13771,7 @@ export async function chatStickerCreate(file, { packId = null, emoji = '', emoji
     return resp.json();
   } catch (e) { return { success: false, message: e?.message || 'upload_failed' }; }
 }
-export async function chatStickerCreateAnimated(file, { packId = null, emoji = '', emojiTags = '' } = {}) {
+export async function chatStickerCreateAnimated(file, { packId = null, emoji = '', emojiTags = '', crop = false } = {}) {
   const formData = new FormData();
   if (Platform.OS === 'web') {
     if (file instanceof Blob || file instanceof File) formData.append('file', file, file.name || 'sticker.mp4');
@@ -13788,6 +13788,7 @@ export async function chatStickerCreateAnimated(file, { packId = null, emoji = '
   if (packId) formData.append('pack_id', String(packId));
   if (emoji) formData.append('emoji', emoji);
   if (emojiTags) formData.append('emoji_tags', emojiTags);
+  if (crop) formData.append('crop', '1'); // [2026-10-22 stkmake] corte central + teto 500 KB (GIF do chat)
   const headers = {};
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;

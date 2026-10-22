@@ -15,6 +15,7 @@
 import { icon } from './nativeNodes';
 import { toArgb } from './argb';
 import { nativeEmojiPayload } from './nativeEmojiData';
+import { stickerMakeKind, makeStickerFromMessage } from '../stickers/makeStickerFromMessage'; // [2026-10-22 stkmake]
 import {
   IconReply, IconCopy, IconStar, IconStarFilled, IconDownload, IconForward, IconMessageSquare,
   IconMail, IconCheck, IconTrash, IconPin, IconStickyNote, IconGlobe, IconSparkles, IconInfo,
@@ -134,8 +135,10 @@ export function buildNativeCtxMenu(key, msg, env) {
     if (msg.type === 'sticker' && (msg.file_url || String(msg.content || '').startsWith('http'))) {
       add('sticker', _tf(t, 'chat.sticker', 'Figurinha'), 'face.smiling', IconStar);
     }
-    if (msg.type === 'image' && msg.file_url && !(msg.is_view_once || msg.view_once || msg.isViewOnce)) {
-      add('stickerMaker', _tf(t, 'stickerMaker.createFromImage', 'Criar figurinha'), 'scissors', IconStickyNote);
+    // [2026-10-22 stkmake] "Fazer figurinha": foto, GIF (animada) e figurinha, de qualquer remetente
+    // (E2EE = mídia decifrada local). Lista dinâmica do JS → sem BUILD.
+    if (stickerMakeKind(msg)) {
+      add('stickerMaker', _tf(t, 'stickerMake.menu', 'Fazer figurinha'), 'scissors', IconStickyNote);
     }
     const em = String(msg.content || '').match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
     if (em) add('sendEmail', _tf(t, 'chatConv.sendEmail', 'Enviar e-mail'), 'envelope', IconMail);
@@ -267,11 +270,11 @@ export function runNativeCtxAction(action, msg, H) {
       H.setStickerSheet({ messageId: Number.isFinite(sid) && sid > 0 ? sid : null, url: msg.file_url || msg.content || '' });
       return;
     }
-    case 'stickerMaker': {
-      const fu = msg.file_url;
-      let src = fu;
-      try { src = H.api.getMediaUrl ? H.api.getMediaUrl(fu) : fu; } catch {}
-      if (src) setTimeout(() => H.setStickerMakerSrc(src), 300);
+    case 'stickerMaker': { // [2026-10-22 stkmake]
+      makeStickerFromMessage(msg, {
+        api: H.api, t: H.t, alert: H.safeAlert,
+        openMaker: (src) => { setTimeout(() => H.setStickerMakerSrc(src), 300); },
+      }).catch(() => {});
       return;
     }
     case 'sendEmail': {
