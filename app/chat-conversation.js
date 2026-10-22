@@ -14885,7 +14885,9 @@ function ChatConversationInnerBody() {
   // in the vanish-timer-banner useEffect's deps array (web bundler crash).
 
   // Vanish mode
-  const [vanishMode, setVanishMode] = _useStateT(false);
+  // [2026-10-22 vanish-lembra] nasce com o último estado conhecido NESTE aparelho (tema escuro no 1º
+  // quadro ao voltar); servidor/WS corrigem depois se mudou.
+  const [vanishMode, setVanishMode] = _useStateT(() => { try { return !!(conversationId && require('../services/vanishMode').knownVanish(conversationId)); } catch { return false; } });
   // Tick used by the per-message vanish_at countdown indicator. Bumps every
   // 30s so bubbles whose vanish_at is <1h away repaint their "23m" / "12m"
   // label. Cheap — top-level state change re-runs the row enrichment but

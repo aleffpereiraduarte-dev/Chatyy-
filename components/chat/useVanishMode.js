@@ -12,7 +12,7 @@ import { useLocalSearchParams } from 'expo-router';
 import Svg, { Circle } from 'react-native-svg';
 import { ForceDarkTheme } from '../../context/ThemeContext';
 import {
-  vanishGateOn, setVanishActive, useVanishActive, purgeVanishLocal, vanishSeenClose,
+  vanishGateOn, setVanishActive, useVanishActive, purgeVanishLocal, vanishSeenClose, rememberVanish,
 } from '../../services/vanishMode';
 import { acquireCaptureProtection, addScreenshotListener, sendScreenshotNotice } from '../../services/chatPrivacy';
 import { secureViewAvailable } from '../../services/captureBlock'; // [2026-10-19 secure-view]
@@ -70,8 +70,10 @@ export default function useVanishMode({
   useEffect(() => {
     if (!cid) return undefined;
     setVanishActive(cid, active);
+    // [2026-10-22 vanish-lembra] guarda no aparelho → próxima abertura já nasce escura.
+    if (eligible) rememberVanish(cid, active);
     return undefined;
-  }, [cid, active]);
+  }, [cid, active, eligible]);
   useEffect(() => () => { if (cid) setVanishActive(cid, false); }, [cid]);
 
   // Ao vivo: o outro lado ligou/desligou.
