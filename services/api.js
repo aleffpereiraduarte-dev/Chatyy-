@@ -12004,6 +12004,26 @@ export async function followUser(targetEmail) {
 export async function unfollowUser(targetEmail) {
   return apiCall('unfollow_user', { target_email: targetEmail }, 'POST');
 }
+// [privado 2026-10-22] Perfil privado nível Instagram (private-profile.php no servidor).
+// follow_user num perfil privado devolve { requested: true, status: 'requested' }.
+export async function profilePrivateGet() {
+  return apiCall('profile_private_get', {}, 'POST');
+}
+export async function profilePrivateSet(isPrivate) {
+  return apiCall('profile_private_set', { private: isPrivate ? 1 : 0 }, 'POST');
+}
+export async function followRequestList(direction = 'incoming', cursor = '') {
+  return apiCall('follow_request_list', { direction, ...(cursor ? { cursor } : {}), limit: 50 }, 'POST');
+}
+export async function followRequestRespond(requesterEmail, accept, all = false) {
+  return apiCall('follow_request_respond', { requester_email: requesterEmail || '', decision: accept ? 'accept' : 'decline', ...(all ? { all: 1 } : {}) }, 'POST');
+}
+export async function followRequestCancel(targetEmail) {
+  return apiCall('follow_request_cancel', { target_email: targetEmail }, 'POST');
+}
+export async function followerRemove(followerEmail) {
+  return apiCall('follower_remove', { email: followerEmail }, 'POST');
+}
 export async function getFollowers(email, page = 1) {
   return apiCall('get_followers', { email, page });
 }

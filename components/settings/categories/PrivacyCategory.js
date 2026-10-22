@@ -26,6 +26,7 @@ import {
 import { PrivacyExtrasGroup } from '../SettingsPanels';
 import { useSafeNav, useSettingsHost, useChatPrivacy, useChatDefaults, privacyValueLabel } from './shared';
 import { useSilenceUnknownCallers } from '../../calls/silenceUnknownCallers'; // [2026-10-16 wave12-D]
+import { useFollowRequestState, setProfilePrivate } from '../../../services/followRequests'; // [privado 2026-10-22]
 import { useCaptureBlockGlobal, setCaptureBlockGlobal, useAdvPrivacyDefault, setAdvPrivacyDefault } from '../../../services/captureBlock'; // [2026-10-19 secure-view] [2026-10-19 capmember]
 import {
   IconAlertTriangle, IconEyeOff, IconSmartphone, IconSearch, IconGlobe, IconLock, IconKey, IconForward, IconSparkles,
@@ -168,6 +169,24 @@ export default function PrivacyCategory() {
     }
   }
 
+  // [privado 2026-10-22] Perfil privado (services/followRequests: otimista + cópia no aparelho).
+  const privProfile = useFollowRequestState();
+  const onPrivateProfile = (v) => {
+    if (v) { setProfilePrivate(true).then((d) => { if (!d) { try { settingsCache.notifySaveFailed(t); } catch {} } }); return; }
+    const n = privProfile.pending || 0;
+    const title = tr('privateProfile.offTitle', 'Tornar a conta pública?');
+    const msg = n > 0
+      ? tr('privateProfile.offBodyPending', 'Qualquer pessoa poderá ver suas publicações, o Mural e o Status. Os {n} pedidos pendentes serão aprovados e essas pessoas passarão a seguir você.').split('{n}').join(String(n))
+      : tr('privateProfile.offBody', 'Qualquer pessoa poderá ver suas publicações, o Mural e o Status.');
+    const go = () => { setProfilePrivate(false).then((d) => { if (!d) { try { settingsCache.notifySaveFailed(t); } catch {} } }); };
+    try {
+      require('../../../services/alerts').safeAlert(title, msg, [
+        { text: tr('common.cancel', 'Cancelar'), style: 'cancel' },
+        { text: tr('privateProfile.offConfirm', 'Tornar pública'), onPress: go },
+      ]);
+    } catch { go(); }
+  };
+
   const fieldTitle = (field) => (
     field === 'last_seen' ? t('settings.privacyLastSeen')
       : field === 'profile_photo' ? t('settings.privacyProfilePhoto')
@@ -238,6 +257,21 @@ export default function PrivacyCategory() {
           footer={tr('settings.rd2.whoCanSeeFooter', 'Escolha quem vê suas informações no Chatyy.')}
           cardStyle={st.card22}
         >
+          {/* [privado 2026-10-22] Perfil privado nível Instagram: toque na linha = pedidos/seguidores; chave = liga/desliga */}
+          <SettingsRow
+            icon={IconLock}
+            title={tr('privateProfile.title', 'Perfil privado')}
+            subtitle={privProfile.private
+              ? (privProfile.pending > 0
+                ? tr('privateProfile.subPending', '{n} pedidos para seguir · toque para ver').split('{n}').join(String(privProfile.pending))
+                : tr('privateProfile.subOn', 'Só seguidores que você aprovar veem suas publicações, o Mural e o Status.'))
+              : tr('privateProfile.subOff', 'Qualquer pessoa pode ver suas publicações. Ative para aprovar quem segue você.')}
+            subtitleLines={3}
+            numberOfLines={1}
+            onPress={() => safeNav('/follow-requests')}
+            right={<NativeSwitch value={!!privProfile.private} onValueChange={onPrivateProfile} accessibilityLabel={tr('privateProfile.title', 'Perfil privado')} />}
+            testID="settings-row-private-profile"
+          />
           {FIELDS.map(field => (
             <SettingsRow key={field} icon={FIELD_ICONS[field]} title={fieldTitle(field)} value={privacyValueLabel(t, privacy, field)} onPress={() => setPicker(field)} />
           ))}

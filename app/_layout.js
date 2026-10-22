@@ -2477,6 +2477,7 @@ export default function RootLayout() {
                   <Stack.Screen name="contacts" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />
                   <Stack.Screen name="notifications" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-08 apps-native] */ }} />
                   <Stack.Screen name="notifications-feed" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
+                  <Stack.Screen name="follow-requests" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [privado 2026-10-22] */ }} />
                   <Stack.Screen name="group-call" options={{ presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, headerShown: false, ..._DARK_BG }} />
                   <Stack.Screen name="one-memory" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR /* [2026-10-09 native-headers] */ }} />
                   <Stack.Screen name="share-receive" options={{ ..._DRAG_MODAL }} />

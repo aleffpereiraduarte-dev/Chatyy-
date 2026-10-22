@@ -91,6 +91,22 @@ const S = {
   reasonAbuse: { pt: 'Conteúdo impróprio', pp: 'Conteúdo impróprio', en: 'Inappropriate content', es: 'Contenido inapropiado' },
   reasonHarass: { pt: 'Assédio ou ameaça', pp: 'Assédio ou ameaça', en: 'Harassment or threat', es: 'Acoso o amenaza' },
   reported: { pt: 'Denúncia enviada. Obrigado.', pp: 'Denúncia enviada. Obrigado.', en: 'Report sent. Thank you.', es: 'Denuncia enviada. Gracias.' },
+  // [privado 2026-10-22] perfil privado nível Instagram
+  follow: { pt: 'Seguir', pp: 'Seguir', en: 'Follow', es: 'Seguir' },
+  followBack: { pt: 'Seguir de volta', pp: 'Seguir de volta', en: 'Follow back', es: 'Seguir también' },
+  requestFollow: { pt: 'Solicitar para seguir', pp: 'Pedir para seguir', en: 'Request to follow', es: 'Solicitar seguir' },
+  requested: { pt: 'Solicitado', pp: 'Pedido enviado', en: 'Requested', es: 'Solicitado' },
+  following: { pt: 'Seguindo', pp: 'A seguir', en: 'Following', es: 'Siguiendo' },
+  unfollow: { pt: 'Deixar de seguir', pp: 'Deixar de seguir', en: 'Unfollow', es: 'Dejar de seguir' },
+  unfollowPrivate: { pt: 'Se mudar de ideia, vai precisar pedir para seguir {name} de novo.', pp: 'Se mudar de ideias, terá de pedir para seguir {name} outra vez.', en: "If you change your mind, you'll have to request to follow {name} again.", es: 'Si cambias de opinión, tendrás que volver a solicitar seguir a {name}.' },
+  cancelRequest: { pt: 'Cancelar pedido', pp: 'Cancelar pedido', en: 'Cancel request', es: 'Cancelar solicitud' },
+  followFailed: { pt: 'Não foi possível agora. Tente de novo.', pp: 'Não foi possível agora. Tente novamente.', en: "Couldn't do that now. Try again.", es: 'No se pudo ahora. Inténtalo de nuevo.' },
+  privateTitle: { pt: 'Esta conta é privada', pp: 'Esta conta é privada', en: 'This account is private', es: 'Esta cuenta es privada' },
+  privateHint: { pt: 'Siga esta conta para ver as publicações, o Mural e o Status.', pp: 'Siga esta conta para ver as publicações, o Mural e o Estado.', en: 'Follow this account to see their posts, wall and status.', es: 'Sigue esta cuenta para ver sus publicaciones, el muro y los estados.' },
+  privateHintReq: { pt: 'Pedido enviado. Quando {name} aceitar, você vê as publicações aqui.', pp: 'Pedido enviado. Quando {name} aceitar, verá as publicações aqui.', en: "Request sent. Once {name} accepts, you'll see their posts here.", es: 'Solicitud enviada. Cuando {name} acepte, verás sus publicaciones aquí.' },
+  followRequests: { pt: 'Pedidos para seguir', pp: 'Pedidos para seguir', en: 'Follow requests', es: 'Solicitudes de seguimiento' },
+  followRequestsSub: { pt: 'Confirme ou exclua · remover seguidores', pp: 'Confirme ou elimine · remover seguidores', en: 'Confirm or delete · remove followers', es: 'Confirma o elimina · quitar seguidores' },
+  privateOn: { pt: 'Conta privada', pp: 'Conta privada', en: 'Private account', es: 'Cuenta privada' },
 };
 
 function _code(language) {

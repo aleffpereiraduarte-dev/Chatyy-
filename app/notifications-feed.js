@@ -20,7 +20,8 @@ import NativeResultList, { useNativeResults } from '../components/native/NativeR
 import { contactTile } from '../components/native/resultListAdapter';
 import { setCache } from '../services/cache';
 
-const FEED_GLYPH = { feed_like: 'heart', like: 'heart', feed_comment: 'message', comment: 'message', follow: 'user', mention: 'at', one_alert: 'bell', contact_joined: 'userPlus' };
+const FEED_GLYPH = { feed_like: 'heart', like: 'heart', feed_comment: 'message', comment: 'message', follow: 'user', mention: 'at', one_alert: 'bell', contact_joined: 'userPlus', follow_request: 'userPlus', follow_accept: 'user' }; // [privado 2026-10-22] +follow_request/follow_accept
+import { useFollowRequestState } from '../services/followRequests'; // [privado 2026-10-22]
 
 // [2026-10-17 cj-feed] "Fulano entrou no Chatyy!" · "Dizer oi". Antes esta tela
 // mostrava só "joao  Say hi and start chatting." (sem dizer que ele entrou), sem
@@ -109,7 +110,7 @@ function NotificationIcon({ type, colors }) {
   // [2026-10-11 polish-secondary] P&B: tipo pelo ícone (era vermelho/âmbar).
   if (type === 'feed_like') return <IconHeart size={22} color={colors.text} />;
   if (type === 'feed_comment') return <IconMessageCircle size={22} color={colors.text} />;
-  if (type === 'follow') return <IconUser size={22} color={colors.text} />;
+  if (type === 'follow' || type === 'follow_request' || type === 'follow_accept') return <IconUser size={22} color={colors.text} />; // [privado 2026-10-22]
   if (type === 'one_alert') return <BiaIcon size={20} color={colors.text} />;
   if (type === 'contact_joined') return <IconUser size={22} color={colors.text} />;
   return <IconMessageCircle size={22} color={colors.textSecondary} />;
@@ -127,6 +128,9 @@ export default function NotificationsFeedScreen() {
     return _readDisk() || [];
   });
   const [loading, setLoading] = useState(() => !(_readLive() || _readDisk()));
+  // [privado 2026-10-22] "Pedidos para seguir (N)" no topo da Atividade (perfil privado).
+  const followReq = useFollowRequestState();
+  const openFollowRequests = useCallback(() => { try { router.push('/follow-requests'); } catch {} }, [router]);
   const [refreshing, setRefreshing] = useState(false);
   // [2026-10-17 cj-feed] nomes da agenda (cache do último sync de contatos).
   const [agendaNames, setAgendaNames] = useState(null);
@@ -261,6 +265,9 @@ export default function NotificationsFeedScreen() {
     const meta = new Map();
     const del = tx('common.delete', 'Apagar');
     const seen = new Set();
+    if (followReq.pending > 0) { // [privado 2026-10-22]
+      rows.push({ id: 'fr:hdr', k: 'r', t: tx('followReq.title', 'Pedidos para seguir'), sb: tx('followReq.rowSub', '{n} pedidos para confirmar ou excluir').split('{n}').join(String(followReq.pending)), gl: 'userPlus', cv: 1 });
+    }
     for (const [key, lk, fb] of FEED_BUCKETS) {
       if (!groups[key].length) continue;
       rows.push({ id: `s:${key}`, k: 's', t: tx(lk, fb) });
@@ -291,8 +298,8 @@ export default function NotificationsFeedScreen() {
     nativeMetaRef.current = meta;
     return rows;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nativeOn, items, loading, page, t, agendaNames]);
-  const onNativePress = useCallback((id) => { const it = nativeMetaRef.current.get(id); if (it) handlePress(it); });
+  }, [nativeOn, items, loading, page, t, agendaNames, followReq.pending]);
+  const onNativePress = useCallback((id) => { if (id === 'fr:hdr') { openFollowRequests(); return; } const it = nativeMetaRef.current.get(id); if (it) handlePress(it); });
   const onNativeAction = useCallback((id, action) => {
     const it = nativeMetaRef.current.get(id);
     if (!it) return;
@@ -310,7 +317,9 @@ export default function NotificationsFeedScreen() {
     const data = item.data || {};
     if (item.type === 'contact_joined') {
       openSayHi(item);
-    } else if (item.type === 'follow' && item.author_email) {
+    } else if (item.type === 'follow_request') { // [privado 2026-10-22]
+      openFollowRequests();
+    } else if ((item.type === 'follow' || item.type === 'follow_accept') && item.author_email) {
       router.push(`/u/${encodeURIComponent(item.author_email)}`);
     } else if ((item.type === 'feed_like' || item.type === 'feed_comment') && data.post_id) {
       // /feed-comments is not a registered route — open the public post page
@@ -454,6 +463,17 @@ export default function NotificationsFeedScreen() {
           data={filterSocialNotifications(items) /* [2026-10-14] sem e-mail na central */}
           keyExtractor={(item, i) => String(item.id) + '_' + i}
           renderItem={renderItem}
+          ListHeaderComponent={followReq.pending > 0 ? ( /* [privado 2026-10-22] */
+            <TouchableOpacity onPress={openFollowRequests} activeOpacity={0.7} style={styles.row} accessibilityRole="button" testID="activity-follow-requests">
+              <View style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.text }}>
+                <IconUser size={22} color={colors.text} />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }}>{tx('followReq.title', 'Pedidos para seguir')}</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 12.5, marginTop: 2 }}>{tx('followReq.rowSub', '{n} pedidos para confirmar ou excluir').split('{n}').join(String(followReq.pending))}</Text>
+              </View>
+            </TouchableOpacity>
+          ) : null}
           onEndReached={onEndReached}
           onEndReachedThreshold={0.6}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={(colors?.primary || ACCENT)} />}

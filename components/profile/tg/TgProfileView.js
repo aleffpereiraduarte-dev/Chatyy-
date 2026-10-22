@@ -35,6 +35,7 @@ import ProfilePostProgress from '../../ProfilePostProgress';
 import * as muralNav from '../../../services/muralNav';
 import { getDefaultAudience, loadDefaultAudience, setDefaultAudience, subscribeDefaultAudience } from '../../../services/muralPrefs';
 import { useAnchoredMenu, AnchoredMenuButton, AnchoredMenuHost, sfSymbolFor } from '../../AnchoredMenu'; // [2026-10-21 menu-ancorado]
+import { useFollowRequestState } from '../../../services/followRequests'; // [privado 2026-10-22]
 
 export function isTgProfileEnabled() {
   try { if (globalThis.__chatyy_profile_tg === false) return false; } catch {}
@@ -233,6 +234,58 @@ export default function TgProfileView(props) {
     return mergePendingPosts(pendingRaw.map(normPost).filter(Boolean), server);
   }, [isSelf, pendingRaw, data.posts.items]);
 
+  // [privado 2026-10-22] Seguir / Solicitar para seguir / Solicitado / Seguindo + perfil privado trancado.
+  const social = (data.profile && data.profile.social) || null;
+  const [followOv, setFollowOv] = useState(null); // otimista até o profile_get voltar
+  useEffect(() => { setFollowOv(null); }, [social]);
+  const followStatus = followOv || (social ? (social.follow_status || (social.is_following ? 'following' : 'none')) : null);
+  const isPrivate = !!(social && social.is_private) || !!ident.is_private;
+  const locked = !isSelf && !!social && social.can_view === false && followStatus !== 'following';
+  const followBusy = useRef(false);
+  const myReq = useFollowRequestState({ refresh: isSelf });
+  const afterFollowChange = useCallback(() => {
+    try { data.reloadProfile && data.reloadProfile(); } catch {}
+    try { data.reloadPosts && data.reloadPosts(); } catch {}
+  }, [data]);
+  const onFollowPress = useCallback(() => {
+    if (!em || isSelf || followBusy.current) return;
+    const api = (() => { try { return require('../../../services/api'); } catch { return null; } })();
+    if (!api) return;
+    const fail = (prev) => {
+      setFollowOv(prev);
+      try { require('../../ui/Toast').showToast({ message: tr('followFailed'), kind: 'error' }); } catch {}
+    };
+    const run = async (fn, optimistic, prev) => {
+      followBusy.current = true;
+      setFollowOv(optimistic);
+      let r = null;
+      try { r = await fn(); } catch { r = null; }
+      followBusy.current = false;
+      if (!r || r.success === false) { fail(prev); return; }
+      const d = r.data || {};
+      if (d.requested || d.status === 'requested') setFollowOv('requested');
+      else if (d.following === true) setFollowOv('following');
+      else if (d.status === 'none' || d.following === false) setFollowOv('none');
+      try { require('../../../services/haptics').hapticEvent?.('selection'); } catch {}
+      afterFollowChange();
+    };
+    const cur = followStatus || 'none';
+    if (cur === 'none') { run(() => api.followUser(em), isPrivate ? 'requested' : 'following', 'none'); return; }
+    if (cur === 'requested') {
+      _menu({ title: name, options: [{ label: tr('cancelRequest'), destructive: true, onPress: () => run(() => api.followRequestCancel(em), 'none', 'requested') }], cancelLabel: tr('cancel') });
+      return;
+    }
+    _menu({
+      title: isPrivate ? tr('unfollowPrivate', { name }) : name,
+      options: [{ label: tr('unfollow'), destructive: true, onPress: () => run(() => api.unfollowUser(em), 'none', 'following') }],
+      cancelLabel: tr('cancel'),
+    });
+  }, [em, isSelf, followStatus, isPrivate, name, tr, afterFollowChange]);
+  const followLabel = followStatus === 'following' ? tr('following')
+    : followStatus === 'requested' ? tr('requested')
+      : isPrivate ? tr('requestFollow')
+        : (social && social.follows_me ? tr('followBack') : tr('follow'));
+
   const muted = mutedLocal != null ? mutedLocal : !!contact.muted;
   const presence = isSelf ? tr('online') : (contact.presence || presenceLine(lang, data.presence));
 
@@ -389,6 +442,7 @@ export default function TgProfileView(props) {
       else if (st.error && !st.items.length) out.push({ k: 'err', key: 'err' });
       else if (st.loaded && !st.items.length) out.push({ k: 'empty', key: 'empty', text: tr(emptyKey), hint });
     };
+    if (tab === 'posts' && locked) { out.push({ k: 'locked', key: 'locked' }); return out; } // [privado 2026-10-22]
     if (tab === 'posts') {
       out.push({ k: 'tool', key: 'tool' });
       if (isSelf) out.push({ k: 'compose', key: 'compose' });
@@ -436,7 +490,7 @@ export default function TgProfileView(props) {
     state(st, tab === 'media' ? 'noMedia' : tab === 'links' ? 'noLinks' : tab === 'docs' ? 'noDocs' : 'noVoice');
     if (st.loading && st.items.length) out.push({ k: 'more', key: 'more' });
     return out;
-  }, [tab, view, posts, data.posts, data.shared, data.conversationId, groupsList, isSelf, tr, lang]);
+  }, [tab, view, posts, data.posts, data.shared, data.conversationId, groupsList, isSelf, tr, lang, locked]);
 
   const onEndReached = useCallback(() => {
     if (tab === 'posts' || (isSelf && tab === 'media')) { if (data.posts.hasMore && !data.posts.loading) data.loadMorePosts(); return; }
@@ -499,6 +553,14 @@ export default function TgProfileView(props) {
             : actions.message ? actBtn({ icon: "comment", label: tr('message'), onPress: actions.message }) : null}
         </View>
       )}
+      {!isSelf && followStatus ? (
+        <Pressable onPress={onFollowPress} testID="tg-profile-follow"
+          style={({ pressed }) => [s.followBtn, { backgroundColor: followStatus === 'none' ? th.accent : th.card, transform: [{ scale: pressed ? 0.98 : 1 }] }, followStatus !== 'none' && shadow]}
+          accessibilityRole="button" accessibilityLabel={followLabel}>
+          {followStatus === 'requested' ? <TgIcon name="clock" size={17} color={th.text} /> : followStatus === 'following' ? <TgIcon name="check" size={17} color={th.text} /> : isPrivate ? <TgIcon name="lock" size={16} color={th.accentInk} /> : null}
+          <Text style={[s.followTxt, { color: followStatus === 'none' ? th.accentInk : th.text }]} numberOfLines={1}>{followLabel}</Text>
+        </Pressable>
+      ) : null}
       {(() => {
           const rows = [];
           const bio = String(ident.bio || contact.bio || '').trim();
@@ -512,6 +574,10 @@ export default function TgProfileView(props) {
               options: ['public', 'contacts', 'private'].map((a) => ({ label: tr(AUD_KEY[a]), onPress: () => setDefaultAudience(a) })),
               cancelLabel: tr('cancel'),
             })} />);
+            if (myReq.private || myReq.pending > 0) { // [privado 2026-10-22]
+              rows.push(<Row key="freq" th={th} icon="users" title={tr('followRequests')} sub={myReq.private ? `${tr('privateOn')} · ${tr('followRequestsSub')}` : tr('followRequestsSub')}
+                value={myReq.pending > 0 ? String(myReq.pending) : ''} first={!rows.length} onPress={() => { try { (router || require('expo-router').router).push('/follow-requests'); } catch {} }} />);
+            }
           } else if (contact.onMute || contact.onMuteFor) {
             rows.push(<Row key="nt" th={th} title={tr('notifications')} sub={muted ? tr('notifOff') : tr('notifOn')} first={!rows.length}
               right={<Switch value={!muted} onValueChange={onToggleNotif} trackColor={{ true: th.accent, false: th.chip }} thumbColor={Platform.OS === 'android' ? (!muted ? th.accentInk : '#fff') : undefined} ios_backgroundColor={th.chip} accessibilityLabel={tr('notifications')} />} />);
@@ -655,6 +721,15 @@ export default function TgProfileView(props) {
         if (tab === 'media' || (tab === 'posts' && view === 'grid')) return <GridSkeleton count={9} columns={3} />;
         if (tab === 'posts') return <PostSkeleton count={1} />;
         return <SkeletonRows count={5} avatarSize={44} />;
+      case 'locked': return ( // [privado 2026-10-22]
+        <View style={s.state} testID="tg-profile-locked">
+          <View style={[s.lockBox, { borderColor: th.line }]}>
+            <View style={[s.lockIc, { borderColor: th.text }]}><TgIcon name="lock" size={26} color={th.text} /></View>
+            <Text style={[s.emptyTxt, { color: th.text }]}>{tr('privateTitle')}</Text>
+            <Text style={[s.emptyHint, { color: th.muted }]}>{followStatus === 'requested' ? tr('privateHintReq', { name }) : tr('privateHint')}</Text>
+          </View>
+        </View>
+      );
       case 'more': return <View style={{ paddingVertical: 18 }}><ActivityIndicator color={th.muted} /></View>;
       case 'err': return (
         <Pressable onPress={() => (tab === 'posts' ? data.reloadPosts() : data.reloadShared(tab))} style={s.state}>
@@ -842,6 +917,8 @@ const s = StyleSheet.create({
   acts: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 18 },
   act: { flex: 1, height: 62, borderRadius: THEME_V2 ? 18 : 14, alignItems: 'center', justifyContent: 'center', gap: 4 },
   actTxt: { fontSize: 12.5, fontWeight: '500' },
+  followBtn: { marginHorizontal: 16, marginTop: 10, height: 44, borderRadius: THEME_V2 ? 14 : 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 }, // [privado 2026-10-22]
+  followTxt: { fontSize: 15, fontWeight: '600' },
   grp: { marginHorizontal: 16, marginTop: 16, borderRadius: THEME_V2 ? Grafite.radius.card : 14, overflow: Platform.OS === 'android' ? 'hidden' : 'visible' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 11, minHeight: 48, borderRadius: THEME_V2 ? Grafite.radius.card : 14 },
   sep: { position: 'absolute', top: 0, right: 0, height: StyleSheet.hairlineWidth },
@@ -875,5 +952,7 @@ const s = StyleSheet.create({
   state: { paddingVertical: 28, paddingHorizontal: 10, alignItems: 'center' },
   emptyBox: { alignSelf: 'stretch', borderWidth: 1.5, borderStyle: 'dashed', borderRadius: 18, padding: 20, alignItems: 'center' },
   emptyTxt: { fontSize: 15, fontWeight: '600', textAlign: 'center' },
+  lockBox: { alignSelf: 'stretch', borderWidth: 1, borderRadius: 18, paddingVertical: 28, paddingHorizontal: 20, alignItems: 'center', gap: 8 }, // [privado 2026-10-22]
+  lockIc: { width: 64, height: 64, borderRadius: 32, borderWidth: 2, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
   emptyHint: { fontSize: 13.5, textAlign: 'center', marginTop: 4 },
 });

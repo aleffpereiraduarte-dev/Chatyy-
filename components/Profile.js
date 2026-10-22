@@ -2126,6 +2126,22 @@ export default function Profile({
     if (!identity?.email) return;
     if (followInFlightRef.current) return;
     followInFlightRef.current = true;
+    // [privado 2026-10-22] perfil privado: "Solicitar para seguir" vira pedido; tocar em "Solicitado" cancela.
+    if (!social?.is_following && (social?.follow_status === 'requested' || social?.is_private)) {
+      const wasReq = social?.follow_status === 'requested';
+      setData(prev => prev ? { ...prev, social: { ...prev.social, follow_status: wasReq ? 'none' : 'requested', requested: !wasReq } } : prev);
+      try {
+        const r = wasReq ? await api.followRequestCancel?.(identity.email) : await api.followUser?.(identity.email);
+        if (r?.success === false) throw new Error('follow_failed');
+        const d = r?.data || {};
+        if (!wasReq && d.following === true) setData(prev => prev ? { ...prev, social: { ...prev.social, is_following: true, follow_status: 'following' } } : prev);
+      } catch {
+        setData(prev => prev ? { ...prev, social: { ...prev.social, follow_status: wasReq ? 'requested' : 'none', requested: wasReq } } : prev);
+      } finally {
+        followInFlightRef.current = false;
+      }
+      return;
+    }
     const wasFollowing = !!social?.is_following;
     const prevCount = Number(social?.followers_count) || 0; // guard NaN
     // Optimistic UI update so the tap feels instant (count guarded with `|| 0`
@@ -3094,11 +3110,13 @@ export default function Profile({
               <FlatButton
                 label={social?.is_following
                   ? (t?.('profile.following') || 'Seguindo')
+                  : social?.follow_status === 'requested' ? (t?.('profile.requested') || 'Solicitado') // [privado 2026-10-22]
+                  : social?.is_private ? (t?.('profile.requestFollow') || 'Solicitar para seguir')
                   : (social?.follows_me
                       ? (t?.('profile.followBack') || 'Seguir de volta')
                       : (t?.('profile.follow') || 'Seguir'))}
                 onPress={handleFollow}
-                isPrimary={!social?.is_following}
+                isPrimary={!social?.is_following && social?.follow_status !== 'requested'}
                 colors={colors}
                 isDark={isDark}
               />
