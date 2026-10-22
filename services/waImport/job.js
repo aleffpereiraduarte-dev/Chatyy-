@@ -149,7 +149,9 @@ async function _run() {
   _set({ status: _signal.paused ? 'paused' : 'running', error: null });
   _keepAwake(true);
   try {
-    const r = await _importer().runImport(_prep, _opts, (p) => {
+    // [wa-import-local 2026-10-22] opts.local → só no aparelho (store local; nada de conteúdo ao servidor)
+    const runner = _opts && _opts.local ? require('./localImport').runLocalImport : _importer().runImport;
+    const r = await runner(_prep, _opts, (p) => {
       _set({ progress: p, conversationId: p.conversationId || _job.conversationId, status: _signal.paused ? 'paused' : 'running' });
     }, _signal);
     if (r.cancelled) { _set({ status: 'cancelled', result: r }); _clearResume(); return r; }

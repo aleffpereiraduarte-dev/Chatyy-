@@ -11,7 +11,10 @@
  * export 1:1 com um contato do Chatyy = CONTINUAÇÃO na conversa direta com a pessoa (verificada
  * no servidor por telefone/nome; senão pede confirmação explícita). Grupo / sem contato / E2EE /
  * (servidor antigo: conversa que já tem mensagens) → cópia separada só sua; servidor novo intercala
- * o histórico pela data/hora original [import-ordem 2026-10-13]. Resumo final + "Resumir com a Bia".
+ * o histórico pela data/hora original [import-ordem 2026-10-13]. Resumo final.
+ * [wa-import-local 2026-10-22] E2EE ativo na conta (ou globalThis.__chatyy_wa_import_local === true) →
+ * importação SÓ NO APARELHO (services/waImport/localImport): store local, sem servidor, sem vínculo/match;
+ * abre em /wa-import-local. Flag false = fluxo antigo.
  */
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import {
@@ -38,8 +41,9 @@ import { bestLocalMatch, nameScore, NAME_MIN_SCORE, rankCandidates, isPhoneReaso
 import { resolveParticipantPhones, lookupViaDiscovery } from '../services/waImport/phones'; // [wa-phone 2026-10-14]
 import AvatarCircle from '../components/AvatarCircle';
 
-let ConversationSummarySheet = null;
-try { ConversationSummarySheet = require('../components/chat/ConversationSummarySheet').default; } catch {}
+// [wa-import-local 2026-10-22] A folha "Resumir com a Bia" saiu do fluxo: ela resumia NO SERVIDOR (não há
+// modelo no aparelho) e a importação passa a ser só no aparelho com E2EE → nada de histórico ao servidor.
+import { isLocalImportOn, listLocalImports, deleteLocalImport, subscribeLocalImports } from '../services/waImport/localImport';
 
 function readLocalConversations() {
   try {
@@ -120,7 +124,8 @@ export default function ImportWhatsAppScreen() {
   const [error, setError] = useState('');
   const [errorAction, setErrorAction] = useState(null); // 'copy' | null
   const [imports, setImports] = useState([]);
-  const [showBia, setShowBia] = useState(false);
+  const [localImports, setLocalImports] = useState([]); // [wa-import-local]
+  const localMode = isLocalImportOn(); // [wa-import-local 2026-10-22]
   const [platformTab, setPlatformTab] = useState(Platform.OS === 'android' ? 'android' : 'ios');
 
   const ink = colors.text;
@@ -132,6 +137,9 @@ export default function ImportWhatsAppScreen() {
   useEffect(() => {
     refreshImports(true).then((l) => setImports(Array.isArray(l) ? l : [])).catch(() => {});
   }, []);
+  // [wa-import-local 2026-10-22] importações guardadas só neste aparelho (store local, desta conta)
+  const reloadLocal = useCallback(() => { listLocalImports().then((l) => setLocalImports(Array.isArray(l) ? l : [])).catch(() => {}); }, []);
+  useEffect(() => { reloadLocal(); return subscribeLocalImports(reloadLocal); }, [reloadLocal]);
 
   useEffect(() => {
     // [wa-remetente 2026-10-13] aberto de dentro da conversa = escolha explícita (o aviso de número/nome divergente continua).
@@ -154,6 +162,8 @@ export default function ImportWhatsAppScreen() {
     if (/zip_/.test(m)) return t('waImport.errZip');
     if (m === 'has_messages') return t('waImport.errHasMessages');
     if (m === 'e2ee') return t('waImport.errE2ee');
+    if (m === 'e2ee_local_only') return t('waImport.errE2eeLocalOnly'); // [wa-import-local] servidor recusa conteúdo (conta E2EE)
+    if (m === 'local_store_unavailable' || m === 'local_slots_full' || m === 'local_off') return t('waImport.errLocalStore');
     if (m === 'group_export') return t('waImport.groupToCopy');
     if (m === 'peer_imported') return t('waImport.errPeerImported', { name: e?.data?.by_name || '' });
     if (m === 'rate_limited' || m === 'too_many_imports' || e?.status === 429) return t('waImport.errRate');
@@ -262,7 +272,7 @@ export default function ImportWhatsAppScreen() {
       setLinkAmbiguous(false); // [wa-1a1 2026-10-14]
       phonesRef.current = null; setAgendaState(''); // [wa-phone 2026-10-14]
       matchedOnceRef.current = true;
-      runMatch(p); // [import-ordem 2026-10-13]
+      if (!isLocalImportOn()) runMatch(p); // [import-ordem 2026-10-13] [wa-import-local] local: nada vai ao servidor
       setStep('review');
     } catch (e) {
       setError(errText(e));
@@ -274,8 +284,8 @@ export default function ImportWhatsAppScreen() {
   useEffect(() => {
     if (matchedOnceRef.current || !prep || step !== 'review') return;
     matchedOnceRef.current = true;
-    if (!matchInfo) runMatch(prep);
-  }, [prep, step, matchInfo, runMatch]);
+    if (!matchInfo && !localMode) runMatch(prep);
+  }, [prep, step, matchInfo, runMatch, localMode]);
 
   const sharedOnce = useRef(false);
   useEffect(() => {
@@ -351,8 +361,31 @@ export default function ImportWhatsAppScreen() {
     return String(id);
   }, [link]);
 
+  // [wa-import-local 2026-10-22] só no aparelho: cópia pessoal no store local (sem vínculo/servidor)
+  const startLocal = useCallback(async () => {
+    if (!prep || !meName) return;
+    setError(''); setErrorAction(null);
+    setStep('job');
+    try {
+      await job.start({
+        local: true,
+        meName,
+        title: title.trim() || prep.title,
+        email: user?.email || '',
+        mode: 'local',
+        originConvId: originConvId || null,
+        notifyTitle: t('waImport.doneNotifTitle'), notifyBody: t('waImport.doneNotifBody', { n: '{n}' }),
+      });
+      reloadLocal();
+    } catch (e) {
+      setError(errText(e));
+      setStep('error');
+    }
+  }, [prep, meName, title, user, originConvId, t, errText, reloadLocal]);
+
   const start = useCallback(async (forceCopy) => {
     if (!prep || !meName) return;
+    if (isLocalImportOn()) { startLocal(); return; }
     const useDirect = !forceCopy && effDest === 'direct';
     if (useDirect && needsConfirm && !mismatchOk) return;
     if (useDirect && !personConfirmed) return; // [wa-remetente 2026-10-13]
@@ -397,16 +430,30 @@ export default function ImportWhatsAppScreen() {
       setErrorAction(['has_messages', 'e2ee', 'group_export', 'peer_imported'].includes(reason) ? 'copy' : null);
       setStep('error');
     }
-  }, [prep, meName, effDest, needsConfirm, mismatchOk, personConfirmed, e2eeTarget, confirm, t, resolveTargetConv, errText, link, title, user, serverMismatch, originConvId, exportPeer]);
+  }, [prep, meName, effDest, needsConfirm, mismatchOk, personConfirmed, e2eeTarget, confirm, t, resolveTargetConv, errText, link, title, user, serverMismatch, originConvId, exportPeer, startLocal]);
 
   const openConversation = useCallback((convId, name, direct) => {
+    try {
+      if (require('../services/waImport/localIds').isLocalImportConvId(convId)) { router.replace({ pathname: '/wa-import-local', params: { id: String(convId) } }); return; }
+    } catch {}
     try {
       require('../services/openConversation').openConversation({
         pathname: '/chat-conversation',
         params: direct ? { id: String(convId), name: name || '', type: 'direct', email: link?.email || '' } : { id: String(convId), name: name || '', type: 'group' },
       }, { replace: true });
     } catch {}
-  }, [link]);
+  }, [link, router]);
+
+  // [wa-import-local 2026-10-22]
+  const deleteLocal = useCallback(async (item) => {
+    const msg = t('waImport.localDeleteConfirm');
+    const ok = Platform.OS === 'web'
+      ? (typeof window !== 'undefined' && window.confirm(msg))
+      : await confirm({ title: t('waImport.delete'), message: msg, confirmLabel: t('waImport.delete'), destructive: true });
+    if (!ok) return;
+    await deleteLocalImport(item.id).catch(() => false);
+    reloadLocal();
+  }, [confirm, t, reloadLocal]);
 
   const deleteImport = useCallback(async (item) => {
     const msg = t('waImport.deleteConfirm');
@@ -536,6 +583,30 @@ export default function ImportWhatsAppScreen() {
       </View>
       <Note text={t('waImport.backgroundHint')} icon={IconRefresh} />
       <Btn label={t('waImport.pickFile')} onPress={pickFile} icon={IconFileText} />
+      {localMode ? <View style={{ height: 12 }} /> : null}
+      {localMode ? <Note text={t('waImport.localNote')} icon={IconLock} /> : null}
+      {localImports.length > 0 && (
+        // [wa-import-local 2026-10-22] cópias guardadas só neste aparelho
+        <View style={{ marginTop: 24 }}>
+          <Text style={[s.section, { color: sub }]}>{t('waImport.localList')}</Text>
+          {localImports.map((it) => (
+            <View key={String(it.id)} style={[s.impRow, { borderColor: line }]}>
+              <TouchableOpacity style={{ flex: 1 }} onPress={() => { try { router.push({ pathname: '/wa-import-local', params: { id: String(it.id) } }); } catch {} }} accessibilityRole="button">
+                <Text style={{ color: ink, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{it.name}</Text>
+                <Text style={{ color: sub, fontSize: 12, marginTop: 2 }} numberOfLines={2}>
+                  {it.status === 'done'
+                    ? t('waImport.localCount', { n: it.message_count || 0 })
+                    : it.status === 'partial' ? t('waImport.localPartial', { n: it.message_count || 0 }) : t('waImport.localRunning', { n: it.message_count || 0 })}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => deleteLocal(it)} hitSlop={10} accessibilityLabel={t('waImport.delete')} style={{ padding: 6 }}>
+                <IconTrash size={18} color={sub} />
+              </TouchableOpacity>
+              <IconChevronRight size={18} color={sub} />
+            </View>
+          ))}
+        </View>
+      )}
       {imports.length > 0 && (
         <View style={{ marginTop: 24 }}>
           <Text style={[s.section, { color: sub }]}>{t('waImport.previous')}</Text>
@@ -609,6 +680,20 @@ export default function ImportWhatsAppScreen() {
         {!meName ? <Text style={[s.small, { color: sub, marginBottom: 8 }]}>{t('waImport.pickMeHint')}</Text> : null}
         </>)}
 
+        {localMode ? (
+          // [wa-import-local 2026-10-22] só no aparelho: sem vínculo/continuação (nada vai ao servidor)
+          <>
+            <Text style={[s.section, { color: sub }]}>{t('waImport.nameLabel')}</Text>
+            <TextInput
+              value={title} onChangeText={setTitle} maxLength={80}
+              style={[s.input, { color: ink, borderColor: line }]} placeholder="WhatsApp" placeholderTextColor={sub}
+            />
+            <Note text={t('waImport.localNote')} />
+            <Btn label={t('waImport.startImport')} onPress={() => start(false)} disabled={!meName} icon={IconDownload} />
+            <View style={{ height: 10 }} />
+            <Btn label={t('common.cancel')} solid={false} onPress={() => { job.reset(); setPrep(null); setStep('intro'); }} />
+          </>
+        ) : (<>
         <Text style={[s.section, { color: sub }]}>{t('waImport.linkLabel')}</Text>
         <TouchableOpacity onPress={() => setShowLinkPicker((v) => !v)} style={[s.card, s.linkRow, { backgroundColor: card, borderColor: line }]} accessibilityRole="button">
           {link ? <IconUser size={18} color={ink} /> : <IconUsers size={18} color={ink} />}
@@ -703,6 +788,7 @@ export default function ImportWhatsAppScreen() {
         <Btn label={t('waImport.startImport')} onPress={() => start(false)} disabled={!meName || (effDest === 'direct' && ((needsConfirm && !mismatchOk) || !personConfirmed))} icon={IconDownload} />
         <View style={{ height: 10 }} />
         <Btn label={t('common.cancel')} solid={false} onPress={() => { job.reset(); setPrep(null); setStep('intro'); }} />
+        </>)}
       </>
     );
   };
@@ -735,7 +821,7 @@ export default function ImportWhatsAppScreen() {
       : '';
     return (
       <View style={{ paddingTop: 24 }}>
-        <Text style={[s.h2, { color: ink, textAlign: 'center' }]}>{j.status === 'paused' ? t('waImport.bannerPaused', { pct: Math.round(frac * 100) }) : t('waImport.importing')}</Text>
+        <Text style={[s.h2, { color: ink, textAlign: 'center' }]}>{j.status === 'paused' ? t('waImport.bannerPaused', { pct: Math.round(frac * 100) }) : p.mode === 'local' ? t('waImport.localSaving') : t('waImport.importing')}</Text>
         {verifiedLine ? <Text style={{ color: sub, textAlign: 'center', fontSize: 13 }}>{verifiedLine}</Text> : null}
         <View style={[s.bar, { borderColor: ink }]}><View style={{ width: `${Math.round(frac * 100)}%`, height: '100%', backgroundColor: ink }} /></View>
         <Text style={{ color: ink, textAlign: 'center', fontSize: 15 }}>{t('waImport.progressMessages', { n: p.sent || 0, total: p.total || 0 })}</Text>
@@ -784,30 +870,9 @@ export default function ImportWhatsAppScreen() {
         {r.conversationId ? (
           <View style={{ alignSelf: 'stretch' }}>
             <Btn label={t('waImport.openChat')} onPress={() => { const id = r.conversationId; job.reset(); openConversation(id, convTitle, direct); }} icon={IconMessageSquare} />
-            {ConversationSummarySheet && jobState.status === 'done' ? (
-              <>
-                <View style={{ height: 10 }} />
-                <Btn label={t('waImport.askBia')} solid={false} onPress={() => setShowBia(true)} />
-              </>
-            ) : null}
             <View style={{ height: 10 }} />
             <Btn label={t('common.back')} solid={false} onPress={() => { job.reset(); setPrep(null); setStep('intro'); }} />
           </View>
-        ) : null}
-        {showBia && ConversationSummarySheet && r.conversationId ? (
-          <ConversationSummarySheet
-            visible
-            onClose={() => setShowBia(false)}
-            conversationId={r.conversationId}
-            messages={[]}
-            currentEmail={user?.email || ''}
-            myName={user?.name || ''}
-            initialRange="last300"
-            isGroup={!direct}
-            colors={colors}
-            isDark={isDark}
-            t={t}
-          />
         ) : null}
       </View>
     );

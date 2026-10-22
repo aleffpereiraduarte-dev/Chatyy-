@@ -84,6 +84,8 @@ const MSG_FIELDS = [
   'starred', 'pinned', 'client_message_id', 'topic_id', 'effect', 'poll_data', 'is_poll',
   // cópia pessoal importada (WhatsApp → store local): só existe no aparelho; ausente = nada muda no JSON
   'imported', 'is_imported', 'import_source', 'imported_at', 'original_sender', 'original_sender_name',
+  // [wa-import-local 2026-10-22] marcas da linha importada (eu/mídia ausente/omitida) + anexo cifrado WP-11 (flag)
+  'is_mine', 'media_missing', 'media_omitted', 'e2ee_media', 'mime',
 ];
 
 // ─── flag ────────────────────────────────────────────────────────────────

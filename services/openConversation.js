@@ -173,6 +173,16 @@ export function openConversation(href, opts = {}) {
     return 'passthrough';
   }
 
+  // [wa-import-local 2026-10-22] conversa importada do WhatsApp SÓ NO APARELHO (id local negativo,
+  // ex.: resultado da busca local) → visualizador local; a tela de conversa falaria com o servidor.
+  try {
+    if (params.id != null && require('./waImport/localIds').isLocalImportConvId(params.id)) {
+      const lh = { pathname: '/wa-import-local', params: { id: String(params.id) } };
+      if (opts.replace) r.replace(lh); else r.push(lh);
+      return 'local_import';
+    }
+  } catch {}
+
   // [2026-10-14 tipo-conv] Quem abre só com `id` (busca, notificações, toast, perfil, comunidade,
   // links /j/…) não sabe o tipo → a tela assumia direct e tratava grupo como contato. Preenche
   // pelo tipo da conversa conhecida (handoff/snapshot da lista); desconhecido segue sem `type`.
