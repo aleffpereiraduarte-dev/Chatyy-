@@ -6481,6 +6481,23 @@ const NATIVE_SEND_ACK_TIMEOUT_MS = 4000;
 // [2026-10-09 net-resilience] 4s fixos < 1 RTT+retransmissão em 2G/satélite → caía
 // no HTTP à toa (mesmo cmi, dedup ok, mas dobra o tráfego no pior enlace).
 function _nativeSendAckTimeout() { return Math.round(NATIVE_SEND_ACK_TIMEOUT_MS * _netTimeoutScale()); }
+// [2026-10-22 ws-warm] Hedge: socket sem frame há > 8 s pode ser half-open (NAT da
+// operadora/roaming expirou) — esperar 4 s (×escala) pelo ack antes do HTTP era o
+// pior caso do 1º envio pós-ociosidade. Nesse caso o prazo cai p/ max(1,5 s,
+// 3×srtt+0,8 s) (teto = o prazo cheio); o HTTP vai com o MESMO client_message_id
+// (dedup no hub/PHP). Socket que cai durante a espera → HTTP na hora.
+// Kill OTA: globalThis.__chatyy_ws_send_hedge = false.
+function _wsSendAckTimeoutFor(ws) {
+  const full = _nativeSendAckTimeout();
+  try {
+    if (globalThis.__chatyy_ws_send_hedge === false || !ws) return full;
+    const quiet = Date.now() - Math.max(ws.lastInboundAt || 0, ws.lastPongTime || 0);
+    if (quiet < 8000) return full;
+    let srtt = 0;
+    try { srtt = Number(require('./networkInfo').getSrtt?.()) || 0; } catch {}
+    return Math.min(full, Math.max(1500, Math.round(srtt * 3 + 800)));
+  } catch { return full; }
+}
 function _nativeSendSocket() {
   try {
     if (globalThis.__chatyy_native_send_off === true) return null; // kill-switch local (debug)
@@ -6586,7 +6603,17 @@ async function _tryNativeWsSend(payload) {
       if (!m || m.client_message_id !== cmi) return;
       finish({ success: false, code: m.code || 'chat_send_error', error: m.code || 'chat_send_error', message: m.code || 'chat_send_error', data: { code: m.code || '' }, __httpStatus: Number(m.http) || 409, _native_outbox: true, _e2ee5_refused: true });
     });
-    timer = setTimeout(() => finish(null), _nativeSendAckTimeout());
+    timer = setTimeout(() => finish(null), _wsSendAckTimeoutFor(ws));
+    try {
+      if (globalThis.__chatyy_ws_send_hedge !== false) {
+        const offConn = ws.on('connection', (c) => {
+          const st = c && c.status;
+          if (st === 'disconnected' || st === 'reconnecting' || st === 'offline' || st === 'session_replaced') finish(null);
+        });
+        const prevOffAck = offAck;
+        offAck = () => { try { prevOffAck?.(); } catch {} try { offConn?.(); } catch {} };
+      }
+    } catch {}
     try {
       if (ws.ws && ws.ws.readyState === 1) ws.ws.send(ws._encodeOutbound(frame));
       else finish(null);

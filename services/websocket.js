@@ -156,6 +156,16 @@ const FG_PROBE_MS = 2500;
 // durante a queda de rede) não pode bloquear a recuperação até o timeout do SO
 // (~60s no iOS). Passou disso → descarta e reabre.
 const CONNECT_TIMEOUT_MS = 10000;
+// [2026-10-22 ws-warm] Pré-aquecimento ao abrir a conversa / 1ª tecla. Caso real
+// (founder, 22/10 23:07Z, edge scl, srtt 0,3-1 s): socket ocioso → o 1º envio
+// pagava a reconexão (hs 2,4 s) ou, em socket half-open, os 4 s de espera do ack
+// antes do HTTP. Agora: sem frame há > WARM_QUIET_MS → 1 ping (prazo adaptativo
+// pelo srtt, base WARM_PROBE_MS); morto → reconecta ENQUANTO o usuário digita.
+// Socket caído → reconexão urgente (pula o backoff). No máx. 1×/WARM_THROTTLE_MS.
+// Kill OTA: globalThis.__chatyy_ws_warm = false.
+const WARM_QUIET_MS = 8000;
+const WARM_PROBE_MS = 2000;
+const WARM_THROTTLE_MS = 10000;
 // Identidade desta INSTÂNCIA de JS (processo do app / aba do browser). Vai no
 // frame de auth; o hub fecha sockets mais antigos com o MESMO instance_id
 // (fantasmas cujo close nunca chegou porque o rádio já tinha morrido) assim que
@@ -2089,6 +2099,25 @@ class MailWebSocket {
     if (wasActive !== this._chatActive && this.pingTimer) {
       this._startPing();
     }
+    if (active) { try { this.warmForSend('chat_open'); } catch {} }
+  }
+
+  // [2026-10-22 ws-warm] ver WARM_* (topo). Chamado por setChatActive(true) e
+  // pela 1ª tecla (sendTyping, antes do gate de privacidade). Nunca mata socket
+  // saudável nem handshake em voo (passa pelo ensureConnected).
+  warmForSend(reason = 'compose') {
+    try { if (globalThis.__chatyy_ws_warm === false) return 'off'; } catch {}
+    if (this._hidden || this._loggedOut) return 'skip';
+    const t = Date.now();
+    if (t - (this._warmAt || 0) < WARM_THROTTLE_MS) return 'throttled';
+    this._warmAt = t;
+    try {
+      if (!this.isConnected) return this.ensureConnected('warm_' + reason, { urgent: true });
+      const quiet = t - Math.max(this.lastInboundAt || 0, this.lastPongTime || 0);
+      if (quiet < WARM_QUIET_MS) return 'fresh';
+      this._logGhost?.('warm_probe', { reason, quiet });
+      return this.ensureConnected('warm_' + reason, { probe: true, probeMs: WARM_PROBE_MS });
+    } catch { return 'error'; }
   }
 
   // Force a fresh health check + reconnect when the caller knows they're
@@ -3551,6 +3580,8 @@ class MailWebSocket {
 
   // Send typing indicator (debounced: max once per 3s per conversation)
   sendTyping(conversationId, recording = false) {
+    // [2026-10-22 ws-warm] 1ª tecla: garante o fio pronto antes do "enviar".
+    try { this.warmForSend(recording ? 'recording' : 'typing'); } catch {}
     if (!this.isConnected) return;
     // [2026-10-06 rt-client] gate de privacidade (ver setTypingPrivacy).
     if (!this.typingAllowed()) return;
