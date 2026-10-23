@@ -185,6 +185,17 @@ class NativeTransportSocket {
     if (opts.authFrame) {
       try { cfg.authFrame = JSON.stringify(opts.authFrame); } catch {}
     }
+    // [quic-proto 2026-10-23] fio QUIC+Noise (protótipo ESCURO; binário com o fio:
+    // iOS quicVersion() ≥ 1, Android quicProtoInfo): só com cfg do servidor p/ a conta
+    // (client-lb transport) — o nativo ainda exige a flag LOCAL do aparelho. Sem a
+    // chave = WSS de sempre. Kill: __chatyy_quic = false.
+    try {
+      const hasQuic = (typeof m.quicVersion === 'function' && m.quicVersion() >= 1) || typeof m.quicProtoInfo === 'function';
+      if (globalThis.__chatyy_quic !== false && hasQuic) {
+        const q = require('./clientLb').quicTransportFor(cfg.account);
+        if (q) cfg.quic = q;
+      }
+    } catch {}
     _sockets.set(this.sid, this);
     try {
       m.open(this.sid, cfg);

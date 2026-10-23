@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import UIKit
+import CryptoKit
 import ExpoChatStore
 
 /// [2026-10-15 native-transport] Transporte realtime NATIVO do Chatyy (gêmeo de
@@ -97,6 +98,19 @@ final class ChatTransport {
   private var sharedSessionBornAt: Double = 0
   private lazy var router: TransportWSRouter = TransportWSRouter()
 
+  // [2026-10-23 quic-proto] bloqueios do fio QUIC por região (só na fila q).
+  // epoch >= 0 = vale só enquanto a rede (netEpoch) for a mesma ("UDP bloqueado
+  // nesta rede"); -1 = vale em qualquer rede (go_ws, noise_fail…).
+  struct QuicBlock {
+    let until: Double
+    let epoch: Int
+    let why: String
+  }
+  private var quicBlocks: [String: QuicBlock] = [:]
+  private var quicAuthedDrops: [Double] = []
+  /// Versão do protótipo QUIC (JS: quicVersion()).
+  static let quicVersion = 1
+
   static func now() -> Double {
     return Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000.0
   }
@@ -107,6 +121,65 @@ final class ChatTransport {
 
   func emit(_ name: String, _ body: [String: Any?]) {
     emitter?(name, body)
+  }
+
+  // MARK: [quic-proto] bloqueios por região
+
+  func quicBlocked(_ region: String) -> QuicBlock? {
+    guard let b = quicBlocks[region] else { return nil }
+    if ChatTransport.now() >= b.until || (b.epoch >= 0 && b.epoch != netEpoch) {
+      quicBlocks.removeValue(forKey: region)
+      return nil
+    }
+    return b
+  }
+
+  func quicBlock(_ region: String, ms: Double, networkScoped: Bool, why: String) {
+    quicBlocks[region] = QuicBlock(until: ChatTransport.now() + ms, epoch: networkScoped ? netEpoch : -1, why: why)
+  }
+
+  /// Queda do QUIC JÁ autenticado: 3 em 10 min → QUIC fora 30 min nessa região.
+  func quicNoteAuthedDrop(_ region: String) {
+    let t = ChatTransport.now()
+    quicAuthedDrops = quicAuthedDrops.filter { t - $0 < 600_000 }
+    quicAuthedDrops.append(t)
+    if quicAuthedDrops.count >= 3 {
+      quicAuthedDrops.removeAll()
+      quicBlock(region, ms: 1_800_000, networkScoped: false, why: "flaky")
+      bump("quicBlockFlaky")
+    }
+  }
+
+  /// Estado p/ tela de diagnóstico / QA (sem segredo: só a chave PÚBLICA do aparelho).
+  func quicStatus() -> [String: Any] {
+    var out: [String: Any] = [
+      "v": ChatTransport.quicVersion,
+      "local": ChatyyQuicGate.localOn(),
+      "kill": ChatyyQuicGate.killOn(),
+      "handover": ChatyyQuicGate.handoverOn(),
+    ]
+    let sem = DispatchSemaphore(value: 0)
+    q.async {
+      var bl: [String: Any] = [:]
+      let t = ChatTransport.now()
+      for (r, b) in self.quicBlocks where t < b.until && (b.epoch < 0 || b.epoch == self.netEpoch) {
+        bl[r] = ["why": b.why, "ms": b.until - t, "net": b.epoch >= 0]
+      }
+      out["blocked"] = bl
+      out["devicePub"] = ChatyyNoiseDeviceKey.publicB64() ?? ""
+      var st: [String: Any] = [:]
+      for (k, v) in self.stats where k.hasPrefix("quic") { st[k] = Double(v) }
+      out["stats"] = st
+      if let s = self.session { out["wire"] = s.wireName() }
+      sem.signal()
+    }
+    if sem.wait(timeout: .now() + 0.5) == .timedOut { out["busy"] = true }
+    return out
+  }
+
+  /// Limpa bloqueios (QA: depois de mexer em flag do servidor).
+  func quicClearBlocks() {
+    q.async { self.quicBlocks.removeAll(); self.quicAuthedDrops.removeAll() }
   }
 
   // MARK: - ciclo de vida / rede
@@ -344,7 +417,8 @@ final class ChatTransport {
       batchMs: ChatTransport.num(config["batchMs"], 16, 0, 250),
       outboxMax: Int(ChatTransport.num(config["outboxMax"], 500, 10, 2000)),
       account: ((config["account"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-      storeIngest: (config["storeIngest"] as? Bool) == true
+      storeIngest: (config["storeIngest"] as? Bool) == true,
+      quic: TransportQuicConfig.parse(config["quic"])
     )
     q.async {
       self.bgGraceOn = cfg.bgGrace
@@ -544,6 +618,42 @@ struct TransportConfig {
   let account: String
   /// [2b] gravar mensagens/recibos direto no expo-chat-store.
   let storeIngest: Bool
+  /// [quic-proto] nil = QUIC nunca é tentado (padrão; JS antigo/conta fora da lista).
+  let quic: TransportQuicConfig?
+}
+
+/// [2026-10-23 quic-proto] cfg.quic do JS — só vem quando o client-lb do servidor
+/// liberou a CONTA (transport.quic/noise) e o kill JS (__chatyy_quic) não está ativo.
+/// { on:true, noise:true, noiseTest:bool, regions:{ <reg>: {kid, port} }, hsMs? }
+struct TransportQuicConfig {
+  struct Region {
+    let kid: String
+    let port: UInt16
+  }
+  let noiseTest: Bool
+  let regions: [String: Region]
+  /// prazo do QUIC+Noise até a msg2 antes de cair para o WSS.
+  let hsMs: Double
+  /// troca de rede com QUIC autenticado: sonda (migração) em vez de reconectar.
+  let migrate: Bool
+
+  static func parse(_ v: Any?) -> TransportQuicConfig? {
+    guard let o = v as? [String: Any], (o["on"] as? Bool) == true, (o["noise"] as? Bool) == true,
+          let rs = o["regions"] as? [String: Any] else { return nil }
+    var regions: [String: Region] = [:]
+    for (k, rv) in rs.prefix(24) {
+      guard let r = rv as? [String: Any], let kid = r["kid"] as? String, !kid.isEmpty, kid.count <= 16 else { continue }
+      let port = Int(ChatTransport.num(r["port"], 443, 1, 65535))
+      regions[k] = Region(kid: kid, port: UInt16(port))
+    }
+    if regions.isEmpty { return nil }
+    return TransportQuicConfig(
+      noiseTest: (o["noiseTest"] as? Bool) == true,
+      regions: regions,
+      hsMs: ChatTransport.num(o["hsMs"], 1500, 600, 3000),
+      migrate: (o["migrate"] as? Bool) != false
+    )
+  }
 }
 
 /// Delegate por socket físico (geração). Callbacks na fila q (delegateQueue).
@@ -623,6 +733,19 @@ final class TransportSession {
 
   private var phys: Phys = .idle
   private var task: URLSessionWebSocketTask?
+  // [2026-10-23 quic-proto] fio QUIC+Noise (protótipo escuro). No máximo UM fio
+  // físico por vez: `task` (WSS) OU `quic`. Sem cfg.quic nada disto é usado.
+  private var quic: ChatyyQuicWire?
+  private var hasWire: Bool { return task != nil || quic != nil }
+  /// "wss" | "quic" — fio da geração atual.
+  private var wire = "wss"
+  private var quicRegion = ""
+  private var quicBound = ""
+  private var quicReplayRetried = false
+  /// troca de rede com QUIC autenticado: hora da sonda de migração (0 = nenhuma).
+  private var migrateProbeAt: Double = 0
+
+  func wireName() -> String { return wire }
   private var urlSession: URLSession?
   private var gen = 0
   private var curUrl: URL?
@@ -730,7 +853,7 @@ final class TransportSession {
   private var e2eeNsCap = false
   private var ingestBuf: [String] = []
 
-  func isAuthed() -> Bool { return !closed && phys == .authed && task != nil }
+  func isAuthed() -> Bool { return !closed && phys == .authed && hasWire }
 
   /// [v6] hosts p/ pré-resolver (regional + US).
   func dnsHosts() -> [String] {
@@ -742,7 +865,7 @@ final class TransportSession {
   }
 
   func nativeSendReady(_ account: String) -> Bool {
-    guard !closed, phys == .authed, task != nil, nativeSendCap, let a = authedAccount else { return false }
+    guard !closed, phys == .authed, hasWire, nativeSendCap, let a = authedAccount else { return false }
     return a == account.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
   }
 
@@ -809,7 +932,7 @@ final class TransportSession {
   // MARK: conexão física
 
   func connect(reason: String) {
-    if closed || task != nil { return }
+    if closed || hasWire { return }
     reconnectWork?.cancel(); reconnectWork = nil
     if !owner.netUp { emitState("offline", ["reason": reason]); return }
     if !owner.foreground { emitState("paused", ["reason": reason]); return }
@@ -820,6 +943,12 @@ final class TransportSession {
     curUrl = url
     connectStartedAt = now()
     owner.bump("connects")
+    // [quic-proto] conta liberada pelo servidor + flag local + sem kill/bloqueio → QUIC.
+    if let qt = quicTarget(url) {
+      startQuic(qt, url: url, g: g, reason: reason)
+      return
+    }
+    wire = "wss"
     emitState("connecting", ["url": url.absoluteString, "attempt": attempt, "reason": reason])
     let d = TransportWSDelegate(owner: self, gen: g)
     let made: (URLSessionWebSocketTask, URLSession?) = owner.makeSocketTask(url: url, delegate: d)
@@ -881,6 +1010,19 @@ final class TransportSession {
   }
 
   private func rawSend(_ text: String) {
+    if let w = quic {
+      let g = gen
+      sendsInFlight += 1
+      w.sendText(text) { [weak self] err in
+        // completion já na fila q (NWConnection.start(queue: q))
+        guard let self = self else { return }
+        if g == self.gen { self.sendsInFlight = max(0, self.sendsInFlight - 1) }
+        if let err = err, g == self.gen, !self.closed {
+          self.onQuicEnd(g, .failed("send: \(err)"), beforeReady: false)
+        }
+      }
+      return
+    }
     guard let t = task else { return }
     let g = gen
     sendsInFlight += 1
@@ -896,7 +1038,7 @@ final class TransportSession {
   }
 
   private func sendAuthIfPossible() {
-    guard let a = authFrame, task != nil, phys == .open, authSentGen != gen else { return }
+    guard let a = authFrame, hasWire, phys == .open, authSentGen != gen else { return }
     rawSend(a)
     authSentGen = gen
     armAuthWatchdog()
@@ -907,6 +1049,11 @@ final class TransportSession {
     let g = gen
     authWatchdogWork = after(effAuthWatchdogMs()) { [weak self] in
       guard let self = self, g == self.gen, self.phys == .open, !self.authRejected else { return }
+      if self.quic != nil {
+        // [quic-proto] Noise ok mas sem auth_success (portão do leaf) → WSS já.
+        self.quicFallback(why: "auth_watchdog", ms: 600_000, networkScoped: false)
+        return
+      }
       self.owner.bump("authTimeouts")
       self.authTimeoutStreak += 1
       self.forceReconnect("auth_watchdog")
@@ -917,6 +1064,7 @@ final class TransportSession {
     guard g == gen, !closed else { return }
     lastInboundAt = now()
     lastInboundWall = TransportSession.wallMs()
+    if migrateProbeAt > 0 { noteQuicAlive() }
     // [v6] qualquer frame depois do ping da volta prova o socket vivo → reusado.
     if resumePending && g == resumeGen && resumeSentAt > 0 {
       finishResume(kept: true, probeMs: now() - resumeSentAt, reason: "probe_ok")
@@ -989,8 +1137,13 @@ final class TransportSession {
     startHeartbeat()
     emitState("authed", [
       "url": curUrl?.absoluteString, "reconnectMs": since, "regionalBlocked": regionalBlocked,
-      "hsMs": hsMs, "connectMs": lastConnectMs, "authMs": authMs, "attempt": attempt,
+      "hsMs": hsMs, "connectMs": lastConnectMs, "authMs": authMs, "attempt": attempt, "wire": wire,
     ])
+    if quic != nil {
+      owner.bump("quicAuthed")
+      owner.bump("quicHsMsTotal", Int64(hsMs))
+      quicReplayRetried = false
+    }
     // [fase 4] socket novo autenticado → fila nativa tenta já (WS)
     if authedAccount != nil { ChatOutbox.shared.kick("ws_authed") }
   }
@@ -1056,6 +1209,10 @@ final class TransportSession {
     let s = urlSession
     task = nil
     urlSession = nil
+    let qw = quic
+    quic = nil
+    migrateProbeAt = 0
+    qw?.cancel(code: closeCode)
     phys = .idle
     sendsInFlight = 0
     stopHeartbeat()
@@ -1087,7 +1244,7 @@ final class TransportSession {
 
   private func scheduleReconnect(reason: String, code: Int, wasAuthed: Bool, delayOverride: Double = -1, http: Int = 0) {
     reconnectWork?.cancel(); reconnectWork = nil
-    if closed || task != nil { return }
+    if closed || hasWire { return }
     let base: [String: Any?] = ["reason": reason, "code": code, "wasAuthed": wasAuthed, "http": http]
     if !owner.netUp { emitState("offline", base); return }
     if !owner.foreground { emitState("paused", base); return }
@@ -1144,7 +1301,7 @@ final class TransportSession {
 
   @discardableResult
   private func sendPing() -> Double {
-    guard task != nil else { return 0 }
+    guard hasWire else { return 0 }
     let t = now()
     lastPingSentAt = t
     owner.bump("pings")
@@ -1153,7 +1310,7 @@ final class TransportSession {
   }
 
   private func tick() {
-    guard phys == .authed, task != nil else { return }
+    guard phys == .authed, hasWire else { return }
     let g = gen
     let sent = sendPing()
     let deadline = pongDeadlineMs
@@ -1262,6 +1419,14 @@ final class TransportSession {
         attempt = 0
         scheduleReconnect(reason: kind, code: 0, wasAuthed: false, delayOverride: Double.random(in: 0..<400))
       }
+      return
+    }
+    // [quic-proto] QUIC autenticado: a conexão pode MIGRAR (o SO troca o caminho e o
+    // leaf aceita o endereço novo) → 1 ping com prazo curto; só reconecta se não voltar.
+    if quic != nil && phys == .authed && (cfg.quic?.migrate ?? false) {
+      owner.bump("quicNetChangeProbes")
+      migrateProbeAt = now()
+      probe(1500, reason: "quic_migrate")
       return
     }
     // Troca da interface principal (Wi-Fi↔celular): o socket está preso à
@@ -1406,7 +1571,7 @@ final class TransportSession {
     default:
       break
     }
-    if phys == .authed && task != nil {
+    if phys == .authed && hasWire {
       rawSend(text)
       owner.bump("framesOut")
       return
@@ -1441,7 +1606,7 @@ final class TransportSession {
   }
 
   private func flushOutbox() {
-    guard task != nil, phys == .authed else { return }
+    guard hasWire, phys == .authed else { return }
     let t = now()
     var n: Int64 = 0
     let items = outbox
@@ -1526,7 +1691,196 @@ final class TransportSession {
       "pongDeadlineMs": pongDeadlineMs,
       "authRejected": authRejected,
       "lastDropWhy": lastDropWhy,
+      "wire": wire,
+      "quicBound": quicBound,
     ]
+  }
+
+  // MARK: [2026-10-23 quic-proto] fio QUIC + Noise (protótipo escuro)
+
+  private struct QuicTarget {
+    let host: String
+    let port: UInt16
+    let region: String
+    let kid: String
+    let pub: Data
+    let key: Curve25519.KeyAgreement.PrivateKey
+  }
+
+  /// nil = WSS de sempre. Só devolve alvo com TODAS as condições: cfg.quic do JS
+  /// (servidor liberou a conta), entrada regional api-<reg> com QUIC anunciado,
+  /// flag local ligada, sem kill, região sem bloqueio, chave fixada e par do aparelho.
+  private func quicTarget(_ url: URL) -> QuicTarget? {
+    guard let qc = cfg.quic, !cfg.account.isEmpty else { return nil }
+    guard url == cfg.urls[0], let host = url.host?.lowercased(),
+          host.hasPrefix("api-"), host.hasSuffix(".chatyy.com.br") else { return nil }
+    let region = String(host.dropFirst(4).dropLast(".chatyy.com.br".count))
+    guard !region.isEmpty, region.count <= 8, region != "us",
+          region.unicodeScalars.allSatisfy({ CharacterSet.lowercaseLetters.contains($0) || CharacterSet.decimalDigits.contains($0) }),
+          let r = qc.regions[region] else { return nil }
+    guard ChatyyQuicGate.localOn(), !ChatyyQuicGate.killOn() else { return nil }
+    if owner.quicBlocked(region) != nil { owner.bump("quicSkippedBlocked"); return nil }
+    guard let pub = ChatyyQuicProto.pinnedKey(kid: r.kid, testAllowed: qc.noiseTest) else { owner.bump("quicNoPin"); return nil }
+    guard let key = ChatyyNoiseDeviceKey.loadOrCreate() else { owner.bump("quicNoDeviceKey"); return nil }
+    return QuicTarget(host: host, port: r.port, region: region, kid: r.kid, pub: pub, key: key)
+  }
+
+  /// e2ee5_device do frame de auth (vai no "dev" da msg1; vazio se não houver).
+  private func authDev() -> String {
+    guard let a = authFrame, let d = a.data(using: .utf8),
+          let o = (try? JSONSerialization.jsonObject(with: d, options: [])) as? [String: Any] else { return "" }
+    if let s = o["e2ee5_device"] as? String { return String(s.prefix(128)) }
+    if let n = o["e2ee5_device"] as? NSNumber { return n.stringValue }
+    return ""
+  }
+
+  /// Prazo QUIC+TLS+Noise até a msg2: cfg (1,5 s) ou 4×RTT+0,5 s; teto 3 s. Passou → WSS.
+  private func quicHsTimeoutMs(_ qc: TransportQuicConfig) -> Double {
+    var v: Double = qc.hsMs
+    if owner.lastGoodRttMs > 0 { v = max(v, owner.lastGoodRttMs * 4.0 + 500.0) }
+    return min(3000.0, v)
+  }
+
+  private func startQuic(_ t: QuicTarget, url: URL, g: Int, reason: String) {
+    wire = "quic"
+    quicRegion = t.region
+    quicBound = ""
+    owner.bump("quicAttempts")
+    emitState("connecting", ["url": url.absoluteString, "attempt": attempt, "reason": reason, "wire": "quic"])
+    let w = ChatyyQuicWire(params: ChatyyQuicWire.Params(
+      host: t.host, port: t.port, region: t.region, kid: t.kid, regionPub: t.pub, deviceKey: t.key,
+      dev: authDev(), ua: ChatyyQuicWire.userAgent(), handover: ChatyyQuicGate.handoverOn()), queue: owner.q)
+    w.onReady = { [weak self, weak w] bound in
+      guard let self = self, g == self.gen, !self.closed else { return }
+      self.quicBound = bound
+      self.owner.bump("quicReady")
+      if bound == "dev" { self.owner.bump("quicBoundDev") }
+      if w?.mode == ChatyyQuicProto.modeE { self.owner.bump("quicNoExporter") }
+      self.onOpen(g)
+    }
+    w.onText = { [weak self] s in self?.onText(g, s) }
+    w.onBytes = { [weak self] in
+      guard let self = self, g == self.gen else { return }
+      self.lastInboundAt = self.now()
+      if self.migrateProbeAt > 0 && self.phys == .authed { self.noteQuicAlive() }
+    }
+    w.onEnd = { [weak self] end, before in self?.onQuicEnd(g, end, beforeReady: before) }
+    w.onPathEvent = { [weak self] ev in
+      guard let self = self, g == self.gen else { return }
+      self.owner.bump("quicPath_" + ev)
+    }
+    quic = w
+    // Prazo armado ANTES do start: falha síncrona no start cai p/ WSS e o prazo
+    // do WSS não é sobrescrito.
+    connectTimeoutWork = after(quicHsTimeoutMs(cfg.quic!)) { [weak self] in
+      guard let self = self, g == self.gen, self.phys == .connecting, self.quic != nil else { return }
+      self.owner.bump("quicHsTimeouts")
+      // "UDP bloqueado nesta rede": 24 h ou até trocar de rede.
+      self.quicFallback(why: "hs_timeout", ms: 86_400_000, networkScoped: true)
+    }
+    w.start()
+  }
+
+  /// Fim do fio QUIC (sempre na fila q). Decide: cair p/ WSS já (com bloqueio) ou
+  /// reconectar como o WS faria hoje.
+  func onQuicEnd(_ g: Int, _ end: ChatyyQuicWire.End, beforeReady: Bool) {
+    guard g == gen, !closed, quic != nil else { return }
+    let region = quicRegion
+    switch end {
+    case .appClose(let code, let reason):
+      switch code {
+      case 4001: // go_ws: conta fora da lista / QUIC desligado no edge / US fora
+        owner.bump("quicGoWs")
+        quicFallback(why: "go_ws", ms: 3_600_000, networkScoped: false)
+      case 4003: // noise_mismatch: par do aparelho é de outra conta
+        owner.bump("quicNoiseMismatch")
+        ChatyyNoiseDeviceKey.forget()
+        quicFallback(why: "noise_mismatch", ms: 3_600_000, networkScoped: false)
+      case 4004: // auth_timeout do portão
+        owner.bump("quicGateTimeout")
+        quicFallback(why: "auth_timeout", ms: 3_600_000, networkScoped: false)
+      default:
+        let business = code >= 4000 && code <= 4999
+        if phys != .authed && !business {
+          quicFallback(why: "close_\(code)", ms: 600_000, networkScoped: true)
+        } else {
+          if !business { owner.quicNoteAuthedDrop(region) }
+          owner.bump("quicDrops")
+          // 1012/1011/1013/4xxx do hub: exatamente como o WS de hoje.
+          onDrop(g, code: code, reason: "quic_close: " + reason)
+        }
+      }
+    case .quicClose(let code, let text):
+      owner.bump("quicClose_" + String(code, radix: 16))
+      switch code {
+      case 0x101:
+        owner.bump("quicGoWs")
+        quicFallback(why: "go_ws", ms: 3_600_000, networkScoped: false)
+      case 0x102: // noise_fail: chave/região/prólogo — evento, sem laço; nunca cai p/ modo P
+        emitState("quic", ["ev": "noise_fail", "region": region, "text": String(text.prefix(40))])
+        quicFallback(why: "noise_fail", ms: 86_400_000, networkScoped: false)
+      case 0x103: // replay: 1 nova tentativa (msg1 nova), depois WSS
+        if !quicReplayRetried && phys != .authed {
+          quicReplayRetried = true
+          teardownSocket(closeCode: nil)
+          connect(reason: "quic_replay_retry")
+        } else {
+          quicFallback(why: "replay", ms: 600_000, networkScoped: false)
+        }
+      case 0x104:
+        quicFallback(why: "rate_limited", ms: 300_000, networkScoped: false)
+      case 0x106:
+        quicFallback(why: "draining", ms: 120_000, networkScoped: false)
+      case 0x107:
+        quicFallback(why: "hs_timeout_srv", ms: 600_000, networkScoped: true)
+      case 0x10A:
+        ChatyyNoiseDeviceKey.forget()
+        quicFallback(why: "noise_mismatch", ms: 3_600_000, networkScoped: false)
+      case 0x0 where phys == .authed:
+        owner.bump("quicDrops")
+        onDrop(g, code: 1001, reason: "quic_bye: " + text)
+      default: // 0x105 bad_preamble, 0x108 noise_required, 0x109 unknown_key, desconhecido
+        quicFallback(why: "srv_" + String(code, radix: 16), ms: 86_400_000, networkScoped: false)
+      }
+    case .failed(let why):
+      if phys == .authed {
+        owner.quicNoteAuthedDrop(region)
+        owner.bump("quicDrops")
+        onDrop(g, code: 0, reason: "quic: " + why)
+      } else {
+        // UDP/TLS/QUIC sem sucesso nesta rede → WSS já; lembra até trocar de rede (≤ 24 h).
+        owner.bump("quicFailBeforeAuth")
+        quicFallback(why: "fail", ms: 86_400_000, networkScoped: true)
+      }
+    }
+  }
+
+  /// Cai para o WSS AGORA (sem backoff, sem marcar falha regional) e bloqueia o QUIC
+  /// nesta região por `ms` (networkScoped = só enquanto a rede for a mesma).
+  private func quicFallback(why: String, ms: Double, networkScoped: Bool) {
+    guard quic != nil else { return }
+    let wasAuthed = phys == .authed
+    owner.quicBlock(quicRegion, ms: ms, networkScoped: networkScoped, why: why)
+    owner.bump("quicFallbacks")
+    emitState("quic", ["ev": "fallback", "why": why, "blockMs": ms, "net": networkScoped,
+                       "wasAuthed": wasAuthed, "region": quicRegion])
+    if wasAuthed && lostAt == 0 { lostAt = now() }
+    teardownSocket(closeCode: nil)
+    if wasAuthed || authRejected {
+      // Já autenticado: o JS precisa ver a queda ('reconnecting') antes do novo auth_success.
+      scheduleReconnect(reason: "quic_fallback", code: 0, wasAuthed: wasAuthed, delayOverride: 0)
+    } else {
+      connect(reason: "quic_fallback")
+    }
+  }
+
+  /// Bytes chegaram depois da troca de rede: a conexão QUIC migrou (sem auth novo).
+  private func noteQuicAlive() {
+    guard migrateProbeAt > 0 else { return }
+    let ms: Double = now() - migrateProbeAt
+    migrateProbeAt = 0
+    owner.bump("quicMigrationsKept")
+    emitState("quic", ["ev": "migrated", "ms": ms, "region": quicRegion])
   }
 
   // MARK: endpoint regional

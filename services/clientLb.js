@@ -79,6 +79,10 @@ export function validateList(j) {
       health: r.id === 'us' ? 'up' : (r.health === 'down' ? 'down' : (r.health === 'up' ? 'up' : 'unknown')),
       hosts,
       ws: typeof r.ws === 'string' && WS_RE.test(r.ws) ? r.ws : null,
+      // [quic-proto 2026-10-23] QUIC chatyy/1 anunciado na região (PROTOCOLO §1: q, qp, nk).
+      q: r.id !== 'us' && (r.q === 1 || r.q === true),
+      qp: (Number.isInteger(r.qp) && r.qp > 0 && r.qp < 65536) ? r.qp : 443,
+      nk: typeof r.nk === 'string' && /^[a-z0-9]{1,16}$/.test(r.nk) ? r.nk : null,
     });
   }
   const us = regions.find((r) => r.id === 'us');
@@ -111,7 +115,15 @@ export function validateList(j) {
     // [client-lb 2026-10-22] WS no leaf (hub regional) p/ contas da lista (hash FNV-1a do e-mail)
     // mesmo em binário cujo nativo só conhece br/eu. Kill remoto: tirar do JSON / "ws_leaf":false.
     wsLeaf: _validWsLeaf(j.ws_leaf),
+    // [quic-proto 2026-10-23] transporte por CONTA (só vem p/ a allowlist do servidor).
+    transport: _validTransport(j.transport),
   };
+}
+function _validTransport(t) {
+  if (!t || typeof t !== 'object') return null;
+  const on = (v) => v === 1 || v === true;
+  const acc = Array.isArray(t.acc) ? t.acc.filter((x) => typeof x === 'string' && /^[0-9a-f]{8}$/.test(x)).slice(0, 64) : null;
+  return { quic: on(t.quic), noise: on(t.noise), noise0rtt: on(t.noise0rtt), ntcp: on(t.ntcp), noise_test: on(t.noise_test), acc };
 }
 const HEX_RE = /^[0-9a-f]{8,16}$/;
 function _validNet(n) {
@@ -587,6 +599,32 @@ export function wsLeafFor(email) {
   return !!e && w.acc.includes(fnv1a(e));
 }
 
+/**
+ * [quic-proto 2026-10-23] cfg.quic p/ o transporte nativo (iOS quicVersion ≥ 1 / Android quicProtoInfo) ou null.
+ * Só quando o SERVIDOR liberou a conta: lista com transport.quic=1 + noise=1 (e, se vier
+ * transport.acc, o FNV-1a do e-mail — normal ou canônico @chatyy.com.br — está nela).
+ * O nativo ainda exige a flag LOCAL (App Group) e sem kill. Kill JS: __chatyy_quic = false.
+ */
+export function quicTransportFor(email) {
+  try { if (globalThis.__chatyy_quic === false) return null; } catch {}
+  try { if (Platform.OS === 'web') return null; } catch { return null; }
+  const l = getList();
+  const t = l && l.transport;
+  if (!t || !t.quic || !t.noise) return null;
+  const e = String(email || '').trim().toLowerCase();
+  if (!e) return null;
+  if (t.acc) {
+    const canon = e.replace(/@onemundo\.com\.br$/, '@chatyy.com.br');
+    if (!t.acc.includes(fnv1a(e)) && !t.acc.includes(fnv1a(canon))) return null;
+  }
+  const regions = {};
+  for (const r of l.regions || []) {
+    if (r && r.q && r.nk && r.id !== 'us') regions[r.id] = { kid: r.nk, port: r.qp || 443 };
+  }
+  if (!Object.keys(regions).length) return null;
+  return { on: true, noise: true, noiseTest: !!t.noise_test, regions, hsMs: 1500, migrate: true };
+}
+
 // ── Economia de bateria/dados ──────────────────────────────────────────────
 export function isEconomy() {
   try { if (require('./liveLocTickGate').isLowBatteryNow?.()) return true; } catch {}
@@ -636,6 +674,6 @@ export function beacon(ev, data = {}) {
 export default {
   getList, refreshList, isClientLbOn, isUsable, usableRegions, regionById, pickCandidates, decide,
   rankRegions, loadState, saveState, isEconomy, beacon, tzGuess, deviceTz, validateList, regionsNear, distKm,
-  netSignature, netKeys, listNetStale, netMemGet, netMemPut, noteWsRtt, wsRttFor, blendScores, wsLeafFor, fnv1a, nearestTo,
+  netSignature, netKeys, listNetStale, netMemGet, netMemPut, noteWsRtt, wsRttFor, blendScores, wsLeafFor, fnv1a, nearestTo, quicTransportFor,
   physNearest, stickyOn, stickyHolds, beatsBig, stickyWouldSwitch, STICKY,
 };

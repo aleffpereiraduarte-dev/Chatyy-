@@ -41,5 +41,6 @@ Pod::Spec.new do |s|
     }
   end
 
-  s.frameworks = 'Foundation', 'Network', 'UIKit', 'BackgroundTasks', 'Security'
+  # [2026-10-23 quic-proto] CryptoKit: Noise IK do fio QUIC (X25519/ChaChaPoly; iOS 13+)
+  s.frameworks = 'Foundation', 'Network', 'UIKit', 'BackgroundTasks', 'Security', 'CryptoKit'
 end

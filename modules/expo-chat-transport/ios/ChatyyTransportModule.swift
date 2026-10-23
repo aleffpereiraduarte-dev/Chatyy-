@@ -79,6 +79,47 @@ public class ChatyyTransportModule: Module {
       return ChatTransport.version
     }
 
+    // ─── [2026-10-23 quic-proto] QUIC + Noise (protótipo ESCURO) ─────────────
+    // Só liga com cfg.quic do JS (servidor liberou a conta) E flag local. Padrão: nada muda.
+    /// 0 = binário sem o fio QUIC; 1 = protótipo chatyy/1 (PROTOCOLO 1-proto).
+    Function("quicVersion") { () -> Int in
+      return ChatTransport.quicVersion
+    }
+
+    /// Flag LOCAL (App Group). Vale na próxima conexão física.
+    Function("quicSetLocal") { (on: Bool) in
+      ChatyyQuicGate.set(ChatyyQuicGate.localKey, on)
+    }
+
+    /// Kill local (vence a flag e o servidor).
+    Function("quicSetKill") { (on: Bool) in
+      ChatyyQuicGate.set(ChatyyQuicGate.killKey, on)
+    }
+
+    /// Teste de migração do SO (multipathServiceType = .handover). Padrão desligado.
+    Function("quicSetHandover") { (on: Bool) in
+      ChatyyQuicGate.set(ChatyyQuicGate.handoverKey, on)
+    }
+
+    /// flags + bloqueios por região + contadores quic* + chave PÚBLICA do aparelho.
+    Function("quicStatus") { () -> [String: Any] in
+      return ChatTransport.shared.quicStatus()
+    }
+
+    Function("quicClearBlocks") { () in
+      ChatTransport.shared.quicClearBlocks()
+    }
+
+    /// Vetores Noise (cacophony IK BLAKE2s/SHA256 + RFC 7693) + ida e volta do canal. "ok" ou a falha.
+    AsyncFunction("quicSelfTest") { () -> String in
+      return ChatyyQuicSelfTest.run() ?? "ok"
+    }
+
+    /// Apaga o par Noise do aparelho (gera outro na próxima conexão QUIC).
+    Function("quicForgetDeviceKey") { () in
+      ChatTransport.shared.q.async { ChatyyNoiseDeviceKey.forget() }
+    }
+
     /// Lança se a config for inválida (URL fora de *.chatyy.com.br etc.) → JS usa o WebSocket JS.
     Function("open") { (sid: String, config: [String: Any]) throws -> Bool in
       try ChatTransport.shared.open(sid: sid, config: config)
