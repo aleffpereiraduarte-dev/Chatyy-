@@ -118,6 +118,11 @@ function _send(kind, info, data, onOk) {
   } catch {}
 }
 
+/** [F-Q0 2026-10-23] mesmo canal (callkit_diag, login obrigatório, kill __chatyy_native_telemetry) p/ outros coletores. */
+export function telemetrySend(kind, info, data) {
+  _send(String(kind || 'misc').slice(0, 24), info, data);
+}
+
 function _ensureLifecycle() {
   if (_off()) return;
   if (!_coverageTimer) {
@@ -231,6 +236,8 @@ export function sendPathOf(r) {
  * ao sair p/ a rede), e2e }.
  */
 export function noteSendAck(info) {
+  // [F-Q0 2026-10-23] envio tocado durante janela sem socket? (services/netQuality, kill próprio)
+  try { const ms = Number(info && info.ms); if (ms >= 0) { const t = Date.now(); require('./netQuality').nqSend(t - ms, t, 'text'); } } catch {}
   try {
     if (_off() || globalThis.__chatyy_send_ack_telemetry === false) return;
   } catch {}
@@ -296,6 +303,8 @@ export function reportMediaSend(row) {
     _send('media_send', `media_send n=${rows.length} ` + Object.keys(vias).map((k) => `${k}:${vias[k]}`).join(' '), { rows });
   };
   if (row === '__flush') { try { flush(); } catch {} return; }
+  // [F-Q0 2026-10-23] idem p/ mídia (e2e = toque→✓)
+  try { const ms = Number(row && row.e2e); if (ms >= 0) { const t = Date.now(); require('./netQuality').nqSend(t - ms, t, 'media'); } } catch {}
   try {
     if (_off() || globalThis.__chatyy_media_send_telemetry === false) return;
   } catch {}

@@ -101,6 +101,8 @@ export function validateList(j) {
       beacon: c.beacon !== false,
       // [client-lb 2026-10-22] peso do RTT do WS (ping/pong) no placar da região (0 = só /health).
       ws_weight: _clamp(Number(c.ws_weight), 0, 1, DEFAULT_CFG.ws_weight),
+      // [F-Q0 2026-10-23] amostra da telemetria de rede (services/netQuality); -1 = servidor não mandou (padrão do app)
+      netq: _clamp(Number(c.netq), 0, 1, -1),
     },
     // [client-lb 2026-10-22] rede vista pelo servidor: hash do IP /24 (v6 /48) e /16 (v6 /32) + ASN
     // (quando o servidor souber). Só hashes — o app usa como chave de "melhor edge POR rede".
