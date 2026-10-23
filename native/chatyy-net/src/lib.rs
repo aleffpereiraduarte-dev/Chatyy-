@@ -18,7 +18,7 @@ use std::time::Duration;
 
 pub use conn::{Conn, Event, Params, Poll};
 
-pub const VERSION: &str = concat!("chatyy-net/", env!("CARGO_PKG_VERSION"), " proto=chatyy/1 noise=IK");
+pub const VERSION: &str = concat!("chatyy-net/", env!("CARGO_PKG_VERSION"), " proto=chatyy/2,chatyy/1 noise=IK");
 
 pub fn runtime() -> &'static tokio::runtime::Runtime {
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -59,21 +59,29 @@ pub fn open(p: Params) -> i64 {
 }
 
 /// Evento serializado p/ a JVM: 1 byte de tipo + corpo.
-///   1 OPEN     u32be hs_ms | u32be quic_ms | hello
+///   1 OPEN     u32be hs_ms | u32be quic_ms | u8 versão (1|2) | u8 modo ('I'|'E') | hello (Accept; vazio no chatyy/2 'I')
 ///   2 FRAME    op | dados
 ///   3 CLOSED   u16be código | u8 remoto | motivo utf-8
 ///   4 ERROR    texto utf-8
 ///   5 MIGRATED u8 ok | texto
 ///   6 GONE     (fim; liberar o handle)
+///   7 ACCEPT   u32be ms | Accept (chatyy/2 'I': msg2 chegou, junto do auth_success)
 pub fn encode_event(p: Poll) -> Option<Vec<u8>> {
     let mut o = Vec::new();
     match p {
         Poll::Timeout => return None,
         Poll::Gone => o.push(6),
-        Poll::Event(Event::Open { hs_ms, quic_ms, hello }) => {
+        Poll::Event(Event::Open { hs_ms, quic_ms, hello, version, mode }) => {
             o.push(1);
             o.extend_from_slice(&hs_ms.to_be_bytes());
             o.extend_from_slice(&quic_ms.to_be_bytes());
+            o.push(version);
+            o.push(mode);
+            o.extend_from_slice(&hello);
+        }
+        Poll::Event(Event::Accept { ms, hello }) => {
+            o.push(7);
+            o.extend_from_slice(&ms.to_be_bytes());
             o.extend_from_slice(&hello);
         }
         Poll::Event(Event::Frame { op, data }) => {
@@ -99,6 +107,30 @@ pub fn encode_event(p: Poll) -> Option<Vec<u8>> {
         }
     }
     Some(o)
+}
+
+/// Pins concatenados (n × 32 B).
+pub fn split_pins(b: &[u8]) -> Vec<[u8; 32]> {
+    b.chunks_exact(32).take(8).filter_map(|c| c.try_into().ok()).collect()
+}
+
+/// Frames do JNI: sequência de `u32be len | utf-8`. None = malformado.
+pub fn decode_frames(b: &[u8]) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b.len() - i < 4 || out.len() >= 256 {
+            return None;
+        }
+        let n = u32::from_be_bytes(b[i..i + 4].try_into().ok()?) as usize;
+        i += 4;
+        if n > proto::MAX_FRAME || b.len() - i < n {
+            return None;
+        }
+        out.push(String::from_utf8(b[i..i + n].to_vec()).ok()?);
+        i += n;
+    }
+    Some(out)
 }
 
 // ─── JNI ────────────────────────────────────────────────────────────────────
@@ -176,6 +208,11 @@ mod jni_api {
         keep_alive_ms: jint,
         dev: JString<'l>,
         ua: JString<'l>,
+        version: jint,
+        pins: JByteArray<'l>,
+        frames: JByteArray<'l>,
+        early_count: jint,
+        allow_0rtt: jboolean,
     ) -> jlong {
         guard(0, || {
             let (Some(sni), Some(ip), Some(region), Some(key_id)) =
@@ -191,6 +228,12 @@ mod jni_api {
             let Some(csk) = bytes(&mut env, &client_priv).and_then(|v| <[u8; 32]>::try_from(v).ok()) else { return 0 };
             let dev = jstr(&mut env, &dev).unwrap_or_default();
             let ua = jstr(&mut env, &ua).unwrap_or_default();
+            let version = if version == 2 { 2u8 } else { 1u8 };
+            let pins = bytes(&mut env, &pins).map(|b| split_pins(&b)).unwrap_or_default();
+            if version == 2 && pins.is_empty() {
+                return 0;
+            }
+            let Some(frames) = bytes(&mut env, &frames).map(|b| decode_frames(&b)).unwrap_or(Some(Vec::new())) else { return 0 };
             let p = Params {
                 sni,
                 addr: SocketAddr::new(ip, port as u16),
@@ -205,6 +248,11 @@ mod jni_api {
                 idle_timeout: Duration::from_secs(60),
                 dev,
                 ua,
+                version,
+                pins,
+                frames,
+                early_count: early_count.max(0) as usize,
+                allow_0rtt: allow_0rtt != JNI_FALSE,
             };
             open(p)
         })

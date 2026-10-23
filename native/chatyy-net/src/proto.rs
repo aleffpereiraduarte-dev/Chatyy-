@@ -16,6 +16,21 @@
 //! Se o PROTOCOLO.md mudar, mude só este arquivo (e o teste `tests/loopback.rs`).
 
 pub const ALPN: &[u8] = b"chatyy/1";
+/// chatyy/2 (PROTOCOLO §0): TLS só por pin SPKI + msg1 IK no flight do Finished com os frames dentro.
+pub const ALPN2: &[u8] = b"chatyy/2";
+pub const MODE_E: u8 = b'E';
+/// §0.3: até 64 frames dentro da msg1; payload da msg1 ≤ 60 KiB.
+pub const MSG1_MAX_FRAMES: usize = 64;
+pub const MSG1_MAX_PAYLOAD: usize = 60 * 1024;
+
+pub fn alpn(version: u8) -> &'static [u8] {
+    if version == 2 { ALPN2 } else { ALPN }
+}
+
+/// Preâmbulo "CY" | versão | modo.
+pub fn preamble(version: u8, mode: u8) -> [u8; 4] {
+    [b'C', b'Y', version, mode]
+}
 pub const NOISE_PARAMS: &str = "Noise_IK_25519_ChaChaPoly_BLAKE2s";
 /// Rótulo do exportador TLS (RFC 8446 §7.5) que amarra o Noise à conexão QUIC (§4.2).
 pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-chatyy-noise-v1";
@@ -43,18 +58,24 @@ pub const NOISE_MAX_PLAIN: usize = NOISE_MAX_MSG - NOISE_TAG;
 pub const CLOSE_GO_WS: u16 = 4001;
 pub const REASON_GO_WS: &str = "go_ws";
 
-/// Prólogo §4.2 (modo I em QUIC).
+/// Prólogo §4.2 (modo I em QUIC, chatyy/1).
 pub fn prologue(region: &str, kid: &str, exporter: &[u8]) -> Vec<u8> {
-    let mut p = Vec::with_capacity(ALPN.len() + region.len() + kid.len() + 5 + exporter.len());
-    p.extend_from_slice(ALPN);
+    prologue_v(1, MODE_I, region, kid, exporter)
+}
+
+/// Prólogo §4.2 / §0.3: "chatyy/<v>" 0 | região 0 | kid 0 | 'q' | modo | binding (vazio no modo E).
+pub fn prologue_v(version: u8, mode: u8, region: &str, kid: &str, binding: &[u8]) -> Vec<u8> {
+    let a = alpn(version);
+    let mut p = Vec::with_capacity(a.len() + region.len() + kid.len() + 5 + binding.len());
+    p.extend_from_slice(a);
     p.push(0);
     p.extend_from_slice(region.as_bytes());
     p.push(0);
     p.extend_from_slice(kid.as_bytes());
     p.push(0);
     p.push(WIRE_QUIC);
-    p.push(MODE_I);
-    p.extend_from_slice(exporter);
+    p.push(mode);
+    p.extend_from_slice(binding);
     p
 }
 
@@ -87,12 +108,47 @@ pub fn b64(data: &[u8]) -> String {
 
 /// Payload da msg1 (§4.3). `n` = 16 B aleatórios NOVOS a cada tentativa. Sem `early` (0-RTT = F-N1).
 pub fn msg1_payload(dev: &str, ua: &str, ts_ms: u64, n: &[u8; 16]) -> Vec<u8> {
-    let mut s = String::from("{\"v\":1,\"dev\":");
+    msg1_payload_x(1, dev, ua, ts_ms, n, None, &[])
+}
+
+/// Payload genérico: v=1 (chatyy/1 e retomada 'E', lista `early`) ou v=2 (chatyy/2 'I', lista `frames`).
+/// `list` = nome da lista ("early" | "frames") ou None.
+pub fn msg1_payload_x(v: u8, dev: &str, ua: &str, ts_ms: u64, n: &[u8; 16], list: Option<&str>, frames: &[String]) -> Vec<u8> {
+    let mut s = format!("{{\"v\":{v},\"dev\":");
     json_str(&mut s, dev);
     s.push_str(&format!(",\"ts\":{ts_ms},\"n\":\"{}\",\"ua\":", b64(n)));
     json_str(&mut s, ua);
+    if let (Some(name), false) = (list, frames.is_empty()) {
+        s.push_str(&format!(",\"{name}\":["));
+        for (i, f) in frames.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            json_str(&mut s, f);
+        }
+        s.push(']');
+    }
     s.push('}');
     s.into_bytes()
+}
+
+/// Quantos frames do prefixo cabem na msg1 (≤ 64 e payload ≤ 60 KiB).
+pub fn msg1_fit(frames: &[String]) -> usize {
+    let mut total = 200usize;
+    for (i, f) in frames.iter().enumerate() {
+        total += f.len() + f.len() / 8 + 4; // folga p/ escapes
+        if i >= MSG1_MAX_FRAMES || total > MSG1_MAX_PAYLOAD {
+            return i;
+        }
+    }
+    frames.len()
+}
+
+/// `early_n` do Accept (msg2). Ausente = 0.
+pub fn accept_early_n(msg2: &[u8]) -> usize {
+    let s = String::from_utf8_lossy(msg2);
+    let Some(i) = s.find("\"early_n\":") else { return 0 };
+    s[i + 10..].trim_start().chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0)
 }
 
 /// varint do QUIC (RFC 9000 §16).
@@ -233,6 +289,23 @@ mod tests {
         assert_eq!(b64(b"foo"), "Zm9v");
         let m = String::from_utf8(msg1_payload("d\"1", "Chatyy/a", 1700000000000, &[0u8; 16])).unwrap();
         assert_eq!(m, r#"{"v":1,"dev":"d\"1","ts":1700000000000,"n":"AAAAAAAAAAAAAAAAAAAAAA==","ua":"Chatyy/a"}"#);
+    }
+
+    #[test]
+    fn v2_bits() {
+        let p = prologue_v(2, MODE_I, "us2", "t1", &[1; 32]);
+        assert!(p.starts_with(b"chatyy/2\0us2\0t1\0qI"));
+        assert_eq!(prologue_v(2, MODE_E, "us2", "t1", &[]), b"chatyy/2\0us2\0t1\0qE".to_vec());
+        assert_eq!(&preamble(2, MODE_I), b"CY\x02I");
+        let f = vec![r#"{"type":"auth","token":"a\"b"}"#.to_string()];
+        let m = String::from_utf8(msg1_payload_x(2, "d", "u", 1, &[0; 16], Some("frames"), &f)).unwrap();
+        assert_eq!(m, r#"{"v":2,"dev":"d","ts":1,"n":"AAAAAAAAAAAAAAAAAAAAAA==","ua":"u","frames":["{\"type\":\"auth\",\"token\":\"a\\\"b\"}"]}"#);
+        assert_eq!(accept_early_n(br#"{"v":2,"ok":true,"early_n":3,"x":1}"#), 3);
+        assert_eq!(accept_early_n(br#"{"v":2}"#), 0);
+        let many: Vec<String> = (0..100).map(|_| "x".repeat(10)).collect();
+        assert_eq!(msg1_fit(&many), 64);
+        let big = vec!["y".repeat(40_000), "y".repeat(40_000)];
+        assert_eq!(msg1_fit(&big), 1);
     }
 
     #[test]

@@ -17,18 +17,28 @@ func TestXJniHarness(t *testing.T) {
 		t.Skip("JNI_CP")
 	}
 	e := newQNEnv(t)
+	pin := e.v2("A") // chatyy/2 ligado no mesmo listener (chatyy/1 continua aceito); reabre o listener
 	addr := e.addr().(*net.UDPAddr)
 	af := filepath.Join(e.dir, "auth.json")
 	os.WriteFile(af, []byte(authFrame("apitest@onemundo.com.br")), 0o600)
-	out, err := exec.Command("java", "-cp", cp, "JniMain", os.Getenv("JNI_SO"), strconv.Itoa(addr.Port),
-		base64.StdEncoding.EncodeToString(e.srvKey.Public), af).CombinedOutput()
-	t.Log("\n" + string(out))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, w := range []string{"keypair 64", "bad_ip 0", "bad_key 0", "stale_send false", "auth_success", "migrate true", "chat_send_ack", "CLOSED code=1000", "GONE", "after_free_poll 6", "DONE"} {
-		if !strings.Contains(string(out), w) {
-			t.Errorf("faltou %q", w)
+	for _, extra := range [][]string{nil, {pin}} {
+		args := append([]string{"-cp", cp, "JniMain", os.Getenv("JNI_SO"), strconv.Itoa(addr.Port),
+			base64.StdEncoding.EncodeToString(e.srvKey.Public), af}, extra...)
+		out, err := exec.Command("java", args...).CombinedOutput()
+		t.Log("\n" + string(out))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"keypair 64", "bad_ip 0", "bad_key 0", "bad_v2_nopins 0", "bad_frames 0", "stale_send false", "auth_success", "migrate true", "chat_send_ack", "CLOSED code=1000", "GONE", "after_free_poll 6", "DONE"}
+		if extra != nil {
+			want = append(want, "OPEN v2 I", "auth_in_msg1", `ACCEPT {"v":2,"ok":true`)
+		} else {
+			want = append(want, "OPEN v1 I", "send_auth true")
+		}
+		for _, w := range want {
+			if !strings.Contains(string(out), w) {
+				t.Errorf("faltou %q", w)
+			}
 		}
 	}
 }

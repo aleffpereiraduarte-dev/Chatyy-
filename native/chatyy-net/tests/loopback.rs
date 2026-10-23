@@ -156,6 +156,11 @@ fn params(s: &Srv, dev: &str) -> Params {
         idle_timeout: Duration::from_secs(10),
         dev: dev.into(),
         ua: "chatyy-net-test".into(),
+        version: 1,
+        pins: Vec::new(),
+        frames: Vec::new(),
+        early_count: 0,
+        allow_0rtt: false,
     }
 }
 

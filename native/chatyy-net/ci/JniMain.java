@@ -9,15 +9,23 @@ public class JniMain {
     int port = Integer.parseInt(a[1]);
     byte[] spk = Base64.getDecoder().decode(a[2]);
     String auth = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(a[3])), StandardCharsets.UTF_8).trim();
+    // a[4] (opcional) = pin SPKI b64 → chatyy/2 com o auth DENTRO da msg1
+    byte[] pins = a.length > 4 ? Base64.getDecoder().decode(a[4]) : new byte[0];
+    int ver = pins.length == 32 ? 2 : 1;
+    byte[] ab = auth.getBytes(StandardCharsets.UTF_8);
+    java.nio.ByteBuffer fb = java.nio.ByteBuffer.allocate(4 + ab.length); fb.putInt(ab.length); fb.put(ab);
+    byte[] frames = ver == 2 ? fb.array() : new byte[0];
     System.out.println("version " + ChatyyNetJni.nativeVersion());
     byte[] kp = ChatyyNetJni.nativeKeypair();
     System.out.println("keypair " + kp.length);
     byte[] priv = java.util.Arrays.copyOfRange(kp, 0, 32);
     // parâmetros inválidos → 0, sem crash
-    System.out.println("bad_ip " + ChatyyNetJni.nativeConnect("x", "nao-ip", port, "tst", "t9", spk, priv, 0L, 3000, false, 0, "", ""));
-    System.out.println("bad_key " + ChatyyNetJni.nativeConnect("x", "127.0.0.1", port, "tst", "t9", new byte[5], priv, 0L, 3000, false, 0, "", ""));
+    System.out.println("bad_ip " + ChatyyNetJni.nativeConnect("x", "nao-ip", port, "tst", "t9", spk, priv, 0L, 3000, false, 0, "", "", 1, new byte[0], new byte[0], 0, false));
+    System.out.println("bad_key " + ChatyyNetJni.nativeConnect("x", "127.0.0.1", port, "tst", "t9", new byte[5], priv, 0L, 3000, false, 0, "", "", 1, new byte[0], new byte[0], 0, false));
+    System.out.println("bad_v2_nopins " + ChatyyNetJni.nativeConnect("x", "127.0.0.1", port, "tst", "t9", spk, priv, 0L, 3000, false, 0, "", "", 2, new byte[0], new byte[0], 0, false));
+    System.out.println("bad_frames " + ChatyyNetJni.nativeConnect("x", "127.0.0.1", port, "tst", "t9", spk, priv, 0L, 3000, false, 0, "", "", 2, new byte[32], new byte[]{0,0,0,9,1}, 0, false));
     System.out.println("stale_send " + ChatyyNetJni.nativeSend(99999L, 1, new byte[1]));
-    long h = ChatyyNetJni.nativeConnect("api-tst.chatyy.com.br", "127.0.0.1", port, "tst", "t9", spk, priv, 0L, 3000, false, 0, "QTESTDEVICE234", "jni-harness");
+    long h = ChatyyNetJni.nativeConnect("api-tst.chatyy.com.br", "127.0.0.1", port, "tst", "t9", spk, priv, 0L, 3000, false, 0, "QTESTDEVICE234", "jni-harness", ver, pins, frames, 1, false);
     System.out.println("handle " + h);
     long t0 = System.currentTimeMillis();
     boolean migrated = false, closing = false;
@@ -27,8 +35,9 @@ public class JniMain {
       int k = ev[0];
       long ms = System.currentTimeMillis() - t0;
       if (k == 1) {
-        System.out.println(ms + " OPEN msg2=" + new String(ev, 9, ev.length - 9, StandardCharsets.UTF_8));
-        System.out.println("send_auth " + ChatyyNetJni.nativeSend(h, 1, auth.getBytes(StandardCharsets.UTF_8)));
+        System.out.println(ms + " OPEN v" + ev[9] + " " + (char) ev[10] + " msg2=" + new String(ev, 11, ev.length - 11, StandardCharsets.UTF_8));
+        if (ev[9] == 1) System.out.println("send_auth " + ChatyyNetJni.nativeSend(h, 1, auth.getBytes(StandardCharsets.UTF_8)));
+        else System.out.println("auth_in_msg1");
       } else if (k == 2) {
         String s = new String(ev, 2, ev.length - 2, StandardCharsets.UTF_8);
         System.out.println(ms + " FRAME op=" + ev[1] + " " + (s.length() > 150 ? s.substring(0, 150) : s));
@@ -48,6 +57,8 @@ public class JniMain {
         System.out.println(ms + " ERROR " + new String(ev, 1, ev.length - 1, StandardCharsets.UTF_8));
       } else if (k == 5) {
         System.out.println(ms + " MIGRATED ok=" + ev[1]);
+      } else if (k == 7) {
+        System.out.println(ms + " ACCEPT " + new String(ev, 5, ev.length - 5, StandardCharsets.UTF_8));
       } else if (k == 6) {
         System.out.println(ms + " GONE");
         break;

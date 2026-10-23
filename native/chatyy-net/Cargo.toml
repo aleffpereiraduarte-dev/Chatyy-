@@ -21,6 +21,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "
 jni = { version = "0.21", default-features = false }
 libc = "0.2"
 getrandom = "0.2"
+# chatyy/2: pin SPKI (SHA-256 do SubjectPublicKeyInfo do folha) — já estão no grafo do rustls.
+webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["alloc", "ring", "std"] }
+ring = "0.17"
 
 [dev-dependencies]
 rcgen = "0.13"

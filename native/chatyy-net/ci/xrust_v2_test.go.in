@@ -1,0 +1,79 @@
+package main
+
+// Teste cruzado chatyy/2 (PROTOCOLO §0): cliente Rust chatyy-net (examples/probe) contra o leaf Go real.
+import (
+	"encoding/base64"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestXRustV2(t *testing.T) {
+	bin := os.Getenv("RUST_PROBE")
+	if bin == "" {
+		t.Skip("RUST_PROBE")
+	}
+	e := newQNEnv(t)
+	e.flags["LEAF_QUIC_0RTT"], e.flags["LEAF_NOISE_0RTT"] = "1", "1"
+	pin := e.v2("A")
+	_, _, pinZ := pinCertFiles(t, e.dir, "Z")
+	qnStartNs.Store(time.Now().Add(-time.Hour).UnixNano()) // anti-replay já aquecido
+	af := filepath.Join(e.dir, "auth.json")
+	os.WriteFile(af, []byte(authFrame("apitest@onemundo.com.br")), 0o600)
+	run := func(addr net.Addr, extra ...string) string {
+		a := addr.(*net.UDPAddr)
+		args := append([]string{"api-tst.chatyy.com.br", "127.0.0.1", strconv.Itoa(a.Port), "tst", "t9",
+			base64.StdEncoding.EncodeToString(e.srvKey.Public), "--auth-file", af, "--dev", "QTESTDEVICE234"}, extra...)
+		out, _ := exec.Command(bin, args...).CombinedOutput()
+		t.Log("\n" + string(out))
+		return string(out)
+	}
+	has := func(out string, ws ...string) {
+		for _, w := range ws {
+			if !strings.Contains(out, w) {
+				t.Errorf("faltou %q", w)
+			}
+		}
+	}
+	// 1) frio chatyy/2 'I' + rotação (pins [Z, A]) + migração
+	out := run(e.addr(), "--pins", pinZ+","+pin, "--secs", "3", "--migrate", "1")
+	has(out, "OPEN v2 I", "ACCEPT", `"v":2`, `"early_n":1`, "auth_success", "MIGRATE Ok", "code: 1000")
+	// 2) pin errado → aborta o TLS, nada chega ao hub
+	a0 := e.fh.authCount()
+	out = run(e.addr(), "--pins", pinZ, "--secs", "2")
+	has(out, "err=quic:")
+	if strings.Contains(out, "OPEN") || e.fh.authCount() != a0 {
+		t.Error("pin errado abriu/autenticou")
+	}
+	// 3) retomada: 2ª conexão com ticket → 0-RTT + 'E' (auth no early)
+	out = run(e.addr(), "--pins", pin, "--resume", "--rounds", "2", "--secs", "1")
+	has(out, "RESULT round=1 v=2 mode=I", "RESULT round=2 v=2 mode=E", `"early_n":1`)
+	// 4) servidor sem QUIC 0-RTT: a retomada cai sozinha p/ 'I'
+	e.flags["LEAF_QUIC_0RTT"] = "0"
+	e.apply()
+	out = run(e.addr(), "--pins", pin, "--resume", "--rounds", "2", "--secs", "1")
+	has(out, "RESULT round=2 v=2 mode=I")
+	if strings.Contains(out, "mode=E") {
+		t.Error("0-RTT com LEAF_QUIC_0RTT=0")
+	}
+	// 5) medida com RTT 100 ms (proxy UDP com atraso), chatyy/2 vs chatyy/1
+	px := newUDPProxy(t, e.addr())
+	px.delay.Store(int64(50 * time.Millisecond))
+	out = run(px.front.LocalAddr(), "--pins", pin, "--rounds", "3", "--secs", "1")
+	out1 := run(px.front.LocalAddr(), "--insecure", "--rounds", "3", "--secs", "1")
+	for _, l := range strings.Split(out+out1, "\n") {
+		if strings.HasPrefix(l, "RESULT") {
+			t.Log("RTT100 " + l)
+		}
+	}
+	// 6) chatyy/2 desligado no edge (LEAF_QUIC_PIN=0) → ALPN não negocia → erro (o app cai p/ chatyy/1 → WSS)
+	e.flags["LEAF_QUIC_PIN"] = "0"
+	e.apply()
+	out = run(e.addr(), "--pins", pin, "--secs", "2")
+	has(out, "err=quic:")
+}

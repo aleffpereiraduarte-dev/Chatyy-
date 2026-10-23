@@ -47,6 +47,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * prefixo [FALLBACK] → a Session reconecta JÁ (sem backoff, sem marcar a regional como ruim) e o
  * portão daqui manda para o WSS.
  *
+ * chatyy/2 (PROTOCOLO §0, padrão quando há pins): ALPN chatyy/2, TLS SÓ por pin SPKI (2 pins de TESTE),
+ * auth DENTRO da msg1 (flight do Finished) → o fio "abre" em ~1 RTT e o auth_success volta em ~2 RTT;
+ * retomada 0-RTT 'E' com ticket. Falha de TLS/ALPN/pin no chatyy/2 → chatyy/1 na hora (1 h) → WSS.
+ *
  * Migração: troca da rede padrão com o fio QUIC autenticado → Endpoint::rebind() com um socket
  * UDP amarrado à Network nova (android_setsocknetwork) + 1 ping de sonda; sem reconectar.
  */
@@ -57,6 +61,9 @@ internal object ChatyyNetJni {
     sni: String, ip: String, port: Int, region: String, keyId: String,
     serverPub: ByteArray, clientPriv: ByteArray, netHandle: Long, timeoutMs: Int,
     tlsVerify: Boolean, keepAliveMs: Int, dev: String, ua: String,
+    // chatyy/2 (PROTOCOLO §0): versão 1|2, pins SPKI concatenados (n×32), frames p/ a msg1
+    // (u32be len | utf-8, …; o 1º = auth), quantos do prefixo vão no early da retomada 'E', 0-RTT.
+    version: Int, pins: ByteArray, frames: ByteArray, earlyCount: Int, allow0rtt: Boolean,
   ): Long
   @JvmStatic external fun nativeSend(h: Long, op: Int, data: ByteArray): Boolean
   @JvmStatic external fun nativePoll(h: Long, timeoutMs: Int): ByteArray?
@@ -80,6 +87,13 @@ internal class QuicTarget(
   val account: String,
   /** cfg.quic.migrate=false → troca de rede reconecta como no WSS (sem rebind). */
   val migrate: Boolean = true,
+  /** chatyy/2 primeiro (pins SPKI concatenados); false = só chatyy/1. */
+  val v2: Boolean = false,
+  val pins: ByteArray = ByteArray(0),
+  /** frame de auth da Session (vai DENTRO da msg1 no chatyy/2). */
+  val authFrame: String = "",
+  /** chatyy/2: retomada QUIC 0-RTT + IK 'E' quando houver ticket (cfg.quic.resume=false desliga). */
+  val resume: Boolean = true,
 )
 
 internal object QuicWire {
@@ -94,6 +108,12 @@ internal object QuicWire {
   // transport.noise_test=1 do servidor (conta na allowlist). Produção = cert assinado pela raiz (F-N1).
   private const val TEST_KID = "t1"
   private const val TEST_PUB_B64 = "inKsxZ/WSbIq8+QcY/3DDTrbxDdiRQ3t6lHsyYinlh8="
+  // PROTOCOLO §0.2 — pins SPKI (base64 SHA-256 do SubjectPublicKeyInfo) do certificado DEDICADO do
+  // chatyy/2, TESTE (todas as regiões): atual + próximo (rotação). Só valem com noiseTest.
+  private val TEST_PINS_B64 = arrayOf(
+    "7T92loM6w7GMhwkyu25bQOwbGoVMJdk7u6nm48Jp51g=",
+    "QhTxrbi7wfzD+EEgmN7jpO2JOGa09wxQYBGullgQQP4=",
+  )
 
   private val REGION_RE = Regex("^api-([a-z0-9]{2,8})\\.chatyy\\.com\\.br$")
   private const val HOUR = 3_600_000L
@@ -195,6 +215,34 @@ internal object QuicWire {
 
   @Synchronized fun noteGood() { strikes = 0 }
 
+  /** chatyy/2 falhou no TLS/ALPN/pin nesta região → 1 h direto no chatyy/1 (o servidor aceita os dois). */
+  private val v2Down = HashMap<String, Long>()
+  @Synchronized fun noteV2Down(t: QuicTarget, why: String) { v2Down[t.region] = now() + HOUR; lastWhy = "v2:$why" }
+  @Synchronized private fun v2IsDown(region: String): Boolean = (v2Down[region] ?: 0L) > now()
+
+  private fun testPins(): ByteArray? {
+    return try {
+      val out = java.io.ByteArrayOutputStream()
+      for (b in TEST_PINS_B64) {
+        val d = Base64.decode(b, Base64.NO_WRAP)
+        if (d.size != 32) return null
+        out.write(d)
+      }
+      out.toByteArray()
+    } catch (_: Throwable) { null }
+  }
+
+  /** frames p/ o JNI: u32be len | utf-8. */
+  fun encodeFrames(list: List<String>): ByteArray {
+    val out = java.io.ByteArrayOutputStream()
+    for (f in list) {
+      val b = f.toByteArray(Charsets.UTF_8)
+      out.write(byteArrayOf((b.size ushr 24).toByte(), (b.size ushr 16).toByte(), (b.size ushr 8).toByte(), b.size.toByte()))
+      out.write(b)
+    }
+    return out.toByteArray()
+  }
+
   @Synchronized private fun clearGate() {
     deny.clear()
     udpBlockedUntil = 0L
@@ -251,7 +299,11 @@ internal object QuicWire {
     val ua = "Chatyy-Android/${Build.VERSION.RELEASE} ${libVersion ?: ""}".take(120)
     val tmo = ((quic["hsMs"] as? Number)?.toInt() ?: 3000).coerceIn(600, 10_000)
     val migrate = quic["migrate"] != false
-    return QuicTarget(host, region, port, kid, pub, ck.copyOfRange(0, 32), dev, ua, tmo, account, migrate)
+    // chatyy/2 (PROTOCOLO §0) primeiro, se: pins de teste (só com noiseTest), cfg não desligou, sem falha recente.
+    val pins = if (noiseTest) testPins() else null
+    val v2 = pins != null && quic["v2"] != false && !v2IsDown(region)
+    return QuicTarget(host, region, port, kid, pub, ck.copyOfRange(0, 32), dev, ua, tmo, account, migrate,
+      v2 = v2, pins = pins ?: ByteArray(0), authFrame = authFrame, resume = quic["resume"] != false)
   }
 
   fun maybeRace(req: Request, url: String, quic: Map<String, Any?>?, account: String, authFrame: String?, listener: WebSocketListener): QuicRaceSocket? = try {
@@ -276,6 +328,7 @@ internal object QuicWire {
     m["libVersion"] = libVersion
     m["enabled"] = ctx?.let { localEnabled(it) } ?: false
     m["testKid"] = TEST_KID
+    m["proto"] = "chatyy/2>chatyy/1>wss"
     if (ctx != null && libState == 1 && localEnabled(ctx)) {
       clientKey(ctx)?.let { m["clientPub"] = Base64.encodeToString(it.copyOfRange(32, 64), Base64.NO_WRAP) }
     }
@@ -315,6 +368,11 @@ internal class QuicRaceSocket(
   private var wssFail: Pair<Throwable, Response?>? = null
   private var openedAt = 0L
   @Volatile private var sawAuthSuccess = false
+  /** versão que abriu (1|2). No chatyy/2 o auth já foi DENTRO da msg1 → o 1º auth da Session é engolido. */
+  @Volatile private var openedVer = 0
+  @Volatile private var authSwallowed = false
+  /** motivo da falha ANTES de abrir (preenchido pelos eventos; runQuic decide chatyy/1 ou WSS). */
+  @Volatile private var preOpenFail: String? = null
   @Volatile var hsMs = -1L
     private set
 
@@ -367,27 +425,56 @@ internal class QuicRaceSocket(
     return a.hostAddress
   }
 
+  /** chatyy/2 → chatyy/1 → WSS (PROTOCOLO §0.9 item 6). */
   private fun runQuic() {
+    val ip = try { resolve() } catch (_: Throwable) { null }
+    if (ip == null) { quicFailed("dns"); return }
+    val versions = if (t.v2) intArrayOf(2, 1) else intArrayOf(1)
+    for (ver in versions) {
+      val fail = attempt(ip, ver) ?: return // abriu (a sessão seguiu até o fim) ou cancelado
+      // pin/ALPN/TLS do chatyy/2 recusado (edge com LEAF_QUIC_PIN=0, pin rotacionado…) → chatyy/1 já.
+      // go_ws/noise_fail/timeout de UDP NÃO: valem p/ qualquer versão → WSS.
+      val retry = ver == 2 && (fail == "bad_params" || (fail.startsWith("quic: ") && !fail.contains("qclose"))) &&
+        synchronized(lock) { !cancelled && winner == NONE }
+      if (retry) {
+        QuicWire.noteV2Down(t, fail.take(60))
+        post("quicV2Fallbacks")
+        continue
+      }
+      quicFailed(fail)
+      return
+    }
+  }
+
+  /** Uma tentativa numa versão. null = abriu (ou cancelado); senão o motivo da falha antes de abrir. */
+  private fun attempt(ip: String, ver: Int): String? {
     var handle = 0L
+    preOpenFail = null
     try {
-      val ip = resolve()
-      if (ip == null) { quicFailed("dns"); return }
+      val v2 = ver == 2
       handle = ChatyyNetJni.nativeConnect(
         t.host, ip, t.port, t.region, t.kid, t.pub, t.clientPriv,
         network?.networkHandle ?: 0L, t.timeoutMs, true, 0, t.dev, t.ua,
+        ver, if (v2) t.pins else ByteArray(0),
+        if (v2 && t.authFrame.isNotEmpty()) QuicWire.encodeFrames(listOf(t.authFrame)) else ByteArray(0),
+        1, v2 && t.resume,
       )
-      if (handle == 0L) { quicFailed("bad_params"); return }
+      if (handle == 0L) return "bad_params"
       val cancelNow = synchronized(lock) { h = handle; cancelled }
       if (cancelNow) ChatyyNetJni.nativeClose(handle, 1000, "cancel", true)
       loop(handle)
     } catch (e: Throwable) {
-      quicFailed("jni_" + e.javaClass.simpleName)
+      val w = synchronized(lock) { if (cancelled) -1 else winner }
+      if (w == NONE) return "jni_" + e.javaClass.simpleName
+      if (w == QUIC) listener.onFailure(this, IOException("quic: jni_" + e.javaClass.simpleName), null)
+      return null
     } finally {
       if (handle != 0L) {
         synchronized(lock) { h = 0L; Unit }
         try { ChatyyNetJni.nativeFree(handle) } catch (_: Throwable) {}
       }
     }
+    return preOpenFail
   }
 
   private fun loop(handle: Long) {
@@ -411,20 +498,24 @@ internal class QuicRaceSocket(
         4 -> onQuicError(String(ev, 1, ev.size - 1, Charsets.UTF_8))
         5 -> post(if (ev.size >= 2 && ev[1].toInt() != 0) "quicMigrations" else "quicMigrateFail")
         6 -> return
+        7 -> onQuicAccept(handle, ev)
       }
     }
   }
 
   private fun onQuicOpen(handle: Long, ev: ByteArray) {
     val hs = if (ev.size >= 5) ((ev[1].toLong() and 0xFF) shl 24) or ((ev[2].toLong() and 0xFF) shl 16) or ((ev[3].toLong() and 0xFF) shl 8) or (ev[4].toLong() and 0xFF) else -1L
-    val msg2 = if (ev.size > 9) String(ev, 9, ev.size - 9, Charsets.UTF_8) else ""
-    // msg2 {"ok":true,...}: ok=false → servidor recusou (trata como falha de handshake)
+    val ver = if (ev.size >= 11) ev[9].toInt() else 1
+    val msg2 = if (ev.size > 11) String(ev, 11, ev.size - 11, Charsets.UTF_8) else ""
+    // msg2 {"ok":true,...}: ok=false → servidor recusou (trata como falha de handshake).
+    // chatyy/2 'I' abre ANTES da msg2 (vazia aqui; o Accept vem no evento 7).
     val ok = try { msg2.isEmpty() || JSONObject(msg2).optBoolean("ok", true) } catch (_: Throwable) { true }
     if (!ok) {
       try { ChatyyNetJni.nativeClose(handle, 1000, "msg2_not_ok", true) } catch (_: Throwable) {}
-      quicFailed("msg2_not_ok")
+      preOpenFail = "msg2_not_ok"
       return
     }
+    openedVer = ver
     var loser: WebSocket? = null
     val win = synchronized(lock) {
       if (cancelled || winner != NONE) false else {
@@ -443,7 +534,15 @@ internal class QuicRaceSocket(
     }
     try { loser?.cancel() } catch (_: Throwable) {}
     post("quicOpens")
-    listener.onOpen(this, Response.Builder().request(req).protocol(Protocol.HTTP_1_1).code(101).message("chatyy/1").build())
+    post(if (ver == 2) (if (ev.size >= 11 && ev[10].toInt() == 'E'.code) "quicOpensV2Resume" else "quicOpensV2") else "quicOpensV1")
+    listener.onOpen(this, Response.Builder().request(req).protocol(Protocol.HTTP_1_1).code(101).message("chatyy/$ver").build())
+  }
+
+  /** chatyy/2 'I': msg2 (Accept) chegou junto do auth_success. ok=false → derruba (a Session volta p/ o WSS). */
+  private fun onQuicAccept(handle: Long, ev: ByteArray) {
+    val msg2 = if (ev.size > 5) String(ev, 5, ev.size - 5, Charsets.UTF_8) else ""
+    val ok = try { msg2.isEmpty() || JSONObject(msg2).optBoolean("ok", true) } catch (_: Throwable) { true }
+    if (!ok) try { ChatyyNetJni.nativeClose(handle, 1000, "msg2_not_ok", true) } catch (_: Throwable) {}
   }
 
   private fun onQuicFrame(ev: ByteArray) {
@@ -465,7 +564,7 @@ internal class QuicRaceSocket(
   private fun onQuicClosed(code: Int, remote: Boolean, reason: String) {
     val w = synchronized(lock) { quicDead = true; if (cancelled) -1 else winner }
     when (w) {
-      NONE -> quicFailed("closed_$code")
+      NONE -> preOpenFail = "closed_$code"
       QUIC -> {
         val alive = SystemClock.elapsedRealtime() - openedAt
         when {
@@ -492,7 +591,7 @@ internal class QuicRaceSocket(
   private fun onQuicError(msg: String) {
     val w = synchronized(lock) { quicDead = true; if (cancelled) -1 else winner }
     when (w) {
-      NONE -> quicFailed(msg)
+      NONE -> preOpenFail = msg
       QUIC -> {
         val alive = SystemClock.elapsedRealtime() - openedAt
         post("quicDrops")
@@ -582,7 +681,15 @@ internal class QuicRaceSocket(
   override fun send(text: String): Boolean {
     val (w, s) = synchronized(lock) { Pair(winner, wss) }
     return when (w) {
-      QUIC -> sendQuic(1, text.toByteArray(Charsets.UTF_8))
+      QUIC -> {
+        // chatyy/2: o auth da Session já foi DENTRO da msg1 → engole o 1º (senão o leaf veria 2 auths).
+        if (openedVer == 2 && !authSwallowed && text.length < 65536 && text.contains("\"auth\"") &&
+          (try { JSONObject(text).optString("type") == "auth" } catch (_: Throwable) { false })) {
+          authSwallowed = true
+          return true
+        }
+        sendQuic(1, text.toByteArray(Charsets.UTF_8))
+      }
       WSS -> s?.send(text) ?: false
       else -> false
     }
