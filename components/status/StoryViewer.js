@@ -18,6 +18,7 @@
 import { androidBottomInset } from '../../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import FastImage from '../FastImage'; // [2026-10-09 expo-image]
+import { statusDisplayMedia, prefetchStatusItem } from '../../services/statusMedia'; // [status-rapido 2026-10-23]
 import {
   View, Text, TouchableOpacity, TextInput, Pressable, Image,
   Platform, Modal, Alert, Animated, Keyboard, FlatList, ActivityIndicator,
@@ -592,7 +593,7 @@ const StoryMedia = React.memo(function StoryMedia({
       // the field is absent (older statuses).
       const posterUrl = cur.thumbnail_url
         ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : api.getMediaUrl(cur.thumbnail_url))
-        : '';
+        : (statusDisplayMedia(cur).poster || ''); // [status-rapido 2026-10-23]
       const PosterOverlay = posterUrl ? (
         <FastImage
           source={{ uri: posterUrl }}
@@ -680,7 +681,7 @@ const StoryMedia = React.memo(function StoryMedia({
     // sharp foreground load).
     const imagePoster = cur.thumbnail_url
       ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : api.getMediaUrl(cur.thumbnail_url))
-      : mediaUrl;
+      : (statusDisplayMedia(cur).thumb || mediaUrl); // [status-rapido 2026-10-23] t320 leve
     const ImagePosterLayer = imagePoster ? (
       WEB ? (
         <img
@@ -1784,9 +1785,13 @@ function StoryViewerJS({
     // "as vezes os status demora carregar a foto em si"; pre-warming two
     // ahead means the full payload is already on disk before they tap.
     if (Platform.OS !== 'web' && _cacheMedia) {
-      for (let _ofs = 1; _ofs <= 2; _ofs++) {
-        const _peek = stories?.[idx + _ofs];
-        if (!_peek) break;
+      // [status-rapido 2026-10-23] variante leve (meta.sv) + 3 à frente.
+      for (let _ofs = 1; _ofs <= 3; _ofs++) {
+        const _pk = stories?.[idx + _ofs];
+        if (!_pk) break;
+        if (_pk?.meta?.sv && !_pk.meta.sv.err) { prefetchStatusItem(_pk, { force: _ofs <= 2 }); continue; }
+        if (_ofs > 2) continue;
+        const _peek = _pk;
         const _peekRaw = _peek.media_url
           || ((_peek.type === 'image' || _peek.type === 'video') && /^(\/|https?:\/\/)/.test(String(_peek.content || ''))
               ? _peek.content : '');
@@ -2034,7 +2039,11 @@ function StoryViewerJS({
     || ((isImage || isVideo) && legacyMediaInContent
         ? raw.split('\n')[0]
         : '');
-  const mediaUrl = rawMedia ? (rawMedia.startsWith('http') ? rawMedia : api.getMediaUrl(rawMedia)) : '';
+  const _origMediaUrl = rawMedia ? (rawMedia.startsWith('http') ? rawMedia : api.getMediaUrl(rawMedia)) : '';
+  // [status-rapido 2026-10-23] exibe a variante leve (meta.sv) e volta ao original
+  // se a variante falhar (retry da foto / erro do vídeo).
+  const _dispUrl = (isImage || isVideo) ? (statusDisplayMedia(cur).uri || '') : '';
+  const mediaUrl = (_dispUrl && _dispUrl !== _origMediaUrl && !(imageRetry > 0) && !videoError) ? _dispUrl : _origMediaUrl;
 
   // Voice status — an audio-only story. Detected by an explicit type OR by a
   // media_url that points at an audio file on a non-image/non-video status

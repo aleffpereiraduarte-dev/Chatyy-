@@ -2058,6 +2058,8 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
     if (Platform.OS !== 'web' && statusGroup?.items?.length) {
       try {
         for (const it of statusGroup.items.slice(0, 3)) {
+          // [status-rapido 2026-10-23] com variante leve (meta.sv): foto/vídeo leve + miniatura.
+          if (it?.meta?.sv && !it.meta.sv.err) { try { require('../services/statusMedia').prefetchStatusItem(it, { force: true }); } catch {} continue; }
           if (it?.type !== 'video') continue;
           const raw = (it.media_url || it.content || '').split('\n')[0];
           const fullUrl = raw.startsWith('/') ? api.getMediaUrl(raw) : raw;
@@ -3837,6 +3839,12 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
   // tira o contato de "Silenciados" (status_unmute + refetch).
   const _nsPrewarm = (statusGroup) => {
     if (Platform.OS === 'web') return;
+    // [status-rapido 2026-10-23] dedo encostou no anel: 1ª não vista + 2 seguintes (variantes leves).
+    try {
+      const _its = statusGroup?.items || [];
+      const _st = Math.max(0, _its.findIndex((x) => x && !x.viewed));
+      require('../services/statusMedia').prefetchStatusOpen(_its, _st);
+    } catch {}
     try {
       const first = (statusGroup?.items || [])[0];
       if (!first || first.type !== 'video') return;

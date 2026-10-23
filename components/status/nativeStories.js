@@ -26,6 +26,7 @@ import { storyReactionDefs, storyReactionKind, storyReactionsEnabled, isStoryRea
 import { nativeEmojiPayload } from '../chat/nativeEmojiData';
 import { getCachedStatusViewers, fetchStatusViewers } from '../../services/statusViewersCache'; // [viewers 2026-10-20]
 import { blurhashToDataUri } from '../../utils/blurhashDataUri'; // [viewers 2026-10-20]
+import { statusDisplayMedia, statusLocalUri, statusLocalThumb } from '../../services/statusMedia'; // [status-rapido 2026-10-23]
 
 let _NS; // undefined = não resolvido; null = indisponível
 function _mod() {
@@ -321,7 +322,10 @@ function _toNativeItem(it, t, isSelf) {
   const poll = v2 && it.type === 'poll' ? _pollOf(it) : null;
   const type = voiceUrl ? 'voice' : (it.type === 'video' ? 'video' : (it.type === 'text' || poll) ? 'text' : 'image');
   const { url, caption: mediaCaption } = _rawMedia(it);
-  const uri = (type === 'image' || type === 'video') ? _resolveUrl(url) : '';
+  // [status-rapido 2026-10-23] variante leve da CDN (meta.sv) quando existe; senão o original.
+  const _isMedia = type === 'image' || type === 'video';
+  const _disp = _isMedia ? statusDisplayMedia(it) : null;
+  const uri = _isMedia ? ((_disp && _disp.uri) || _resolveUrl(url)) : '';
   const text = type === 'text' && !poll ? String(it.content || '') : '';
   const bgRaw = itemBg(it);
   const grad = type === 'text' ? resolveTextGradient(bgRaw) : null;
@@ -339,9 +343,15 @@ function _toNativeItem(it, t, isSelf) {
     id: String(it.id),
     type,
     uri,
-    localUri: uri ? _local(uri) : '',
+    localUri: uri ? (statusLocalUri(it) || _local(uri)) : '',
     // [viewers 2026-10-20] sem miniatura no servidor → blurhash (meta) vira data: URI 32×32.
-    thumb: it.thumbnail_url ? _resolveUrl(it.thumbnail_url) : (uri ? _blurThumb(it) : ''),
+    // [status-rapido 2026-10-23] ordem: t320 já no disco → pôster do vídeo → blurhash
+    // (instantâneo) → t320 remoto.
+    thumb: !uri ? '' : (statusLocalThumb(it)
+      || (type === 'video' && _disp && _disp.poster ? _disp.poster : '')
+      || (it.thumbnail_url ? _resolveUrl(it.thumbnail_url) : '')
+      || _blurThumb(it)
+      || (_disp && _disp.thumb) || ''),
     text,
     caption,
     bg: (type === 'text' || type === 'voice') ? textStatusSolid(bgRaw) : '#000000',
