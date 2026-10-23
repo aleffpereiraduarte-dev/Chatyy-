@@ -11,6 +11,7 @@ import { BorderRadius, FontSize, Spacing } from '../constants/theme';
 import { IconCloudCheck, IconLock, IconKey, IconAlertTriangle, IconCheck } from './Icons';
 import * as ownBackup from '../services/ownBackup';
 import { fmtBytes, fmtDate, errorText, ProgressBar } from './OwnBackupCard';
+import { skipRestoreV4 } from './CloudBackupCard'; // [cbk4d] pular = decisão gravada; obrigatória = confirma
 
 /**
  * @param {{ visible:boolean, candidate:{email:string,set:object,hasPassword:boolean}|null, onClose:()=>void }} props
@@ -30,6 +31,8 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
   // [backup-nuvem 2026-10-22] candidato v4 (services/cloudBackup): mesma senha/chave; chave no aparelho → não pede.
   const v4 = candidate?.v === 4;
   const needSecret = !(v4 && candidate?.hasKey);
+  const mandatory = v4 && !!candidate?.mandatory; // [cbk4d] servidor sem histórico (store-and-forward)
+  const skip = useCallback(async () => { if (v4 && !(await skipRestoreV4(t, candidate))) return; onClose?.(); }, [v4, t, candidate, onClose]);
 
   useEffect(() => { if (visible) { setStage('ask'); setError(null); setSecret(''); setResult(null); setUseKey(!candidate?.hasPassword); } }, [visible, candidate]);
 
@@ -77,7 +80,7 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
   const busy = stage === 'restoring';
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={busy ? undefined : onClose}>
+    <Modal visible transparent animationType="fade" onRequestClose={busy ? undefined : (mandatory ? skip : onClose)}>
       <SheetKeyboardAvoider style={[st.backdrop]}>
         <View style={[st.sheet, { backgroundColor: colors.background, borderColor: colors.border }]} testID="ownbk-restore-prompt">
           <View style={st.row}>
@@ -97,6 +100,11 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
               <Text style={[st.body, { color: colors.text }]} testID="ownbk-restore-summary">
                 {t('ownBackup.restorePromptBody', { date: fmtDate(set.created_at), n: set.msg_count, size: fmtBytes(set.size_bytes) })}
               </Text>
+              {mandatory ? (
+                <Text style={[st.small, { color: colors.textSecondary, marginTop: Spacing.sm }]} testID="ownbk-restore-mandatory">
+                  {t('cbk4.mandatoryHint', 'Suas conversas antigas só existem neste backup: o Chatyy não guarda mensagens depois de entregues.')}
+                </Text>
+              ) : null}
               {needSecret ? (<>
               <View style={[st.row, { marginTop: Spacing.sm }]}>
                 {passwordMode ? <IconLock size={14} color={colors.textSecondary} /> : <IconKey size={14} color={colors.textSecondary} />}
@@ -140,8 +148,8 @@ export default function OwnBackupRestorePrompt({ visible, candidate, onClose }) 
               </TouchableOpacity>
             ) : (
               <>
-                <TouchableOpacity testID="ownbk-restore-skip" disabled={busy && !v4} style={[st.btn, { borderWidth: 1, borderColor: colors.text, opacity: busy && !v4 ? 0.4 : 1 }]} onPress={onClose}>
-                  <Text style={[st.btnText, { color: colors.text }]}>{v4 && busy ? t('cbk4.continueInApp', 'Continuar usando o app') : t('ownBackup.notNow')}</Text>
+                <TouchableOpacity testID="ownbk-restore-skip" disabled={busy && !v4} style={[st.btn, { borderWidth: 1, borderColor: colors.text, opacity: busy && !v4 ? 0.4 : 1 }]} onPress={v4 && busy ? onClose : skip}>
+                  <Text style={[st.btnText, { color: colors.text }]}>{v4 && busy ? t('cbk4.continueInApp', 'Continuar usando o app') : mandatory ? t('cbk4.skip', 'Pular') : t('ownBackup.notNow')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity testID="ownbk-restore-go" disabled={busy || (needSecret && !secret)} style={[st.btn, { backgroundColor: colors.text, opacity: busy || (needSecret && !secret) ? 0.45 : 1 }]} onPress={restore}>
                   {busy ? <ActivityIndicator color={colors.background} /> : <Text style={[st.btnText, { color: colors.background }]}>{t('ownBackup.restore')}</Text>}

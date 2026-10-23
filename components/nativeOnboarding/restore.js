@@ -23,7 +23,7 @@ export async function probeRestore(accountEmail) {
   const ownP = (async () => {
     try {
       const cb = require('../../services/cloudBackup');
-      if (cb.isOn()) { const c4 = await _timeout(cb.findRestoreCandidate(email), 6000); if (c4) return c4; }
+      if (cb.isOn()) { const c4 = await _timeout(cb.findRestoreCandidate(email), 10000); if (c4) return c4; } // [cbk4d] 6→10 s
     } catch {}
     try {
       const ob = require('../../services/ownBackup');

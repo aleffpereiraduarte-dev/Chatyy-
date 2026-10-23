@@ -60,7 +60,10 @@ const SERVER_PAGE = 100;
 const UPLOAD_CONCURRENCY = 3;
 const DOWNLOAD_CONCURRENCY = 4;
 const FULL_RESCAN_MS = 7 * 24 * 3600 * 1000;
-const FREQ_MS = { daily: 20 * 3600 * 1000, weekly: 6.5 * 24 * 3600 * 1000 };
+// [cbk4d 2026-10-22] + Mensal; 'manual' = só pelo botão; 'off' = backup desligado (nem o botão).
+const FREQ_MS = { daily: 20 * 3600 * 1000, weekly: 6.5 * 24 * 3600 * 1000, monthly: 29 * 24 * 3600 * 1000 };
+export const FREQS = ['daily', 'weekly', 'monthly', 'manual', 'off'];
+const PREFS_FV = 2; // prefs v1: 'off' significava 'Só manual'
 const BG_TASK = 'CHATYY_CLOUD_BACKUP_V4';
 const FLAG_MIRROR = '@chatyy_cbk4_flag'; // cópia da flag p/ a tarefa de 2º plano (bundle sem a flag em memória)
 // mídia
@@ -193,19 +196,28 @@ async function _rootKey(email) {
 
 // ─── prefs ───────────────────────────────────────────────────────────────
 const DEFAULT_PREFS = { freq: 'daily', allowCellular: false, serverFill: true, includeMedia: true, includeVideos: false };
+const _handledKey = (t) => `@chatyy_cbk4_handled:${t}`; // [cbk4d] decisão de restaurar tomada (restaurou/pulou/sobrescreveu)
+function _migratePrefs(p) {
+  const o = { ...DEFAULT_PREFS, ...(p || {}) };
+  if (!p?.fv && o.freq === 'off') o.freq = 'manual'; // v1 'off' = "Só manual"
+  if (!FREQS.includes(o.freq)) o.freq = DEFAULT_PREFS.freq;
+  o.fv = PREFS_FV;
+  return o;
+}
 const _prefsKey = (t) => `@chatyy_cbk4_prefs:${t}`;
 const _stateKey = (t) => `@chatyy_cbk4_state:${t}`; // só ids/contagens/urls (sem conteúdo nem chaves)
 const _rstKey = (t) => `@chatyy_cbk4_rst:${t}`;     // restauração em andamento (retomada)
 const _promptKey = (t) => `@chatyy_cbk4_prompted:${t}`;
 export async function getPrefs(email) {
   const em = _email(email);
-  try { const raw = em ? await AsyncStorage.getItem(_prefsKey(_tag(em))) : null; return { ...DEFAULT_PREFS, ...(raw ? JSON.parse(raw) : {}) }; }
-  catch { return { ...DEFAULT_PREFS }; }
+  try { const raw = em ? await AsyncStorage.getItem(_prefsKey(_tag(em))) : null; return _migratePrefs(raw ? JSON.parse(raw) : null); }
+  catch { return _migratePrefs(null); }
 }
 export async function setPrefs(patch, email) {
   const em = _email(email);
   if (!em) return null;
-  const next = { ...(await getPrefs(em)), ...(patch || {}) };
+  const next = { ...(await getPrefs(em)), ...(patch || {}), fv: PREFS_FV };
+  if (!FREQS.includes(next.freq)) next.freq = DEFAULT_PREFS.freq;
   try { await AsyncStorage.setItem(_prefsKey(_tag(em)), JSON.stringify(next)); } catch {}
   return next;
 }
@@ -608,7 +620,21 @@ export async function status() {
   if (!isOn()) return { enabled: false };
   const d = await _call('chat_cbk4_status', null, 'GET');
   // [cbk4c] só o ÚLTIMO backup: sets = [atual]; previous = o anterior (ainda restaurável na janela de 24 h)
-  return { enabled: !!d.enabled, sets: d.sets || [], previous: d.previous || [], quota: d.quota || null, keep: d.keep || 1, media: !!d.media, window: d.window };
+  return {
+    enabled: !!d.enabled, sets: d.sets || [], previous: d.previous || [], quota: d.quota || null, keep: d.keep || 1, media: !!d.media, window: d.window,
+    // [cbk4d] modelo store-and-forward: o servidor deixa de guardar o histórico → backup é a ÚNICA cópia
+    historyOnServer: _historyOnServer(d), defaultOn: _defaultOn(d),
+  };
+}
+/** Servidor guarda o histórico? (campo history_on_server do chat_cbk4_status; ausente = sim). QA: globalThis.__chatyy_history_on_server. */
+function _historyOnServer(d) {
+  try { if (typeof globalThis.__chatyy_history_on_server === 'boolean') return globalThis.__chatyy_history_on_server; } catch {}
+  return d?.history_on_server !== false;
+}
+/** Backup ligado por padrão (cria a chave sozinho no 1º uso)? flag globalThis.__chatyy_cbk4_default_on | servidor default_on. */
+function _defaultOn(d) {
+  try { if (typeof globalThis.__chatyy_cbk4_default_on === 'boolean') return globalThis.__chatyy_cbk4_default_on; } catch {}
+  return d?.default_on === true;
 }
 
 /** Faz o backup agora (incremental). opts.manual = botão "Fazer backup agora". */
@@ -647,7 +673,14 @@ async function _runBackup(opts) {
   const keys = _keys(K);
   const tag = _tag(em);
   const prefs = await getPrefs(em);
+  if (prefs.freq === 'off') throw _err('ERR_BACKUP_OFF', 'backup turned off');
   if (!(await _networkOk(prefs, !!opts.manual))) throw _err('ERR_NETWORK_POLICY', 'wifi only');
+  // [cbk4d] só existe UM backup por conta: aparelho que nunca fez backup nem restaurou não pode trocar o backup
+  // de outro aparelho por um vazio/menor. Automático = pula; botão = só depois de confirmar (opts.overwrite).
+  if (!opts.overwrite) {
+    const dec = await restoreDecision(em);
+    if (dec?.pending) throw _err('ERR_RESTORE_FIRST', 'restore decision pending', { set: dec.set });
+  } else { await markRestoreHandled(em, 'overwrite'); }
   const st0 = (await _getState(tag)) || {};
   const sameKey = st0.kid === keys.kid;
   const mediaSig = `${prefs.includeMedia === false ? 0 : 1}${prefs.includeVideos ? 1 : 0}`;
@@ -842,13 +875,17 @@ export async function maybeRunAuto(opts = {}) {
     if (!em || !api.getAuthToken?.()) return { skipped: 'no_account' };
     const prefs = await getPrefs(em);
     const iv = FREQ_MS[prefs.freq];
-    if (!iv) return { skipped: 'freq_off' };
+    if (!iv) return { skipped: prefs.freq === 'manual' ? 'freq_manual' : 'freq_off' };
     if (Date.now() - (Date.parse(prefs.lastAt || 0) || 0) < iv) return { skipped: 'recent' };
     if (prefs.lastErrorAt && Date.now() - Date.parse(prefs.lastErrorAt) < 3600 * 1000) return { skipped: 'backoff' };
-    if (!(await _rootKey(em))) return { skipped: 'not_setup' };
     if (!(await _networkOk(prefs, false))) return { skipped: 'network' };
     const st = await status();
     if (!st.enabled) return { skipped: 'server_off' };
+    if (!(await _rootKey(em))) {
+      const dk = await ensureDefaultOn({ email: em, st });
+      if (!dk?.created) return { skipped: 'not_setup' };
+    }
+    if ((await restoreDecision(em, st))?.pending) return { skipped: 'restore_first' };
     try { return { ran: true, result: await runBackup({ email: em }) }; }
     catch (e) { await setPrefs({ lastErrorAt: new Date().toISOString(), lastError: e?.code || 'ERR' }, em); return { error: e?.code || 'ERR' }; }
   } catch (e) { return { error: e?.code || String(e?.message || e) }; }
@@ -1014,11 +1051,15 @@ export async function findRestoreCandidate(email) {
   const em = _email(email);
   if (!em || !api.getAuthToken?.()) return null;
   const tag = _tag(em);
-  try { if ((await AsyncStorage.getItem(_promptKey(tag))) === '1') return null; } catch {}
   let st;
   try { st = await status(); } catch { return null; }
   const set = st.enabled && st.sets?.length ? st.sets[0] : null;
   if (!set) return null;
+  // [cbk4d] servidor sem histórico (store-and-forward) → restaurar é obrigatório: pergunta até decidir
+  // (restaurar ou pular com confirmação); senão pergunta 1 vez por instalação, como antes.
+  const mandatory = st.historyOnServer === false;
+  try { if ((await AsyncStorage.getItem(_handledKey(tag)))) return null; } catch {}
+  if (!mandatory) { try { if ((await AsyncStorage.getItem(_promptKey(tag))) === '1') return null; } catch {} }
   const rs = await _getJ(_rstKey(tag));
   if (rs?.uid === set.uid) return null;               // já restaurando/restaurado (retomada cuida)
   const mine = await _getState(tag);
@@ -1031,8 +1072,72 @@ export async function findRestoreCandidate(email) {
   }
   let hasPassword = false;
   if (!hasKey) { try { hasPassword = !!(await require('./ownBackup').listBackups()).hasPassword; } catch {} }
-  try { await AsyncStorage.setItem(_promptKey(tag), '1'); } catch {}
-  return { v: 4, email: em, set, hasPassword, hasKey };
+  if (!mandatory) { try { await AsyncStorage.setItem(_promptKey(tag), '1'); } catch {} }
+  return { v: 4, email: em, set, hasPassword, hasKey, mandatory };
+}
+
+/**
+ * [cbk4d] Este aparelho ainda precisa decidir sobre o backup de outro aparelho? (pending = há backup na
+ * nuvem, este aparelho nunca fez backup nem terminou uma restauração, e não pulou/sobrescreveu.)
+ * Mesma chave + conversas no aparelho = não é aparelho novo (mesma regra do findRestoreCandidate).
+ */
+export async function restoreDecision(email, st0) {
+  const em = _email(email);
+  if (!em) return null;
+  const tag = _tag(em);
+  try { const h = await AsyncStorage.getItem(_handledKey(tag)); if (h) return { pending: false, handled: h }; } catch {}
+  let st = st0;
+  if (!st) { try { st = await status(); } catch { return null; } }
+  const set = st?.enabled && st.sets?.length ? st.sets[0] : null;
+  if (!set) return { pending: false, mandatory: st?.historyOnServer === false };
+  const mine = await _getState(tag);
+  if (mine?.lastUid) return { pending: false };
+  const rs = await _getJ(_rstKey(tag));
+  if (rs?.state === 'done') return { pending: false };
+  try {
+    const K = await _rootKey(em);
+    if (K && (!set.key_id || _keys(K).kid === set.key_id)) {
+      const rows = await _db()?.dbGetConversations?.(true);
+      if (Array.isArray(rows) && rows.length > 0) return { pending: false };
+    }
+  } catch {}
+  return { pending: true, set, mandatory: st.historyOnServer === false, restoring: !!rs?.uid };
+}
+/** [cbk4d] Grava a decisão: 'restored' | 'skipped' (pulou com confirmação) | 'overwrite' (backup novo por cima). */
+export async function markRestoreHandled(email, how = 'skipped') {
+  const em = _email(email);
+  if (!em) return;
+  const tag = _tag(em);
+  try { await AsyncStorage.setItem(_handledKey(tag), String(how)); await AsyncStorage.setItem(_promptKey(tag), '1'); } catch {}
+}
+
+/**
+ * [cbk4d] Backup ligado por padrão (flag __chatyy_cbk4_default_on | servidor default_on): na 1ª vez,
+ * conta SEM nenhum backup (nem v4, nem v3, nem senha no cofre) e aparelho sem chave → cria a chave de
+ * 64 dígitos aqui (fica só no aparelho até o usuário criar senha/anotar; o cartão avisa). v3 automático
+ * fica desligado (o v4 substitui). Nunca roda com 'off', nem se já existe backup para restaurar.
+ */
+export async function ensureDefaultOn(opts = {}) {
+  try {
+    if (!isOn() || Platform.OS === 'web') return { skipped: 'off' };
+    const em = _email(opts.email);
+    if (!em || !api.getAuthToken?.()) return { skipped: 'no_account' };
+    if (await _rootKey(em)) return { skipped: 'has_key' };
+    const prefs = await getPrefs(em);
+    if (prefs.freq === 'off' || prefs.freq === 'manual') return { skipped: 'freq_' + prefs.freq };
+    const st = opts.st || (await status());
+    if (!st.enabled || !st.defaultOn) return { skipped: 'not_default' };
+    if (st.sets?.length || st.previous?.length) return { skipped: 'has_backup' };
+    const ob = require('./ownBackup');
+    try { const l = await ob.listBackups(); if (l?.hasPassword || l?.sets?.length) return { skipped: 'has_v3' }; }
+    catch { return { skipped: 'network' }; }
+    if (await _rootKey(em)) return { skipped: 'has_key' };
+    await ob.setupBackupKey({ mode: 'key' }, em);
+    try { await ob.setPrefs({ auto: false }, em); } catch {}
+    await setPrefs({ autoKey: true, autoKeyAt: new Date().toISOString() }, em);
+    try { await AsyncStorage.setItem(_handledKey(_tag(em)), 'fresh'); } catch {}
+    return { created: true };
+  } catch (e) { return { error: e?.code || String(e?.message || e) }; }
 }
 
 /** Abre o manifesto (confere a chave). Sem chave local: opts.password | opts.recoveryKey via ownBackup. */
@@ -1124,6 +1229,7 @@ async function _restore(set, opts) {
   }
   rs.state = 'done'; rs.doneAt = new Date().toISOString();
   await _setJ(_rstKey(tag), { uid: rs.uid, kid: rs.kid, state: 'done', doneAt: rs.doneAt, msgs, media });
+  try { await AsyncStorage.setItem(_handledKey(tag), 'restored'); } catch {}
   _emit({ phase: 'restored', done, total, msgs, media });
   return { conv_count: convs.length, msg_count: msgs, media_count: media, media_failed: mediaFailed };
 }
@@ -1164,7 +1270,7 @@ export async function pendingRestore(email) {
 export async function deleteAll(email) {
   const r = await _call('chat_cbk4_delete', { all: 1 });
   const em = _email(email);
-  if (em) { const tag = _tag(em); await _setState(tag, null); await _setJ(_rstKey(tag), null); await setPrefs({ lastAt: null }, em); }
+  if (em) { const tag = _tag(em); await _setState(tag, null); await _setJ(_rstKey(tag), null); await setPrefs({ lastAt: null }, em); try { await AsyncStorage.setItem(_handledKey(tag), 'deleted'); } catch {} }
   return r;
 }
 
@@ -1182,5 +1288,6 @@ export const __test = { _keys, _prep, _seal, _open, _json, _blocks, _isBoundary,
 
 export default {
   isOn, status, runBackup, maybeRunAuto, startRunner, runBackgroundTask, defineBackgroundTask, findRestoreCandidate, unlock, restore,
+  restoreDecision, markRestoreHandled, ensureDefaultOn, FREQS,
   restoreInBackground, resumePendingRestore, pendingRestore, deleteAll, getPrefs, setPrefs, subscribe, getProgress, isRunning, localSummary,
 };

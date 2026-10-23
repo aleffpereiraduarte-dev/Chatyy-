@@ -10,7 +10,7 @@ import { IconCloudUpload, IconTrash, IconRefresh } from './Icons';
 import * as cloud from '../services/cloudBackup';
 import { fmtBytes, fmtDate } from './OwnBackupCard';
 
-const FREQS = ['daily', 'weekly', 'off'];
+const FREQS = cloud.FREQS || ['daily', 'weekly', 'monthly', 'manual', 'off']; // [cbk4d] + Mensal; Desligado ≠ Só manual
 
 function errText(t, code) {
   const m = {
@@ -25,11 +25,27 @@ function errText(t, code) {
     ERR_BAD_KEY: t('cbk4.errBadKey', 'Essa chave não abre este backup.'),
     ERR_BUSY: t('cbk4.errBusy', 'Já tem um backup em andamento.'),
     ERR_DISABLED: t('cbk4.errOff', 'Backup na nuvem indisponível para a conta.'),
+    ERR_BACKUP_OFF: t('cbk4.errTurnedOff', 'O backup está desligado. Escolha uma frequência para ligar.'),
   };
   return m[code] || t('cbk4.errGeneric', 'Não foi possível concluir. Tente de novo.');
 }
 
-function confirmAsync(title, msg, ok, cancel) {
+/**
+ * [cbk4d] "Agora não/Pular" na restauração v4. Obrigatória (servidor sem histórico) = confirma com aviso.
+ * Grava a decisão (libera o backup automático deste aparelho). true = pode fechar.
+ */
+export async function skipRestoreV4(t, candidate) {
+  if (candidate?.mandatory) {
+    const ok = await confirmAsync(t('cbk4.skipTitle', 'Pular a restauração?'),
+      t('cbk4.skipBody', 'O Chatyy não guarda suas conversas depois de entregues. Sem restaurar, este celular começa sem as conversas antigas e o próximo backup substitui o atual.'),
+      t('cbk4.skipConfirm', 'Pular'), t('cbk4.skipCancel', 'Voltar e restaurar'));
+    if (!ok) return false;
+  }
+  try { await cloud.markRestoreHandled(candidate?.email, 'skipped'); } catch {}
+  return true;
+}
+
+export function confirmAsync(title, msg, ok, cancel) {
   if (Platform.OS === 'web') { try { return Promise.resolve(!!globalThis.confirm?.(`${title}\n\n${msg}`)); } catch { return Promise.resolve(false); } }
   return new Promise((resolve) => Alert.alert(title, msg, [
     { text: cancel, style: 'cancel', onPress: () => resolve(false) },
@@ -47,13 +63,22 @@ export default function CloudBackupCard() {
   const [busy, setBusy] = useState(cloud.isRunning());
   const [msg, setMsg] = useState('');
   const [pendingRst, setPendingRst] = useState(null);
+  const [decision, setDecision] = useState(null); // [cbk4d] backup de outro aparelho ainda sem decisão
+  const [obKeyMode, setObKeyMode] = useState(null);
 
   const load = useCallback(async () => {
     if (!cloud.isOn()) return;
     try { setSrv(await cloud.status()); } catch { setSrv({ enabled: false }); }
     try { setPrefsState(await cloud.getPrefs()); } catch {}
-    try { setLocal(await cloud.localSummary()); } catch {}
+    try {
+      let l = await cloud.localSummary();
+      // [cbk4d] ligado por padrão (flag): conta sem nenhum backup → cria a chave aqui e já fica pronto
+      if (l && !l.hasKey) { const r = await cloud.ensureDefaultOn(); if (r?.created) l = await cloud.localSummary(); }
+      setLocal(l);
+    } catch {}
     try { setPendingRst(await cloud.pendingRestore()); } catch {}
+    try { setDecision(await cloud.restoreDecision()); } catch {}
+    try { setObKeyMode((await require('../services/ownBackup').getPrefs())?.keyMode || null); } catch {}
   }, []);
   useEffect(() => { load(); return cloud.subscribe((p) => { setProgress(p); setBusy(cloud.isRunning()); }); }, [load]);
 
@@ -61,14 +86,27 @@ export default function CloudBackupCard() {
   const last = srv.sets?.[0] || null;
   const fg = colors.text;
 
-  const runNow = async () => {
+  const runNow = async (overwrite = false) => {
     setMsg(''); setBusy(true);
     try {
-      const r = await cloud.runBackup({ manual: true });
+      const r = await cloud.runBackup({ manual: true, overwrite });
       let m = t('cbk4.doneMedia', 'Backup concluído: {n} mensagens e {m} arquivos de mídia.').replace('{n}', String(r.msg_count)).replace('{m}', String(r.media_count || 0));
       if (r.quota_hit) m += ' ' + t('cbk4.mediaQuota', 'Parte da mídia ficou de fora: acabou o espaço do backup.');
       setMsg(m);
-    } catch (e) { setMsg(errText(t, e?.code)); }
+    } catch (e) {
+      if (e?.code === 'ERR_RESTORE_FIRST' && !overwrite) {
+        // [cbk4d] só existe 1 backup por conta: este aparelho ainda não restaurou o de outro aparelho
+        setBusy(false);
+        const s0 = e.set || last;
+        const ok = await confirmAsync(t('cbk4.overwriteTitle', 'Substituir o backup?'),
+          t('cbk4.overwriteBody', 'O backup de {d} ({n} mensagens) foi feito em outro aparelho e ainda não foi restaurado aqui. Um backup novo agora substitui esse.')
+            .replace('{d}', fmtDate(s0?.created_at)).replace('{n}', String(s0?.msg_count || 0)),
+          t('cbk4.overwrite', 'Substituir'), t('common.cancel', 'Cancelar'));
+        if (ok) return runNow(true);
+        load(); return;
+      }
+      setMsg(errText(t, e?.code));
+    }
     setBusy(false); load();
   };
   const restoreNow = async () => {
@@ -104,7 +142,21 @@ export default function CloudBackupCard() {
     setBusy(false); load();
   };
   const setP = async (patch) => { setPrefsState(await cloud.setPrefs(patch)); };
-  const freqLabel = { daily: t('cbk4.daily', 'Diário'), weekly: t('cbk4.weekly', 'Semanal'), off: t('cbk4.off', 'Só manual') };
+  const setFreq = async (f) => {
+    if (f === 'off' && (prefs?.freq || 'daily') !== 'off' && srv.historyOnServer === false) {
+      const ok = await confirmAsync(t('cbk4.offTitle', 'Desligar o backup?'),
+        t('cbk4.offBody', 'O Chatyy não guarda suas conversas depois de entregues. Sem backup, se você perder ou trocar de celular, elas não voltam.'),
+        t('cbk4.offConfirm', 'Desligar'), t('common.cancel', 'Cancelar'));
+      if (!ok) return;
+    }
+    setP({ freq: f });
+  };
+  const freqLabel = {
+    daily: t('cbk4.daily', 'Diário'), weekly: t('cbk4.weekly', 'Semanal'), monthly: t('cbk4.monthly', 'Mensal'),
+    manual: t('cbk4.manual', 'Só manual'), off: t('cbk4.off', 'Desligado'),
+  };
+  const isOff = prefs?.freq === 'off';
+  const keyOnlyHere = !!prefs?.autoKey && obKeyMode !== 'password';
   const pct = progress && progress.total && !['done', 'error', 'restored'].includes(progress.phase) ? Math.max(0.03, Math.min(1, (progress.done || 0) / progress.total)) : null;
 
   return (
@@ -149,7 +201,7 @@ export default function CloudBackupCard() {
         {FREQS.map((f) => {
           const on = (prefs?.freq || 'daily') === f;
           return (
-            <TouchableOpacity key={f} accessibilityRole="button" accessibilityState={{ selected: on }} onPress={() => setP({ freq: f })}
+            <TouchableOpacity key={f} accessibilityRole="button" accessibilityState={{ selected: on }} onPress={() => setFreq(f)}
               style={[st.chip, { borderColor: fg }, on && { backgroundColor: fg }]} testID={`cbk4-freq-${f}`}>
               <Text style={[st.chipText, { color: on ? colors.background : fg }]}>{freqLabel[f]}</Text>
             </TouchableOpacity>
@@ -169,11 +221,23 @@ export default function CloudBackupCard() {
         <Switch value={!!prefs?.includeVideos} disabled={prefs?.includeMedia === false} onValueChange={(v) => setP({ includeVideos: v })} testID="cbk4-videos" />
       </View>
 
+      {isOff ? <Text style={[st.small, { color: colors.textSecondary }]} testID="cbk4-off-note">{t('cbk4.offNote', 'Backup desligado: nada é copiado, nem pelo botão.')}</Text> : null}
+      {prefs?.freq === 'manual' ? <Text style={[st.small, { color: colors.textSecondary }]}>{t('cbk4.manualNote', 'Só quando você tocar em "Fazer backup agora".')}</Text> : null}
+      {decision?.pending ? (
+        <Text style={[st.small, { color: fg }]} testID="cbk4-decision">
+          {t('cbk4.decisionPending', 'Há um backup de {d} feito em outro aparelho. Restaure antes: o backup automático fica pausado até lá.').replace('{d}', fmtDate(decision.set?.created_at))}
+        </Text>
+      ) : null}
+      {keyOnlyHere && local?.hasKey ? (
+        <Text style={[st.small, { color: fg }]} testID="cbk4-keynudge">
+          {t('cbk4.keyNudge', 'Seu backup já está ligado, mas a chave dele está só neste celular. Crie uma senha ou anote a chave de 64 dígitos no bloco acima para restaurar em outro aparelho.')}
+        </Text>
+      ) : null}
       {local && !local.hasKey ? <Text style={[st.small, { color: colors.textSecondary }]}>{errText(t, 'ERR_NOT_SETUP')}</Text> : null}
       {msg ? <Text style={[st.small, { color: fg }]} testID="cbk4-msg">{msg}</Text> : null}
 
-      <TouchableOpacity accessibilityRole="button" disabled={busy || !local?.hasKey} onPress={runNow} testID="cbk4-run"
-        style={[st.btn, { backgroundColor: fg }, (busy || !local?.hasKey) && { opacity: 0.45 }]}>
+      <TouchableOpacity accessibilityRole="button" disabled={busy || !local?.hasKey || isOff} onPress={() => runNow(false)} testID="cbk4-run"
+        style={[st.btn, { backgroundColor: fg }, (busy || !local?.hasKey || isOff) && { opacity: 0.45 }]}>
         <IconCloudUpload size={16} color={colors.background} />
         <Text style={[st.btnText, { color: colors.background }]}>{t('cbk4.runNow', 'Fazer backup agora')}</Text>
       </TouchableOpacity>

@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, Animated, Easing, StyleSheet, Platform } from 'react-native';
 import * as ownBackup from '../../services/ownBackup';
 import { fmtBytes, fmtDate, errorText } from '../OwnBackupCard';
+import { skipRestoreV4 } from '../CloudBackupCard'; // [cbk4d] pular = decisão gravada; obrigatória = confirma
 import { IconCloud, IconCheck, IconAlertTriangle, IconLock } from '../Icons';
 
 export default function RestorePanel({ candidate, colors, t, reduced, onFinished, Primary, Secondary }) {
@@ -23,6 +24,7 @@ export default function RestorePanel({ candidate, colors, t, reduced, onFinished
   // senha/chave do backup; chave já no aparelho → nem pede. Restauração com barra real e retomável.
   const v4 = candidate?.v === 4;
   const needSecret = !(v4 && candidate?.hasKey);
+  const mandatory = v4 && !!candidate?.mandatory; // [cbk4d] servidor sem histórico (store-and-forward)
   const aliveRef = useRef(true);
   useEffect(() => () => { aliveRef.current = false; }, []);
 
@@ -108,6 +110,11 @@ export default function RestorePanel({ candidate, colors, t, reduced, onFinished
               : t('ownBackup.restoredNotice', { n: result?.restored || 0 }))
             : t('ownBackup.restorePromptBody', { date: fmtDate(set.created_at), n: set.msg_count, size: fmtBytes(set.size_bytes) })}
         </Text>
+        {mandatory && stage !== 'done' ? (
+          <Text style={[st.sub, { color: colors.textSecondary }]} maxFontSizeMultiplier={1.5} testID="nob-restore-mandatory">
+            {t('cbk4.mandatoryHint', 'Suas conversas antigas só existem neste backup: o Chatyy não guarda mensagens depois de entregues.')}
+          </Text>
+        ) : null}
       </View>
 
       {stage !== 'done' && needSecret && (
@@ -173,7 +180,12 @@ export default function RestorePanel({ candidate, colors, t, reduced, onFinished
             // a restauração v4 continua sozinha (e retoma se o app fechar) — dá para entrar já
             <Secondary label={t('cbk4.continueInApp', 'Continuar usando o app')} onPress={() => onFinished?.('restoring')} testID="nob-restore-bg" />
           ) : (
-            <Secondary label={t('ownBackup.notNow')} onPress={() => onFinished?.('skipped')} disabled={busy} testID="nob-restore-skip" />
+            <Secondary
+              label={mandatory ? t('cbk4.skip', 'Pular') : t('ownBackup.notNow')}
+              onPress={async () => { if (v4 && !(await skipRestoreV4(t, candidate))) return; onFinished?.('skipped'); }}
+              disabled={busy}
+              testID="nob-restore-skip"
+            />
           )}
         </>
       )}

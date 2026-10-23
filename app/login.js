@@ -256,7 +256,7 @@ export default function LoginScreen() {
       if (cb.isOn()) {
         const c4 = await Promise.race([
           cb.findRestoreCandidate(accountEmail),
-          new Promise((res) => setTimeout(() => res(null), 6000)),
+          new Promise((res) => setTimeout(() => res(null), 10000)), // [cbk4d] 6→10 s: restauração pode ser obrigatória
         ]);
         if (c4 && mountedRef.current) { setOwnRestore(c4); return; }
       }
