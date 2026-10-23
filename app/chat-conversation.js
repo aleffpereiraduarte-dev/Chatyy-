@@ -14913,6 +14913,11 @@ function ChatConversationInnerBody() {
   const [showTopicsModal, setShowTopicsModal] = _useStateT(false);
   const [topics, setTopics] = _useStateT([]);
   const [activeTopic, setActiveTopic] = _useStateT(null); // { id, name, icon } | null
+  // [conv-tail 2026-10-23] tópico ativo (a cauda por id não roda dentro de tópico) + maior id que o
+  // SERVIDOR já devolveu nesta conversa (semente da cauda; nunca vem de evento ao vivo).
+  const _tailTopicRef = useRef(null);
+  _tailTopicRef.current = activeTopic;
+  const _tailSeedRef = useRef({ cid: null, id: 0 });
   const _topicSentCmisRef = useRef(new Set()); // [2026-10-21 tg4] cmis enviados dentro de um tópico
   const [newTopicName, setNewTopicName] = _useStateT('');
   const [newTopicIcon, setNewTopicIcon] = _useStateT(''); // [2026-10-12 srv-audit] '' = ícone padrão (SVG #)
@@ -16905,6 +16910,15 @@ function ChatConversationInnerBody() {
         setIBlockedPeer(!!r.data?.i_blocked_peer);
         setBlockerName(r.data?.blocker_name || null);
         let newMsgs = processIncoming(r.data?.messages || []);
+        // [conv-tail 2026-10-23] semente da cauda: maior id numérico que o servidor devolveu (janela nova/delta).
+        if (!beforeId && !activeTopic?.id) {
+          try {
+            let _mx = 0;
+            for (const _m of newMsgs) { const _n = Number(_m && _m.id); if (Number.isFinite(_n) && _n > _mx) _mx = _n; }
+            const _sd = _tailSeedRef.current;
+            if (_mx > 0) _tailSeedRef.current = { cid: conversationId, id: (_sd && _sd.cid === conversationId) ? Math.max(_sd.id || 0, _mx) : _mx };
+          } catch {}
+        }
         // [import-ordem 2026-10-13] servidor novo manda wa_import_rev quando a conversa tem
         // histórico importado → conversa passa a ser "por data"; rev novo nesta sessão
         // (1ª vez ou importou/apagou/ocultou de novo) → recarrega a janela inteira.
@@ -18633,11 +18647,90 @@ function ChatConversationInnerBody() {
       // below is mutated synchronously and shared across the entire chat
       // screen lifetime so no two setMessages calls can both insert the
       // same id.
+      // [conv-tail 2026-10-23] Conversa ABERTA nível WhatsApp — nenhum evento ao vivo some da tela:
+      //  • "cauda por id": GET chat_messages since_id=<maior id já confirmado pelo SERVIDOR> → o que
+      //    não está na tela entra pelo MESMO funil do ao vivo (onIncomingMessage). Não usa o cursor de
+      //    pts da conversa (compartilhado: o onlineRecoveryOrchestrator sincroniza TODAS as conversas no
+      //    reconectar/1º plano, grava no SQLite com setter no-op e avança o pts → o chat_sync da tela
+      //    aberta voltava vazio e a bolha só aparecia ao sair e entrar de novo).
+      //  • gatilhos: buraco de conv_pts no ao vivo (≤ ~0,3 s), fim de rajada (2,5 s), WS autenticou /
+      //    1º plano / resume_full_sync (0,4 s + 2,5 s p/ réplica atrasada).
+      //  • id marcado no dedup mas bolha fora da tela há >1,5 s → re-insere (nunca descarta).
+      //  • linha E2EE escondida (_e5Hidden) além da espera → cadeado "Aguardando" (re-decifra no e2ee5_plain).
+      //  • telemetria push_diag `conv_live_miss` (rnr = recebida e não pintada, nr = nunca chegou ao vivo).
+      // Kill a quente: globalThis.__chatyy_conv_tail = false.
+      const _tailOn = () => { try { return globalThis.__chatyy_conv_tail !== false; } catch { return true; } };
+      const _tail = {
+        wm: 0, busy: false, again: null, lastAt: 0, timer: null, due: 0, burstTimer: null, burstFirst: 0,
+        livePts: 0, seen: new Map(), added: new Map(), lastReport: 0,
+        st: { runs: 0, rows: 0, rnr: 0, nr: 0, ri: 0, uh: 0, ty: {}, why: {} },
+      };
+      const _tailNote = (map, k) => { map.set(k, Date.now()); if (map.size > 800) map.delete(map.keys().next().value); };
+      const _tailOnScreen = (idKey) => {
+        const arr = messagesRef.current || [];
+        for (let i = arr.length - 1; i >= 0; i--) { const m = arr[i]; if (m && String(m.id) === idKey) return true; }
+        return false;
+      };
+      // id já marcado no dedup, mas a bolha não está na tela (janela recarregada de réplica atrasada,
+      // linha trocada, etc.) → libera p/ re-inserir. Só depois de 1,5 s (estado já pintado).
+      const _tailCanReingest = (idKey) => {
+        if (!_tailOn() || idKey.startsWith('tmp_')) return false;
+        const at = _tail.added.get(idKey);
+        if (at && Date.now() - at < 1500) return false;
+        return !_tailOnScreen(idKey);
+      };
+      // Linha E2EE que entrou escondida (_e5Hidden: decifrando / corpo do roteador) e continua escondida
+      // depois da espera → mostra o cadeado "Aguardando esta mensagem" (o e2ee5_plain troca pelo texto).
+      const _tailUnhideLater = (idKey) => {
+        if (!_tailOn()) return;
+        const tm = setTimeout(() => {
+          if (!mountedRef.current) return;
+          setMessages(prev => _mapKeep(prev, m => {
+            if (!m || String(m.id) !== idKey || !m._e5Hidden) return m;
+            let r = null;
+            try {
+              const _e5 = require('../services/e2ee/e2ee5');
+              if (typeof m._e2eRaw === 'string' && _e5.isEnvelope(m._e2eRaw)) r = _e5.applyToRow(m, m._e2eRaw, conversationId, t);
+              if (!r || r._e5Hidden) r = { ...m, _e5Hidden: false, _e2e: true, _e5State: 'waiting', content: _e5.stateText(t, 'waiting') };
+            } catch { r = { ...m, _e5Hidden: false, _e2e: true, _e5State: 'waiting' }; }
+            _tail.st.uh++;
+            return r;
+          }));
+        }, 4500);
+        wsUnsubs.push(() => clearTimeout(tm));
+      };
+      const _tailReport = (force) => {
+        try {
+          const s = _tail.st;
+          if (!(s.rnr || s.nr || s.ri || s.uh)) return;
+          const now = Date.now();
+          if (!force && now - _tail.lastReport < 60000) return;
+          _tail.lastReport = now;
+          const fmt = (o) => Object.keys(o).map(k => k + ':' + o[k]).join(',');
+          const info = `conv=${conversationId} rnr=${s.rnr} nr=${s.nr} ri=${s.ri} uh=${s.uh} runs=${s.runs} rows=${s.rows} why=${fmt(s.why)} ty=${fmt(s.ty)}`;
+          _tail.st = { runs: 0, rows: 0, rnr: 0, nr: 0, ri: 0, uh: 0, ty: {}, why: {} };
+          require('../services/crashReporter').reportStep?.('conv_live_miss', info.slice(0, 400));
+        } catch {}
+      };
+      wsUnsubs.push(() => _tailReport(true));
       const onIncomingMessage = (data) => {
         if (!mountedRef.current) return;
         const raw = data?.message || data;
         if (!raw || !raw.id) return;
         if (String(raw.conversation_id ?? data?.conversation_id) !== String(conversationId)) return;
+        // [conv-tail] tudo que chegou ao vivo p/ esta conversa (telemetria rnr) + detector de buraco por conv_pts
+        if (!data?.__tail) {
+          try {
+            const _rk = String(raw.id);
+            if (!_rk.startsWith('tmp_')) _tailNote(_tail.seen, _rk);
+            const _p = Number(raw.conv_pts) || 0;
+            if (_p > 0 && _tailOn()) {
+              if (_tail.livePts > 0 && _p > _tail.livePts + 4) _tailSchedule('gap', 300);
+              if (_p > _tail.livePts) _tail.livePts = _p;
+            }
+            if (String(raw.sender_email || '').toLowerCase() !== String(currentEmail || '').toLowerCase()) _tailBurst();
+          } catch {}
+        }
         // [FIX pts-before-insert 2026-10-02] The pts watermark bump was MOVED
         // down to AFTER processIncoming produces a valid msg (see below). It
         // used to run here, at the top — but if processIncoming then failed and
@@ -18655,6 +18748,15 @@ function ChatConversationInnerBody() {
         // followed by the canonical broadcast doesn't produce two bubbles.
         const rawCid = raw.client_message_id || raw._client_id;
         const cidKey = rawCid ? 'c:' + String(rawCid) : null;
+        // [conv-tail] dedup nunca descarta o que NÃO está na tela → re-insere pelo caminho normal.
+        try {
+          if (_recvIdSet.current.has(idKey) && _tailCanReingest(idKey)) {
+            _recvIdSet.current.delete(idKey);
+            if (cidKey) _recvIdSet.current.delete(cidKey);
+            _tail.st.ri++;
+            _tailReport(false);
+          }
+        } catch {}
         if (_recvIdSet.current.has(idKey)) {
           // [2026-10-18 vthumb-lqip] mesmo id de novo = re-broadcast de enriquecimento
           // (pôster/LQIP/dimensões gerados depois). Antes era descartado aqui → a bolha
@@ -18713,6 +18815,7 @@ function ChatConversationInnerBody() {
             } catch {}
           }
           _addRecvId(idKey);
+          try { _tailNote(_tail.added, idKey); if (msg._e5Hidden) _tailUnhideLater(idKey); } catch {} // [conv-tail]
           // [FIX 2026-08-09 tick azul não aparece] Só o broadcast CANÔNICO (id
           // numérico) pode reivindicar o cidKey. Se o relay otimista (id 'tmp_')
           // marcasse o cid, o broadcast canônico seguinte batia no early-return
@@ -18884,7 +18987,7 @@ function ChatConversationInnerBody() {
           // lands in the thread we're currently viewing. Own messages (echo
           // from sender relay) skip the sound so the user's own sends stay
           // quiet past the outbound "whoosh". Respects chatyySettings.sounds.
-          if (msg.sender_email !== currentEmail && chatyySettings.sounds !== false) {
+          if (msg.sender_email !== currentEmail && chatyySettings.sounds !== false && !data?.__tail) { // [conv-tail] recuperada pela cauda: sem som
             // [push-preview 2026-10-21b] conversa aberta: só som, depois da bolha pintar, sem vibrar.
             try { require('../services/notificationSound').playThreadReceiveSound(); } catch {}
           }
@@ -19029,6 +19132,131 @@ function ChatConversationInnerBody() {
       const unsubMsg = _wsOnB('chat_message', onIncomingMessage);
       const unsubMsgSummary = _wsOnB('chat_summary', onIncomingMessage);
       wsUnsubs.push(unsubMsg, unsubMsgSummary);
+
+      // [conv-tail 2026-10-23] cauda por id da conversa aberta (ver bloco acima de onIncomingMessage).
+      let _tailDead = false;
+      wsUnsubs.push(() => {
+        _tailDead = true;
+        if (_tail.timer) clearTimeout(_tail.timer);
+        if (_tail.burstTimer) clearTimeout(_tail.burstTimer);
+      });
+      const _tailInitWm = () => {
+        const sd = _tailSeedRef.current;
+        let wm = (sd && sd.cid === conversationId) ? (Number(sd.id) || 0) : 0;
+        if (wm > 0) return wm;
+        // sem semente (servidor ainda não respondeu nesta abertura): maior id na tela que NÃO veio ao vivo
+        for (const m of (messagesRef.current || [])) {
+          const n = Number(m && m.id);
+          if (!Number.isFinite(n) || n <= 0 || m._pending) continue;
+          if (_tail.seen.has(String(m.id))) continue;
+          if (n > wm) wm = n;
+        }
+        return wm;
+      };
+      const _tailRun = async (why) => {
+        if (_tailDead || !_tailOn() || !mountedRef.current || !conversationId) return;
+        if (_tailTopicRef.current) return; // tópico: janela própria
+        if (!appActiveRef.current) return; // 2º plano: o 'active' dispara de novo
+        if (_tail.busy) { _tail.again = why; return; }
+        // sem semente do servidor ainda (loadMessages em voo): espera até ~9 s antes de cair no que há na tela
+        if (!(_tail.wm > 0)) {
+          const _sd0 = _tailSeedRef.current;
+          if (!(_sd0 && _sd0.cid === conversationId && Number(_sd0.id) > 0) && (_tail.noSeed = (_tail.noSeed || 0) + 1) <= 3) { _tailSchedule(why, 3000); return; }
+        }
+        _tail.busy = true;
+        _tail.lastAt = Date.now();
+        try {
+          const sd = _tailSeedRef.current;
+          if (sd && sd.cid === conversationId && Number(sd.id) > _tail.wm) _tail.wm = Number(sd.id);
+          if (!(_tail.wm > 0)) _tail.wm = _tailInitWm();
+          if (!(_tail.wm > 0)) return;
+          const since = _tail.wm;
+          _tail.st.runs++;
+          _tail.st.why[why] = (_tail.st.why[why] || 0) + 1;
+          let r = null;
+          try { r = await api.chatMessages(conversationId, 100, null, since); } catch { r = null; }
+          if (_tailDead || !mountedRef.current) return;
+          const rows = (r && r.success && Array.isArray(r.data?.messages)) ? r.data.messages : null;
+          if (!rows) return;
+          // watermark só avança por linhas com >5 s (réplica atrasada / commit fora de ordem → pede de novo)
+          const cutoff = Date.now() - 5000;
+          let wmNext = since;
+          const missing = [];
+          const onIds = new Set(); const onCids = new Set();
+          for (const m of (messagesRef.current || [])) {
+            if (!m) continue;
+            if (m.id != null) onIds.add(String(m.id));
+            const c = m.client_message_id || m._client_id;
+            if (c) onCids.add(String(c));
+          }
+          for (const row of rows) {
+            if (!row || row.id == null) continue;
+            const n = Number(row.id);
+            if (!Number.isFinite(n) || n <= since) continue;
+            const ts = Date.parse(row.created_at || '') || 0;
+            if ((!ts || ts < cutoff) && n > wmNext) wmNext = n; // sem data legível = trata como antiga
+            if (onIds.has(String(row.id))) continue;
+            const rc = row.client_message_id || row._client_id;
+            // minha mensagem ainda com id tmp_ na tela (ack em voo): o funil troca pelo id real, sem contar como perda
+            if (rc && onCids.has(String(rc))) { try { onIncomingMessage({ message: { conversation_id: conversationId, ...row }, conversation_id: conversationId, __tail: true }); } catch {} continue; }
+            missing.push(row);
+          }
+          if (rows.length >= 100 && Date.now() - (_tail.fullAt || 0) > 30000) {
+            // buraco maior que a página: janela inteira de novo (merge preserva o que já está na tela)
+            _tail.fullAt = Date.now();
+            try { loadMessages(false); } catch {}
+          }
+          _tail.wm = Math.max(_tail.wm, wmNext);
+          if (!missing.length) return;
+          missing.sort((a, b) => Number(a.id) - Number(b.id));
+          _tail.st.rows += missing.length;
+          for (const row of missing) {
+            const k = String(row.id);
+            if (_tail.seen.has(k)) _tail.st.rnr++; else _tail.st.nr++;
+            const ty = String(row.type || 'text').slice(0, 16);
+            _tail.st.ty[ty] = (_tail.st.ty[ty] || 0) + 1;
+            // libera o dedup (a bolha NÃO está na tela) e entra pelo funil do ao vivo
+            try { _recvIdSet.current?.delete(k); } catch {}
+            try { onIncomingMessage({ message: { conversation_id: conversationId, ...row }, conversation_id: conversationId, __tail: true }); } catch {}
+          }
+          _tailReport(false);
+        } finally {
+          _tail.busy = false;
+          if (_tail.again && !_tailDead) { const w = _tail.again; _tail.again = null; _tailSchedule(w, 400); }
+        }
+      };
+      // Agenda 1 execução (a mais cedo vence); intervalo mínimo de 1 s entre execuções.
+      var _tailSchedule = (why, delay) => {
+        if (_tailDead || !_tailOn()) return;
+        const now = Date.now();
+        const due = Math.max(now + (Number(delay) || 0), _tail.lastAt + 1000);
+        if (_tail.timer && _tail.due <= due) return;
+        if (_tail.timer) clearTimeout(_tail.timer);
+        _tail.due = due;
+        _tail.timer = setTimeout(() => { _tail.timer = null; _tail.due = 0; _tailRun(why); }, Math.max(0, due - now));
+      };
+      // Fim de rajada ao vivo: confere a cauda 2,5 s depois da última (no máx. 6 s depois da 1ª).
+      var _tailBurst = () => {
+        if (_tailDead || !_tailOn()) return;
+        const now = Date.now();
+        if (!_tail.burstTimer) _tail.burstFirst = now;
+        else clearTimeout(_tail.burstTimer);
+        const wait = Math.max(0, Math.min(2500, _tail.burstFirst + 6000 - now));
+        _tail.burstTimer = setTimeout(() => { _tail.burstTimer = null; _tailSchedule('burst', 0); }, wait);
+      };
+      {
+        const _tailTwice = (why) => { _tailSchedule(why, 400); setTimeout(() => { if (!_tailDead) _tailSchedule(why + '2', 0); }, 2500); };
+        const _offConnTail = mailWs.on('connection', (d) => { if (d && d.status === 'authenticated') _tailTwice('ws'); });
+        const _offFgTail = mailWs.on('foreground', () => _tailTwice('fg'));
+        let _tailApp = AppState.currentState;
+        const _appTailSub = AppState.addEventListener('change', (s) => {
+          const was = _tailApp; _tailApp = s;
+          if (s === 'active' && was !== 'active') _tailTwice('app');
+        });
+        wsUnsubs.push(() => { try { _offConnTail?.(); } catch {} try { _offFgTail?.(); } catch {} try { _appTailSub?.remove?.(); } catch {} });
+        // 1ª conferência depois da abertura (loadMessages já respondeu na maioria dos casos)
+        _tailSchedule('open', 3000);
+      }
 
       // [#1188 Agent A 2026-05-19] ENVELOPE-MODE UI WAKE
       // ────────────────────────────────────────────────────────────────
