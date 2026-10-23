@@ -19,6 +19,8 @@ import Crypto
 
 enum ChatyyQuicProto {
   static let alpn = "chatyy/1"
+  /// [chatyy/2 — PROTOCOLO §0] TLS pinado por SPKI + msg1 do IK no flight do Finished.
+  static let alpn2 = "chatyy/2"
   static let port: UInt16 = 443
   static let exporterLabel = "EXPORTER-chatyy-noise-v1"
   static let exporterLen = 32
@@ -55,14 +57,14 @@ enum ChatyyQuicProto {
     return nil
   }
 
-  /// §2 preâmbulo: "CY" | versão 0x01 | modo.
-  static func preamble(mode: UInt8) -> Data {
-    return Data([0x43, 0x59, 0x01, mode])
+  /// §2 preâmbulo: "CY" | versão (0x01 | 0x02) | modo.
+  static func preamble(mode: UInt8, version: UInt8 = 1) -> Data {
+    return Data([0x43, 0x59, version, mode])
   }
 
-  /// §4.2: "chatyy/1" 0x00 | região 0x00 | kid 0x00 | fio | modo | binding.
-  static func prologue(region: String, kid: String, wire: UInt8, mode: UInt8, binding: Data) -> Data {
-    var d = Data("chatyy/1".utf8)
+  /// §4.2 / §0.3: proto ("chatyy/1" | "chatyy/2") 0x00 | região 0x00 | kid 0x00 | fio | modo | binding.
+  static func prologue(region: String, kid: String, wire: UInt8, mode: UInt8, binding: Data, proto: String = "chatyy/1") -> Data {
+    var d = Data(proto.utf8)
     d.append(0)
     d.append(Data(region.utf8))
     d.append(0)
@@ -125,6 +127,30 @@ enum ChatyyQuicProto {
     let code = (Int(b[0]) << 8) | Int(b[1])
     let reason = String(data: b.subdata(in: 2..<b.count), encoding: .utf8) ?? ""
     return (code, reason)
+  }
+
+  // MARK: chatyy/2 — pin SPKI (§0.2)
+
+  /// Pins de TESTE (todas as regiões): atual + próximo (rotação).
+  static let testPins: [String] = [
+    "7T92loM6w7GMhwkyu25bQOwbGoVMJdk7u6nm48Jp51g=",
+    "QhTxrbi7wfzD+EEgmN7jpO2JOGa09wxQYBGullgQQP4=",
+  ]
+
+  /// Cabeçalho DER do SubjectPublicKeyInfo de uma chave EC P-256 (id-ecPublicKey + prime256v1,
+  /// BIT STRING de 66 bytes). SecKeyCopyExternalRepresentation dá só o ponto 04||X||Y (65 B).
+  static let spkiP256Header: [UInt8] = [
+    0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01,
+    0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+  ]
+
+  /// base64(SHA-256(SPKI DER)) a partir do ponto P-256 não comprimido; nil se não for P-256.
+  static func spkiPinP256(point: Data) -> String? {
+    let pt = Data(point)
+    guard pt.count == 65, pt[0] == 0x04 else { return nil }
+    var der = Data(spkiP256Header)
+    der.append(pt)
+    return Data(SHA256.hash(data: der)).base64EncodedString()
   }
 
   static func u16(_ n: Int) -> Data {
@@ -204,26 +230,31 @@ final class ChatyyQuicChannel {
   }
 
   /// Preâmbulo + msg1 (§2, §4.3). `payload` = JSON da msg1 (ver helloPayload).
-  func clientHello(mode: UInt8, payload: Data) throws -> Data {
+  func clientHello(mode: UInt8, payload: Data, version: UInt8 = 1) throws -> Data {
     if helloSent { throw ChatyyNoiseError.wrongState("hello twice") }
     if payload.count > ChatyyQuicProto.maxHelloPayload { throw ChatyyQuicChannelError.tooBig }
     let m1 = try ik.writeMessageA(payload: payload)
     helloSent = true
-    var out = ChatyyQuicProto.preamble(mode: mode)
+    var out = ChatyyQuicProto.preamble(mode: mode, version: version)
     out.append(ChatyyQuicProto.u16(m1.count))
     out.append(m1)
     return out
   }
 
   /// JSON da msg1: {"v":1,"dev","ts","n","ua"} — `n` novo a cada tentativa (anti-replay §5).
-  static func helloPayload(dev: String, ua: String, nowMs: Double) -> Data {
-    let obj: [String: Any] = [
-      "v": 1,
+  /// chatyy/2 modo I: v=2 + `frames` (auth primeiro; qualquer frame, vai amarrado ao exporter).
+  /// Modo E (retomada) e chatyy/1: v=1 + `early` opcional (só idempotentes, §5).
+  static func helloPayload(dev: String, ua: String, nowMs: Double, version: Int = 1,
+                           frames: [String] = [], early: [String] = []) -> Data {
+    var obj: [String: Any] = [
+      "v": version,
       "dev": dev,
       "ts": Int64(nowMs),
       "n": ChatyyQuicProto.randomBytes(16).base64EncodedString(),
       "ua": ua,
     ]
+    if !frames.isEmpty { obj["frames"] = Array(frames.prefix(64)) }
+    if !early.isEmpty { obj["early"] = Array(early.prefix(64)) }
     return (try? JSONSerialization.data(withJSONObject: obj, options: [])) ?? Data("{\"v\":1}".utf8)
   }
 
@@ -416,6 +447,31 @@ enum ChatyyQuicSelfTest {
       if ChatyyQuicProto.pinnedKey(kid: "t1", testAllowed: false) != nil { return "pin without test" }
       if ChatyyQuicProto.pinnedKey(kid: "t2", testAllowed: true) != nil { return "pin unknown kid" }
       if ChatyyQuicProto.pinnedKey(kid: "t1", testAllowed: true)?.count != 32 { return "pin t1" }
+      // chatyy/2: pin SPKI dos 2 certificados de TESTE (ponto P-256 extraído com openssl)
+      let pt1 = ChatyyNoiseSelfTest.hex("0410128f33b8c73fbffffed322cb0df50fa9d6eadbf6a48971bdbb123691373bffa241335d4f6f9054fe9fad19b43ca4e5a22ff70e1f3b2c50831dfdd8ca3128b0")
+      let pt2 = ChatyyNoiseSelfTest.hex("040cb2a209f9d0a2ebb6754d462fe9ce9a8588b29e4e2cf6259dc879e05f1ba606ce8a9d56c319f7812b3825b401c4f0c8757a028f55e14a22081b749005f3447a")
+      if ChatyyQuicProto.spkiPinP256(point: pt1) != ChatyyQuicProto.testPins[0] { return "spki pin atual" }
+      if ChatyyQuicProto.spkiPinP256(point: pt2) != ChatyyQuicProto.testPins[1] { return "spki pin próximo" }
+      if ChatyyQuicProto.spkiPinP256(point: pt1.subdata(in: 0..<64)) != nil { return "spki pin tamanho" }
+      // chatyy/2 modo I: preâmbulo 0x02, prólogo "chatyy/2", frames dentro da msg1
+      let pro2 = ChatyyQuicProto.prologue(region: "mex", kid: "t1", wire: ChatyyQuicProto.wireQuic,
+                                          mode: ChatyyQuicProto.modeI, binding: binding, proto: "chatyy/2")
+      if pro2.prefix(9) != Data("chatyy/2\u{0}".utf8) { return "prologue v2" }
+      let ch4 = try ChatyyQuicChannel(region: "mex", kid: "t1", regionPub: srv.publicKey.rawRepresentation, deviceKey: dev, prologue: pro2)
+      let h4 = try ch4.clientHello(mode: ChatyyQuicProto.modeI, payload: ChatyyQuicChannel.helloPayload(
+        dev: "d1", ua: "t", nowMs: 1, version: 2, frames: ["{\"type\":\"auth\"}"]), version: 2)
+      if h4.prefix(4) != Data([0x43, 0x59, 0x02, 0x49]) { return "preamble v2" }
+      let rsp4 = try ChatyyNoiseIK(hash: .blake2s, role: .responder, prologue: pro2, localStatic: srv, remoteStatic: nil)
+      let p4 = try rsp4.readMessageA(h4.subdata(in: 6..<h4.count))
+      guard let j4 = (try? JSONSerialization.jsonObject(with: p4)) as? [String: Any], (j4["v"] as? Int) == 2,
+            (j4["frames"] as? [String])?.first == "{\"type\":\"auth\"}" else { return "msg1 v2 payload" }
+      let m4 = try rsp4.writeMessageB(payload: Data("{\"v\":2,\"ok\":true,\"region\":\"mex\",\"kid\":\"t1\",\"bound\":\"bearer\",\"early_n\":1}".utf8))
+      var st4 = try rsp4.split()
+      var w4 = ChatyyQuicProto.u16(m4.count); w4.append(m4)
+      let as4 = try st4.encrypt(ChatyyQuicProto.encodeFrame(.text, Data("{\"type\":\"auth_success\"}".utf8)))
+      w4.append(ChatyyQuicProto.u16(as4.count)); w4.append(as4)
+      let r4 = try ch4.receive(w4)
+      if r4.events != [.ready(bound: "bearer"), .text("{\"type\":\"auth_success\"}")] || ch4.serverHello?.earlyN != 1 { return "msg2 v2 + auth_success" }
       return nil
     } catch {
       return "throw \(error)"

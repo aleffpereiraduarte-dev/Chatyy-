@@ -36,6 +36,12 @@ enum ChatyyQuicGate {
   static func localOn() -> Bool { return ud()?.bool(forKey: localKey) == true }
   static func killOn() -> Bool { return ud()?.bool(forKey: killKey) == true }
   static func handoverOn() -> Bool { return ud()?.bool(forKey: handoverKey) == true }
+  /// true = não tenta o chatyy/2 (vai direto ao chatyy/1).
+  static let v2OffKey = "chatyy_quic_v2_off"
+  /// true = retomada 'E' com QUIC 0-RTT (allowFastOpen) depois de um chatyy/2 bom. Padrão desligado.
+  static let zeroRttKey = "chatyy_quic_0rtt"
+  static func v2Off() -> Bool { return ud()?.bool(forKey: v2OffKey) == true }
+  static func zeroRttOn() -> Bool { return ud()?.bool(forKey: zeroRttKey) == true }
 
   static func set(_ key: String, _ on: Bool) {
     guard let u = ud() else { return }
@@ -109,6 +115,16 @@ final class ChatyyQuicWire {
     let dev: String
     let ua: String
     let handover: Bool
+    /// 2 = chatyy/2 (TLS pinado por SPKI, msg1 com `frames` no flight do Finished); 1 = chatyy/1.
+    let proto: Int
+    /// chatyy/2: base64(SHA-256(SPKI)) aceitos (atual + próximo). Vazio no chatyy/1.
+    let pins: [String]
+    /// chatyy/2 modo I: frames de texto dentro da msg1 (o auth primeiro).
+    let frames: [String]
+    /// Retomada (modo E): early (só idempotentes) na msg1 sem exporter; `fastOpen` = QUIC 0-RTT.
+    let resume: Bool
+    let early: [String]
+    let fastOpen: Bool
   }
 
   enum End {
@@ -130,8 +146,8 @@ final class ChatyyQuicWire {
   private(set) var mode: UInt8 = 0
   private var lastIface: String?
 
-  /// Noise pronto (msg2 ok) → `bound` ("dev" | "bearer").
-  var onReady: ((String) -> Void)?
+  /// Noise pronto (msg2 ok) → (`bound` "dev" | "bearer", early_n = frames da msg1 aceitos).
+  var onReady: ((String, Int) -> Void)?
   var onText: ((String) -> Void)?
   /// Qualquer byte recebido (prova de vida — inclusive ping de transporte).
   var onBytes: (() -> Void)?
@@ -145,20 +161,46 @@ final class ChatyyQuicWire {
     self.queue = queue
   }
 
+  /// Pin do chatyy/2 recusou o certificado (o fallback vai p/ o chatyy/1, não p/ o WebPKI).
+  private(set) var pinRejected = false
+
   func start() {
-    let qo = NWProtocolQUIC.Options(alpn: [ChatyyQuicProto.alpn])
+    let v2 = p.proto == 2
+    let qo = NWProtocolQUIC.Options(alpn: [v2 ? ChatyyQuicProto.alpn2 : ChatyyQuicProto.alpn])
     qo.direction = .bidirectional
     qo.idleTimeout = 60_000 // ms (= MaxIdleTimeout do leaf); quem pinga é o app
-    // TLS do QUIC: validação PADRÃO do sistema (WebPKI) com SNI = host. A identidade
-    // forte vem do Noise com a chave de região fixada (PROTOCOLO §1).
+    if v2 {
+      // chatyy/2 (§0.2): SÓ o pin SPKI do folha (sem cadeia/WebPKI/validade). Pin fora da lista
+      // = aborta o TLS. A identidade forte continua sendo o Noise com a chave de região.
+      let pins = Set(p.pins)
+      let sec = qo.securityProtocolOptions
+      sec_protocol_options_set_verify_block(sec, { [weak self] _, trust, complete in
+        let ok = ChatyyQuicWire.leafPinMatches(trust, pins)
+        if !ok { self?.pinRejected = true }
+        complete(ok)
+      }, queue)
+      if p.resume { sec_protocol_options_set_tls_resumption_enabled(sec, true) }
+    }
+    // chatyy/1: validação PADRÃO do sistema (WebPKI) com SNI = host.
     let params = NWParameters(quic: qo)
     if p.handover { params.multipathServiceType = .handover }
+    let early0 = v2 && p.resume && p.fastOpen
+    if early0 { params.allowFastOpen = true }
     guard let port = NWEndpoint.Port(rawValue: p.port) else {
       finish(.failed("port"), beforeReady: true)
       return
     }
     let c = NWConnection(host: NWEndpoint.Host(p.host), port: port, using: params)
     conn = c
+    if early0 {
+      // Retomada 0-RTT (§0.6): msg1 modo E (sem exporter) sai ANTES do start, marcada idempotente.
+      if let hello = makeHello(binding: nil) {
+        c.send(content: hello, completion: .idempotent)
+      } else {
+        finish(.failed("noise_init"), beforeReady: true)
+        return
+      }
+    }
     c.stateUpdateHandler = { [weak self] st in self?.onState(st) }
     c.viabilityUpdateHandler = { [weak self] v in self?.onPathEvent?(v ? "viable" : "not_viable") }
     c.betterPathUpdateHandler = { [weak self] b in if b { self?.onPathEvent?("better_path") } }
@@ -176,7 +218,7 @@ final class ChatyyQuicWire {
     if ended { return }
     switch st {
     case .ready:
-      if ch == nil { beginNoise() }
+      if ch == nil { beginNoise() } else if !receiving { receiveLoop() }
     case .waiting(let e):
       // Sem rota / UDP sem resposta antes do handshake → WSS já (não esperar o SO).
       if !ready { finish(.failed("waiting: \(e)"), beforeReady: true) }
@@ -249,32 +291,59 @@ final class ChatyyQuicWire {
     return d.count == ChatyyQuicProto.exporterLen ? d : nil
   }
 
-  private func beginNoise() {
-    guard let c = conn else { return }
-    var binding = Data()
-    var md = ChatyyQuicProto.modeE
-    if let b = exporter(c) {
-      binding = b
-      md = ChatyyQuicProto.modeI
-    }
+  private var receiving = false
+
+  /// Preâmbulo + msg1 (e cria o canal). binding nil = modo E (sem exporter).
+  ///   chatyy/2 'I': v=2 + frames · chatyy/2 'E' e chatyy/1 'E': v=1 + early · chatyy/1 'I': v=1.
+  private func makeHello(binding: Data?) -> Data? {
+    let v2 = p.proto == 2
+    let md: UInt8 = binding == nil ? ChatyyQuicProto.modeE : ChatyyQuicProto.modeI
     mode = md
-    lastIface = c.currentPath?.availableInterfaces.first?.name
-    let pro = ChatyyQuicProto.prologue(region: p.region, kid: p.kid, wire: ChatyyQuicProto.wireQuic, mode: md, binding: binding)
+    let pro = ChatyyQuicProto.prologue(region: p.region, kid: p.kid, wire: ChatyyQuicProto.wireQuic, mode: md,
+                                       binding: binding ?? Data(), proto: v2 ? ChatyyQuicProto.alpn2 : ChatyyQuicProto.alpn)
+    let now = Date().timeIntervalSince1970 * 1000.0
+    let payload: Data
+    if v2 && md == ChatyyQuicProto.modeI {
+      payload = ChatyyQuicChannel.helloPayload(dev: p.dev, ua: p.ua, nowMs: now, version: 2, frames: p.frames)
+    } else {
+      payload = ChatyyQuicChannel.helloPayload(dev: p.dev, ua: p.ua, nowMs: now, version: 1, early: p.resume ? p.early : [])
+    }
     do {
       let channel = try ChatyyQuicChannel(hash: .blake2s, region: p.region, kid: p.kid, regionPub: p.regionPub,
                                           deviceKey: p.deviceKey, prologue: pro)
+      let hello = try channel.clientHello(mode: md, payload: payload, version: v2 ? 2 : 1)
       ch = channel
-      let hello = try channel.clientHello(mode: md, payload: ChatyyQuicChannel.helloPayload(
-        dev: p.dev, ua: p.ua, nowMs: Date().timeIntervalSince1970 * 1000.0))
-      rawWrite(hello)
-      receiveLoop()
+      return hello
     } catch {
-      finish(.failed("noise_init: \(error)"), beforeReady: true)
+      return nil
     }
+  }
+
+  private func beginNoise() {
+    guard let c = conn else { return }
+    lastIface = c.currentPath?.availableInterfaces.first?.name
+    // chatyy/2 'I' e chatyy/1 'I' precisam do exporter; retomada (resume) vai em 'E'.
+    var binding: Data? = nil
+    if !p.resume {
+      binding = exporter(c)
+      if binding == nil && p.proto == 2 {
+        // sem exporter não há chatyy/2 'I' → o chamador cai p/ o chatyy/1 (que tenta 'E')
+        finish(.failed("no_exporter"), beforeReady: true)
+        return
+      }
+    }
+    guard let hello = makeHello(binding: binding) else {
+      finish(.failed("noise_init"), beforeReady: true)
+      return
+    }
+    // chatyy/2: num write só, logo depois do TLS (= flight do Finished).
+    rawWrite(hello)
+    receiveLoop()
   }
 
   private func receiveLoop() {
     guard let c = conn, !ended else { return }
+    receiving = true
     c.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { [weak self] data, _, isComplete, error in
       guard let self = self, !self.ended else { return }
       if let d = data, !d.isEmpty {
@@ -289,7 +358,7 @@ final class ChatyyQuicWire {
             switch ev {
             case .ready(let bound):
               self.ready = true
-              self.onReady?(bound)
+              self.onReady?(bound, channel.serverHello?.earlyN ?? 0)
             case .text(let s):
               self.onText?(s)
             case .binary:
@@ -389,6 +458,17 @@ final class ChatyyQuicWire {
       c.betterPathUpdateHandler = nil
       c.pathUpdateHandler = nil
     }
+  }
+
+  /// chatyy/2 §0.2: base64(SHA-256(SPKI DER)) do certificado FOLHA ∈ pins (só EC P-256).
+  static func leafPinMatches(_ trust: sec_trust_t, _ pins: Set<String>) -> Bool {
+    if pins.isEmpty { return false }
+    let t: SecTrust = sec_trust_copy_ref(trust).takeRetainedValue()
+    guard let chain = SecTrustCopyCertificateChain(t) as? [SecCertificate], let leaf = chain.first,
+          let key = SecCertificateCopyKey(leaf),
+          let ext = SecKeyCopyExternalRepresentation(key, nil) as Data?,
+          let pin = ChatyyQuicProto.spkiPinP256(point: ext) else { return false }
+    return pins.contains(pin)
   }
 
   /// User-Agent no formato do URLSession (o leaf repassa ao hub) + marca do fio.

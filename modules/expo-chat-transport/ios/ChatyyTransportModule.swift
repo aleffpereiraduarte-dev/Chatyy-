@@ -101,6 +101,16 @@ public class ChatyyTransportModule: Module {
       ChatyyQuicGate.set(ChatyyQuicGate.handoverKey, on)
     }
 
+    /// [chatyy/2] true = pula o chatyy/2 (pinado) e vai direto ao chatyy/1.
+    Function("quicSetV2Off") { (on: Bool) in
+      ChatyyQuicGate.set(ChatyyQuicGate.v2OffKey, on)
+    }
+
+    /// [chatyy/2] retomada 'E' com QUIC 0-RTT depois de um chatyy/2 bom. Padrão desligado.
+    Function("quicSet0rtt") { (on: Bool) in
+      ChatyyQuicGate.set(ChatyyQuicGate.zeroRttKey, on)
+    }
+
     /// flags + bloqueios por região + contadores quic* + chave PÚBLICA do aparelho.
     Function("quicStatus") { () -> [String: Any] in
       return ChatTransport.shared.quicStatus()

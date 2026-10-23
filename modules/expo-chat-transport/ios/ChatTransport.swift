@@ -108,6 +108,8 @@ final class ChatTransport {
   }
   private var quicBlocks: [String: QuicBlock] = [:]
   private var quicAuthedDrops: [Double] = []
+  /// [chatyy/2] hosts com conexão chatyy/2 autenticada neste processo (ticket TLS p/ retomada 'E').
+  var quicV2OkHosts: Set<String> = []
   /// Versão do protótipo QUIC (JS: quicVersion()).
   static let quicVersion = 1
 
@@ -157,6 +159,9 @@ final class ChatTransport {
       "local": ChatyyQuicGate.localOn(),
       "kill": ChatyyQuicGate.killOn(),
       "handover": ChatyyQuicGate.handoverOn(),
+      "v2Off": ChatyyQuicGate.v2Off(),
+      "zeroRtt": ChatyyQuicGate.zeroRttOn(),
+      "pins": ChatyyQuicProto.testPins,
     ]
     let sem = DispatchSemaphore(value: 0)
     q.async {
@@ -636,6 +641,8 @@ struct TransportQuicConfig {
   let hsMs: Double
   /// troca de rede com QUIC autenticado: sonda (migração) em vez de reconectar.
   let migrate: Bool
+  /// [chatyy/2] tentar o chatyy/2 (pinado) antes do chatyy/1. cfg "v2": false desliga.
+  let v2: Bool
 
   static func parse(_ v: Any?) -> TransportQuicConfig? {
     guard let o = v as? [String: Any], (o["on"] as? Bool) == true, (o["noise"] as? Bool) == true,
@@ -651,7 +658,8 @@ struct TransportQuicConfig {
       noiseTest: (o["noiseTest"] as? Bool) == true,
       regions: regions,
       hsMs: ChatTransport.num(o["hsMs"], 1500, 600, 3000),
-      migrate: (o["migrate"] as? Bool) != false
+      migrate: (o["migrate"] as? Bool) != false,
+      v2: (o["v2"] as? Bool) != false
     )
   }
 }
@@ -742,6 +750,10 @@ final class TransportSession {
   private var quicRegion = ""
   private var quicBound = ""
   private var quicReplayRetried = false
+  /// versão do fio QUIC atual (2 = chatyy/2, 1 = chatyy/1) e host (ticket p/ retomada).
+  private var quicProto = 0
+  private var quicHost = ""
+  private var quicResume = false
   /// troca de rede com QUIC autenticado: hora da sonda de migração (0 = nenhuma).
   private var migrateProbeAt: Double = 0
 
@@ -1141,6 +1153,8 @@ final class TransportSession {
     ])
     if quic != nil {
       owner.bump("quicAuthed")
+      owner.bump("quicAuthedV" + String(quicProto))
+      if quicProto == 2 { owner.quicV2OkHosts.insert(quicHost) }
       owner.bump("quicHsMsTotal", Int64(hsMs))
       quicReplayRetried = false
     }
@@ -1705,6 +1719,14 @@ final class TransportSession {
     let kid: String
     let pub: Data
     let key: Curve25519.KeyAgreement.PrivateKey
+    /// 2 = chatyy/2 (pinado), 1 = chatyy/1. Ordem de queda: 2 → 1 → WSS.
+    let proto: Int
+    let resume: Bool
+  }
+
+  /// Chave de bloqueio: "<reg>" vale p/ as 2 versões; "<reg>/2" ou "<reg>/1" só p/ uma.
+  private func quicBlockedAny(_ region: String, _ proto: Int) -> Bool {
+    return owner.quicBlocked(region) != nil || owner.quicBlocked(region + "/" + String(proto)) != nil
   }
 
   /// nil = WSS de sempre. Só devolve alvo com TODAS as condições: cfg.quic do JS
@@ -1719,10 +1741,16 @@ final class TransportSession {
           region.unicodeScalars.allSatisfy({ CharacterSet.lowercaseLetters.contains($0) || CharacterSet.decimalDigits.contains($0) }),
           let r = qc.regions[region] else { return nil }
     guard ChatyyQuicGate.localOn(), !ChatyyQuicGate.killOn() else { return nil }
-    if owner.quicBlocked(region) != nil { owner.bump("quicSkippedBlocked"); return nil }
+    // chatyy/2 primeiro (cfg.v2 != false e sem kill local), depois chatyy/1.
+    var proto = 0
+    if qc.v2 && !ChatyyQuicGate.v2Off() && !quicBlockedAny(region, 2) { proto = 2 }
+    else if !quicBlockedAny(region, 1) { proto = 1 }
+    if proto == 0 { owner.bump("quicSkippedBlocked"); return nil }
     guard let pub = ChatyyQuicProto.pinnedKey(kid: r.kid, testAllowed: qc.noiseTest) else { owner.bump("quicNoPin"); return nil }
     guard let key = ChatyyNoiseDeviceKey.loadOrCreate() else { owner.bump("quicNoDeviceKey"); return nil }
-    return QuicTarget(host: host, port: r.port, region: region, kid: r.kid, pub: pub, key: key)
+    // Retomada 'E' (0-RTT): só chatyy/2, com flag local, depois de um chatyy/2 bom neste host.
+    let resume = proto == 2 && ChatyyQuicGate.zeroRttOn() && owner.quicV2OkHosts.contains(host)
+    return QuicTarget(host: host, port: r.port, region: region, kid: r.kid, pub: pub, key: key, proto: proto, resume: resume)
   }
 
   /// e2ee5_device do frame de auth (vai no "dev" da msg1; vazio se não houver).
@@ -1747,16 +1775,30 @@ final class TransportSession {
     quicBound = ""
     owner.bump("quicAttempts")
     emitState("connecting", ["url": url.absoluteString, "attempt": attempt, "reason": reason, "wire": "quic"])
+    quicProto = t.proto
+    quicHost = t.host
+    quicResume = t.resume
+    owner.bump("quicAttemptsV" + String(t.proto))
+    // chatyy/2: o auth vai DENTRO da msg1 (modo I: frames; retomada E: early) → auth_success já
+    // chega atrás da msg2. Sem auth (JS ainda não mandou) = vazio; vai pelo canal depois.
+    let first: [String] = (t.proto == 2 && authFrame != nil) ? [authFrame!] : []
     let w = ChatyyQuicWire(params: ChatyyQuicWire.Params(
       host: t.host, port: t.port, region: t.region, kid: t.kid, regionPub: t.pub, deviceKey: t.key,
-      dev: authDev(), ua: ChatyyQuicWire.userAgent(), handover: ChatyyQuicGate.handoverOn()), queue: owner.q)
-    w.onReady = { [weak self, weak w] bound in
+      dev: authDev(), ua: ChatyyQuicWire.userAgent(), handover: ChatyyQuicGate.handoverOn(),
+      proto: t.proto, pins: t.proto == 2 ? ChatyyQuicProto.testPins : [],
+      frames: t.resume ? [] : first, resume: t.resume, early: t.resume ? first : [],
+      fastOpen: t.resume), queue: owner.q)
+    w.onReady = { [weak self, weak w] bound, earlyN in
       guard let self = self, g == self.gen, !self.closed else { return }
       self.quicBound = bound
       self.owner.bump("quicReady")
       if bound == "dev" { self.owner.bump("quicBoundDev") }
-      if w?.mode == ChatyyQuicProto.modeE { self.owner.bump("quicNoExporter") }
+      if w?.mode == ChatyyQuicProto.modeE && !t.resume { self.owner.bump("quicNoExporter") }
+      // auth já foi na msg1 e o servidor recebeu (early_n ≥ 1): não reenviar; só o prazo do auth.
+      let authInHello = !first.isEmpty && earlyN >= 1
+      if authInHello { self.authSentGen = g; self.owner.bump("quicAuthInHello") }
       self.onOpen(g)
+      if authInHello && self.phys == .open && g == self.gen { self.armAuthWatchdog() }
     }
     w.onText = { [weak self] s in self?.onText(g, s) }
     w.onBytes = { [weak self] in
@@ -1802,7 +1844,7 @@ final class TransportSession {
       default:
         let business = code >= 4000 && code <= 4999
         if phys != .authed && !business {
-          quicFallback(why: "close_\(code)", ms: 600_000, networkScoped: true)
+          quicFallback(why: "close_\(code)", ms: 600_000, networkScoped: true, thisVersion: quicProto == 2)
         } else {
           if !business { owner.quicNoteAuthedDrop(region) }
           owner.bump("quicDrops")
@@ -1818,7 +1860,7 @@ final class TransportSession {
         quicFallback(why: "go_ws", ms: 3_600_000, networkScoped: false)
       case 0x102: // noise_fail: chave/região/prólogo — evento, sem laço; nunca cai p/ modo P
         emitState("quic", ["ev": "noise_fail", "region": region, "text": String(text.prefix(40))])
-        quicFallback(why: "noise_fail", ms: 86_400_000, networkScoped: false)
+        quicFallback(why: "noise_fail", ms: 86_400_000, networkScoped: false, thisVersion: true)
       case 0x103: // replay: 1 nova tentativa (msg1 nova), depois WSS
         if !quicReplayRetried && phys != .authed {
           quicReplayRetried = true
@@ -1840,7 +1882,7 @@ final class TransportSession {
         owner.bump("quicDrops")
         onDrop(g, code: 1001, reason: "quic_bye: " + text)
       default: // 0x105 bad_preamble, 0x108 noise_required, 0x109 unknown_key, desconhecido
-        quicFallback(why: "srv_" + String(code, radix: 16), ms: 86_400_000, networkScoped: false)
+        quicFallback(why: "srv_" + String(code, radix: 16), ms: 86_400_000, networkScoped: false, thisVersion: true)
       }
     case .failed(let why):
       if phys == .authed {
@@ -1849,21 +1891,33 @@ final class TransportSession {
         onDrop(g, code: 0, reason: "quic: " + why)
       } else {
         // UDP/TLS/QUIC sem sucesso nesta rede → WSS já; lembra até trocar de rede (≤ 24 h).
+        // chatyy/2 que falhou no TLS (pin/ALPN) ou sem exporter → só o chatyy/2 sai; tenta o chatyy/1.
         owner.bump("quicFailBeforeAuth")
-        quicFallback(why: "fail", ms: 86_400_000, networkScoped: true)
+        let pinBad = quic?.pinRejected == true
+        if pinBad { owner.bump("quicPinRejected") }
+        quicFallback(why: pinBad ? "pin" : "fail", ms: 86_400_000, networkScoped: !pinBad, thisVersion: quicProto == 2)
       }
     }
   }
 
   /// Cai para o WSS AGORA (sem backoff, sem marcar falha regional) e bloqueia o QUIC
   /// nesta região por `ms` (networkScoped = só enquanto a rede for a mesma).
-  private func quicFallback(why: String, ms: Double, networkScoped: Bool) {
+  /// `thisVersion` = bloqueia só a versão atual (chatyy/2 → tenta chatyy/1 já; chatyy/1 → WSS).
+  private func quicFallback(why: String, ms: Double, networkScoped: Bool, thisVersion: Bool = false) {
     guard quic != nil else { return }
     let wasAuthed = phys == .authed
-    owner.quicBlock(quicRegion, ms: ms, networkScoped: networkScoped, why: why)
+    if quicResume && !wasAuthed {
+      // retomada 'E' falhou: esquece o ticket e tenta o chatyy/2 a frio (sem bloquear).
+      owner.quicV2OkHosts.remove(quicHost)
+      owner.bump("quicResumeFail")
+    } else {
+      let key = thisVersion ? quicRegion + "/" + String(quicProto) : quicRegion
+      owner.quicBlock(key, ms: ms, networkScoped: networkScoped, why: why)
+    }
     owner.bump("quicFallbacks")
     emitState("quic", ["ev": "fallback", "why": why, "blockMs": ms, "net": networkScoped,
-                       "wasAuthed": wasAuthed, "region": quicRegion])
+                       "wasAuthed": wasAuthed, "region": quicRegion, "proto": quicProto,
+                       "only": thisVersion])
     if wasAuthed && lostAt == 0 { lostAt = now() }
     teardownSocket(closeCode: nil)
     if wasAuthed || authRejected {
