@@ -1,0 +1,58 @@
+package main
+
+// Teste cruzado (fora do repo do servidor): cliente Rust chatyy-net (examples/probe) contra o leaf Go real.
+import (
+	"encoding/base64"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+func TestXRustProbe(t *testing.T) {
+	bin := os.Getenv("RUST_PROBE")
+	if bin == "" {
+		t.Skip("RUST_PROBE")
+	}
+	e := newQNEnv(t)
+	addr := e.addr().(*net.UDPAddr)
+	af := filepath.Join(e.dir, "auth.json")
+	os.WriteFile(af, []byte(authFrame("apitest@onemundo.com.br")), 0o600)
+	run := func(extra ...string) string {
+		args := append([]string{"api-tst.chatyy.com.br", "127.0.0.1", strconv.Itoa(addr.Port), "tst", "t9",
+			base64.StdEncoding.EncodeToString(e.srvKey.Public), "--insecure", "--auth-file", af, "--dev", "QTESTDEVICE234"}, extra...)
+		out, _ := exec.Command(bin, args...).CombinedOutput()
+		t.Log("\n" + string(out))
+		return string(out)
+	}
+	out := run("--secs", "4", "--migrate", "2")
+	for _, w := range []string{"OPEN", `"ok":true`, "auth_success", "MIGRATE Ok", "code: 1000"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("faltou %q", w)
+		}
+	}
+	h := qnHealth()
+	t.Logf("health: %+v", h)
+	// conta fora da allowlist → 4001 go_ws
+	os.WriteFile(af, []byte(authFrame("fulano@chatyy.com.br")), 0o600)
+	out = run("--secs", "3")
+	if !strings.Contains(out, "code: 4001") {
+		t.Errorf("sem 4001 go_ws p/ conta fora da allowlist")
+	}
+	// chave pinada errada → qclose 0x102
+	out2, _ := exec.Command(bin, "api-tst.chatyy.com.br", "127.0.0.1", strconv.Itoa(addr.Port), "tst", "t9",
+		base64.StdEncoding.EncodeToString(make([]byte, 32)), "--insecure", "--secs", "3").CombinedOutput()
+	t.Log("\n" + string(out2))
+	if !strings.Contains(string(out2), "0x102") {
+		t.Errorf("sem noise_fail p/ chave errada")
+	}
+	// região errada no prólogo → noise_fail
+	out3, _ := exec.Command(bin, "api-tst.chatyy.com.br", "127.0.0.1", strconv.Itoa(addr.Port), "br", "t9",
+		base64.StdEncoding.EncodeToString(e.srvKey.Public), "--insecure", "--secs", "3").CombinedOutput()
+	if !strings.Contains(string(out3), "0x102") {
+		t.Errorf("sem noise_fail p/ região errada: %s", out3)
+	}
+}
