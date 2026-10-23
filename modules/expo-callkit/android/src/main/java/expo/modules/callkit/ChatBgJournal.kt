@@ -53,6 +53,40 @@ object ChatBgJournal {
         return File(d, FILE)
     }
 
+    /**
+     * [sgu F0 2026-10-23] Uma linha, gravada de forma DURÁVEL: um único write + fsync (fd.sync) sob o
+     * mesmo lock. true só se a linha inteira chegou ao disco. Usado pelo push E2EE v5 com envelope
+     * (`e5c`): o ack de entrega só sai com persisted=1 se isto devolver true.
+     */
+    @Synchronized
+    fun appendLineDurable(ctx: Context, line: String): Boolean {
+        if (line.isBlank() || line.contains('\n')) return false
+        return try {
+            val f = file(ctx)
+            if (f.exists() && f.length() > MAX_BYTES) {
+                Log.w(TAG, "journal full (${f.length()} B) — skipping durable line")
+                return false
+            }
+            FileOutputStream(f, true).use { out ->
+                out.write((line + "\n").toByteArray(StandardCharsets.UTF_8))
+                out.fd.sync()
+            }
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "durable append failed: ${t.message}")
+            false
+        }
+    }
+
+    /**
+     * [sgu F0 2026-10-23] Kill switch do envelope E2EE no journal: SharedPreferences "chatyy_dlv",
+     * chave "chatyy.dlv.e5journal" = "0" → o push E2EE volta ao de antes (só marcador, persisted=0).
+     * Padrão (ausente) = ligado.
+     */
+    private fun e5JournalOn(ctx: Context): Boolean = try {
+        ctx.getSharedPreferences("chatyy_dlv", Context.MODE_PRIVATE).getString("chatyy.dlv.e5journal", "1") != "0"
+    } catch (_: Throwable) { true }
+
     @Synchronized
     fun appendLines(ctx: Context, lines: List<String>): Int {
         if (lines.isEmpty()) return 0
@@ -143,8 +177,8 @@ object ChatBgJournal {
             val d = flatten(data) ?: return false
             val type = d["type"] ?: return false
             if (type !in CHAT_TYPES) return false
-            val cid = d["conversation_id"]?.takeIf { it.isNotBlank() } ?: return false
-            val mid = d["message_id"]?.takeIf { it.isNotBlank() } ?: return false
+            val cid = d["conversation_id"]?.takeIf { it.isNotBlank() } ?: d["e2e_conv"]?.takeIf { it.isNotBlank() } ?: return false
+            val mid = d["message_id"]?.takeIf { it.isNotBlank() } ?: d["e2e_mid"]?.takeIf { it.isNotBlank() } ?: return false
             // Backend without [2026-10-07 bgsync] fields → still journal a
             // conversation-only bump (preview + unread) — better than nothing.
             val o = JSONObject()
@@ -175,6 +209,27 @@ object ChatBgJournal {
                 cp("bg_text", "text"); cp("bg_cmid", "cmid"); cp("bg_furl", "furl")
                 cp("bg_fname", "fname"); cp("bg_fsize", "fsize"); cp("bg_w", "w"); cp("bg_h", "h")
                 cp("bg_dur", "dur"); cp("bg_thumb", "thumb"); cp("bg_reply", "reply"); cp("bg_rquote", "rquote")
+            }
+            // [sgu F0 2026-10-23] E2EE v5 com envelope inline (e2e_c, cifrado — nunca texto decifrado):
+            // a linha leva as MESMAS chaves de services/bgJournal.js entryFromPush (e5/e5c/e5su/cmid) e o
+            // JS importa o envelope no SQLite. Gravação durável (write único + fsync) ANTES do ack →
+            // persisted=1 só aqui. e2e_fetch (sem envelope), journal cheio, falha de IO ou kill → 0.
+            if (e2e && !locked && e5JournalOn(ctx)) {
+                val env = d["e2e_c"].orEmpty()
+                if (env.startsWith("{\"e2e\":5") && env.length < 8192) {
+                    o.put("e5", "1")
+                    o.put("e5c", env)
+                    d["e2e_sender_uid"]?.takeIf { it.isNotEmpty() }?.let { o.put("e5su", it) }
+                    d["e2e_cmid"]?.takeIf { it.isNotEmpty() }?.let { o.put("cmid", it) }
+                    val line = o.toString()
+                    if (line.length <= 8192 && appendLineDurable(ctx, line)) return true
+                    // não coube / falhou: grava o marcador de sempre (sem corpo), persisted=0
+                    o.remove("e5c")
+                } else {
+                    o.put("e5", "1")
+                    d["e2e_sender_uid"]?.takeIf { it.isNotEmpty() }?.let { o.put("e5su", it) }
+                    d["e2e_cmid"]?.takeIf { it.isNotEmpty() }?.let { o.put("cmid", it) }
+                }
             }
             val n = appendLines(ctx, listOf(o.toString()))
             return full && n > 0 && (d["bg_text"].orEmpty().isNotEmpty() || d["bg_furl"].orEmpty().isNotEmpty())

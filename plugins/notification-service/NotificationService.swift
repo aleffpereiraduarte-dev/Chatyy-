@@ -630,7 +630,7 @@ class NotificationService: UNNotificationServiceExtension {
     @discardableResult
     private static func journalMessage(_ p: [String: Any]) -> Bool {
         guard let type = str(p, "type"), journalTypes.contains(type),
-              let cid = str(p, "conversation_id"), let mid = str(p, "message_id"),
+              let cid = str(p, "conversation_id") ?? str(p, "e2e_conv"), let mid = str(p, "message_id") ?? str(p, "e2e_mid"),
               let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.onemundo.mail")
         else { return false }
         let locked = str(p, "locked") == "1"
@@ -660,9 +660,40 @@ class NotificationService: UNNotificationServiceExtension {
                                            ("bg_reply", "reply"), ("bg_rquote", "rquote")]
             for (src, dst) in map { if let v = str(p, src) { o[dst] = v } }
         }
+        // [sgu F0 2026-10-23] E2EE v5 com envelope inline (e2e_c, CIFRADO — nunca o texto decifrado): a
+        // linha leva as mesmas chaves de services/bgJournal.js entryFromPush (e5/e5c/e5su/cmid) e o app
+        // importa o envelope no SQLite. Gravação durável (1 write + fsync sob o flock) ANTES do ack →
+        // persisted=1 só neste caso. e2e_fetch (sem envelope), linha > 8 KB, journal cheio, falha de IO
+        // ou kill → 0. Kill: App Group UserDefaults "chatyy.dlv.e5journal" = "0" (padrão = ligado).
+        var e5Body = false
+        if str(p, "e2e") == "5" && !locked {
+            o["e5"] = "1"
+            if let su = str(p, "e2e_sender_uid") { o["e5su"] = su }
+            if let cm = str(p, "e2e_cmid") { o["cmid"] = cm }
+            let killed = (UserDefaults(suiteName: "group.com.onemundo.mail")?.string(forKey: "chatyy.dlv.e5journal") ?? "1") == "0"
+            if !killed, let env = str(p, "e2e_c"), env.hasPrefix("{\"e2e\":5"), env.utf8.count < 8192 {
+                o["e5c"] = env
+                e5Body = true
+            }
+        }
+        if e5Body {
+            if let d = try? JSONSerialization.data(withJSONObject: o), d.count <= 8192,
+               let l = String(data: d, encoding: .utf8), !l.contains("\n"),
+               appendJournalLine(container, l + "\n", durable: true) {
+                return true
+            }
+            o.removeValue(forKey: "e5c") // não coube/falhou → marcador de sempre, persisted=0
+        }
         guard let d = try? JSONSerialization.data(withJSONObject: o),
-              var line = String(data: d, encoding: .utf8), !line.contains("\n") else { return false }
-        line += "\n"
+              let line = String(data: d, encoding: .utf8), !line.contains("\n") else { return false }
+        _ = appendJournalLine(container, line + "\n", durable: false)
+        // E2EE (e2e=5) sem envelope gravado: o journal só leva a prévia/marcador → não conta como gravada.
+        return full && str(p, "e2e") != "5" && (str(p, "bg_text") != nil || str(p, "bg_furl") != nil)
+    }
+
+    /// Append de UMA linha sob o flock de inbox.lock. durable = fsync antes de devolver (persisted).
+    /// true só se a linha inteira foi escrita (e sincronizada, se durable).
+    private static func appendJournalLine(_ container: URL, _ line: String, durable: Bool) -> Bool {
         let dir = container.appendingPathComponent("chatyy_bg_journal", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let fd = open(dir.appendingPathComponent("inbox.lock").path, O_RDWR | O_CREAT, 0o644)
@@ -676,12 +707,24 @@ class NotificationService: UNNotificationServiceExtension {
         if !FileManager.default.fileExists(atPath: file.path) {
             FileManager.default.createFile(atPath: file.path, contents: nil)
         }
-        guard let h = try? FileHandle(forWritingTo: file), let bytes = line.data(using: .utf8) else { return false }
-        _ = h.seekToEndOfFile()
-        h.write(bytes)
-        try? h.close()
-        // E2EE (e2e=5): o journal só leva a prévia/marcador → não conta como gravada.
-        return full && str(p, "e2e") != "5" && (str(p, "bg_text") != nil || str(p, "bg_furl") != nil)
+        guard let bytes = line.data(using: .utf8) else { return false }
+        if !durable {
+            guard let h = try? FileHandle(forWritingTo: file) else { return false }
+            _ = h.seekToEndOfFile()
+            h.write(bytes)
+            try? h.close()
+            return true
+        }
+        // Durável: write(2) único com O_APPEND (sem exceção ObjC do FileHandle.write) + fsync.
+        let wfd = open(file.path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
+        if wfd < 0 { return false }
+        defer { close(wfd) }
+        let n = bytes.withUnsafeBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return -1 }
+            return write(wfd, base, raw.count)
+        }
+        if n != bytes.count { return false }
+        return fsync(wfd) == 0
     }
 
     private static func extractImageURL(from p: [String: Any]) -> URL? {
