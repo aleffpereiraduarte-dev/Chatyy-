@@ -2592,11 +2592,11 @@ public class ExpoCallKitModule: Module {
     update.supportsGrouping = false
     update.supportsUngrouping = false
     update.supportsHolding = true
-    // [DTMF, 2026-05-19] Set true so the CallKit system call bar
-    // exposes the keypad button alongside our in-app keypad overlay.
-    // Both paths route through `playDTMF` (LK data channel) and the
-    // ProviderDelegate CXPlayDTMFCallAction handler.
-    update.supportsDTMF = true
+    // [2026-10-23 callkit-native-buttons] No DTMF on Chatyy calls (peer is a
+    // person, not an IVR) → the native "Keypad" is shown DISABLED instead of a
+    // dead keypad. Same as the earlyProvider / WS paths. The CXPlayDTMF
+    // handler stays (fulfills) in case iOS still sends one.
+    update.supportsDTMF = false
 
     try await provider.reportNewIncomingCall(with: uuid, update: update)
   }
@@ -3335,6 +3335,16 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // wants this BEFORE we ship the SIP/WS invite — it covers the brief
     // window between "user tapped call" and "callee phone is ringing".
     provider.reportOutgoingCall(with: uuid, startedConnectingAt: nil)
+    // [2026-10-23 callkit-native-buttons] Outgoing calls never got a
+    // CXCallUpdate → CallKit defaults (keypad ENABLED, video flag unset) on
+    // the native "Chatyy Audio" screen. Same capabilities as incoming.
+    let caps = CXCallUpdate()
+    caps.hasVideo = params.isVideo
+    caps.supportsGrouping = false
+    caps.supportsUngrouping = false
+    caps.supportsHolding = true
+    caps.supportsDTMF = false
+    provider.reportCall(with: uuid, updated: caps)
 
     // Configure audio category up front. Same pattern as CXAnswerCallAction —
     // don't activate the session, just set the category. CallKit will

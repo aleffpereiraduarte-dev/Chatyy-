@@ -100,6 +100,8 @@ extension AudioRouter {
     /// Apply a choice from selectableRoutes(). Main thread.
     func selectRoute(id: String) {
         let session = AVAudioSession.sharedInstance()
+        // [2026-10-23 callkit-native-speaker] Our own change — not a system choice.
+        markOwnRouteChange()
         switch id {
         case "speaker":
             _ = setSpeaker(true)

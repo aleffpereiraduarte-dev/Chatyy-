@@ -305,6 +305,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // toggling mute from the lock-screen / system call bar takes the same
     // fast-path applyMicEnabled uses (track.mute / unmute, no republish).
     private var systemMuteObserver: NSObjectProtocol?
+    // [2026-10-23 callkit-native-buttons] Last mute state the native CallKit
+    // screen knows about (nil = never reported → CallKit assumes unmuted).
+    private var callKitMutedReported: Bool?
     // [2026-10-09 system-hold] CXSetHeldCallAction (system pill, "Hold &
     // Accept" on a GSM call, CallHoldResumer auto-resume) → hold UI + mic.
     private var systemHoldObserver: NSObjectProtocol?
@@ -4127,6 +4130,66 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
+    /// [2026-10-23 callkit-native-buttons] In-app mute → CXSetMutedCallAction
+    /// so the NATIVE CallKit screen (lock screen / "Chatyy Audio" screen /
+    /// pill) shows the same state. Before, an in-app mute left the native
+    /// "Mute" un-highlighted and its first tap was a no-op (asked for the
+    /// state we were already in). The action comes back through the provider
+    /// delegate → installSystemMuteObserver, which sees the live mic already
+    /// matches and only syncs the UI (no loop: deduped by callKitMutedReported).
+    fileprivate func syncCallKitMuted(_ muted: Bool) {
+        guard callKitMutedReported != muted,
+              let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) else { return }
+        callKitMutedReported = muted
+        let controller = CXCallController(queue: .main)
+        controller.request(CXTransaction(action: CXSetMutedCallAction(call: uuid, muted: muted))) { [weak self] error in
+            guard let error = error else { return }
+            print("[CallVC] syncCallKitMuted(\(muted)) error: \(error.localizedDescription)")
+            self?.callKitMutedReported = nil
+        }
+    }
+
+    /// [2026-10-23 callkit-native-buttons] "Video" on the NATIVE CallKit
+    /// screen of an audio call. iOS does not send a CXAction for it: it
+    /// brings the app to the foreground with an INStartCallIntent
+    /// (callCapability .videoCall) for the SAME contact. Before, that intent
+    /// was routed as "start a new call" (assistant-action deep link / Recents
+    /// redial) → dead button or a second call attempt. WhatsApp: the button
+    /// opens the call screen and turns the camera on (voice → video upgrade).
+    /// Returns false when no 1:1 call screen exists.
+    @discardableResult
+    static func handleSystemCallIntent(video: Bool) -> Bool {
+        guard let vc = ongoingVC() else { return false }
+        nativeCallDiag("callkit_video_button", vc.callId, "video=\(video ? 1 : 0) cam=\(vc.session.camEnabled ? 1 : 0) min=\(minimizedInstance === vc ? 1 : 0)")
+        let run = { [weak vc] in
+            guard let vc = vc, !vc.didHangup else { return }
+            if CallViewController.minimizedInstance === vc { vc.restoreFromMinimize() }
+            guard video else { return }
+            // Let the re-present (and PiP stop) settle before the camera op.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak vc] in
+                guard let vc = vc, !vc.didHangup, !vc.session.camEnabled, !vc.session.onHold else { return }
+                vc.uikitOnVideoToggle()
+            }
+        }
+        DispatchQueue.main.async {
+            if UIApplication.shared.applicationState == .active {
+                run()
+                return
+            }
+            // continueUserActivity lands before the scene is foregroundActive
+            // (restoreFromMinimize needs it) — run once on didBecomeActive.
+            var token: NSObjectProtocol?
+            token = NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { _ in
+                if let t = token { NotificationCenter.default.removeObserver(t) }
+                token = nil
+                run()
+            }
+        }
+        return true
+    }
+
     private func installSystemMuteObserver() {
         guard systemMuteObserver == nil else { return }
         systemMuteObserver = NotificationCenter.default.addObserver(
@@ -4136,13 +4199,27 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         ) { [weak self] note in
             guard let self = self else { return }
             guard let muted = note.userInfo?["muted"] as? Bool else { return }
+            // [2026-10-23 callkit-native-buttons] Only drop it when it is
+            // provably another call: the earlyProvider path (incoming) used to
+            // send the bare UUID string when the callId map missed → the
+            // native "Mute" button was silently ignored. maximumCallGroups=1.
             if let nid = note.userInfo?["callId"] as? String,
-               !nid.isEmpty, nid != self.callId {
-                // Notification arrived for a different active call surface;
-                // ignore — the other VC will pick it up.
+               !nid.isEmpty, nid != self.callId,
+               let mine = ExpoCallKitModule.sharedCallKitUUID(forCallId: self.callId),
+               nid != mine.uuidString {
                 return
             }
+            if self.session.onHold {
+                // Held: the mic is already off; remember the choice for resume.
+                self.preHoldMicEnabled = !muted
+                self.callKitMutedReported = muted
+                return
+            }
+            nativeCallDiag("callkit_mute", self.callId, "muted=\(muted ? 1 : 0)")
+            self.callKitMutedReported = muted
             let nextEnabled = !muted
+            self.setControlActive(self.view.viewWithTag(9002) as? UIButton, active: muted,
+                                  symbol: muted ? "mic.slash.fill" : "mic.fill")
             // [2026-05-26 mute→unmute P0 fix v2] Reconcile against the REAL
             // track state, not the cached @Published bool. The old guard
             // `if self.session.micEnabled == nextEnabled { return }` could
@@ -4859,6 +4936,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         let enabled = !muted
         vc.session.micEnabled = enabled
         vc.applyMicEnabled(enabled)
+        vc.syncCallKitMuted(muted)
         vc.setControlActive(vc.view.viewWithTag(9002) as? UIButton, active: !enabled,
                             symbol: enabled ? "mic.fill" : "mic.slash.fill")
         return true
@@ -6249,6 +6327,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // only rolls this back if LiveKit genuinely throws.
         session.micEnabled = newMicEnabled
         applyMicEnabled(newMicEnabled)
+        syncCallKitMuted(!newMicEnabled)
         let btn = view.viewWithTag(9002) as? UIButton
         tapFeedback(btn)
         // Active (filled) when MUTED.

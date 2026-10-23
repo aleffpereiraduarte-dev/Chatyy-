@@ -409,6 +409,7 @@ import LiveKitClient
             || session.categoryOptions.contains(.defaultToSpeaker)
             || session.categoryOptions.contains(.mixWithOthers)
         do {
+            if firstTime || categoryWrong || session.mode != desiredMode { markOwnRouteChange() }
             if firstTime || categoryWrong {
                 try session.setCategory(.playAndRecord, mode: desiredMode, options: Self.callOptions)
                 lockQueue.sync { self.categoryConfigured = true }
@@ -435,7 +436,10 @@ import LiveKitClient
         let onSpeakerNow = outsNow.contains { $0.portType == .builtInSpeaker }
         let overrideNeeded = !CallResilience.flags().routeLight || outsNow.isEmpty || onSpeakerNow != wantSpeaker
         do {
-            if overrideNeeded { try session.overrideOutputAudioPort(port) }
+            if overrideNeeded {
+                markOwnRouteChange()
+                try session.overrideOutputAudioPort(port)
+            }
         } catch {
             print("[AudioRouter] overrideOutputAudioPort(\(wantSpeaker ? "speaker" : "none")) failed (\(reason)): \(error)")
         }
@@ -558,6 +562,14 @@ import LiveKitClient
             }
             if allowSelfHeal() { applyPolicy(reason: "no_route_\(reason.rawValue)") } else { postRouteChanged() }
         case .categoryChange, .override, .routeConfigurationChange:
+            // [2026-10-23 callkit-native-speaker] The user tapped "Speaker" /
+            // picked AirPods on the NATIVE CallKit screen (or Control Center).
+            // iOS applies that override itself → routeChange .override. Before,
+            // the drift check below saw "speaker while voice call wants the
+            // earpiece" and re-applied override(.none) → the system Speaker
+            // button snapped back instantly ("alto-falante não funciona").
+            // Adopt it as the user's choice instead.
+            if adoptSystemRouteChoiceIfNeeded(reason: reason) { return }
             // Self-heal: if someone (LiveKit, expo-audio, RN WebRTC) changed
             // category/mode behind our back, applyPolicy restores it; if
             // nothing differs it only re-sets the same override + posts UI.
@@ -581,6 +593,53 @@ import LiveKitClient
         default:
             postRouteChanged()
         }
+    }
+
+    // MARK: - System (CallKit / Control Center) route choice
+
+    /// When this router last changed category/mode/override itself. Route
+    /// changes within `ownChangeWindow` are treated as our own echo.
+    private var lastOwnRouteChangeAt = Date.distantPast
+    private static let ownChangeWindow: TimeInterval = 0.8
+
+    func markOwnRouteChange() {
+        lastOwnRouteChangeAt = Date()
+    }
+
+    /// [2026-10-23 callkit-native-speaker] A route change NOT caused by this
+    /// router, with category + mode still correct (i.e. not LiveKit/WebRTC
+    /// flipping to .videoChat), whose real output disagrees with what we
+    /// want = an explicit user choice made outside the app (CallKit Speaker
+    /// button, CallKit/Control Center route picker). Record it as
+    /// `userSpeakerChoice` so applyPolicy / the post-subscribe re-asserts
+    /// keep it, update proximity + the in-app button. Main thread.
+    private func adoptSystemRouteChoiceIfNeeded(reason: AVAudioSession.RouteChangeReason) -> Bool {
+        guard Date().timeIntervalSince(lastOwnRouteChangeAt) > Self.ownChangeWindow else { return false }
+        let session = AVAudioSession.sharedInstance()
+        let outs = session.currentRoute.outputs
+        guard !outs.isEmpty, session.category == .playAndRecord else { return false }
+        let onSpeaker = outs.contains { $0.portType == .builtInSpeaker }
+        let (wantSpeaker, desiredMode) = target()
+        if onSpeaker == wantSpeaker { return false }
+        // Speaker turned ON from outside: trust .override (what the system
+        // Speaker button emits). Any other reason only when mode/options are
+        // still ours — LiveKit/WebRTC drift lands on the speaker via
+        // .videoChat or .defaultToSpeaker → leave that to the self-heal below.
+        if onSpeaker && reason != .override
+            && (session.mode != desiredMode || session.categoryOptions.contains(.defaultToSpeaker)) {
+            return false
+        }
+        let choice = onSpeaker
+        lockQueue.sync {
+            self.userSpeakerChoice = choice
+            self.speakerOn = choice
+        }
+        NSLog("[AudioRouter] system route choice adopted (reason=\(reason.rawValue)) speaker=\(choice) outputs=\(outs.map { $0.portType.rawValue })")
+        // Mode must agree with the new choice (video call + speaker OFF needs
+        // .voiceChat, else .videoChat's implicit loudspeaker wins). applyPolicy
+        // only touches what differs; the override already matches.
+        applyPolicy(reason: "system_choice_\(choice)")
+        return true
     }
 
     /// Loop breaker: at most 3 self-heals per 3 s window (our own

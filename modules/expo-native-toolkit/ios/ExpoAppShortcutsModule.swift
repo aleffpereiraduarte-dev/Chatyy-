@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import CallKit
 import Intents
 import UIKit
 
@@ -81,6 +82,14 @@ final class ChatyyShortcutCenter {
     guard let interaction = activity.interaction else { return nil }
     let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
     func enc(_ s: String) -> String { return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s }
+    // [2026-10-23 callkit-native-buttons] While a call is live, an
+    // INStartCallIntent is the "Video" button of the native CallKit screen
+    // (same contact) — expo-callkit's CallIntentAppDelegateSubscriber turns
+    // it into "open the call + camera on". Never start a 2nd call here.
+    if interaction.intent is INStartCallIntent,
+       CXCallObserver().calls.contains(where: { !$0.hasEnded }) {
+      return nil
+    }
     if let call = interaction.intent as? INStartCallIntent,
        let person = call.contacts?.first,
        let handle = person.personHandle?.value, handle.contains("@") {

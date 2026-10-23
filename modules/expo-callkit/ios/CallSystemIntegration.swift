@@ -227,6 +227,16 @@ enum CallRecentsIntentStore {
             // INStartAudio/VideoCallIntent types are intentionally not used).
             return false
         }
+        // [2026-10-23 callkit-native-buttons] "Video" on the native CallKit
+        // screen of an ongoing call arrives as INStartCallIntent for the SAME
+        // contact. Never treat it as a new call: hand it to the live call
+        // screen (restore + camera on). expo-native-toolkit's shortcut
+        // subscriber skips call intents while a call is active (same rule).
+        if CallViewController.hasOngoing() || hasActiveSystemCall() {
+            NSLog("[CallRecentsIntent] call intent during an active call (video=\(video)) → live call screen")
+            CallViewController.handleSystemCallIntent(video: video)
+            return true
+        }
         let raw = (handleValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else {
             NSLog("[CallRecentsIntent] call intent without handle — ignored")
@@ -263,6 +273,13 @@ enum CallRecentsIntentStore {
         }
         if Thread.isMainThread { post() } else { DispatchQueue.main.async(execute: post) }
         return true
+    }
+
+    /// A Chatyy CallKit call that has not ended (ringing, dialing or live).
+    private static func hasActiveSystemCall() -> Bool {
+        return CXCallObserver().calls.contains { call in
+            !call.hasEnded && ExpoCallKitModule.sharedCallId(forCallKitUUID: call.uuid) != nil
+        }
     }
 
     /// One-shot read for JS (cold start: JS mounts after the activity).
