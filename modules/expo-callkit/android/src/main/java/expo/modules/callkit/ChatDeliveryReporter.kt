@@ -54,6 +54,7 @@ object ChatDeliveryReporter {
     private const val MAX_RECENT = 300
     private const val ENDPOINT = "https://chatyy.com.br/api/email.php?action=chat_push_delivered"
     private const val TIMEOUT_CONNECT_MS = 4_000
+    private const val TIMEOUT_CONNECT_FAST_MS = 2_500 // ack_url: falha rápido → cai na URL de sempre
     private const val TIMEOUT_READ_MS = 8_000
     private val CHAT_TYPES = setOf("chat_message", "chat_mention", "chat_keyword")
 
@@ -83,8 +84,20 @@ object ChatDeliveryReporter {
             // um WorkManager one-shot com rede (sobrevive ao processo morrer).
             val app = ctx.applicationContext
             val item = if (persisted) "$dAck|1" else dAck
+            // [2026-10-23 push-rapido 3-nativo] `ack_url` opcional do servidor (https, *.chatyy.com.br):
+            // ack vai primeiro para ele (ex.: borda mais perto); falha/não-2xx → URL de sempre.
+            val ackUrl = field("ack_url")?.let { validAckUrl(app, it) }
             Thread({
-                if (!post(app, item)) { addPending(app, item); scheduleRetry(app) }
+                val t0 = android.os.SystemClock.elapsedRealtime()
+                var via = "default"
+                val ok = if (ackUrl != null && postCode(app, item, ackUrl, TIMEOUT_CONNECT_FAST_MS) in 200..299) {
+                    via = "ack_url"; true
+                } else {
+                    if (ackUrl != null) via = "fallback"
+                    post(app, item)
+                }
+                Log.i(TAG, "dack ok=$ok via=$via ms=${android.os.SystemClock.elapsedRealtime() - t0}")
+                if (!ok) { addPending(app, item); scheduleRetry(app) }
                 else drainPending(app, 5) // rede ok → reenvia pendentes antigos
             }, "chatyy-dack").apply { isDaemon = true }.start()
         } catch (t: Throwable) {
@@ -136,16 +149,36 @@ object ChatDeliveryReporter {
         } catch (_: Throwable) { "" }
     }
 
+    /** [2026-10-23] `ack_url` aceito só se https, host chatyy.com.br ou *.chatyy.com.br, sem usuário/porta
+     *  estranha. Kill: SharedPreferences "chatyy_push_fast" ack_url=false → sempre a URL de sempre. */
+    private fun validAckUrl(ctx: Context, raw: String): String? {
+        return try {
+            if (!ctx.getSharedPreferences(ChatyyRnGate.PREFS, Context.MODE_PRIVATE).getBoolean("ack_url", true)) return null
+            val s = raw.trim()
+            if (s.length > 512) return null
+            val u = URL(s)
+            val host = (u.host ?: "").lowercase()
+            val okHost = host == "chatyy.com.br" || (host.endsWith(".chatyy.com.br") && host.length > ".chatyy.com.br".length)
+            if (u.protocol != "https" || !okHost || u.userInfo != null || (u.port != -1 && u.port != 443)) null else s
+        } catch (_: Throwable) { null }
+    }
+
     /** true = servidor respondeu definitivo (2xx, ou 4xx = token inválido/expirado → não reenvia).
      *  [item] = "<d_ack>" ou "<d_ack>|1" (persisted). */
     internal fun post(ctx: Context, item: String): Boolean {
+        val code = postCode(ctx, item, ENDPOINT, TIMEOUT_CONNECT_MS)
+        return code in 200..499 && code != 429 && code != 408
+    }
+
+    /** POST do ack para [url]; devolve o HTTP status (0 = falha de rede). */
+    private fun postCode(ctx: Context, item: String, url: String, connectTimeoutMs: Int): Int {
         val dAck = item.substringBefore('|')
         val persisted = item.endsWith("|1")
         var conn: HttpURLConnection? = null
         try {
-            conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
+            conn = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = TIMEOUT_CONNECT_MS
+                connectTimeout = connectTimeoutMs
                 readTimeout = TIMEOUT_READ_MS
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
@@ -159,10 +192,10 @@ object ChatDeliveryReporter {
             val code = conn.responseCode
             Log.d(TAG, "delivered ack HTTP $code")
             try { (if (code < 400) conn.inputStream else conn.errorStream)?.use { it.readBytes() } } catch (_: Throwable) {}
-            return code in 200..499 && code != 429 && code != 408
+            return code
         } catch (t: Throwable) {
             Log.w(TAG, "delivered ack failed: ${t.message}")
-            return false
+            return 0
         } finally {
             try { conn?.disconnect() } catch (e: Throwable) {}
         }

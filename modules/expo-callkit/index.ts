@@ -1354,6 +1354,19 @@ export function e2ee5PushMetricsTake(): { counts: Record<string, number>; ms: nu
   } catch { return null; }
 }
 
+// [2026-10-23 push-rapido] Kill switches nativos do push rápido (padrão = tudo ligado; só as chaves
+// passadas mudam). Android: rn_defer / rn_preload (próximo processo), ack_url, timing.
+// iOS (NSE, App Group): text_first, media_budget_ms (100…3000), ack_url, timing.
+// false = binário sem a função (anterior a este build).
+export function setPushFastFlags(flags: {
+  rn_defer?: boolean; rn_preload?: boolean; ack_url?: boolean; timing?: boolean;
+  text_first?: boolean; media_budget_ms?: number;
+}): boolean {
+  const m: any = getModule();
+  if (!m || typeof m.setPushFastFlags !== 'function') return false;
+  try { return !!m.setPushFastFlags(JSON.stringify(flags || {})); } catch { return false; }
+}
+
 export async function bgSyncConfigure(cfgJson: string): Promise<void> {
   const m: any = getModule();
   if (!m || typeof m.bgSyncConfigure !== 'function') return;

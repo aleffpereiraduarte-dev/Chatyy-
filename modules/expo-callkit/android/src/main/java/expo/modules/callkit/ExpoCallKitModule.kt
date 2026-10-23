@@ -817,6 +817,21 @@ class ExpoCallKitModule : Module() {
       try { ChatPushE2EE.takeMetrics(context) } catch (_: Throwable) { "{}" }
     }
 
+    // [2026-10-23 push-rapido] Kill switches nativos do push rápido (padrão = tudo ligado).
+    // JSON {"rn_defer":bool,"rn_preload":bool,"ack_url":bool,"timing":bool} — só as chaves presentes
+    // mudam. rn_defer/rn_preload valem a partir do PRÓXIMO processo (o onCreate lê).
+    Function("setPushFastFlags") { json: String ->
+      try {
+        val o = org.json.JSONObject(json)
+        val ed = context.getSharedPreferences(ChatyyRnGate.PREFS, Context.MODE_PRIVATE).edit()
+        for (k in listOf("rn_defer", "rn_preload", "ack_url", "timing")) {
+          if (o.has(k)) ed.putBoolean(k, o.optBoolean(k, true))
+        }
+        ed.apply()
+        true
+      } catch (_: Throwable) { false }
+    }
+
     AsyncFunction("bgSyncConfigure") { cfgJson: String ->
       try { ChatBgSyncWorker.configure(context, cfgJson) } catch (t: Throwable) {
         Log.w(TAG, "bgSyncConfigure failed: ${t.message}")

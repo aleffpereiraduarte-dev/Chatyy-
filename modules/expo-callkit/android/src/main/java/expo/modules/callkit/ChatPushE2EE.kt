@@ -95,8 +95,15 @@ object ChatPushE2EE {
     fun takeMetrics(ctx: Context): String {
         return try {
             val sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val counts = try { JSONObject(sp.getString("counts", "{}") ?: "{}") } catch (_: Throwable) { JSONObject() }
+            // [2026-10-23 push-rapido] + contadores de tempo do push (pt_*, ChatyyPushTiming) no mesmo envio.
+            try {
+                val pt = ChatyyPushTiming.take(ctx)
+                val it = pt.keys()
+                while (it.hasNext()) { val k = it.next(); counts.put(k, counts.optInt(k, 0) + pt.optInt(k, 0)) }
+            } catch (_: Throwable) {}
             val out = JSONObject()
-                .put("counts", try { JSONObject(sp.getString("counts", "{}") ?: "{}") } catch (_: Throwable) { JSONObject() })
+                .put("counts", counts)
                 .put("ms", try { JSONArray(sp.getString("ms", "[]") ?: "[]") } catch (_: Throwable) { JSONArray() })
             sp.edit().remove("counts").remove("ms").apply()
             out.toString()

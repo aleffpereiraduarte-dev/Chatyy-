@@ -50,6 +50,18 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
+        // [2026-10-23 push-rapido item 4] marcadores de tempo (ChatyyPushTiming, logcat ChatyyPushT)
+        // + libera o pré-carregamento do RN em 2º plano SÓ depois do push tratado (ChatyyRnGate).
+        val pt = ChatyyPushTiming.begin()
+        try {
+            handleMessage(message, pt)
+        } finally {
+            try { ChatyyPushTiming.finish(applicationContext, pt, pt.kind) } catch (_: Throwable) {}
+            try { ChatyyRnGate.pushDone() } catch (_: Throwable) {}
+        }
+    }
+
+    private fun handleMessage(message: RemoteMessage, pt: ChatyyPushTiming.Mark) {
         // [2026-10-17 expo-call-unpack] Push de chamada roteado pelo Expo chega
         // como data-only com tudo em JSON dentro de data["body"] → achata p/ os
         // ramos de chamada (incoming_call/…/call_end) acharem o "type".
@@ -70,6 +82,7 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             } catch (_: Throwable) {}
         }
         val type = data["type"] ?: ""
+        pt.kind = "t:" + type.take(24)
 
         // [2026-10-17 android-wa] A token refresh that failed offline is retried
         // on the next push (cheap no-op when nothing is pending; 5 min throttle).
@@ -97,7 +110,9 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
         // [2026-10-22 dlv-device] Journal ANTES do ack: o ack diz se a mensagem
         // completa ficou gravada aqui (persisted=1) — base do "apagar ao entregar".
         val dlvPersisted = try { ChatBgJournal.maybeAppendFromPush(applicationContext, data) } catch (e: Throwable) { false }
+        pt.journalMs = pt.since()
         try { ChatDeliveryReporter.maybeReport(applicationContext, data, dlvPersisted) } catch (e: Throwable) {}
+        pt.ackMs = pt.since()
 
         // [2026-05-16 Stage 4] Silent push wake. When the web companion
         // device needs chat history that only this phone has in SQLite,
@@ -550,6 +565,8 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             if (ChatMessagingStyleHandler.looksLikeChatPush(data)) {
                 try {
                     if (ChatMessagingStyleHandler.tryHandle(applicationContext, message)) {
+                        pt.notifMs = pt.since()
+                        pt.kind = "chat"
                         Log.d(TAG, "MessagingStyle handler consumed $type")
                         return
                     }
@@ -558,6 +575,13 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 }
             }
 
+            // [2026-10-23 push-rapido] O expo-notifications pode acordar JS (tarefa headless /
+            // emitter): garante o RN carregado antes (no-op se já estava; processo adiado paga aqui,
+            // igual ao comportamento antigo). Chat consumido pelo MessagingStyle NÃO passa por aqui.
+            try { ChatyyRnGate.ensure("expo_delegate") } catch (t: Throwable) {
+                Log.w(TAG, "rn ensure before Expo delegate failed: ${t.message}")
+            }
+            pt.kind = "expo:" + type.take(20)
             // Forward non-call messages to Expo's notification handler.
             // We use reflection to call FirebaseMessagingDelegate since we can't
             // directly depend on expo-notifications at compile time.
