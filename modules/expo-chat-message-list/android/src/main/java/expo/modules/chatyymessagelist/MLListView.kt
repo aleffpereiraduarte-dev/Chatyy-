@@ -571,7 +571,11 @@ class MLListView(context: Context, appContext: AppContext) : ExpoView(context, a
     ov.onDismissed = { reason ->
       if (ctxOverlay === ov) ctxOverlay = null
       refreshOverlay() // [tg-list]
-      if (liftedKey == key) setLiftedKey("")
+      // [2026-10-22 ctx-blink] paridade iOS 03d8b9bf: o snapshot já está pousado
+      // em cima da bolha → a célula volta a 100% NA HORA (antes fade 0→1 de 0,15 s
+      // DEPOIS de o overlay sair → foto/GIF/álbum "piscava"). O overlay some por
+      // cima com fade curto (MLCtxOverlay.finish), sem buraco entre os dois.
+      if (liftedKey == key) { findCell(key)?.setLifted(false, animated = false); setLiftedKey("") }
       if (!destroyed) {
         onMenuDismiss(mapOf("key" to key, "reason" to reason))
         checkPendingPop()

@@ -326,9 +326,15 @@ class MLCtxOverlay(
     dimView.setBackgroundColor(th.dim)
     if (d.showReactions && d.reactions.isNotEmpty()) buildBar(d)
     if (d.actions.isNotEmpty()) buildMenu(d)
+    // [2026-10-22 ctx-blink] balão ACIMA do menu (paridade iOS d1c3ad21): o menu
+    // entra/sai escalando (0,5→1) e passava POR CIMA da foto/álbum ("retângulo
+    // cinza" no 1º quadro e na volta). No Android a ordem real é o Z (elevation
+    // vence bringToFront): menu 12−6=6 < balão 7 < reações 8 < painel 12 < voo 16.
+    menu?.let { it.bringToFront(); it.translationZ = -dp(6f) }
+    bubble.outlineProvider = null // Z só p/ ordem, sem sombra no snapshot
+    bubble.elevation = dp(7f)
     bubble.bringToFront()
     bar?.bringToFront()
-    menu?.bringToFront()
     layoutMenu()
     animateIn()
   }
@@ -851,7 +857,7 @@ class MLCtxOverlay(
     removeCallbacks(timeout)
     search?.let { hideIme(it) }
     isClickable = false
-    if (!animated || !isAttachedToWindow) { finish(reason); return }
+    if (!animated || !isAttachedToWindow) { finish(reason, fade = false); return }
     lastReason = reason
     val dest = sourceRectProvider?.invoke() ?: src
     bar?.animate()?.alpha(0f)?.scaleX(0.8f)?.scaleY(0.8f)?.setDuration(170)?.start()
@@ -882,15 +888,28 @@ class MLCtxOverlay(
     if (pending <= 0 && dismissing) finish(lastReason)
   }
 
-  private fun finish(reason: String) {
+  private fun finish(reason: String, fade: Boolean = true) {
     if (finished) return
     finished = true
     removeCallbacks(timeout)
     blurAnim?.cancel()
     setBlur(0f)
     try { onDismissed?.invoke(reason) } catch (_: Throwable) {}
-    try { (parent as? ViewGroup)?.removeView(this) } catch (_: Throwable) {}
+    // [2026-10-22 ctx-blink] paridade iOS 03d8b9bf: a célula já voltou a 100%
+    // embaixo (onDismissed) → o balão pousado sai com fade curto por cima em vez
+    // de sumir seco (GIF: quadro do snapshot ≠ quadro ao vivo). Sem toques.
+    if (fade && !reduce && isAttachedToWindow && reason != "off" && reason != "replaced") {
+      passThrough = true
+      animate().alpha(0f).setDuration(120).setInterpolator(DecelerateInterpolator())
+        .withEndAction { try { (parent as? ViewGroup)?.removeView(this) } catch (_: Throwable) {} }
+        .start()
+    } else {
+      try { (parent as? ViewGroup)?.removeView(this) } catch (_: Throwable) {}
+    }
   }
+
+  private var passThrough = false
+  override fun dispatchTouchEvent(ev: MotionEvent): Boolean = if (passThrough) false else super.dispatchTouchEvent(ev)
 
   companion object {
     fun activityOf(ctx: Context?): Activity? {

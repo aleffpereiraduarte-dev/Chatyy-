@@ -766,11 +766,12 @@ class MLCellView(context: Context) : ViewGroup(context) {
     a.start()
   }
 
-  fun setLifted(on: Boolean) {
+  fun setLifted(on: Boolean, animated: Boolean = true) {
     if (lifted == on) return
     lifted = on
     liftAnim?.cancel()
     if (on) { liftAlpha = 0f; invalidate(); return }
+    if (!animated) { liftAlpha = 1f; invalidate(); return }
     val a = ValueAnimator.ofFloat(liftAlpha, 1f)
     a.duration = 150
     a.addUpdateListener { liftAlpha = it.animatedValue as Float; invalidate() }
