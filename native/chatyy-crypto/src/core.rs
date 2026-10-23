@@ -754,7 +754,7 @@ impl CryptoCore {
         Ok(Self::cv_get(m, CV_SEEN).await?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default())
     }
 
-    fn users_for(&self, uids: &[String]) -> CoreResult<Vec<OwnedUserId>> {
+    pub(crate) fn users_for(&self, uids: &[String]) -> CoreResult<Vec<OwnedUserId>> {
         let mut set: BTreeSet<OwnedUserId> = BTreeSet::new();
         set.insert(self.user_id.clone());
         for u in uids {

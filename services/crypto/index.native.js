@@ -142,7 +142,7 @@ function call(op, args) {
 // nem o `_inflight` do decrypt para sempre. Rede no núcleo (status/sync/keys_*) = até 15 s por ida.
 const _NET_OPS = new Set(['status', 'sync', 'syncWith', 'bootstrapIdentity', 'sendToDevice', 'flushMetrics', 'forgetDevice', 'signDevice',
   'backupEnable', 'backupStep', 'backupRestore', 'backupDisable', 'linkAccept', 'linkPhonePoll', 'onMembersChanged', 'rotateConversation',
-  'requestRoomKey', 'shareRoomKey']);
+  'requestRoomKey', 'shareRoomKey', 'prewarmConversation', 'backupFetchSession']);
 function opTimeoutMs(op) {
   if (op === 'encrypt') return 20000; // keys_query + keys_claim + to_device_send no 1º envio da sessão
   if (op === 'decryptFile' || op === 'encryptFile') return 60000;
@@ -345,6 +345,9 @@ export const requestRoomKey = (convId, sessionId, senderUid, serverMid) =>
   call('requestRoomKey', { convId: String(convId), sessionId: String(sessionId), senderUid: String(senderUid), serverMid: String(serverMid) });
 export const shareRoomKey = (convId, sessionId, targetUid, targetDevices) =>
   call('shareRoomKey', { convId: String(convId), sessionId: String(sessionId), targetUid: String(targetUid), targetDevices: strs(targetDevices) });
+// [e2ee5 utd-wa 2026-10-23] BUILD: build sem os métodos → 'unsupported' do host (o e2ee5.js desliga e segue)
+export const prewarmConversation = (convId, memberUids) => call('prewarmConversation', { convId: String(convId), memberUids: strs(memberUids) });
+export const backupFetchSession = (convId, sessionId) => call('backupFetchSession', { convId: String(convId), sessionId: String(sessionId) });
 export const onMembersChanged = (convId, memberUids, removedUids) =>
   call('onMembersChanged', { convId: String(convId), memberUids: strs(memberUids), removedUids: strs(removedUids) }).then(() => ({}));
 export const forgetDevice = (deviceId) => call('forgetDevice', { deviceId: String(deviceId) });

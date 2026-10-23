@@ -772,3 +772,68 @@ async fn meu_outro_aparelho_encaminha_a_chave_automaticamente() {
     let d = bw.recv("15", &a, &e, &c, "1").await.unwrap();
     assert_eq!(body_of(&d), "a web perdeu esta");
 }
+
+// [e2ee5 utd-wa 2026-10-23] prewarm: a chave da sessão chega ANTES da 1ª mensagem; o envio não troca chave de novo.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prewarm_compartilha_chave_antes_do_primeiro_envio() {
+    let s = FakeServer::new();
+    let a = Client::phone(&s, "7").await;
+    let b = Client::phone(&s, "42").await;
+    s.set_conv("880", &["7", "42"]);
+    a.core.sync().await.unwrap();
+    let p = a.core.prewarm_conversation("880".into(), vec!["7".into(), "42".into()]).await.unwrap();
+    assert!(p.key_share_requests >= 1 && !p.session_id.is_empty(), "{p:?}");
+    // idempotente: 2º prewarm não manda nada
+    let p2 = a.core.prewarm_conversation("880".into(), vec!["7".into(), "42".into()]).await.unwrap();
+    assert_eq!(p2.key_share_requests, 0);
+    assert_eq!(p2.session_id, p.session_id);
+    // o destinatário puxa a chave antes de existir mensagem
+    let sb = b.core.sync().await.unwrap();
+    assert!(sb.convs_with_new_keys.contains(&"880".to_string()), "{:?}", sb.convs_with_new_keys);
+    // 1º envio: sem troca de chave (já foi), mesma sessão; decifra sem esperar to-device
+    let payload = serde_json::json!({"v": 1, "t": "text", "conv": "880", "cmid": "cm-prewarm-0001", "ts": 1, "body": "primeira"}).to_string();
+    let r = a.core.encrypt("880".into(), vec!["7".into(), "42".into()], payload).await.unwrap();
+    assert_eq!(r.key_share_requests, 0, "a chave já tinha ido no prewarm");
+    assert_eq!(r.session_id, p.session_id);
+    let d = b
+        .core
+        .decrypt(DecryptInput { conv_id: "880".into(), envelope_json: r.envelope_json.clone(), sender_uid: "7".into(), server_mid: "1".into(), cmid: "cm-prewarm-0001".into(), ts_ms: 1_700_000_000_000 })
+        .await
+        .unwrap();
+    assert_eq!(body_of(&d), "primeira");
+}
+
+// [e2ee5 utd-wa 2026-10-23] chave perdida + backup ligado: busca SÓ aquela sessão no backup e decifra.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn backup_busca_uma_sessao_quando_falta_a_chave() {
+    let s = FakeServer::new();
+    let a = Client::phone(&s, "7").await;
+    let b = Client::phone(&s, "42").await;
+    s.set_conv("881", &["7", "42"]);
+    let en = b.core.backup_enable(String::new()).await.unwrap();
+    let (e1, c1, r1) = a.send("881", &[&a, &b], "vai para o backup").await;
+    b.recv("881", &a, &e1, &c1, "1").await.unwrap();
+    b.core.backup_step(0).await.unwrap();
+    // aparelho novo restaurado (tem a chave do backup) mas uma sessão NOVA chega sem to-device
+    let d = new_device_id("P").unwrap();
+    let nb = Client::open_at(&s, "42", &d, Arc::new(tempfile::tempdir().unwrap()), ProcessRole::App, "").await;
+    nb.core.sync().await.unwrap();
+    nb.core.backup_restore(en.recovery_key.clone()).await.unwrap();
+    // sem backup ligado → no_backup; com a sessão já presente → have
+    let have = nb.core.backup_fetch_session("881".into(), r1.session_id.clone()).await.unwrap();
+    assert_eq!(have.reason, "have");
+    assert_eq!(a.core.backup_fetch_session("881".into(), "x".repeat(43)).await.unwrap().reason, "no_backup");
+    // sessão que não está no backup
+    assert_eq!(nb.core.backup_fetch_session("881".into(), "y".repeat(43)).await.unwrap().reason, "not_found");
+    // sessão nova (rotação) cuja entrega ao aparelho novo se perde; o outro aparelho a guardou no backup
+    a.core.rotate_conversation("881".into()).await.unwrap();
+    let (e2, c2, r2) = a.send("881", &[&a, &b, &nb], "sessão nova").await;
+    assert_ne!(r2.session_id, r1.session_id);
+    assert!(s.drop_to_device("42", &nb.device_id) >= 1);
+    assert_eq!(is_utd(&nb.recv("881", &a, &e2, &c2, "2").await), Some(UtdReason::MissingSession));
+    b.recv("881", &a, &e2, &c2, "2").await.unwrap();
+    b.core.backup_step(0).await.unwrap();
+    let f = nb.core.backup_fetch_session("881".into(), r2.session_id.clone()).await.unwrap();
+    assert!(f.imported >= 1 && f.reason.is_empty() && f.convs.contains(&"881".to_string()), "{f:?}");
+    assert_eq!(body_of(&nb.recv("881", &a, &e2, &c2, "2").await.unwrap()), "sessão nova");
+}

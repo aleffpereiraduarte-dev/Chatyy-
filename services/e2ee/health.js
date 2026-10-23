@@ -93,7 +93,9 @@ export function recordResolved(key) {
 
 // [e2ee5 1.7 keyreq] contadores nomeados (só os que o e2ee5_metrics aceita).
 const NAMED = new Set(['key_request_sent', 'key_request_served', 'key_request_ok', 'native_timeout', 'native_err', 'core_slow']);
-export function recordCounter(name, n = 1) { if (_on() && NAMED.has(String(name)) && n > 0) _inc(String(name), n); }
+// [e2ee5 utd-wa 2026-10-23] + família utdw_* (tempo/motivo em "aguardando"; o servidor grava com o kit utd-wa)
+const UTDW_RE = /^utdw_[a-z0-9_]{1,40}$/;
+export function recordCounter(name, n = 1) { const k = String(name); if (_on() && (NAMED.has(k) || UTDW_RE.test(k)) && n > 0) _inc(k, n); }
 
 export function recordPlaintextRefused() { if (_on()) _inc('plaintext_refused'); }
 export function recordNseFallback(n = 1) { if (_on() && n > 0) _inc('nse_fallback', n); }

@@ -370,6 +370,13 @@ object ChatyyCrypto {
       "shareRoomKey" -> opened().shareRoomKey(s("convId"), s("sessionId"), s("targetUid"), ChatyyJson.strs(a, "targetDevices")).let {
         JSONObject().put("sharedDevices", it.sharedDevices.toLong()).put("refused", ChatyyJson.list(it.refused)).put("reason", it.reason)
       }
+      // [e2ee5 utd-wa 2026-10-23] chave antes da 1ª mensagem + busca de UMA sessão no backup
+      "prewarmConversation" -> opened().prewarmConversation(s("convId"), ChatyyJson.strs(a, "memberUids")).let {
+        JSONObject().put("keyShareRequests", it.keyShareRequests.toLong()).put("keyShareBytes", it.keyShareBytes.toLong()).put("sessionId", it.sessionId)
+      }
+      "backupFetchSession" -> opened().backupFetchSession(s("convId"), s("sessionId")).let {
+        JSONObject().put("imported", it.imported.toLong()).put("reason", it.reason).put("convs", ChatyyJson.list(it.convs))
+      }
       "onMembersChanged" -> {
         opened().onMembersChanged(s("convId"), ChatyyJson.strs(a, "memberUids"), ChatyyJson.strs(a, "removedUids")); JSONObject()
       }

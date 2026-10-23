@@ -450,6 +450,13 @@ public actor ChatyyCrypto {
       let r = try await opened().shareRoomKey(convId: S(a["convId"]), sessionId: S(a["sessionId"]),
                                               targetUid: S(a["targetUid"]), targetDevices: ChatyyCryptoJSON.strs(a["targetDevices"]))
       out = ["sharedDevices": r.sharedDevices, "refused": r.refused, "reason": r.reason]
+    // [e2ee5 utd-wa 2026-10-23] chave antes da 1ª mensagem + busca de UMA sessão no backup
+    case "prewarmConversation":
+      let r = try await opened().prewarmConversation(convId: S(a["convId"]), memberUids: ChatyyCryptoJSON.strs(a["memberUids"]))
+      out = ["keyShareRequests": r.keyShareRequests, "keyShareBytes": r.keyShareBytes, "sessionId": r.sessionId]
+    case "backupFetchSession":
+      let r = try await opened().backupFetchSession(convId: S(a["convId"]), sessionId: S(a["sessionId"]))
+      out = ["imported": r.imported, "reason": r.reason, "convs": r.convs]
     case "onMembersChanged":
       try await opened().onMembersChanged(convId: S(a["convId"]), memberUids: ChatyyCryptoJSON.strs(a["memberUids"]),
                                           removedUids: ChatyyCryptoJSON.strs(a["removedUids"]))
