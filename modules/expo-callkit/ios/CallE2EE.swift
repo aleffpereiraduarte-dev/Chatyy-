@@ -352,14 +352,15 @@ final class CallE2EEBadge: UIView {
     }
 
     private static func text(_ key: String) -> String {
-        let lang = (Locale.preferredLanguages.first ?? "pt").lowercased()
-        let pt = lang.hasPrefix("pt"), es = lang.hasPrefix("es")
+        // [2026-10-22 e2ee5-i18n] Idioma do APP (App Group "chatyy_app_lang") e só depois o do sistema.
+        let lang = GroupCallStrings.lang
+        let pt = lang.hasPrefix("pt"), es = lang == "es"
         switch key {
         case "on": return pt ? "Criptografada de ponta a ponta" : es ? "Cifrada de extremo a extremo" : "End-to-end encrypted"
-        case "wait": return pt ? "Protegendo a ligação…" : es ? "Protegiendo la llamada…" : "Securing the call…"
-        case "nokey": return pt ? "Não foi possível proteger esta ligação." : es ? "No fue posible proteger esta llamada." : "Couldn't secure this call."
-        case "plain": return pt ? "Esta ligação não está protegida. Desligue e ligue de novo." : es ? "Esta llamada no está protegida. Cuelga y vuelve a llamar." : "This call isn't secured. Hang up and call again."
-        default: return pt ? "A outra pessoa precisa atualizar o Chatyy para esta ligação ser protegida." : es ? "La otra persona necesita actualizar Chatyy para proteger esta llamada." : "The other person needs to update Chatyy to secure this call."
+        case "wait": return pt ? "Protegendo a chamada…" : es ? "Protegiendo la llamada…" : "Securing the call…"
+        case "nokey": return pt ? "Não foi possível proteger esta chamada. Verifique a conexão e tente de novo." : es ? "No fue posible proteger esta llamada. Revisa tu conexión e inténtalo de nuevo." : "Couldn't secure this call. Check your connection and try again."
+        case "plain": return pt ? "Esta chamada não está protegida. Desligue e ligue de novo." : es ? "Esta llamada no está protegida. Cuelga y vuelve a llamar." : "This call isn't secured. Hang up and call again."
+        default: return pt ? "A outra pessoa precisa atualizar o Chatyy para esta chamada ser protegida." : es ? "La otra persona necesita actualizar Chatyy para proteger esta llamada." : "The other person needs to update Chatyy to secure this call."
         }
     }
 

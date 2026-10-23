@@ -288,16 +288,20 @@ internal object CallE2EE {
   }
 
   fun text(ctx: Context?, key: String): String {
-    val lang = try { (ctx?.resources?.configuration?.locales?.get(0) ?: Locale.getDefault()).language } catch (_: Throwable) { "pt" }
-    val pt = lang == "pt"; val es = lang == "es"
+    // [2026-10-22 e2ee5-i18n] Idioma do APP (prefs "chatyy_app_lang" espelhado pelo JS) e só
+    // depois o do sistema — antes lia só o locale do sistema e aparelho em inglês com app em
+    // pt-BR mostrava "Securing the call…".
+    val lang = try { GroupCallStrings.load(ctx); GroupCallStrings.lang() } catch (_: Throwable) { "pt-BR" }
+    val pt = lang.startsWith("pt"); val es = lang == "es"
     return when (key) {
       "on" -> if (pt) "Criptografada de ponta a ponta" else if (es) "Cifrada de extremo a extremo" else "End-to-end encrypted"
-      "wait" -> if (pt) "Protegendo a ligação…" else if (es) "Protegiendo la llamada…" else "Securing the call…"
-      "nokey" -> if (pt) "Não foi possível proteger esta ligação." else if (es) "No fue posible proteger esta llamada." else "Couldn't secure this call."
-      "plain" -> if (pt) "Esta ligação não está protegida. Desligue e ligue de novo." else if (es) "Esta llamada no está protegida. Cuelga y vuelve a llamar." else "This call isn't secured. Hang up and call again."
-      else -> if (pt) "A outra pessoa precisa atualizar o Chatyy para esta ligação ser protegida." else if (es) "La otra persona necesita actualizar Chatyy para proteger esta llamada." else "The other person needs to update Chatyy to secure this call."
+      "wait" -> if (pt) "Protegendo a chamada…" else if (es) "Protegiendo la llamada…" else "Securing the call…"
+      "nokey" -> if (pt) "Não foi possível proteger esta chamada. Verifique a conexão e tente de novo." else if (es) "No fue posible proteger esta llamada. Revisa tu conexión e inténtalo de nuevo." else "Couldn't secure this call. Check your connection and try again."
+      "plain" -> if (pt) "Esta chamada não está protegida. Desligue e ligue de novo." else if (es) "Esta llamada no está protegida. Cuelga y vuelve a llamar." else "This call isn't secured. Hang up and call again."
+      else -> if (pt) "A outra pessoa precisa atualizar o Chatyy para esta chamada ser protegida." else if (es) "La otra persona necesita actualizar Chatyy para proteger esta llamada." else "The other person needs to update Chatyy to secure this call."
     }
   }
+
 }
 
 /**
