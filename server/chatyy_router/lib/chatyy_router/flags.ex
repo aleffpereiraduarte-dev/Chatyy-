@@ -14,12 +14,20 @@ defmodule ChatyyRouter.Flags do
                    (comportamento antigo = região deste nó).
     RT_F0_CMP=0    [sgu F0] desliga o comparador inbox × dlv (ChatyyRouter.DlvCompare; só medição).
                    Padrão ligado (se a AckSource estiver ligada e ROUTER_F0_CMP != 0 no boot).
+    [sgu F1 2026-10-23] armazenamento durável do corpo (ChatyyRouter.BodyStore):
+    RT_STORE=0|1   /store e a cópia do /fanout. PADRÃO 0 (inerte). Com 0 nada novo é gravado; o que já
+                   está guardado continua servindo /pull (kill global da F1 em ≤ 2 s).
+    RT_F1_CMP=0    desliga o comparador roteador × PG (ChatyyRouter.BodyCompare). Padrão ligado.
+    RT_STORE_REPAIR=pg  o comparador COPIA do PG (réplica) o que faltar na casa (conta como reparo, não
+                   como acerto). Padrão desligado: na F1 a falta tem que aparecer.
+    RT_INHERIT=auto  herança de inbox automática (A5) quando um aparelho é revogado e outro do mesmo uid
+                   nasce ±24 h da revogação. Padrão desligado (só o POST /inherit explícito).
   `override/2` (Control POST /flags?route=&fanout=) vale até o restart.
   """
   use GenServer
   require Logger
 
-  @defaults %{route: true, fanout: false, hub_http: false, offline_skip: false, f0_cmp: true}
+  @defaults %{route: true, fanout: false, hub_http: false, offline_skip: false, f0_cmp: true, store: false, f1_cmp: true, store_repair: false, inherit_auto: false}
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -28,7 +36,7 @@ defmodule ChatyyRouter.Flags do
   def get(k), do: :persistent_term.get({__MODULE__, k}, @defaults[k])
 
   def override(v) when is_boolean(v), do: override(:route, v)
-  def override(k, v) when k in [:route, :fanout, :hub_http, :offline_skip, :f0_cmp] and is_boolean(v), do: GenServer.call(__MODULE__, {:override, k, v})
+  def override(k, v) when k in [:route, :fanout, :hub_http, :offline_skip, :f0_cmp, :store, :f1_cmp, :store_repair, :inherit_auto] and is_boolean(v), do: GenServer.call(__MODULE__, {:override, k, v})
 
   @impl true
   def init(_) do
@@ -51,12 +59,16 @@ defmodule ChatyyRouter.Flags do
         _ -> ""
       end
 
-    for {k, var} <- [route: "RT_ROUTE", fanout: "RT_FANOUT", hub_http: "RT_HUB", offline_skip: "RT_OFFLINE", f0_cmp: "RT_F0_CMP"],
+    for {k, var} <- [route: "RT_ROUTE", fanout: "RT_FANOUT", hub_http: "RT_HUB", offline_skip: "RT_OFFLINE", f0_cmp: "RT_F0_CMP",
+                    store: "RT_STORE", f1_cmp: "RT_F1_CMP", store_repair: "RT_STORE_REPAIR", inherit_auto: "RT_INHERIT"],
         not Map.has_key?(s.override, k) do
       v =
         cond do
           k == :hub_http -> String.contains?(body, "RT_HUB=http")
           k == :offline_skip -> String.contains?(body, "RT_OFFLINE=skip")
+          k == :store_repair -> line?(body, "RT_STORE_REPAIR", "pg")
+          k == :inherit_auto -> line?(body, "RT_INHERIT", "auto")
+          k == :store -> line?(body, "RT_STORE", "1")
           String.contains?(body, var <> "=0") -> false
           String.contains?(body, var <> "=1") -> true
           true -> @defaults[k]
@@ -70,5 +82,18 @@ defmodule ChatyyRouter.Flags do
 
     Process.send_after(self(), :reload, 2_000)
     {:noreply, s}
+  end
+
+  # [sgu F1] chave exata no começo da linha (RT_STORE não casa com RT_STORE_REPAIR); a última linha vale
+  defp line?(body, key, val) do
+    body
+    |> String.split("\n")
+    |> Enum.map(&String.trim/1)
+    |> Enum.filter(&String.starts_with?(&1, key <> "="))
+    |> List.last()
+    |> case do
+      nil -> false
+      l -> String.trim(String.trim_leading(l, key <> "="), ~s("' )) == val
+    end
   end
 end

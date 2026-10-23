@@ -138,6 +138,33 @@ defmodule ChatyyRouter.Directory do
     end
   end
 
+  @doc """
+  [sgu F1] Só os ids dos aparelhos destino (destinatários + OUTROS aparelhos do remetente), SEM
+  perguntar a região/presença de ninguém (o armazenamento durável da casa não depende de onde o
+  aparelho está). Mesmo conjunto que `recipients_result/2`. {:ok, [device]} | {:error, _}.
+  """
+  def recipient_ids_result(cid, sender_device) do
+    with {:ok, uids} <- members_result(cid) do
+      Enum.reduce_while(uids, {:ok, []}, fn uid, {:ok, acc} ->
+        case device_ids_result(uid) do
+          {:ok, ids} -> {:cont, {:ok, acc ++ for(d <- ids, d != sender_device, do: d)}}
+          err -> {:halt, err}
+        end
+      end)
+    end
+    |> case do
+      {:ok, l} -> {:ok, Enum.uniq(l)}
+      err -> err
+    end
+  end
+
+  defp device_ids_result(uid) do
+    case :ets.lookup(@devices, uid) do
+      [{_, devs}] -> {:ok, for({d, _} <- devs, do: d)}
+      [] -> if pg?(), do: cached(@dcache, uid, fn -> pg_devices(uid) end), else: {:ok, []}
+    end
+  end
+
   @doc "Região atual do aparelho (presença do hub, com cache curto e fallback)."
   def region(device), do: elem(region_info(device), 0)
 

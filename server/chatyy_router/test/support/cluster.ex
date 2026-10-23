@@ -45,6 +45,8 @@ defmodule ChatyyRouter.TestCluster do
         flags_file: "/nonexistent/chatyy-router-flags",
         sisters: opts[:sisters] || %{}
       ]
+      # [sgu F1] env extra por teste (ex.: PG de ensaio)
+      |> Kernel.++(opts[:env] || [])
       |> Enum.reject(fn {_, v} -> v == nil end)
 
     for {r, p} <- peers do

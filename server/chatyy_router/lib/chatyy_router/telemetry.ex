@@ -106,6 +106,10 @@ defmodule ChatyyRouter.Metrics do
 
   # [sgu F0] contador com rótulo kind (ChatyyRouter.DlvCompare)
   defp name_labels({:rt_inbox_vs_dlv_mismatch_events, k}), do: {"rt_inbox_vs_dlv_mismatch_events", [{"kind", to_string(k)}]}
+  # [sgu F1] (ChatyyRouter.BodyStore / BodyCompare)
+  defp name_labels({:rt_f1_body_mismatch_events, k}), do: {"rt_f1_body_mismatch_events", [{"kind", to_string(k)}]}
+  defp name_labels({:rt_store, r}), do: {"rt_store", [{"result", to_string(r)}]}
+  defp name_labels({:rt_store_src, r}), do: {"rt_store_src", [{"src", to_string(r)}]}
   defp name_labels({a, r}) when a in @labeled, do: {to_string(a), [{"region", to_string(r)}]}
   defp name_labels(name), do: {fmt(name), []}
 
@@ -164,6 +168,8 @@ defmodule ChatyyRouter.Metrics do
       "chatyy_router_beam_processes #{:erlang.system_info(:process_count)}\n",
       "chatyy_router_dist_connections #{length(Node.list())}\n",
       safe.(fn -> ChatyyRouter.DlvCompare.prom_lines() end) || [],
+      safe.(fn -> ChatyyRouter.BodyStore.prom_lines() end) || [],
+      safe.(fn -> ChatyyRouter.BodyCompare.prom_lines() end) || [],
       "chatyy_router_up 1\n"
     ]
   end

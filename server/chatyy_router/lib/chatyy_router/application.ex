@@ -50,11 +50,13 @@ defmodule ChatyyRouter.Application do
         ChatyyRouter.Presence,
         ChatyyRouter.Replica,
         {DynamicSupervisor, name: ChatyyRouter.ConvSup, strategy: :one_for_one, max_restarts: 1000, max_seconds: 1},
-        ChatyyRouter.Home
+        ChatyyRouter.Home,
+        # [sgu F1] corpo durável por conversa marcada (inerte com RT_STORE=0, o padrão)
+        ChatyyRouter.BodyStore
       ] ++
         ChatyyRouter.Delivery.child_specs() ++
         ChatyyRouter.Fanout.child_specs() ++
-        if(ChatyyRouter.Config.pg_enabled?(), do: [ChatyyRouter.AckSource, ChatyyRouter.DlvCompare], else: []) ++
+        if(ChatyyRouter.Config.pg_enabled?(), do: [ChatyyRouter.AckSource, ChatyyRouter.DlvCompare, ChatyyRouter.BodyCompare], else: []) ++
         [
           ChatyyRouter.AckOutbox,
           ChatyyRouter.Net.Cluster,

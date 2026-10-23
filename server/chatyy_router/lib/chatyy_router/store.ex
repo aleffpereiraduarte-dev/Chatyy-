@@ -9,6 +9,9 @@ defmodule ChatyyRouter.Store do
        :rt_msg     {cid, seq}         -> msg   (na CASA, até ack de todos ou 30 d)
        :rt_replica {cid, seq}         -> msg   (cópia na IRMÃ, p/ failover)
        :rt_inbox   {device, cid, seq} -> {msg, exp} (região do aparelho; aux = casa)
+       :rt_body    {cid, mid | {:rx, mid, email}} -> rec  [sgu F1] corpo E2EE durável (casa + 2 irmãs),
+                   chave = mid Snowflake do leaf (A1: sem seq do roteador); aux = {ts, sha, aparelhos, kind}
+       :rt_inherit {uid, de, para} -> %{ts, ...}  [sgu F1] herança de inbox (A5), em TODOS os nós
 
   2. METADADOS pequenos → Mnesia LOCAL `disc_copies` (schema só deste nó,
      nunca clusterizado: evita o "inconsistent_database" do Mnesia em
@@ -18,6 +21,7 @@ defmodule ChatyyRouter.Store do
        :rt_meta    cid         -> %{last_seq, epoch}
        :rt_home    cid         -> {region, epoch}  (cache durável da casa, comprometida)
        :rt_home_acc cid        -> {region, epoch}  (aceite pendente da proposta de casa por maioria)
+       :rt_body_ack {cid, mid, device} -> {acked_ms, persisted_ms}  [sgu F1] (refeito da fila dlv)
      Ficam em RAM (alguns bytes por mensagem pendente); o tamanho sai em
      /metrics (chatyy_router_store_entries) com alerta no monitor.
      Mnesia não faz fsync por escrita: numa queda de ENERGIA pode perder os
@@ -28,8 +32,8 @@ defmodule ChatyyRouter.Store do
   require Logger
   alias ChatyyRouter.{Config, Seglog}
 
-  @mnesia [:rt_pend, :rt_dedupe, :rt_meta, :rt_home, :rt_home_acc]
-  @logs [:rt_msg, :rt_replica, :rt_inbox]
+  @mnesia [:rt_pend, :rt_dedupe, :rt_meta, :rt_home, :rt_home_acc, :rt_body_ack]
+  @logs [:rt_msg, :rt_replica, :rt_inbox, :rt_body, :rt_inherit]
 
   def tables, do: @mnesia ++ @logs
   def log_tables, do: @logs
@@ -82,6 +86,8 @@ defmodule ChatyyRouter.Store do
   defp exp_aux(:rt_inbox, _k, {msg, exp}), do: {exp, msg[:home]}
   defp exp_aux(:rt_msg, _k, m), do: {m.ts + Config.retention_ms(), {m.ts, m[:cmi]}}
   defp exp_aux(:rt_replica, _k, m), do: {m.ts + Config.retention_ms(), {m.home, m.epoch, m.ts}}
+  defp exp_aux(:rt_body, _k, m), do: {m.ts + Config.retention_ms(), {m.ts, m.sha, m.devices, m.kind}}
+  defp exp_aux(:rt_inherit, _k, m), do: {m.ts + Config.retention_ms(), nil}
 
   @doc "Grava. Tabelas de log devolvem :ok | {:error, motivo} (disco cheio/E/S)."
   def put(t, k, v) when t in @logs do

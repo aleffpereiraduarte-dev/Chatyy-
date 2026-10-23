@@ -44,10 +44,11 @@ defmodule ChatyyRouter.Config do
     end
   end
 
-  @ints ~w(quorum failover_ms tick_ms redeliver_ms retention_ms dedupe_ms ctl_port idle_ms janitor_ms replica_timeout_ms hot_ms seg_max_bytes log_max_mb ping_ms fanout_ttl_ms ack_ttl_ms)a
+  @ints ~w(quorum failover_ms tick_ms redeliver_ms retention_ms dedupe_ms ctl_port idle_ms janitor_ms replica_timeout_ms hot_ms seg_max_bytes log_max_mb ping_ms fanout_ttl_ms ack_ttl_ms body_conv_ms body_repair_ms body_ack_poll_ms body_copies f1_cmp_ms f1_cmp_window_s f1_cmp_grace_ms f1_cmp_max)a
   defp parse(k, v) when k in @ints, do: String.to_integer(v)
   defp parse(:regions, v), do: parse_regions(v)
   defp parse(:sisters, v), do: parse_sisters(v)
+  defp parse(:body_sisters, v), do: parse_sisters(v)
   defp parse(_k, v), do: v
 
   def parse_regions(v) do
@@ -98,6 +99,27 @@ defmodule ChatyyRouter.Config do
     end
   end
   def sisters, do: get(:sisters, %{})
+
+  # [sgu F1] A4 (founder 23/10): a cópia DURÁVEL do corpo vai a 2 irmãs, e o BR deixa de ter o BR2 (mesmo
+  # provedor/país) como irmã preferida. ROUTER_BODY_SISTERS (mesmo formato de ROUTER_SISTERS) manda; sem
+  # ela: ROUTER_SISTERS com o BR/BR2 trocados para SCL + MIA (outro provedor e outro país).
+  @a4_overrides %{"br" => ["scl", "mia"], "br2" => ["scl", "mia"]}
+  def body_sisters do
+    case get(:body_sisters) do
+      m when is_map(m) and map_size(m) > 0 ->
+        m
+
+      _ ->
+        names = region_names()
+
+        Enum.reduce(@a4_overrides, sisters(), fn {r, prefs}, acc ->
+          if r in names and Enum.all?(prefs, &(&1 in names)), do: Map.put(acc, r, prefs), else: acc
+        end)
+    end
+  end
+
+  @doc "[sgu F1] cópias do corpo FORA da casa antes de confirmar o /store (padrão 2 = A4 sister2)."
+  def body_copies, do: get(:body_copies, 2)
 
   @doc "Regiões que nunca servem de irmã/sucessora de outras (ROUTER_NEVER_SISTER=\"us\": o US só observa/recebe)."
   def never_sister do

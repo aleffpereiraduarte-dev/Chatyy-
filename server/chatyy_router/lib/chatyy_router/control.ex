@@ -15,6 +15,14 @@ defmodule ChatyyRouter.Control do
     POST /assign  {"cid","region"}          POST /migrate {"cid","to"}
     POST /bench?n=&conc=&convs=&home=&target=&bytes=
     POST /partition?regions=a,b  /heal?regions=a,b   (isolar região: só p/ ensaio)
+  [sgu F1] corpo durável (ChatyyRouter.BodyStore; inerte com RT_STORE=0):
+    POST /store   {"cid","mid","env_b64"(= bytes exatos de chat_messages.content),"from","device","ts","type",
+                   "kind":"msg"|"reaction","ref"(mid alvo da reação),"devices":[d]?,"meta"?}
+                  -> 200 {"ok":true,"copies":3,"wanted":3,"dup"?,"conflict"?} | 503 {"ok":false,"error"}
+    GET  /pull?device=D[&cid=C][&since=MID][&limit=N] -> {"messages":[...],"reactions":[...]} (pendentes do aparelho)
+    POST /ack_store {"device","cid","mids":[...],"persisted":1}
+    POST /inherit {"uid","from","to"}            (A5: aparelho novo herda as pendências do antigo)
+    GET  /f1/report  (comparador roteador × PG deste nó)   GET /f1/status   POST /f1/repair
   """
   use GenServer
   require Logger
@@ -168,11 +176,57 @@ defmodule ChatyyRouter.Control do
       devices: p["devices"] && Enum.map(p["devices"], fn [d, r] -> {d, r} end)
     }
 
+    # [sgu F1] conversa marcada: cópia durável do corpo na casa + 2 irmãs (assíncrona; RT_STORE=1)
+    ChatyyRouter.BodyStore.from_fanout(req)
+
     case ChatyyRouter.Fanout.fanout_async(req) do
       {:ok, r} -> ok(Map.put(r, :ok, true))
       {:error, e} -> {503, "application/json", json(%{ok: false, error: e})}
     end
   end
+
+  defp route(:POST, "/store", _, b) do
+    p = body(b)
+    env = p["env_b64"] || p["envelope_b64"] || p["body_b64"]
+
+    req = %{
+      cid: p["cid"], mid: p["mid"] || p["msg_id"], kind: p["kind"], ref: p["ref"], from: p["from"] || p["from_uid"],
+      from_device: p["device"] || p["from_device"], ts: p["ts"], type: p["type"], devices: p["devices"],
+      meta: p["meta"], src: :store,
+      env: env && Base.decode64!(env)
+    }
+
+    case ChatyyRouter.BodyStore.store(req) do
+      {:ok, r} -> ok(Map.put(r, :ok, true))
+      {:error, e} -> {503, "application/json", json(%{ok: false, error: inspect_err(e)})}
+    end
+  end
+
+  defp route(:GET, "/pull", %{"device" => d} = q, _) do
+    int = fn k -> case Integer.parse(q[k] || "") do {i, ""} -> i; _ -> nil end end
+    r = ChatyyRouter.BodyStore.pull(d, cid: int.("cid"), since: int.("since"), limit: int.("limit") || 500)
+    j = fn m -> %{cid: m.cid, mid: sub_json(m.mid), kind: m.kind, ref: m.ref, ts: m.ts, from: m.from, type: m.type, sha: m.sha, env_b64: Base.encode64(m.env)} end
+    ok(%{messages: Enum.map(r.messages, j), reactions: Enum.map(r.reactions, j)})
+  end
+
+  defp route(:POST, "/ack_store", _, b) do
+    p = body(b)
+    ChatyyRouter.BodyStore.ack(p["device"], p["cid"], p["mids"] || [p["mid"]], p["persisted"] in [1, true, "1"])
+    ok(%{ok: true})
+  end
+
+  defp route(:POST, "/inherit", _, b) do
+    p = body(b)
+
+    case ChatyyRouter.BodyStore.inherit(p["uid"], p["from"], p["to"]) do
+      :ok -> ok(%{ok: true})
+      {:error, e} -> {400, "application/json", json(%{ok: false, error: e})}
+    end
+  end
+
+  defp route(:GET, "/f1/report", _, _), do: ok(ChatyyRouter.BodyCompare.report())
+  defp route(:GET, "/f1/status", _, _), do: ok(ChatyyRouter.BodyStore.status())
+  defp route(:POST, "/f1/repair", _, _), do: ok(ChatyyRouter.BodyStore.repair_now())
 
   defp route(:POST, "/send", _, b) do
     p = body(b)
@@ -253,4 +307,9 @@ defmodule ChatyyRouter.Control do
   end
 
   defp route(_, _, _, _), do: {404, "application/json", json(%{error: "not_found"})}
+
+  defp sub_json({:rx, m, e}), do: "rx:#{m}:#{e}"
+  defp sub_json(m), do: m
+  defp inspect_err(e) when is_atom(e), do: e
+  defp inspect_err(e), do: inspect(e)
 end
