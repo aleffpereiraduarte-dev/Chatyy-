@@ -85,7 +85,9 @@ export function validateList(j) {
     v: Number(j.v) || 1,
     lb: j.lb !== false,
     regions,
-    near: (Array.isArray(j.near) ? j.near : []).filter((x) => typeof x === 'string' && ID_RE.test(x)).slice(0, 4),
+    near: (Array.isArray(j.near) ? j.near : []).filter((x) => typeof x === 'string' && ID_RE.test(x)).slice(0, 5),
+    // [mapa-latencia 2026-10-22] hubs p/ medir quando o país do IP ≠ fuso/GPS (roaming c/ home routing)
+    roam: (Array.isArray(j.roam) ? j.roam : ROAM_HUBS).filter((x) => typeof x === 'string' && ID_RE.test(x)).slice(0, 4),
     country: typeof j.country === 'string' && /^[A-Z]{2}$/.test(j.country) ? j.country : null,
     ttlMs: _clamp(Number(j.ttl) * 1000, LIST_MIN_TTL_MS, LIST_MAX_TTL_MS, 300000),
     cfg: {
@@ -251,6 +253,13 @@ export function deviceTz() {
  * + a atual + a última boa + US. Só utilizáveis; no máx. `max` (US conta).
  */
 export const GEO_RADIUS_KM = 2500;
+// [mapa-latencia 2026-10-22] mapa medido (Globalping, ~150 locais x 11 servidores): a 3ª do `near`
+// ganha da 1ª/2ª em vários estados/países (ex. GA/SC: mia < mex ≈ usw ≈ us) e no roaming
+// (IP de operadora dos EUA/home routing) o melhor é o hub perto da SAÍDA da operadora (mia/usw/mex),
+// não o do país do aparelho → +1 sonda fora do modo economia (max ≥ 4) p/ caber near[2] / hub.
+// Kill OTA: globalThis.__chatyy_lb_map_off = true (volta à seleção anterior).
+export const ROAM_HUBS = ['mia', 'usw', 'mex'];
+export const MAP_EXTRA_PROBES = 1;
 export function distKm(a, b) {
   const R = 6371, rad = Math.PI / 180;
   const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
@@ -267,6 +276,8 @@ export function regionsNear(geo, list, km = GEO_RADIUS_KM) {
 export function pickCandidates({ list, near, tz, current, lastGood, max = 4, remembered = null, geoBad = false, geo = null, netChange = false, phys = null } = {}) {
   const L = list || getList();
   const ok = (id) => isUsable(regionById(id, L));
+  const mapOn = globalThis.__chatyy_lb_map_off !== true;
+  if (mapOn && max >= 4) max += MAP_EXTRA_PROBES;
   const out = [];
   const add = (id) => { if (id && !out.includes(id) && ok(id) && out.length < max) out.push(id); };
   // [geo-fisica 2026-10-22] posição FÍSICA (GPS do SO, só c/ permissão já dada — services/physGeo.js)
@@ -296,6 +307,13 @@ export function pickCandidates({ list, near, tz, current, lastGood, max = 4, rem
   add(guess[1]);
   add(current);
   add(lastGood);
+  if (mapOn) {
+    // Roaming/VPN: fuso ou GPS apontam p/ região fora do `near` do IP → mede os hubs (a medição decide).
+    const pz = physNear[0] || z[0];
+    const roaming = !!(pz && n.length && !n.includes(pz));
+    if (roaming) for (const id of (L.roam && L.roam.length ? L.roam : ROAM_HUBS)) { if (out.length >= max - 1) break; add(id); }
+    for (const id of n.slice(1)) { if (out.length >= max - 1) break; add(id); }
+  }
   if (!out.includes('us')) { if (out.length >= max) out.pop(); out.push('us'); }
   return out;
 }
