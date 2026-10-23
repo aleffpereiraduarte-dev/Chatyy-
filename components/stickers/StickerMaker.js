@@ -658,19 +658,32 @@ function StickerMakerInner({ sourceUri, onClose, onSaved, onSend, autoCutout = t
     }
   }, [S, baseImg, fitBox.bw, fitBox.bh, outline, outlinePx]);
 
-  const finish = useCallback(async (send) => {
+  // [2026-10-23 figurinhas-organizar] "Salvar" pergunta (opcional) 1–3 emojis
+  // p/ achar a figurinha na busca do painel; "Enviar" não pergunta (usa os
+  // emojis colados nela). Emoji aqui é CONTEÚDO (tag de busca), não ícone.
+  const layerEmojis = useCallback(() => {
+    const out = [];
+    for (const l of stateRef.current.layers) if (l.kind === 'emoji' && l.text && !out.includes(l.text)) out.push(l.text);
+    return out.slice(0, 3);
+  }, []);
+  const [tagAsk, setTagAsk] = useState(null); // null | { tags: [] }
+  const finishWith = useCallback(async (send, tags) => {
     if (busy) return;
+    setTagAsk(null);
     setSelectedId(null);
     setTool(null);
     setBusy(send ? 'send' : 'save');
     try {
       const file = await doExport();
-      const firstEmoji = (stateRef.current.layers.find((l) => l.kind === 'emoji') || {}).text || '';
-      const r = await api.chatStickerCreate(file, { normalize: true, emoji: firstEmoji });
+      const tagList = (Array.isArray(tags) ? tags : []).filter(Boolean).slice(0, 3);
+      const firstEmoji = tagList[0] || '';
+      const r = await api.chatStickerCreate(file, { normalize: true, emoji: firstEmoji, emojiTags: tagList.join(',') });
       const d = (r && (r.data || r)) || {};
       if (!r || r.success === false || !d.url) throw new Error((r && (r.message || r.error)) || 'upload_failed');
       const absUrl = d.abs_url || (/^https?:/i.test(d.url) ? d.url : `https://chatyy.com.br${d.url}`);
-      const row = { id: d.id, pack_id: d.pack_id, url: d.url, abs_url: absUrl, emoji: d.emoji || firstEmoji, emoji_tags: d.emoji_tags || '', is_animated: false };
+      const row = { id: d.id, pack_id: d.pack_id, url: d.url, abs_url: absUrl, emoji: d.emoji || firstEmoji, emoji_tags: d.emoji_tags || tagList.join(','), is_animated: false };
+      // Minhas + topo dos Recentes na hora (painel JS e nativo), em qualquer tela que abriu o criador.
+      try { require('../../services/stickerCache').noteStickerAdded(row); } catch {}
       try { onSaved && onSaved(row); } catch {}
       if (send && onSend) { try { onSend(absUrl, row); } catch {} }
       onClose && onClose({ saved: true, sent: !!send, row });
@@ -681,6 +694,11 @@ function StickerMakerInner({ sourceUri, onClose, onSaved, onSend, autoCutout = t
       }
     }
   }, [busy, doExport, onSaved, onSend, onClose, showToast, t]);
+  const finish = useCallback((send) => {
+    if (busy) return;
+    if (!send) { setSelectedId(null); setTool(null); setTagAsk({ tags: layerEmojis() }); return; }
+    finishWith(true, layerEmojis());
+  }, [busy, layerEmojis, finishWith]);
 
   const hasEdits = layers.length > 0 || strokes.length > 0;
   const requestClose = useCallback(() => {
@@ -971,6 +989,65 @@ function StickerMakerInner({ sourceUri, onClose, onSaved, onSend, autoCutout = t
           </KeyboardSafeView>
         ) : null}
 
+        {/* [2026-10-23 figurinhas-organizar] emojis de busca (opcional) */}
+        {tagAsk ? (
+          <View style={styles.confirmVeil}>
+            <View style={styles.confirmCard}>
+              <Text style={styles.confirmTitle}>{tr(t, 'stickerMaker.tagsTitle', 'Emojis para encontrar depois')}</Text>
+              <Text style={styles.tagSub}>{tr(t, 'stickerMaker.tagsSub', 'Opcional · escolha até 3. Na busca do painel, digite o emoji para achar esta figurinha.')}</Text>
+              <View style={styles.tagSel}>
+                {[0, 1, 2].map((i) => {
+                  const em = tagAsk.tags[i];
+                  return (
+                    <TouchableOpacity
+                      key={i}
+                      disabled={!em}
+                      onPress={() => setTagAsk((a) => (a ? { tags: a.tags.filter((x) => x !== em) } : a))}
+                      style={[styles.tagSlot, em ? styles.tagSlotOn : null]}
+                      accessibilityRole="button"
+                      accessibilityLabel={em ? `${tr(t, 'common.remove', 'Remover')} ${em}` : tr(t, 'stickerMaker.tagsEmpty', 'Vazio')}
+                    >
+                      {em ? <Text style={styles.tagGlyph} allowFontScaling={false}>{em}</Text> : <IconPlus size={16} color="rgba(255,255,255,0.35)" />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <ScrollView style={{ maxHeight: 176 }} contentContainerStyle={styles.tagGrid} keyboardShouldPersistTaps="handled">
+                {EMOJIS.map((em) => {
+                  const on = tagAsk.tags.includes(em);
+                  return (
+                    <TouchableOpacity
+                      key={em}
+                      onPress={() => setTagAsk((a) => {
+                        if (!a) return a;
+                        if (a.tags.includes(em)) return { tags: a.tags.filter((x) => x !== em) };
+                        return { tags: [...a.tags, em].slice(-3) };
+                      })}
+                      style={[styles.tagCell, on && styles.tagCellOn]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: on }}
+                      accessibilityLabel={em}
+                    >
+                      <Text style={styles.tagCellGlyph} allowFontScaling={false}>{em}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+                <TouchableOpacity onPress={() => finishWith(false, layerEmojis())} style={[styles.confirmKeep, { flex: 1 }]} accessibilityRole="button">
+                  <Text style={styles.confirmKeepText}>{tr(t, 'stickerMaker.tagsSkip', 'Pular')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => finishWith(false, tagAsk.tags)} style={[styles.tagSave, { flex: 1 }]} accessibilityRole="button">
+                  <Text style={styles.tagSaveText}>{tr(t, 'stickerMaker.save', 'Salvar')}</Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity onPress={() => setTagAsk(null)} style={{ alignSelf: 'center', paddingVertical: 6 }} accessibilityRole="button">
+                <Text style={styles.tagBack}>{tr(t, 'stickerMaker.keepEditing', 'Continuar editando')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : null}
+
         {/* confirmar descarte */}
         {confirmDiscard ? (
           <View style={styles.confirmVeil}>
@@ -1070,6 +1147,18 @@ const styles = StyleSheet.create({
   fontRow: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginBottom: 12 },
   fontChip: { width: 48, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)' },
   fontChipActive: { backgroundColor: '#fff', borderColor: '#fff' },
+  tagSub: { color: 'rgba(255,255,255,0.65)', fontSize: 13, textAlign: 'center', marginTop: -4 },
+  tagSel: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginVertical: 6 },
+  tagSlot: { width: 48, height: 48, borderRadius: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(255,255,255,0.3)', alignItems: 'center', justifyContent: 'center' },
+  tagSlotOn: { borderStyle: 'solid', borderColor: '#fff', backgroundColor: 'rgba(255,255,255,0.08)' },
+  tagGlyph: { fontSize: 28 },
+  tagGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' },
+  tagCell: { width: 42, height: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center', margin: 2 },
+  tagCellOn: { backgroundColor: 'rgba(255,255,255,0.18)' },
+  tagCellGlyph: { fontSize: 24 },
+  tagSave: { height: 46, borderRadius: 23, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  tagSaveText: { color: '#000', fontSize: 15, fontWeight: '700' },
+  tagBack: { color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: '600' },
   confirmVeil: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 32 },
   confirmCard: { width: '100%', maxWidth: 340, backgroundColor: '#1C1C1E', borderRadius: 18, padding: 18, gap: 10 },
   confirmTitle: { color: '#fff', fontSize: 17, fontWeight: '700', textAlign: 'center', marginBottom: 6 },

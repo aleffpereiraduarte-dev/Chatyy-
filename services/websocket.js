@@ -359,6 +359,8 @@ function _nativeWsMode() {
 // Região em que o WS está DE FATO (p/ atribuir o RTT do ping/pong). Atualizada no connect e
 // no 'authed' do nativo (ev.url = URL física, quando o binário manda).
 let _wsEffRegion = 'us';
+// [F-Q0 quic-noise 2026-10-23] janela sem socket utilizável → services/netQuality.js (nunca lança)
+function _nqDrop(why, code) { try { require('./netQuality').nqDrop(why, code); } catch {} }
 function _regionOfAnyWsUrl(url) {
   const u = String(url || '');
   if (/^wss:\/\/ws\.chatyy\.com\.br\//.test(u)) return 'us';
@@ -799,7 +801,8 @@ class MailWebSocket {
           this._hsStartAt = 0;
           if (hs >= 0) {
             this._lastHandshakeMs = hs;
-            this._emit('ws_handshake', { ms: hs, transport: 'native', precise: typeof ev.hsMs === 'number', connectMs: ev.connectMs, authMs: ev.authMs, url: ev.url, attempt: ev.attempt });
+            // [F-Q0 2026-10-23] dnsMs/tcpMs/tlsMs/connReused: Android nativo (EventListener do OkHttp), próximo build
+            this._emit('ws_handshake', { ms: hs, transport: 'native', precise: typeof ev.hsMs === 'number', connectMs: ev.connectMs, authMs: ev.authMs, url: ev.url, attempt: ev.attempt, dnsMs: ev.dnsMs, tcpMs: ev.tcpMs, tlsMs: ev.tlsMs, connReused: ev.connReused });
           }
         } catch {}
         break;
@@ -826,6 +829,7 @@ class MailWebSocket {
         this.authenticated = false;
         this._resumeInFlight = false;
         if (wasAuthed) this._reconnectCount++;
+        if (wasAuthed) _nqDrop('native_' + st + ':' + String(ev.reason || ''), ev.code || 0); // [F-Q0 2026-10-23]
         // Beacon com o MOTIVO de cada queda/recusa do fio nativo (o mesmo canal
         // 'ws_close' do WebSocket JS). Só quedas reais: socket que estava
         // autenticado, recusa HTTP no handshake ou auth pendente; tentativas
@@ -1046,6 +1050,7 @@ class MailWebSocket {
     // Vai abrir um socket novo.
     this.reconnectAttempt = 0;
     this._lastConnectAt = 0; // libera o coalesce do connect()
+    if (ws && this.authenticated) _nqDrop(reason, 0); // [F-Q0 2026-10-23] socket autenticado sendo derrubado (sonda/pong/força)
     if (ws) { try { this._cleanup(); } catch {} }
     this.token = token;
     const go = () => {
@@ -1347,6 +1352,7 @@ class MailWebSocket {
     this.ws.onopen = () => {
       clearTimeout(this._connectTimer);
       this._connectTimer = null;
+      this._hsOpenAt = Date.now(); // [F-Q0 2026-10-23] TCP+TLS+upgrade | auth no handshake do WebSocket JS
       this.connected = true;
       this.reconnectAttempt = 0;
       this.lastInboundAt = Date.now();
@@ -3781,10 +3787,14 @@ class MailWebSocket {
     // reporta no estado 'authed', ver _onNativeState).
     if (!(this.ws && this.ws.__native) && this._hsStartAt) {
       try {
-        const hs = Date.now() - this._hsStartAt;
+        const _t = Date.now();
+        const hs = _t - this._hsStartAt;
+        // [F-Q0 2026-10-23] connectMs = TCP+TLS+upgrade (até onopen), authMs = onopen→auth_success
+        const _op = (this._hsOpenAt && this._hsOpenAt >= this._hsStartAt) ? this._hsOpenAt : 0;
         this._hsStartAt = 0;
+        this._hsOpenAt = 0;
         this._lastHandshakeMs = hs;
-        this._emit('ws_handshake', { ms: hs, transport: 'js' });
+        this._emit('ws_handshake', { ms: hs, transport: 'js', connectMs: _op ? _op - (_t - hs) : -1, authMs: _op ? _t - _op : -1 });
       } catch {}
     }
     // [WAVE 66 2026-05-21] Auth landed → cancel any pending resurrect retry
@@ -4110,5 +4120,7 @@ try { mailWs._eagerBootstrapConnect(); } catch {}
 // [2026-10-19 http-fallback] transporte HTTP de reserva (idempotente; o
 // syncStatus também liga). Lazy: sem ciclo de import no carregamento.
 try { setTimeout(() => { try { require('./httpFallback').startHttpFallback(); } catch {} }, 0); } catch {}
+// [F-Q0 quic-noise 2026-10-23] medição de reconexões/trocas de rede (kill: globalThis.__chatyy_netq = false)
+try { setTimeout(() => { try { if (globalThis.__chatyy_netq !== false) require('./netQuality').startNetQuality(); } catch {} }, 0); } catch {}
 
 export default mailWs;

@@ -28,8 +28,11 @@ defmodule ChatyyRouter.BodyPGTest do
     DELETE FROM chat_msg_device_dlv; DELETE FROM chat_message_reactions; DELETE FROM chat_messages; DELETE FROM chat_conversations;
     INSERT INTO chat_conversations (id, home_region, e2ee_mode, body_store, body_store_at) VALUES (#{@cid}, 'a-qa', 1, 1, now() - interval '1 hour'), (95902, 'b', 0, 1, now());
     INSERT INTO chat_messages (id, conversation_id, sender_email, content) VALUES
-      (#{m1}, #{@cid}, 'u1@chatyy.com.br', 'ENV-1'), (#{m2}, #{@cid}, 'u1@chatyy.com.br', 'ENV-2'), (#{m3}, #{@cid}, 'u1@chatyy.com.br', 'ENV-3');
-    INSERT INTO chat_message_reactions (message_id, email, emoji, enc) VALUES (#{m1}, 'U2@onemundo.com.br', '?', 'RX-ENV');
+      (#{m1}, #{@cid}, 'u1@chatyy.com.br', 'ENV-1'), (#{m2}, #{@cid}, 'u1@chatyy.com.br', 'ENV-2'), (#{m3}, #{@cid}, 'u1@chatyy.com.br', 'ENV-3'),
+      -- ANTES do body_store_at (2 h atrás; a conversa entrou há 1 h): o comparador NÃO olha
+      (#{mid.(7_200_000, 9)}, #{@cid}, 'u1@chatyy.com.br', 'ANTIGA');
+    INSERT INTO chat_message_reactions (message_id, email, emoji, enc) VALUES (#{m1}, 'U2@onemundo.com.br', '?', 'RX-ENV'),
+      (#{m1}, 'U2@onemundo.com.br', 'v{"s":1}', 'V-ENV');
     INSERT INTO chat_msg_device_dlv (message_id, conversation_id, uid, device_id, expected, msg_at) VALUES
       (#{m1}, #{@cid}, 2, 'd2', true, now() - interval '10 min'), (#{m2}, #{@cid}, 2, 'd2', true, now() - interval '10 min'),
       (#{m3}, #{@cid}, 2, 'd2', true, now() - interval '10 min');
@@ -65,7 +68,8 @@ defmodule ChatyyRouter.BodyPGTest do
     row = rep.cids[Integer.to_string(@cid)]
     assert row.pg_rows == 3 and row.compared == 3
     assert row.kinds.faltando_casa == 1 and row.samples.faltando_casa == [m3]
-    assert row.kinds.reacao_faltando == 1
+    assert row.kinds.reacao_faltando == 2
+    assert row.kinds.so_no_roteador == 0
     for k <- [:hash_diferente, :faltando_irma, :hash_diferente_irma, :inbox_faltando], do: assert(row.kinds[k] == 0, "#{k}")
     refute rep.criterio_ok
     assert on(c, "a", Metrics, :counter, [{:rt_f1_body_mismatch_events, :faltando_casa}]) == 1
@@ -75,6 +79,7 @@ defmodule ChatyyRouter.BodyPGTest do
 
     # S4: reação chega pela fila → some do comparador
     {:ok, _} = on(c, "b", BodyStore, :store, [%{cid: @cid, kind: "reaction", ref: m1, from: "u2@onemundo.com.br", env: "RX-ENV", from_device: "d2"}])
+    {:ok, _} = on(c, "b", BodyStore, :store, [%{cid: @cid, kind: "reaction", ref: m1, from: "u2@onemundo.com.br", env: "V-ENV", from_device: "d2", meta: %{"rx_kind" => "v"}}])
 
     # reparo pelo PG (RT_STORE_REPAIR=pg): a 3ª vem da réplica com o MESMO sha
     :ok = on(c, "a", Flags, :override, [:store_repair, true])

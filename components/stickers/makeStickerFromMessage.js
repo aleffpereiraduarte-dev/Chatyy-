@@ -80,7 +80,11 @@ export async function makeStickerFromMessage(m, ctx) {
     try {
       const mid = Number(m.id);
       const r = await api.stickerSave({ messageId: Number.isFinite(mid) && mid > 0 ? mid : null, url: Number.isFinite(mid) && mid > 0 ? '' : (m.file_url || _httpContent(m)) });
-      if (r && r.success !== false) savedOk(); else fail();
+      if (r && r.success !== false) {
+        // [2026-10-23 figurinhas-organizar] Minhas + topo dos Recentes na hora.
+        try { const row = (r.data && r.data.sticker) || r.sticker; if (row && row.url) require('../../services/stickerCache').noteStickerAdded(row); } catch {}
+        savedOk();
+      } else fail();
     } catch { fail(); }
     return;
   }
@@ -100,7 +104,11 @@ export async function makeStickerFromMessage(m, ctx) {
     if (!uri) { fail(); return; }
     const r = await api.chatStickerCreateAnimated({ uri, name, type }, { crop: true });
     const d = (r && (r.data || r)) || {};
-    if (r && r.success !== false && d.url) { savedOk(); return; }
+    if (r && r.success !== false && d.url) {
+      try { require('../../services/stickerCache').noteStickerAdded({ id: d.id || d.sticker_id, pack_id: d.pack_id, url: d.url, is_animated: true }); } catch {}
+      savedOk();
+      return;
+    }
     if (d && d.reason === 'too_large') {
       alert(_tf(t, 'stickerMake.failTitle', 'Figurinha'), _tf(t, 'stickerMake.tooLarge', 'Este GIF ficou grande demais para virar figurinha (máx. 500 KB).'));
       return;

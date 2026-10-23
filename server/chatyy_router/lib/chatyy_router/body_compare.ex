@@ -63,7 +63,7 @@ defmodule ChatyyRouter.BodyCompare do
 
   @doc """
   pg:    [%{mid, sha, type, deleted}]                  (mensagens do PG na janela)
-  pg_rx: [%{ref, email, sha}]                          (reações E2EE do PG)
+  pg_rx: [%{ref, email, sha, type}]                    (reações E2EE do PG; type "r" reação | "v" estado)
   local: %{sub => {ts, sha, devices | nil, kind}}      (índice da casa)
   peers: %{região => %{sub => sha}}                    (cópias nos outros nós vivos)
   dlv:   %{mid => MapSet de aparelhos esperados}
@@ -145,7 +145,7 @@ defmodule ChatyyRouter.BodyCompare do
 
     hits =
       Enum.reduce(pg_rx, hits, fn r, acc ->
-        sub = {:rx, r.ref, r.email}
+        sub = {:rx, r.ref, r.email, Map.get(r, :type, "r")}
 
         case Map.get(local, sub) do
           nil -> if aged?.(r.ref), do: add.(acc, :reacao_faltando, sub), else: acc
@@ -166,7 +166,7 @@ defmodule ChatyyRouter.BodyCompare do
 
   @doc "Linhas texto do PG → mapas."
   def parse_pg(rows), do: for([m, sha, t, d] <- rows, do: %{mid: String.to_integer(m), sha: sha, type: t, deleted: d in ["t", "true"]})
-  def parse_rx(rows), do: for([m, e, sha] <- rows, do: %{ref: String.to_integer(m), email: BodyStore.canon(e), sha: sha})
+  def parse_rx(rows), do: for([m, e, sha, t] <- rows, do: %{ref: String.to_integer(m), email: BodyStore.canon(e), sha: sha, type: t})
 
   def parse_dlv(rows) do
     Enum.reduce(rows, %{}, fn [m, d], acc -> Map.update(acc, String.to_integer(m), MapSet.new([d]), &MapSet.put(&1, d)) end)
@@ -278,7 +278,7 @@ defmodule ChatyyRouter.BodyCompare do
 
   # funções SECURITY DEFINER do kit F1 (ddl/003-f1.sql): só conversas marcadas; do content só sai o sha256
   defp pg_sql(max), do: "SELECT id::text, sha, type, deleted::text FROM sgu_f1_msgs($1::bigint, $2::bigint, #{max})"
-  defp rx_sql(max), do: "SELECT message_id::text, email, sha FROM sgu_f1_rx($1::bigint, $2::bigint, #{max})"
+  defp rx_sql(max), do: "SELECT message_id::text, email, sha, rx_type FROM sgu_f1_rx($1::bigint, $2::bigint, #{max})"
 
   defp dlv_sql(max) do
     """
@@ -328,7 +328,7 @@ defmodule ChatyyRouter.BodyCompare do
   end
 
   defp samples_json(m), do: Map.new(m, fn {k, l} -> {k, Enum.map(l, &sub_json/1)} end)
-  defp sub_json({:rx, m, e}), do: "rx:#{m}:#{e}"
+  defp sub_json({:rx, m, e, t}), do: "rx:#{m}:#{e}:#{t}"
   defp sub_json(m), do: m
 
   defp totals(cids) do

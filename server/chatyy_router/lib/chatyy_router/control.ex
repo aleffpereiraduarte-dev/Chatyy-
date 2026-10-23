@@ -17,9 +17,13 @@ defmodule ChatyyRouter.Control do
     POST /partition?regions=a,b  /heal?regions=a,b   (isolar região: só p/ ensaio)
   [sgu F1] corpo durável (ChatyyRouter.BodyStore; inerte com RT_STORE=0):
     POST /store   {"cid","mid","env_b64"(= bytes exatos de chat_messages.content),"from","device","ts","type",
-                   "kind":"msg"|"reaction","ref"(mid alvo da reação),"devices":[d]?,"meta"?}
+                   "kind":"msg"|"edit"|"reaction","ref"(mid alvo da reação),"rx_type":"r"|"v",
+                   "rev"|"edited_at"(ms, edição no lugar),"devices":[d]?,"meta"?}
                   -> 200 {"ok":true,"copies":3,"wanted":3,"dup"?,"conflict"?} | 503 {"ok":false,"error"}
-    GET  /pull?device=D[&cid=C][&since=MID][&limit=N] -> {"messages":[...],"reactions":[...]} (pendentes do aparelho)
+    GET  /pull?device=D[&cid=C][&since=MID][&limit=N][&all=1][&mids=1,2] -> {"messages":[...],"reactions":[...]}
+                  padrão = pendentes do aparelho; all=1 inclui o que ele já gravou; mids= (com cid) só essas, gravadas
+                  ou não. Itens: cid,mid,kind,ref,rx_type,ts,from,from_uid,from_device,cmi,reply_to_id,edit_of,
+                  mentions,rev,type,sha,env_b64
     POST /ack_store {"device","cid","mids":[...],"persisted":1}
     POST /inherit {"uid","from","to"}            (A5: aparelho novo herda as pendências do antigo)
     GET  /f1/report  (comparador roteador × PG deste nó)   GET /f1/status   POST /f1/repair
@@ -192,7 +196,9 @@ defmodule ChatyyRouter.Control do
     req = %{
       cid: p["cid"], mid: p["mid"] || p["msg_id"], kind: p["kind"], ref: p["ref"], from: p["from"] || p["from_uid"],
       from_device: p["device"] || p["from_device"], ts: p["ts"], type: p["type"], devices: p["devices"],
-      meta: p["meta"], src: :store,
+      meta: p["meta"], src: :store, rev: p["rev"], edited_at: p["edited_at"], rx_type: p["rx_type"],
+      cmi: p["cmi"], from_uid: p["from_uid"], reply_to_id: p["reply_to_id"], edit_of: p["edit_of"],
+      mentions: p["mentions"],
       env: env && Base.decode64!(env)
     }
 
@@ -204,8 +210,19 @@ defmodule ChatyyRouter.Control do
 
   defp route(:GET, "/pull", %{"device" => d} = q, _) do
     int = fn k -> case Integer.parse(q[k] || "") do {i, ""} -> i; _ -> nil end end
-    r = ChatyyRouter.BodyStore.pull(d, cid: int.("cid"), since: int.("since"), limit: int.("limit") || 500)
-    j = fn m -> %{cid: m.cid, mid: sub_json(m.mid), kind: m.kind, ref: m.ref, ts: m.ts, from: m.from, type: m.type, sha: m.sha, env_b64: Base.encode64(m.env)} end
+    mids = case q["mids"] do
+      nil -> nil
+      l -> l |> String.split(",", trim: true) |> Enum.flat_map(&(case Integer.parse(String.trim(&1)) do {i, ""} -> [i]; _ -> [] end))
+    end
+
+    r = ChatyyRouter.BodyStore.pull(d, cid: int.("cid"), since: int.("since"), limit: int.("limit") || 500, mids: mids, all: q["all"] == "1")
+
+    j = fn m ->
+      %{cid: m.cid, mid: sub_json(m.mid), kind: m.kind, ref: m.ref, ts: m.ts, from: m.from, type: m.type, sha: m.sha,
+        env_b64: Base.encode64(m.env), from_device: m[:from_device], from_uid: m[:from_uid], cmi: m[:cmi],
+        reply_to_id: m[:reply_to_id], edit_of: m[:edit_of], mentions: m[:mentions], rev: m[:rev] || 0,
+        rx_type: (case m.mid do {:rx, _, _, t} -> t; _ -> nil end)}
+    end
     ok(%{messages: Enum.map(r.messages, j), reactions: Enum.map(r.reactions, j)})
   end
 
@@ -308,6 +325,7 @@ defmodule ChatyyRouter.Control do
 
   defp route(_, _, _, _), do: {404, "application/json", json(%{error: "not_found"})}
 
+  defp sub_json({:rx, m, e, t}), do: "rx:#{m}:#{e}:#{t}"
   defp sub_json({:rx, m, e}), do: "rx:#{m}:#{e}"
   defp sub_json(m), do: m
   defp inspect_err(e) when is_atom(e), do: e

@@ -11,7 +11,11 @@ import android.os.SystemClock
 import android.util.Log
 import expo.modules.chatyychatstore.ChatyyStoreDB
 import expo.modules.chatyychatstore.StoreIngest
+import okhttp3.Call
+import okhttp3.Connection
 import okhttp3.Dns
+import okhttp3.EventListener
+import okhttp3.Handshake
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -20,6 +24,8 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import org.json.JSONObject
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -131,6 +137,7 @@ internal object ChatTransport {
       .writeTimeout(15, TimeUnit.SECONDS)
       .pingInterval(0, TimeUnit.MILLISECONDS) // keepalive é o ping de app (o hub pinga a cada 25 s e o OkHttp responde)
       .retryOnConnectionFailure(false)
+      .eventListenerFactory(HsTimings.FACTORY) // [F-Q0 2026-10-23] DNS/TCP/TLS do handshake do /ws
       .build()
   }
 
@@ -832,10 +839,14 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     lostAt = 0
     flushOutbox()
     startHeartbeat()
+    // [F-Q0 2026-10-23] fases do handshake (só se a medição é DESTE connect; -1 = não houve/reusou conexão)
+    val hsOk = HsTimings.callAt >= connectStartedAt
     emitState("authed", mapOf(
       "url" to curUrl, "reconnectMs" to since, "regionalBlocked" to regionalBlocked,
       "hsMs" to hsMs, "connectMs" to lastConnectMs, "authMs" to authMs, "attempt" to attempt,
       "wire" to wireName(),
+      "dnsMs" to (if (hsOk) HsTimings.dnsMs else -1L), "tcpMs" to (if (hsOk) HsTimings.tcpMs else -1L),
+      "tlsMs" to (if (hsOk) HsTimings.tlsMs else -1L), "connReused" to (hsOk && HsTimings.reused),
     ))
     // [fase 4] socket novo autenticado → fila nativa tenta já (WS)
     if (authedAccount != null) NativeOutbox.peek()?.kick("ws_authed")
@@ -1441,4 +1452,50 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   private fun topType(text: String): String? = try {
     JSONObject(text).optString("type", "")
   } catch (_: Throwable) { null }
+}
+
+/**
+ * [F-Q0 quic-noise 2026-10-23] Fases do handshake do WebSocket (DNS, TCP, TLS) medidas pelo
+ * EventListener do OkHttp — o que QUIC/0-RTT economizaria. Só chamadas p/ o caminho /ws;
+ * 1 WS por vez → último valor global basta. Só durações (ms), nada de IP/host.
+ */
+internal object HsTimings {
+  @Volatile var callAt = 0L
+  @Volatile var dnsMs = -1L
+  @Volatile var tcpMs = -1L
+  @Volatile var tlsMs = -1L
+  @Volatile var reused = false
+
+  internal fun t(): Long = SystemClock.elapsedRealtime()
+
+  val FACTORY: EventListener.Factory = object : EventListener.Factory {
+    override fun create(call: Call): EventListener =
+      try { if (call.request().url.encodedPath.endsWith("/ws")) Timer() else EventListener.NONE } catch (_: Throwable) { EventListener.NONE }
+  }
+
+  private class Timer : EventListener() {
+    private var d0 = 0L
+    private var c0 = 0L
+    private var s0 = 0L
+    private var connected = false
+    override fun callStart(call: Call) {
+      HsTimings.callAt = HsTimings.t(); HsTimings.dnsMs = -1L; HsTimings.tcpMs = -1L; HsTimings.tlsMs = -1L; HsTimings.reused = false
+    }
+    override fun dnsStart(call: Call, domainName: String) { d0 = HsTimings.t() }
+    override fun dnsEnd(call: Call, domainName: String, inetAddressList: List<InetAddress>) {
+      if (d0 > 0) HsTimings.dnsMs = HsTimings.t() - d0
+    }
+    override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
+      c0 = HsTimings.t(); connected = true
+    }
+    override fun secureConnectStart(call: Call) {
+      s0 = HsTimings.t(); if (c0 > 0) HsTimings.tcpMs = s0 - c0
+    }
+    override fun secureConnectEnd(call: Call, handshake: Handshake?) {
+      if (s0 > 0) HsTimings.tlsMs = HsTimings.t() - s0
+    }
+    override fun connectionAcquired(call: Call, connection: Connection) {
+      if (!connected) HsTimings.reused = true
+    }
+  }
 }

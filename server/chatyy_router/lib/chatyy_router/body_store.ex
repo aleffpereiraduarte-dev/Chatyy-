@@ -155,6 +155,14 @@ defmodule ChatyyRouter.BodyStore.Purge do
   na casa + `{:drop, ...}` nas cópias) e a compactação física fica no Seglog.
   """
   @callback all_persisted(key :: {term, term}, rec :: map) :: :ok
+  @doc "Opcional: chave já apagada pela F3 (lápide) — o BodyStore não regrava (cópia, reparo, reenvio)."
+  @callback purged?(cid :: term, sub :: term) :: boolean
+  @optional_callbacks purged?: 2
+
+  def purged?(cid, sub) do
+    m = impl()
+    Code.ensure_loaded?(m) and function_exported?(m, :purged?, 2) and m.purged?(cid, sub) == true
+  end
 
   def impl do
     case ChatyyRouter.Config.get(:body_purge_module) do
@@ -180,7 +188,11 @@ defmodule ChatyyRouter.BodyStore do
 
   A1: o leaf continua dono do aceite/id/entrega ao vivo. Aqui NÃO há seq: a chave é `{cid, mid}` com o
   mid Snowflake do leaf (ou o id do PG, que é o mesmo formato). Reação (S4) entra na mesma fila com chave
-  `{cid, {:rx, mid_alvo, email_canon}}`: a mais nova (ts) substitui a anterior e reabre as confirmações.
+  `{cid, {:rx, mid_alvo, email_canon, tipo}}` (tipo "r" reação / "v" estado, campo `rx_type` ou `meta.rx_kind`):
+  a mais nova (ts) substitui a anterior e reabre as confirmações.
+  Edição E2EE no lugar (chat_edit: mesmo mid, conteúdo novo) só com marca explícita `kind:"edit"` (+ `rev` ou
+  `edited_at` em ms; padrão ts): a revisão maior substitui, mantém os aparelhos congelados e reabre as
+  confirmações; revisão igual/menor = `stale`. Sem a marca, mesmo mid + sha diferente continua conflito.
 
   Entradas (todas idempotentes por chave; mesma chave + mesmo sha = duplicata; sha diferente = conflito,
   fica a 1ª e conta `rt_store_total{result="conflict"}`):
@@ -266,7 +278,7 @@ defmodule ChatyyRouter.BodyStore do
       if ChatyyRouter.Flags.get(:store) == true and is_integer(cid) and BodyHome.check(cid) == :ok do
         spawn(fn ->
           store(%{cid: cid, mid: req[:seq], env: req[:body], kind: "msg", from: req[:from],
-                  from_device: req[:from_device], ts: req[:ts], src: :fanout})
+                  from_device: req[:from_device], ts: req[:ts], cmi: req[:cmi], src: :fanout})
         end)
       end
     rescue
@@ -316,13 +328,42 @@ defmodule ChatyyRouter.BodyStore do
       kind == "reaction" ->
         ref = to_int(req[:ref])
         from = canon(req[:from])
-        if is_integer(ref) and from != "", do: {:ok, base(req, cid, {:rx, ref, from}, :reaction, env) |> Map.put(:ref, ref)}, else: {:error, :bad_request}
+        rt = rx_type(req)
+        if is_integer(ref) and from != "" and rt != nil,
+          do: {:ok, base(req, cid, {:rx, ref, from, rt}, :reaction, env) |> Map.put(:ref, ref)},
+          else: {:error, :bad_request}
+
+      kind == "edit" ->
+        # edição E2EE NO LUGAR (chat_edit: mesmo mid, conteúdo novo): rev crescente decide (padrão = edited_at
+        # em ms, senão ts). Sem a marca de edição, mesmo mid + sha diferente continua CONFLITO.
+        case to_int(req[:mid]) do
+          mid when is_integer(mid) and mid > 0 ->
+            r = base(req, cid, mid, :msg, env)
+            {:ok, Map.merge(r, %{edit: true, rev: to_int(req[:rev]) || to_int(req[:edited_at]) || r.ts})}
+
+          _ ->
+            {:error, :bad_request}
+        end
 
       true ->
         case to_int(req[:mid]) do
           mid when is_integer(mid) and mid > 0 -> {:ok, base(req, cid, mid, :msg, env)}
           _ -> {:error, :bad_request}
         end
+    end
+  end
+
+  @doc """
+  S4: tipo da entrada na fila de reações — "r" (reação) ou "v" (estado: emoji começando com `v{`).
+  Vem de `rx_type` (ou `meta.rx_kind`, como o sgu-f1.php manda); padrão "r". Outro valor = inválido (nil).
+  """
+  def rx_type(req) do
+    meta = req[:meta] || %{}
+    t = req[:rx_type] || meta["rx_kind"] || meta[:rx_kind] || "r"
+
+    case to_string(t) do
+      x when x in ["r", "v"] -> x
+      _ -> nil
     end
   end
 
@@ -341,9 +382,21 @@ defmodule ChatyyRouter.BodyStore do
       env: env,
       devices: req[:devices],
       meta: req[:meta] || %{},
-      src: req[:src] || :store
+      src: req[:src] || :store,
+      edit: false,
+      rev: 0,
+      # metadados p/ a F2 (o PHP passa no /store; o /pull devolve)
+      cmi: str(req[:cmi]),
+      from_uid: str(req[:from_uid]),
+      reply_to_id: to_int(req[:reply_to_id]),
+      edit_of: to_int(req[:edit_of]),
+      mentions: req[:mentions]
     }
   end
+
+  defp str(nil), do: nil
+  defp str(""), do: nil
+  defp str(v), do: to_string(v)
 
   def sha(env), do: Base.encode16(:crypto.hash(:sha256, env), case: :lower)
   def canon(nil), do: ""
@@ -366,13 +419,65 @@ defmodule ChatyyRouter.BodyStore do
 
   # ------------------------------------------------------------ aceite (casa em exercício)
 
-  @doc false
+  @doc """
+  Aceite na casa em exercício. Idempotência também por (cid, from_uid, cmi) — F2: se o /store gravou e o
+  esqueleto no PG falhou, o reenvio do app chega com OUTRO mid e o mesmo cmi → devolve o mid que já está
+  guardado (`mid`, `dup: true, cmi_dup: true`) e não grava um 2º corpo. Toda resposta ok traz `mid`.
+  """
   def accept(req) do
+    case cmi_key(req) do
+      nil ->
+        accept_key(req)
+
+      ck ->
+        lock(ck)
+
+        try do
+          case Store.get(:rt_body_cmi, ck) do
+            %{mid: m} when m != req.mid ->
+              if Store.member?(:rt_body, {req.cid, m}) do
+                Metrics.inc(:rt_store_cmi_dup)
+                {:ok, %{dup: true, cmi_dup: true, mid: m, copies: 1, wanted: 1 + Config.body_copies(), acting: Net.me()}}
+              else
+                accept_key(req)
+              end
+
+            _ ->
+              accept_key(req)
+          end
+        after
+          unlock(ck)
+        end
+    end
+  end
+
+  @doc false
+  def cmi_key(%{kind: :msg, cmi: cmi} = r) when is_binary(cmi) and cmi != "" do
+    if Map.get(r, :edit), do: nil, else: {r.cid, canon(r[:from_uid] || r[:from]), cmi}
+  end
+
+  def cmi_key(_), do: nil
+
+  defp put_cmi(recs) do
+    rows = for r <- recs, ck = cmi_key(r), ck != nil, do: {ck, %{mid: r.mid, ts: r.ts}}
+    Store.put_many(:rt_body_cmi, rows)
+  end
+
+  defp accept_key(req) do
+    with {:ok, r} <- accept_key0(req), do: {:ok, Map.put_new(r, :mid, req.mid)}
+  end
+
+  defp accept_key0(req) do
     key = {req.cid, req.mid}
     lock(key)
 
     try do
-      case Store.get(:rt_body, key) do
+      case (if ChatyyRouter.BodyStore.Purge.purged?(req.cid, req.mid), do: :purged, else: Store.get(:rt_body, key)) do
+        :purged ->
+          # F3 já apagou (todos os aparelhos gravaram): reenvio tardio não ressuscita
+          Metrics.inc(:rt_store_after_purge)
+          {:ok, %{dup: true, purged: true, copies: 0, wanted: 1 + Config.body_copies(), acting: Net.me()}}
+
         %{sha: sha} = rec when sha == req.sha ->
           # duplicata: garante as cópias (idempotente; cura irmã que estava fora)
           copies = replicate([rec], BodyHome.copy_targets(rec.home || req.home, Net.me()))
@@ -387,6 +492,17 @@ defmodule ChatyyRouter.BodyStore do
           Metrics.inc(:rt_store_reaction_stale)
           {:ok, %{dup: true, stale: true, copies: 1, wanted: 1 + Config.body_copies(), acting: Net.me()}}
 
+        %{kind: :msg} = old when req.edit ->
+          if req.rev > Map.get(old, :rev, 0) do
+            # edição no lugar: substitui o corpo, mantém os aparelhos congelados da mensagem e reabre as confirmações
+            Metrics.inc(:rt_store_edit)
+            clear_acks(key)
+            write_new(%{req | devices: old.devices || req.devices})
+          else
+            Metrics.inc(:rt_store_edit_stale)
+            {:ok, %{dup: true, stale: true, copies: 1, wanted: 1 + Config.body_copies(), acting: Net.me()}}
+          end
+
         %{} = _other ->
           Metrics.inc(:rt_store_conflict_mid)
           Logger.warning("router f1: conflito de corpo cid=#{req.cid} mid=#{inspect(req.mid)} (fica o 1º)")
@@ -400,7 +516,9 @@ defmodule ChatyyRouter.BodyStore do
     end
   end
 
-  defp write_new(req) do
+  defp write_new(req), do: with({:ok, r} <- write_new0(req), do: {:ok, Map.put(r, :mid, req.mid)})
+
+  defp write_new0(req) do
     devices =
       case req.devices do
         l when is_list(l) -> Enum.map(l, &to_string/1) |> Enum.uniq()
@@ -418,6 +536,7 @@ defmodule ChatyyRouter.BodyStore do
 
     case Store.put(:rt_body, {rec.cid, rec.mid}, rec) do
       :ok ->
+        put_cmi([rec])
         copies = Task.await(task, 35_000)
         if copies < Config.body_copies(), do: Metrics.inc(:rt_store_copies_short)
         {:ok, %{copies: 1 + copies, wanted: 1 + Config.body_copies(), acting: Net.me()}}
@@ -451,14 +570,17 @@ defmodule ChatyyRouter.BodyStore do
   @doc false
   def put_copies(recs) do
     fresh =
-      for rec <- recs, keep?(Store.get(:rt_body, {rec.cid, rec.mid}), rec), do: {{rec.cid, rec.mid}, rec}
+      for rec <- recs, not ChatyyRouter.BodyStore.Purge.purged?(rec.cid, rec.mid),
+          keep?(Store.get(:rt_body, {rec.cid, rec.mid}), rec), do: {{rec.cid, rec.mid}, rec}
 
-    Store.put_many(:rt_body, fresh)
+    with :ok <- Store.put_many(:rt_body, fresh), do: put_cmi(Enum.map(fresh, &elem(&1, 1)))
   end
 
   defp keep?(nil, _), do: true
   defp keep?(%{sha: s}, %{sha: s}), do: false
   defp keep?(%{kind: :reaction, ts: a}, %{kind: :reaction, ts: b}), do: b > a
+  # edição no lugar: a revisão maior vence (sem marca de edição, sha diferente = conflito, fica o que está)
+  defp keep?(%{kind: :msg} = a, %{kind: :msg, edit: true} = b), do: Map.get(b, :rev, 0) > Map.get(a, :rev, 0)
   defp keep?(%{devices: nil}, %{devices: d}) when is_list(d), do: true
   defp keep?(_, _), do: false
 
@@ -473,11 +595,13 @@ defmodule ChatyyRouter.BodyStore do
     device = to_string(device)
     limit = opts[:limit] || 500
 
+    q = %{since: opts[:since], limit: limit, mids: opts[:mids], all: opts[:all] == true}
+
     parts =
       case opts[:cid] do
         nil ->
           Net.alive_regions()
-          |> Task.async_stream(fn r -> ask(r, {:pull_local, device, nil, opts[:since], limit}) end,
+          |> Task.async_stream(fn r -> ask(r, {:pull_q, device, nil, q}) end,
             timeout: 32_000, on_timeout: :kill_task, max_concurrency: 16, ordered: false)
           |> Enum.flat_map(fn
             {:ok, l} when is_list(l) -> l
@@ -485,7 +609,7 @@ defmodule ChatyyRouter.BodyStore do
           end)
 
         cid ->
-          case ask(BodyHome.acting(cid), {:pull_local, device, [cid], opts[:since], limit}) do
+          case ask(BodyHome.acting(cid), {:pull_q, device, [cid], q}) do
             l when is_list(l) -> l
             _ -> []
           end
@@ -496,19 +620,29 @@ defmodule ChatyyRouter.BodyStore do
     %{messages: msgs |> Enum.sort_by(&{&1.cid, &1.mid}) |> Enum.take(limit), reactions: Enum.sort_by(rx, &{&1.ts, &1.cid})}
   end
 
-  defp ask(r, msg) do
-    if r == Net.me(), do: pull_local(elem(msg, 1), elem(msg, 2), elem(msg, 3), elem(msg, 4)), else: Net.call(r, __MODULE__, msg, Net.tmo(r, 5_000))
+  defp ask(r, {:pull_q, d, c, q} = msg) do
+    if r == Net.me(), do: pull_local(d, c, q), else: Net.call(r, __MODULE__, msg, Net.tmo(r, 5_000))
   end
 
   @doc false
-  def pull_local(device, cids, since, limit) do
+  def pull_local(device, cids, since, limit), do: pull_local(device, cids, %{since: since, limit: limit})
+
+  @doc """
+  q: since, limit, mids (lista: só essas chaves, JÁ gravadas pelo aparelho ou não), all (true: também o que o
+  aparelho já confirmou `persisted` — o aparelho tem que ser esperado/herdeiro, salvo com `mids`).
+  """
+  def pull_local(device, cids, q) do
     cids = cids || Enum.filter(BodyHome.enabled_cids(), &BodyHome.acting?/1)
     inh = inherited_from(device)
+    since = q[:since]
+    limit = q[:limit] || 500
+    want = q[:mids] && MapSet.new(q[:mids])
 
     for cid <- cids,
         {sub, {ts, _sha, devs, kind}} <- aux(cid),
-        kind == :reaction or since == nil or (is_integer(sub) and sub > since),
-        pending_for?(cid, sub, ts, devs, device, inh) do
+        want == nil or MapSet.member?(want, sub),
+        want != nil or kind == :reaction or since == nil or (is_integer(sub) and sub > since),
+        want != nil or (if q[:all], do: expected_for?(sub, devs, device, inh, ts), else: pending_for?(cid, sub, ts, devs, device, inh)) do
       Store.get(:rt_body, {cid, sub})
     end
     |> Enum.reject(&is_nil/1)
@@ -518,6 +652,11 @@ defmodule ChatyyRouter.BodyStore do
   @doc "[{sub, {ts, sha, devices, kind}}] da conversa, sem ler corpo."
   def aux(cid) do
     :ets.select(Seglog.idx(:rt_body), [{{{cid, :"$1"}, :_, :_, :_, :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+  end
+
+  defp expected_for?(_sub, devs, device, inh, ts) do
+    devs = devs || []
+    device in devs or Enum.any?(inh, fn {from, its} -> from in devs and ts <= its end)
   end
 
   defp pending_for?(cid, sub, ts, devs, device, inh) do
@@ -699,7 +838,9 @@ defmodule ChatyyRouter.BodyStore do
     case Map.fetch(m, sub) do
       :error -> true
       {:ok, ^sha} -> false
-      {:ok, _} -> match?({:rx, _, _}, sub)
+      # sha diferente: reação (mais nova) ou edição (rev maior) — quem recebe decide pelo keep?/2;
+      # conflito de verdade é raro e só custa um reenvio por volta
+      {:ok, _} -> true
     end
   end
 
@@ -741,6 +882,11 @@ defmodule ChatyyRouter.BodyStore do
 
   def handle_call({:copy, recs}, from, s) do
     spawn(fn -> GenServer.reply(from, try_(fn -> put_copies(recs) end)) end)
+    {:noreply, s}
+  end
+
+  def handle_call({:pull_q, device, cids, q}, from, s) do
+    spawn(fn -> GenServer.reply(from, try_(fn -> pull_local(device, cids, q) end)) end)
     {:noreply, s}
   end
 

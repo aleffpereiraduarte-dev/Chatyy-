@@ -63,14 +63,17 @@ defmodule ChatyyRouter.BodyCompareTest do
       gone => {@now - 600_000, sha("orig"), ["d1"], :msg},
       only => {@now - 600_000, sha("o"), ["d1"], :msg},
       unk => {@now - 600_000, sha("u"), nil, :msg},
-      {:rx, unk, "u2@chatyy.com.br"} => {@now, sha("r-velha"), ["d1"], :reaction}
+      {:rx, unk, "u2@chatyy.com.br", "r"} => {@now, sha("r-velha"), ["d1"], :reaction},
+      # estado (v) do MESMO usuário na MESMA mensagem é outra chave: não colide com a reação
+      {:rx, unk, "u2@chatyy.com.br", "v"} => {@now, sha("v-estado"), ["d1"], :reaction}
     }
 
     peers = %{"b" => %{unk => sha("u")}, "c" => %{unk => sha("u")}}
 
     rx = [
-      %{ref: unk, email: "u2@chatyy.com.br", sha: sha("r-nova")},
-      %{ref: unk, email: "u3@chatyy.com.br", sha: sha("r3")}
+      %{ref: unk, email: "u2@chatyy.com.br", sha: sha("r-nova"), type: "r"},
+      %{ref: unk, email: "u2@chatyy.com.br", sha: sha("v-estado"), type: "v"},
+      %{ref: unk, email: "u3@chatyy.com.br", sha: sha("r3"), type: "r"}
     ]
 
     r = run(pg, local, peers, %{}, rx)
@@ -78,14 +81,14 @@ defmodule ChatyyRouter.BodyCompareTest do
     assert r.samples[:apagada_no_pg] == [gone]
     assert r.samples[:so_no_roteador] == [only]
     assert r.samples[:aparelhos_desconhecidos] == [unk]
-    assert r.samples[:reacao_hash_diferente] == [{:rx, unk, "u2@chatyy.com.br"}]
-    assert r.samples[:reacao_faltando] == [{:rx, unk, "u3@chatyy.com.br"}]
+    assert r.samples[:reacao_hash_diferente] == [{:rx, unk, "u2@chatyy.com.br", "r"}]
+    assert r.samples[:reacao_faltando] == [{:rx, unk, "u3@chatyy.com.br", "r"}]
     assert r.compared == 2
   end
 
   test "parse das linhas do PG" do
     assert [%{mid: 5, sha: "ab", type: "text", deleted: true}] = BodyCompare.parse_pg([["5", "ab", "text", "true"]])
-    assert [%{ref: 5, email: "x@chatyy.com.br"}] = BodyCompare.parse_rx([["5", "X@onemundo.com.br", "s"]])
+    assert [%{ref: 5, email: "x@chatyy.com.br", type: "v"}] = BodyCompare.parse_rx([["5", "X@onemundo.com.br", "s", "v"]])
     assert BodyCompare.parse_dlv([["5", "d1"], ["5", "d2"]]) == %{5 => MapSet.new(["d1", "d2"])}
   end
 

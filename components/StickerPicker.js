@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, ScrollView, Platform, Image,
-  Alert, ActivityIndicator, TextInput, Animated, Modal, Pressable, StyleSheet,
+  Alert, ActivityIndicator, TextInput, StyleSheet, Dimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import CachedImage from './CachedImage';
-import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconStarFilled, IconTrash, IconFilm, IconPackage, IconClock, IconPalette, IconImage, IconCamera, IconSend, IconChevronUp, IconGrid } from './Icons';
+import { IconX, IconPlus, IconSearch, IconStar, IconStarFilled, IconTrash, IconFilm, IconPackage, IconClock, IconPalette, IconImage, IconCamera, IconSend, IconChevronUp, IconGrid, IconSettings, IconSmile } from './Icons';
 import * as api from '../services/api';
 // [2026-10-19 sticker-cache] listas por conta no KV + arquivos no disco (LRU 300 MB).
 import * as stkCache from '../services/stickerCache';
@@ -237,47 +237,87 @@ async function _legacyStorageSet(key, value) {
   } catch {}
 }
 
+// ============================================================
+// [2026-10-23 figurinhas-organizar] Painel nível WhatsApp/Telegram:
+// UMA rolagem com seções na ordem Recentes · Favoritas · Minhas figurinhas ·
+// pacotes adicionados (ordem do usuário, nome + capa) · Chatyy (oficiais +
+// mascote) · Emojis; barra de abas embaixo com o ícone/capa de cada seção
+// (toque = pula; rolar = acende a aba). Busca por emoji ou palavra (tags das
+// minhas figurinhas e dos pacotes — local/instantânea — + servidor). Segurar
+// = Favoritar / Remover dos recentes / Emojis de busca / Excluir (só minhas) /
+// Ver pacote. Tudo pinta do KV da conta no 1º frame (stickerCache).
+// ============================================================
+const COLS = 5;
+const HEADER_H = 30;
+const LOADING_H = 56;
+const TAB_W = 44;
+const QUICK_EMOJIS = ['😂', '😍', '😭', '😡', '🥳', '😎', '🤔', '😴', '👍', '🙏', '❤️', '🔥', '🎉', '😱', '🤣', '😘'];
+const _isLottieS = (s) => typeof s === 'string' && /\.json(?:[?#].*)?$/i.test(s);
+const _isImgS = (s) => typeof s === 'string' && (/^https?:\/\//.test(s) || s.startsWith('/data/'));
+// Lottie não toca no seletor JS: mostra o PNG irmão (mesmo nome) e envia como lottie_sticker.
+const _lottiePng = (u) => String(u).replace(/\.json(?=$|[?#])/i, '.png');
+function _keywordEmojis(q) {
+  const s = String(q || '').trim().toLowerCase();
+  if (s.length < 2) return [];
+  const out = new Set();
+  for (const [k, emojis] of Object.entries(SEARCH_INDEX)) {
+    if (k.startsWith(s) || (s.length >= 4 && s.startsWith(k))) emojis.forEach((e) => out.add(e));
+  }
+  return [...out];
+}
+function _packCover(p) {
+  const u = p && (p.cover_url || p.cover || p.thumb_url || p.icon_url);
+  if (!u) return null;
+  if (/^https?:\/\//.test(u)) return u;
+  if (u.startsWith('/data/')) {
+    try { return api.getMediaUrl(u); } catch { return 'https://chatyy.com.br' + u; }
+  }
+  return `https://media.chatyy.com.br/${u.replace(/^\/+/, '')}`;
+}
+function _mascotItems() {
+  try {
+    const M = require('./mascot/ChatyyMascot');
+    return [M.MASCOT_GREETING_URL || ((M.MASCOT_STICKER_BASE || 'https://chatyy.com.br/stickers/') + 'chatyy-aceno.json')];
+  } catch { return []; }
+}
+function _subscribe(fn) {
+  try { return stkCache.subscribeStickerLists(fn); } catch { return () => {}; }
+}
+
 export default function StickerPicker({ onSelect, onClose, colors, t, userEmail, bottomInset = 0 }) {
   // [2026-10-10] Painel substitui o teclado (WhatsApp): ocupa o lugar do home
   // indicator — a aba de pacotes fica ACIMA do inset, sem faixa vazia.
   const _bi = Math.max(0, Number(bottomInset) || 0);
   const router = useRouter();
-  const [activePack, setActivePack] = useState('recent');
-  // [2026-10-13 sticker-one-create] ÚNICA entrada p/ criar: tile no início da
-  // grade nas abas "Recentes" (abertura padrão) e "Minhas".
+  const [activeKey, setActiveKey] = useState('recent');
   // [2026-10-19 sticker-cache] 1º frame direto do KV da conta (offline também).
-  const [recents, setRecents] = useState(() => _metaList(RECENT_KEY));
-  const [mine, setMine] = useState(() => _metaList(MINE_KEY));            // cached URL-only list for offline
-  const [mineFull, setMineFull] = useState(_mineFullSync);    // full sticker rows from server (with id, emoji_tags)
-  const [myPacks, setMyPacks] = useState(() => _metaArr('my_packs'));      // user's own packs
+  const [recents, setRecents] = useState(() => { try { return stkCache.getStickerRecents(); } catch { return []; } });
+  const [mineFull, setMineFull] = useState(_mineFullSync);
+  const [mine, setMine] = useState(() => _metaList(MINE_KEY));
   const [favorites, setFavorites] = useState(() => _metaList(FAV_KEY));
+  const [installedPacks, setInstalledPacks] = useState(() => _metaArr('mkt_packs'));
+  const [packItems, setPackItems] = useState(() => _packItemsSync(_metaArr('mkt_packs')));
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
-  const [searchBackend, setSearchBackend] = useState([]); // server-side emoji-tag results (installed)
-  const [searchGlobal, setSearchGlobal] = useState([]);   // discovery results (every public pack)
+  const [searchBackend, setSearchBackend] = useState([]);
+  const [searchGlobal, setSearchGlobal] = useState([]);
   const [showSearch, setShowSearch] = useState(_STK_DESKTOP_WEB);
-  const [selectedMyPack, setSelectedMyPack] = useState(null); // pack_id filter inside Mine tab
-  const [showPackCreate, setShowPackCreate] = useState(false);
-  const [newPackName, setNewPackName] = useState('');
-  // Marketplace (sticker_packs / sticker_pack_items) — Telegram Premium-style
-  // store. installedMarketPacks holds pack metadata; marketPackItems caches
-  // items per pack id (lazy-loaded when a pack tab is selected).
-  const [installedMarketPacks, setInstalledMarketPacks] = useState(() => _metaArr('mkt_packs'));
-  const [marketPackItems, setMarketPackItems] = useState(() => _packItemsSync(_metaArr('mkt_packs')));
+  // 1º frame já com a largura (nativo: painel = largura da tela) → grade sem esperar o onLayout.
+  const [gridW, setGridW] = useState(() => { if (Platform.OS === 'web') return 0; try { return Math.round(Dimensions.get('window').width) || 0; } catch { return 0; } });
   const searchRef = useRef(null);
-  // Long-press preview: shows a large rendering + "Adicionar aos favoritos"
-  // affordance. Tapping the backdrop or the close button dismisses it.
-  const [previewItem, setPreviewItem] = useState(null);
-  const previewScale = useRef(new Animated.Value(0.85)).current;
-  const openStickerPreview = useCallback((item) => {
-    setPreviewItem(item);
-    previewScale.setValue(0.85);
-    Animated.spring(previewScale, {
-      toValue: 1, useNativeDriver: true, tension: 280, friction: 18,
-    }).start();
-  }, [previewScale]);
-  const closeStickerPreview = useCallback(() => setPreviewItem(null), []);
+  const listRef = useRef(null);
+  const tabsRef = useRef(null);
+  const jumpingRef = useRef(0);
+  const [actionItem, setActionItem] = useState(null); // figurinha segurada
+  const [tagEdit, setTagEdit] = useState(null);       // { id, url, tags[] }
+
+  // KV → estado (qualquer tela que criar/salvar/favoritar avisa aqui)
+  useEffect(() => _subscribe((name) => {
+    if (name === 'st_recent') setRecents(stkCache.getStickerRecents());
+    else if (name === 'st_fav') setFavorites(_metaList(FAV_KEY));
+    else if (name === 'st_mine') { setMineFull(_mineFullSync()); setMine(_metaList(MINE_KEY)); }
+    else if (name === 'mkt_packs') setInstalledPacks(_metaArr('mkt_packs'));
+  }), []);
 
   useEffect(() => {
     // [2026-10-19 sticker-cache] Já pintou do KV (useState acima). Aqui: adota as
@@ -293,17 +333,16 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
         const urls = full.map(s => s.url).filter(Boolean);
         if (urls.length) { setMine(urls); storageSet(MINE_KEY, urls); }
       }
-      if (name === 'my_packs' || name === '*') setMyPacks(_metaArr('my_packs'));
-      if (name === 'mkt_packs' || name === '*') setInstalledMarketPacks(_metaArr('mkt_packs'));
+      if (name === 'mkt_packs' || name === '*') setInstalledPacks(_metaArr('mkt_packs'));
       if (name === '*' || (typeof name === 'string' && name.startsWith('pack_'))) {
-        setMarketPackItems(prev => ({ ...prev, ..._packItemsSync(_metaArr('mkt_packs')) }));
+        setPackItems(prev => ({ ...prev, ..._packItemsSync(_metaArr('mkt_packs')) }));
       }
     };
     (async () => {
       try {
         await stkCache.migrateLegacyStickerLists();
         if (!alive) return;
-        setRecents(_metaList(RECENT_KEY));
+        setRecents(stkCache.getStickerRecents());
         setFavorites(prev => (prev && prev.length ? prev : _metaList(FAV_KEY)));
         setMine(prev => (prev && prev.length ? prev : _metaList(MINE_KEY)));
       } catch {}
@@ -313,112 +352,180 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
     return () => { alive = false; };
   }, []);
 
-  // Lazy-load items for a marketplace pack when its tab activates.
-  useEffect(() => {
-    if (typeof activePack !== 'string' || !activePack.startsWith('mkt-')) return;
-    const id = parseInt(activePack.slice(4), 10);
-    // [2026-10-19 sticker-cache] Itens do KV já estão na tela; revalida se vencido.
-    if (!id || (marketPackItems[id] && stkCache.packItemsFresh(id))) return;
-    (async () => {
-      try {
-        const items = await stkCache.revalidatePackItems(id, () => {
-          setMarketPackItems(prev => ({ ...prev, [id]: stkCache.getStickerMeta('pack_' + id) || [] }));
-        });
-        if (Array.isArray(items) && !marketPackItems[id]) setMarketPackItems(prev => ({ ...prev, [id]: items }));
-        if (Array.isArray(items)) stkCache.prefetchStickers(items.map(it => it.url).filter(Boolean));
-      } catch {}
-    })();
-  }, [activePack, marketPackItems]);
+  const resolveStickerUri = useCallback((s) => {
+    if (typeof s !== 'string') return s;
+    if (_isLottieS(s)) return _lottiePng(s);
+    if (_isImgS(s)) {
+      try { return stkCache.stickerDisplayUri(s); } catch {}
+    }
+    if (s.startsWith('/data/')) {
+      try { return api.getMediaUrl(s); } catch { return 'https://chatyy.com.br' + s; }
+    }
+    return s;
+  }, []);
 
-  const handleSelect = useCallback(async (item) => {
-    const next = [item, ...recents.filter(r => r !== item)].slice(0, 40);
-    setRecents(next);
-    storageSet(RECENT_KEY, next);
+  const handleSelect = useCallback((item) => {
+    try { stkCache.pushStickerRecent(item); } catch {}
     // For server-relative URLs, hand the absolute form to the sender so the
     // recipient's client can fetch the image regardless of its own base URL.
-    let toSend = item;
     // [2026-10-08 sticker-maker] /data/sticker-files só existe no US (CDN_URL);
-    // BASE_URL pode ser um edge (api-br/eu) que devolve index.html → figurinha
-    // quebrada pra quem recebe. getMediaUrl roteia /data/sticker-files → US.
+    // getMediaUrl roteia /data/sticker-files → US.
+    let toSend = item;
     if (typeof item === 'string' && item.startsWith('/data/')) {
       try { toSend = api.getMediaUrl(item); } catch { toSend = 'https://chatyy.com.br' + item; }
     }
-    // [2026-10-19 sticker-cache] recente = fixado no disco; a bolha (ChatMedia
-    // cacheKind="sticker" / lista nativa) acha o mesmo arquivo pela URL.
-    if (typeof toSend === 'string' && /^https?:/.test(toSend)) { try { stkCache.ensureStickerCached(toSend, { priority: 'high' }).catch(() => {}); } catch {} }
+    if (_isLottieS(toSend)) { onSelect(toSend, 'lottie_sticker'); return; }
     onSelect(toSend);
-  }, [recents, onSelect]);
+  }, [onSelect]);
 
-  const toggleFavorite = useCallback(async (item) => {
-    let next;
-    if (favorites.includes(item)) {
-      next = favorites.filter(f => f !== item);
-    } else {
-      next = [item, ...favorites].slice(0, 200);
-    }
-    setFavorites(next);
-    storageSet(FAV_KEY, next);
-    // Sync to server (fire-and-forget — local UI already updated).
-    try { api.chatStickerFavoriteToggle(typeof item === 'string' ? item : String(item)); } catch {}
-  }, [favorites]);
+  const isFav = useCallback((s) => favorites.includes(s), [favorites]);
+  const toggleFavorite = useCallback((item) => {
+    try { stkCache.toggleStickerFavorite(typeof item === 'string' ? item : String(item)); } catch {}
+  }, []);
 
-  // Search handler — local (emoji packs + keyword index) + backend (user's
-  // custom stickers by emoji_tags). Backend runs debounced to avoid a
-  // request on every keystroke.
-  useEffect(() => {
-    if (!searchQuery.trim()) { setSearchResults([]); setSearchBackend([]); setSearchGlobal([]); return; }
-    const q = searchQuery.trim().toLowerCase();
-    const results = new Set();
-    // Search index
-    for (const [keyword, emojis] of Object.entries(SEARCH_INDEX)) {
-      if (keyword.includes(q)) emojis.forEach(e => results.add(e));
-    }
-    // Also search pack names and individual stickers
+  // ── seções ────────────────────────────────────────────────────────────────
+  const mineUrls = useMemo(() => (mineFull.length ? mineFull.map(s => s.url).filter(Boolean) : mine), [mineFull, mine]);
+  const groups = useMemo(() => {
+    try { return stkCache.groupStickerPacks(installedPacks); } catch { return { added: installedPacks || [], chatyy: [] }; }
+  }, [installedPacks]);
+  const sections = useMemo(() => {
+    const out = [];
+    const rec = (recents || []).filter((u) => typeof u === 'string' && u).slice(0, 30);
+    if (rec.length) out.push({ key: 'recent', title: _tr(t, 'chat.npanel.recent', 'Recentes'), icon: IconClock, items: rec });
+    if (favorites.length) out.push({ key: 'favorites', title: _tr(t, 'chat.npanel.favorites', 'Favoritas'), icon: IconStar, items: favorites });
+    out.push({ key: 'mine', title: _tr(t, 'stickers.myStickers', 'Minhas figurinhas'), icon: IconPalette, items: mineUrls, mine: true });
+    const packSec = (p) => {
+      const id = p.id ?? p.pack_id;
+      const raw = packItems[id];
+      const items = Array.isArray(raw) ? raw.map(it => it && (it.url || it.image_url || it.sticker_id)).filter(Boolean) : [];
+      return { key: 'mkt-' + id, packId: id, title: String(p.name || ''), cover: _packCover(p) || (items[0] ? resolveStickerUri(items[0]) : null), animated: !!p.animated, items, loading: !Array.isArray(raw) };
+    };
+    for (const p of groups.added) out.push(packSec(p));
+    const mascot = _mascotItems();
+    if (mascot.length) out.push({ key: 'chatyy-mascot', title: 'Chatyy', cover: _lottiePng(mascot[0]), items: mascot, chatyy: true });
+    for (const p of groups.chatyy) out.push({ ...packSec(p), chatyy: true });
+    out.push({ key: 'emoji', title: _tr(t, 'chat.npanel.emoji', 'Emoji'), icon: IconSmile, items: STICKER_PACKS.reduce((a, p) => a.concat(p.stickers), []) });
+    // o tile "Criar figurinha" abre a 1ª seção pessoal (Recentes ou Minhas)
+    const first = out.find((s) => s.key === 'recent' || s.key === 'mine');
+    if (first) first.create = true;
+    return out;
+  }, [recents, favorites, mineUrls, groups, packItems, t, resolveStickerUri]);
+
+  // ── busca ─────────────────────────────────────────────────────────────────
+  const q = searchQuery.trim();
+  const searching = showSearch && !!q;
+  const localHits = useMemo(() => {
+    if (!searching) return [];
+    let hits = [];
+    try { hits = stkCache.searchStickersLocal(q, { emojis: _keywordEmojis(q) }); } catch {}
+    // recentes/favoritas sem tag mas que sejam MINHAS/de pacote já entram acima;
+    // aqui só a ordem: o que a pessoa mais usa sobe.
+    const rank = new Map();
+    (recents || []).forEach((u, i) => rank.set(u, 100 - i));
+    return hits.map(h => h.url).sort((a, b) => (rank.get(b) || 0) - (rank.get(a) || 0));
+  }, [searching, q, recents, mineFull, packItems]); // eslint-disable-line react-hooks/exhaustive-deps
+  const emojiHits = useMemo(() => {
+    if (!searching) return [];
+    const ql = q.toLowerCase();
+    const res = new Set(_keywordEmojis(q));
+    for (const [keyword, emojis] of Object.entries(SEARCH_INDEX)) { if (keyword.includes(ql)) emojis.forEach(e => res.add(e)); }
     for (const pack of STICKER_PACKS) {
-      if (pack.name.toLowerCase().includes(q)) {
-        pack.stickers.forEach(s => results.add(s));
-      }
+      if (pack.name.toLowerCase().includes(ql)) pack.stickers.forEach(s0 => res.add(s0));
+      if (pack.stickers.includes(q)) res.add(q);
     }
-    // Include the user's own uploaded stickers whose emoji_tags match
-    for (const s of mineFull) {
-      const tags = (s.emoji_tags || '').toLowerCase();
-      if (tags.includes(q) || (s.emoji && s.emoji.includes(searchQuery.trim()))) {
-        if (s.url) results.add(s.url);
-      }
-    }
-    setSearchResults([...results].slice(0, 60));
-
-    // Debounced backend search for packs installed by user + global
-    // discovery search across every public pack (WhatsApp parity). Both run
-    // in parallel — installed results render first, global underneath in
-    // the "Mais resultados" rail.
-    // [2026-10-21] `stale`: resposta de uma busca antiga (digitação rápida)
-    // chegava depois da nova e trocava os resultados pelos do termo anterior.
+    return [...res].slice(0, 40);
+  }, [searching, q]);
+  useEffect(() => {
+    setSearchBackend([]); setSearchGlobal([]);
+    if (!searching) return undefined;
+    // [2026-10-21] `stale`: resposta de uma busca antiga chegava depois da nova.
     let stale = false;
+    const ql = q.toLowerCase();
     const tid = setTimeout(async () => {
-      if (q.length < 2) return;
+      if (ql.length < 2) return;
       try {
-        const r = await api.chatStickerSearch(q);
+        const r = await api.chatStickerSearch(ql);
         const items = r?.items || r?.data?.items || [];
         if (!stale) setSearchBackend(items.map(x => x.url).filter(Boolean));
       } catch {}
       try {
-        const gr = await api.chatStickerGlobalSearch(q);
+        const gr = await api.chatStickerGlobalSearch(ql);
         const gitems = gr?.items || gr?.data?.items || [];
         if (!stale) setSearchGlobal(gitems.map(x => x.url).filter(Boolean));
       } catch {}
     }, 300);
     return () => { stale = true; clearTimeout(tid); };
-  }, [searchQuery, mineFull]);
+  }, [searching, q]);
+  const searchSections = useMemo(() => {
+    if (!searching) return [];
+    const seen = new Set();
+    const uniq = (list) => list.filter((u) => { if (!u || seen.has(u)) return false; seen.add(u); return true; });
+    const mineAndPacks = uniq([...localHits, ...searchBackend]);
+    const global = uniq(searchGlobal);
+    const emo = uniq(emojiHits);
+    const out = [];
+    if (mineAndPacks.length) out.push({ key: 's-mine', title: _tr(t, 'stickerPicker.searchYours', 'Suas figurinhas e pacotes'), items: mineAndPacks.slice(0, 150) });
+    if (global.length) out.push({ key: 's-global', title: _tr(t, 'stickerPicker.searchMore', 'Mais resultados'), items: global.slice(0, 90) });
+    if (emo.length) out.push({ key: 's-emoji', title: _tr(t, 'chat.npanel.emoji', 'Emoji'), items: emo });
+    return out;
+  }, [searching, localHits, searchBackend, searchGlobal, emojiHits, t]);
 
-  // Pick image → open sticker editor → upload result as sticker
+  // ── linhas (cabeçalho + fileiras de 5) com altura fixa → pulo exato ─────────
+  const cell = gridW > 0 ? Math.floor((gridW - 4) / COLS) : 64;
+  const visibleSections = searching ? searchSections : sections;
+  const { rows, headerIndex, offsets } = useMemo(() => {
+    const rws = [];
+    const hIdx = {};
+    for (const sec of visibleSections) {
+      hIdx[sec.key] = rws.length;
+      rws.push({ type: 'h', key: 'h:' + sec.key, sec });
+      const items = sec.create ? [CREATE_TILE, ...sec.items] : sec.items;
+      if (sec.loading && !items.length) { rws.push({ type: 'loading', key: 'l:' + sec.key, sec }); continue; }
+      if (!items.length) { rws.push({ type: 'empty', key: 'e:' + sec.key, sec }); continue; }
+      for (let i = 0; i < items.length; i += COLS) rws.push({ type: 'r', key: 'r:' + sec.key + ':' + i, sec, items: items.slice(i, i + COLS) });
+    }
+    const offs = [];
+    let y = 0;
+    for (const r of rws) { offs.push(y); y += r.type === 'h' ? HEADER_H : r.type === 'r' ? cell : LOADING_H; }
+    return { rows: rws, headerIndex: hIdx, offsets: offs };
+  }, [visibleSections, cell]);
+  const getItemLayout = useCallback((_d, index) => {
+    const r = rows[index];
+    const len = !r ? 0 : r.type === 'h' ? HEADER_H : r.type === 'r' ? cell : LOADING_H;
+    return { length: len, offset: offsets[index] || 0, index };
+  }, [rows, offsets, cell]);
+
+  const scrollTabIntoView = useCallback((key) => {
+    const i = sections.findIndex((s) => s.key === key);
+    if (i < 0) return;
+    try { tabsRef.current?.scrollTo?.({ x: Math.max(0, i * TAB_W - TAB_W * 2), animated: true }); } catch {}
+  }, [sections]);
+  const jumpTo = useCallback((key) => {
+    setActiveKey(key);
+    scrollTabIntoView(key);
+    const idx = headerIndex[key];
+    if (idx == null) return;
+    jumpingRef.current = Date.now();
+    try { listRef.current?.scrollToOffset?.({ offset: offsets[idx] || 0, animated: false }); } catch {}
+  }, [headerIndex, offsets, scrollTabIntoView]);
+  const searchingRef = useRef(false);
+  searchingRef.current = searching;
+  const onViewable = useRef(({ viewableItems }) => {
+    if (searchingRef.current || Date.now() - jumpingRef.current < 400) return;
+    const first = (viewableItems || []).find((v) => v && v.item && v.item.sec);
+    const k = first && first.item.sec.key;
+    if (k && _activeRef.current !== k) { _activeRef.current = k; setActiveKey(k); _scrollTabRef.current && _scrollTabRef.current(k); }
+  }).current;
+  const _activeRef = useRef(activeKey);
+  _activeRef.current = activeKey;
+  const _scrollTabRef = useRef(null);
+  _scrollTabRef.current = scrollTabIntoView;
+  const viewCfg = useRef({ itemVisiblePercentThreshold: 10 }).current;
+
+  // ── criar ────────────────────────────────────────────────────────────────
   const [editorUri, setEditorUri] = useState(null);
-
-  // [2026-10-12 sticker-picker-fix] "não abre a galeria" (iOS): a folha
-  // "Criar figurinha" é um <Modal> que ainda está saindo quando o picker era
-  // chamado; o iOS dispensava o PHPicker junto. pickStickerSourceImage agora
-  // espera o overlay sair, não bloqueia a galeria por permissão e mostra erro
-  // traduzido. `picking` = spinner no botão "Criar" + trava toque duplo.
+  // [2026-10-12 sticker-picker-fix] pickStickerSourceImage espera o overlay
+  // sair (iOS dispensava o PHPicker junto). `picking` = spinner + trava toque duplo.
   const pickingRef = useRef(false);
   const [picking, setPicking] = useState(false);
   const pickImageForEditor = useCallback(async (source) => {
@@ -439,46 +546,30 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
     }
   }, [t]);
 
-  // Pick a short video and upload as animated WebP sticker (no editor)
+  // Vídeo curto → figurinha animada (WebP) direto no servidor
   const pickVideoForAnimatedSticker = useCallback(async () => {
     if (pickingRef.current && Platform.OS !== 'web') return;
     pickingRef.current = true;
-    if (Platform.OS !== 'web') setPicking(true); // web: seletor de arquivo pode não avisar cancelamento
+    if (Platform.OS !== 'web') setPicking(true);
     try {
-      let file = null;
       const asset = await pickMedia({ source: 'gallery', media: 'video', t, afterOverlay: true, quality: 0.85, videoMaxDuration: 5 });
       if (!asset) return;
       if (asset.size && asset.size > 20 * 1024 * 1024) {
         Alert.alert(_tr(t, 'common.error', 'Erro'), _tr(t, 'chat.stickerTooLarge', 'Vídeo muito grande (máx 20MB)'));
         return;
       }
-      if (Platform.OS === 'web') {
-        file = { _raw: asset.file, name: asset.fileName || 'sticker.mp4', type: asset.mimeType || 'video/mp4' };
-      } else {
-        file = { uri: asset.uri, name: asset.fileName || 'sticker.mp4', type: asset.mimeType || 'video/mp4' };
-      }
+      const file = Platform.OS === 'web'
+        ? { _raw: asset.file, name: asset.fileName || 'sticker.mp4', type: asset.mimeType || 'video/mp4' }
+        : { uri: asset.uri, name: asset.fileName || 'sticker.mp4', type: asset.mimeType || 'video/mp4' };
       pickingRef.current = false;
       setPicking(false);
-      if (!file) return;
       setCreating(true);
       const r = await api.chatStickerCreateAnimated(file);
-      if (r?.success) {
-        const url = r.cdn_url || r.url;
-        if (url) {
-          const next = [url, ...mine.filter(u => u !== url)].slice(0, 200);
-          setMine(next);
-          storageSet(MINE_KEY, next);
-          if (r.sticker_id) {
-            setMineFull(prev => [{
-              id: r.sticker_id, pack_id: r.pack_id, url, emoji: '', emoji_tags: '', is_animated: true,
-            }, ...prev]);
-          }
-          setActivePack('mine');
-          try {
-            const p = await api.chatStickerMyPacks();
-            if (p?.success) setMyPacks(p.items || p.data?.items || []);
-          } catch {}
-        }
+      const d = (r && (r.data || r)) || {};
+      const url = d.cdn_url || d.url || r?.cdn_url || r?.url;
+      if (r?.success && url) {
+        try { stkCache.noteStickerAdded({ id: d.sticker_id || d.id || null, pack_id: d.pack_id || null, url, is_animated: true }); } catch {}
+        jumpTo(sections[0] && sections[0].key === 'recent' ? 'recent' : 'mine');
       } else {
         Alert.alert(_tr(t, 'common.error', 'Erro'), _tr(t, 'stickerPicker.animatedFailed', 'Falha ao criar figurinha animada.'));
       }
@@ -489,215 +580,160 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
       setPicking(false);
       setCreating(false);
     }
-  }, [t, mine]);
+  }, [t, jumpTo, sections]);
 
-  // [2026-10-08 sticker-maker] "+ Criar" → folha: Galeria / Câmera / Vídeo (animada)
+  // [2026-10-08 sticker-maker] "Criar figurinha" → folha: Galeria / Câmera / Vídeo (animada)
   const [createSheet, setCreateSheet] = useState(false);
-  const [mineSheet, setMineSheet] = useState(null); // url da figurinha (Minhas)
   const createSticker = useCallback(() => {
     if (creating || (pickingRef.current && Platform.OS !== 'web')) return;
     setCreateSheet(true);
   }, [creating]);
-
-  // Called by StickerEditor when user confirms the edit. StickerEditor
-  // already hit chat_sticker_create so `file.cdn_url` / `file.sticker_id` are
-  // the server-assigned values. Fall back to rustUpload if somehow the
-  // editor handed us a raw file (legacy path / offline).
-  // [2026-10-08 sticker-maker] figurinha criada no StickerMaker (já salva no servidor)
-  const handleMakerSaved = useCallback((row) => {
-    if (!row?.url) return;
-    const finalUrl = row.url;
-    setMine(prev => {
-      const next = [finalUrl, ...prev.filter(u => u !== finalUrl)].slice(0, 200);
-      storageSet(MINE_KEY, next);
-      return next;
-    });
-    if (row.id) setMineFull(prev => [{ id: row.id, pack_id: row.pack_id, url: finalUrl, emoji: row.emoji || '', emoji_tags: row.emoji_tags || '' }, ...prev.filter(x => x.id !== row.id)]);
-    setActivePack('mine');
-    setSelectedMyPack(null);
-    (async () => {
-      try {
-        const p = await api.chatStickerMyPacks();
-        if (p?.success) setMyPacks(p.items || p.data?.items || []);
-      } catch {}
-    })();
+  // StickerMaker já gravou no KV (noteStickerAdded): só leva a pessoa ao topo.
+  const handleMakerSaved = useCallback(() => {
+    try { listRef.current?.scrollToOffset?.({ offset: 0, animated: true }); } catch {}
+    setActiveKey('recent');
   }, []);
 
-  // Mover figurinha para o início de "Minhas figurinhas" (ordem salva no servidor)
+  // ── segurar ─────────────────────────────────────────────────────────────
+  const mineRowOf = useCallback((url) => {
+    if (!url) return null;
+    return mineFull.find((s0) => s0 && s0.url === url) || null;
+  }, [mineFull]);
+  const originOf = useCallback((url) => { try { return stkCache.stickerOrigin(url); } catch { return null; } }, []);
+  const deleteMine = useCallback((url) => {
+    const row = mineRowOf(url) || (originOf(url) || {}).row;
+    if (!row || !row.id) return;
+    const go = async () => {
+      try {
+        const r = await api.chatStickerDelete(row.id);
+        if (r?.success === false) throw new Error('x');
+        try { stkCache.noteStickerRemoved(url, row.id); } catch {}
+      } catch {
+        Alert.alert(_tr(t, 'common.error', 'Erro'), _tr(t, 'stickers.actionFailed', 'Não deu certo. Tente de novo.'));
+      }
+    };
+    if (Platform.OS === 'web') { go(); return; }
+    Alert.alert(_tr(t, 'stickerPicker.deleteTitle', 'Excluir figurinha?'), _tr(t, 'stickerPicker.deleteBody', 'Ela sai de Minhas figurinhas em todos os seus aparelhos.'), [
+      { text: _tr(t, 'common.cancel', 'Cancelar'), style: 'cancel' },
+      { text: _tr(t, 'common.delete', 'Excluir'), style: 'destructive', onPress: go },
+    ]);
+  }, [mineRowOf, originOf, t]);
   const moveMineToFront = useCallback(async (url) => {
-    const row = mineFull.find(s0 => s0.url === url);
-    const nextFull = row ? [row, ...mineFull.filter(x => x.id !== row.id)] : mineFull;
+    const row = mineRowOf(url);
+    if (!row) return;
+    const nextFull = [row, ...mineFull.filter(x => x.id !== row.id)];
+    try { stkCache.setStickerMeta('st_mine', nextFull); stkCache.setStickerMeta('st_mine_urls', nextFull.map(x => x.url).filter(Boolean)); } catch {}
     setMineFull(nextFull);
-    const nextUrls = [url, ...mine.filter(u => u !== url)];
-    setMine(nextUrls);
-    storageSet(MINE_KEY, nextUrls);
+    setMine(nextFull.map(x => x.url).filter(Boolean));
     const ids = nextFull.map(x => x.id).filter(Boolean);
     if (ids.length) { try { await api.chatStickerReorder(ids); } catch {} }
-  }, [mineFull, mine]);
+  }, [mineRowOf, mineFull]);
 
-  const handleEditorSave = useCallback(async (file) => {
-    setEditorUri(null);
-    if (!file) return;
-    setCreating(true);
-    try {
-      let finalUrl = file.cdn_url || file.url || null;
-      let stickerRow = null;
-      if (file.sticker_id) {
-        stickerRow = {
-          id: file.sticker_id,
-          pack_id: file.pack_id,
-          url: finalUrl,
-          emoji: file.emoji || '',
-          emoji_tags: file.emoji_tags || '',
-        };
-      }
-      if (!finalUrl) {
-        const r = await api.rustUpload(file, userEmail || '', 'sticker');
-        if (r?.success && r.cdn_url) finalUrl = r.cdn_url;
-      }
-      if (finalUrl) {
-        const next = [finalUrl, ...mine.filter(u => u !== finalUrl)].slice(0, 200);
-        setMine(next);
-        storageSet(MINE_KEY, next);
-        if (stickerRow) setMineFull(prev => [stickerRow, ...prev]);
-        setActivePack('mine');
-        // Refresh user's packs list (in case server auto-created "My Stickers")
-        try {
-          const p = await api.chatStickerMyPacks();
-          if (p?.success) setMyPacks(p.items || p.data?.items || []);
-        } catch {}
-      } else {
-        Alert.alert(t?.('common.error') || 'Erro', _tr(t, 'stickerPicker.createFailed', 'Falha ao criar figurinha.'));
-      }
-    } catch (e) {
-      Alert.alert(_tr(t, 'common.error', 'Erro'), _tr(t, 'stickerPicker.createFailed', 'Falha ao criar figurinha.'));
-    } finally {
-      setCreating(false);
+  const actionOptions = useMemo(() => {
+    const it = actionItem;
+    if (it == null) return [];
+    const img = _isImgS(it);
+    const mineRow = img ? (mineRowOf(it) || ((originOf(it) || {}).mine ? (originOf(it) || {}).row : null)) : null;
+    const origin = img ? originOf(it) : null;
+    const inRecents = (recents || []).includes(it);
+    const opts = [
+      { key: 'send', label: _tr(t, 'stickerMaker.send', 'Enviar'), icon: IconSend, onPress: () => handleSelect(it) },
+      isFav(it)
+        ? { key: 'fav', label: _tr(t, 'stickers.removeFromFavorites', 'Remover das favoritas'), icon: IconStarFilled, onPress: () => toggleFavorite(it) }
+        : { key: 'fav', label: _tr(t, 'stickers.addToFavorites', 'Adicionar às favoritas'), icon: IconStar, onPress: () => toggleFavorite(it) },
+    ];
+    if (inRecents) opts.push({ key: 'unrecent', label: _tr(t, 'stickerPicker.removeRecent', 'Remover dos recentes'), icon: IconClock, onPress: () => { try { stkCache.removeStickerRecent(it); } catch {} } });
+    if (mineRow && mineRow.id) {
+      opts.push({ key: 'tags', label: _tr(t, 'stickerPicker.editTags', 'Emojis de busca'), subtitle: String(mineRow.emoji_tags || mineRow.emoji || '').split(',').filter(Boolean).join(' ') || undefined, icon: IconSmile, onPress: () => setTimeout(() => setTagEdit({ id: mineRow.id, url: it, tags: String(mineRow.emoji_tags || mineRow.emoji || '').split(',').map(x => x.trim()).filter(Boolean).slice(0, 3) }), 250) });
+      opts.push({ key: 'front', label: _tr(t, 'stickerMaker.moveToFront', 'Mover para o início'), icon: IconChevronUp, onPress: () => moveMineToFront(it) });
     }
-  }, [mine, userEmail, t]);
-
-  // Create a new personal pack
-  const handleCreatePack = useCallback(async () => {
-    const name = newPackName.trim();
-    if (!name) return;
-    try {
-      const r = await api.chatStickerPackCreate({ name });
-      if (r?.success) {
-        const created = r.data || r;
-        setMyPacks(prev => [{
-          id: created.id,
-          name: created.name || name,
-          description: created.description || '',
-          cover_url: created.cover_url || '',
-          sticker_count: 0,
-          created_at: created.created_at,
-        }, ...prev]);
-        setNewPackName('');
-        setShowPackCreate(false);
-        setSelectedMyPack(created.id);
-      } else {
-        Alert.alert(t?.('common.error') || 'Erro', r?.error || _tr(t, 'stickerShop.createFailed', 'Falha ao criar pacote.'));
-      }
-    } catch (e) {
-      Alert.alert(t?.('common.error') || 'Erro', e?.message || _tr(t, 'stickerShop.createFailed', 'Falha ao criar pacote.'));
+    if (origin && origin.packId && !(origin.mine && !groups.added.some(p => String(p.id) === String(origin.packId)))) {
+      opts.push({ key: 'pack', label: _tr(t, 'stickers.viewPack', 'Ver pacote'), icon: IconPackage, onPress: () => { try { onClose && onClose(); } catch {} setTimeout(() => router.push({ pathname: '/stickers/pack', params: { id: String(origin.packId) } }), 60); } });
     }
-  }, [newPackName, t]);
+    if (mineRow && mineRow.id) opts.push({ key: 'del', destructive: true, label: _tr(t, 'stickerMaker.deleteSticker', 'Excluir figurinha'), icon: IconTrash, onPress: () => deleteMine(it) });
+    return opts;
+  }, [actionItem, recents, isFav, mineRowOf, originOf, groups, t, handleSelect, toggleFavorite, moveMineToFront, deleteMine, onClose, router]);
 
-  // Delete a user sticker (by URL — resolve against mineFull for id)
-  const deleteServerSticker = useCallback(async (url) => {
-    const row = mineFull.find(s => s.url === url);
-    if (!row?.id) return;
-    try {
-      const r = await api.chatStickerDelete(row.id);
-      if (r?.success) {
-        setMineFull(prev => prev.filter(s => s.id !== row.id));
-        const next = mine.filter(u => u !== url);
-        setMine(next);
-        storageSet(MINE_KEY, next);
-      }
-    } catch {}
-  }, [mineFull, mine]);
+  const saveTags = useCallback(async () => {
+    const te = tagEdit;
+    setTagEdit(null);
+    if (!te || !te.id) return;
+    let ok = false;
+    try { ok = await stkCache.setMyStickerTags(te.id, te.tags); } catch {}
+    if (!ok) { try { require('./ui/Toast').showToast({ message: _tr(t, 'stickerPicker.tagsLocal', 'Salvo neste aparelho. Sincroniza quando o servidor responder.'), kind: 'info' }); } catch {} }
+  }, [tagEdit, t]);
 
-  const removeMyStickerLong = useCallback((url) => {
-    Alert.alert(
-      t?.('chat.removeSticker') || 'Remover figurinha?', '',
-      [
-        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-        {
-          text: t?.('common.remove') || 'Remover', style: 'destructive',
-          onPress: () => {
-            // Local cache first for instant UI
-            const next = mine.filter(u => u !== url);
-            setMine(next);
-            storageSet(MINE_KEY, next);
-            // Then server-side delete (if the sticker exists on server)
-            deleteServerSticker(url);
-          },
-        },
-      ]
+  // ── render ──────────────────────────────────────────────────────────────
+  const renderCell = (item, sec) => {
+    if (item === CREATE_TILE) {
+      return (
+        <TouchableOpacity
+          key="create"
+          onPress={createSticker}
+          disabled={creating || picking}
+          style={{ width: cell, height: cell, padding: 4 }}
+          accessibilityRole="button"
+          accessibilityLabel={_tr(t, 'stickerMaker.pickTitle', 'Criar figurinha')}
+          activeOpacity={0.6}
+        >
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.textTertiary }}>
+            {(creating || picking) ? <ActivityIndicator size="small" color={colors.text} /> : <IconStickerPlus size={22} color={colors.text} />}
+            <Text style={{ fontSize: 9, fontWeight: '700', color: colors.text, marginTop: 2, textAlign: 'center' }} numberOfLines={2}>{_tr(t, 'stickerMaker.pickTitle', 'Criar figurinha')}</Text>
+          </View>
+        </TouchableOpacity>
+      );
+    }
+    const img = _isImgS(item);
+    return (
+      <TouchableOpacity
+        key={sec.key + ':' + item}
+        onPress={() => handleSelect(item)}
+        onLongPress={() => setActionItem(item)}
+        delayLongPress={350}
+        style={{ width: cell, height: cell, alignItems: 'center', justifyContent: 'center', padding: 4 }}
+        activeOpacity={0.5}
+        accessibilityRole="button"
+        accessibilityLabel={img ? _tr(t, 'chat.sticker', 'Figurinha') : item}
+        accessibilityHint={_tr(t, 'stickerPicker.holdHint', 'Segure para mais opções')}
+      >
+        {img ? (
+          <CachedImage source={{ uri: resolveStickerUri(item) }} style={{ width: '92%', height: '92%' }} resizeMode="contain" placeholder={STICKER_CLEAR_PLACEHOLDER} showSpinner={false} />
+        ) : (
+          <Text style={{ fontSize: Math.round(cell * 0.52) }} allowFontScaling={false}>{item}</Text>
+        )}
+        {isFav(item) && sec.key !== 'favorites' ? (
+          <View style={{ position: 'absolute', top: 3, right: 3 }}>
+            <IconStarFilled size={9} color={colors.text} />
+          </View>
+        ) : null}
+      </TouchableOpacity>
     );
-  }, [mine, t, deleteServerSticker]);
-
-  // Current pack stickers
-  let currentStickers = [];
-  if (showSearch && searchQuery.trim()) {
-    // Merge local + backend (installed) + global discovery results, dedupe
-    // while preserving order. Local emoji index first so the canned answer
-    // is the fastest path, then user's installed packs, then discovery from
-    // the wider sticker corpus.
-    const seen = new Set();
-    const merged = [];
-    for (const s of [...searchResults, ...searchBackend, ...searchGlobal]) {
-      if (!seen.has(s)) { seen.add(s); merged.push(s); }
+  };
+  const renderRow = ({ item: r }) => {
+    if (r.type === 'h') {
+      return (
+        <View style={{ height: HEADER_H, flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 10, paddingBottom: 4 }}>
+          <Text style={{ flex: 1, fontSize: 11, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3, textTransform: 'uppercase' }} numberOfLines={1}>{r.sec.title}</Text>
+          {r.sec.packId != null && !searching ? (
+            <TouchableOpacity hitSlop={8} onPress={() => { try { onClose && onClose(); } catch {} setTimeout(() => router.push({ pathname: '/stickers/pack', params: { id: String(r.sec.packId) } }), 60); }} accessibilityRole="button" accessibilityLabel={_tr(t, 'stickers.viewPack', 'Ver pacote')}>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: colors.textTertiary }}>{_tr(t, 'stickers.viewPack', 'Ver pacote')}</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      );
     }
-    currentStickers = merged.slice(0, 120);
-  }
-  else if (activePack === 'recent') currentStickers = recents;
-  else if (activePack === 'favorites') currentStickers = favorites;
-  else if (activePack === 'mine') {
-    // Pack filter inside Mine tab
-    if (selectedMyPack) {
-      currentStickers = mineFull.filter(s => s.pack_id === selectedMyPack).map(s => s.url).filter(Boolean);
-    } else {
-      // Show all user-authored stickers (server-hydrated if available, else cache)
-      currentStickers = mineFull.length ? mineFull.map(s => s.url).filter(Boolean) : mine;
+    if (r.type === 'loading') return <View style={{ height: LOADING_H, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator size="small" color={colors.textTertiary} /></View>;
+    if (r.type === 'empty') {
+      return (
+        <View style={{ height: LOADING_H, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+          <Text style={{ fontSize: 12, color: colors.textTertiary, textAlign: 'center' }} numberOfLines={2}>
+            {r.sec.mine ? _tr(t, 'stickerPicker.mineEmpty', 'Toque em "Criar figurinha" para fazer a sua') : ''}
+          </Text>
+        </View>
+      );
     }
-  }
-  else if (typeof activePack === 'string' && activePack.startsWith('mkt-')) {
-    // Marketplace pack — items rendered as image URLs / R2 keys.
-    const id = parseInt(activePack.slice(4), 10);
-    const items = marketPackItems[id] || [];
-    currentStickers = items
-      .map(it => it.url || it.image_url || it.sticker_id)
-      .filter(Boolean);
-  }
-  else currentStickers = STICKER_PACKS.find(p => p.id === activePack)?.stickers
-    || ANIMATED_PACKS.find(p => p.id === activePack)?.stickers
-    || [];
-  // [2026-10-13 sticker-one-create] Tile "Criar figurinha" = única entrada de
-  // criação. Some só durante uma busca com texto (no desktop web a busca já
-  // abre visível, antes o tile nunca aparecia lá).
-  const showCreateTile = (activePack === 'recent' || activePack === 'mine') && !(showSearch && searchQuery.trim());
-
-  // Accept http(s):// URLs and server-relative paths like /data/sticker-files/...
-  const isImg = (s) => typeof s === 'string' && (/^https?:\/\//.test(s) || s.startsWith('/data/'));
-  const isFav = (s) => favorites.includes(s);
-
-  // When the server returns a relative URL we need to resolve it to the
-  // API origin so native `<Image>` can fetch it.
-  // [2026-10-19 sticker-cache] file:// do disco quando já baixado (instantâneo e
-  // offline); senão a URL remota + download p/ o disco (próxima vez é local).
-  const resolveStickerUri = useCallback((s) => {
-    if (typeof s !== 'string') return s;
-    if (/^https?:\/\//.test(s) || s.startsWith('/data/')) {
-      try { return stkCache.stickerDisplayUri(s); } catch {}
-    }
-    if (/^https?:\/\//.test(s)) return s;
-    if (s.startsWith('/data/')) {
-      try { return api.getMediaUrl(s); } catch { return 'https://chatyy.com.br' + s; }
-    }
-    return s;
-  }, []);
+    return <View style={{ flexDirection: 'row', height: cell, paddingHorizontal: 2 }}>{r.items.map((it) => renderCell(it, r.sec))}</View>;
+  };
 
   return (
     <View style={{ height: 340 + _bi, paddingBottom: _bi, backgroundColor: colors.surface, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, ...(Platform.OS === 'web' ? { borderTopLeftRadius: Overlay.cardRadius, borderTopRightRadius: Overlay.cardRadius, overflow: 'hidden' } : null) }}>
@@ -720,26 +756,50 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
           { key: 'cancel', label: _tr(t, 'common.cancel', 'Cancelar'), onPress: () => {} },
         ]}
       />
-      <ChoiceSheet
-        visible={!!mineSheet}
-        colors={colors}
-        onClose={() => setMineSheet(null)}
-        options={[
-          { key: 'send', label: _tr(t, 'stickerMaker.send', 'Enviar'), onPress: () => { const u = mineSheet; if (u) handleSelect(u); } },
-          { key: 'front', label: _tr(t, 'stickerMaker.moveToFront', 'Mover para o início'), onPress: () => { const u = mineSheet; if (u) moveMineToFront(u); } },
-          { key: 'fav', label: (mineSheet && favorites.includes(mineSheet)) ? _tr(t, 'stickerMaker.unfavorite', 'Remover dos favoritos') : _tr(t, 'stickerMaker.favorite', 'Adicionar aos favoritos'), onPress: () => { const u = mineSheet; if (u) toggleFavorite(u); } },
-          { key: 'del', destructive: true, label: _tr(t, 'stickerMaker.deleteSticker', 'Apagar figurinha'), onPress: () => {
-            const u = mineSheet;
-            if (!u) return;
-            const next = mine.filter(x => x !== u);
-            setMine(next);
-            storageSet(MINE_KEY, next);
-            deleteServerSticker(u);
-          } },
-          { key: 'cancel', label: _tr(t, 'common.cancel', 'Cancelar'), onPress: () => {} },
-        ]}
-      />
-      {/* Header with search */}
+      {/* segurar figurinha */}
+      <Sheet visible={actionItem != null} onClose={() => setActionItem(null)}>
+        {actionItem != null ? (
+          <View style={{ alignItems: 'center', paddingBottom: 6 }}>
+            {_isImgS(actionItem)
+              ? <CachedImage source={{ uri: resolveStickerUri(actionItem) }} style={{ width: 132, height: 132 }} resizeMode="contain" placeholder={STICKER_CLEAR_PLACEHOLDER} />
+              : <Text style={{ fontSize: 88 }} allowFontScaling={false}>{actionItem}</Text>}
+          </View>
+        ) : null}
+        <ActionList items={actionOptions} onDone={() => setActionItem(null)} separators />
+      </Sheet>
+      {/* emojis de busca (minhas) */}
+      <Sheet visible={!!tagEdit} onClose={() => setTagEdit(null)} title={_tr(t, 'stickerPicker.editTags', 'Emojis de busca')} subtitle={_tr(t, 'stickerMaker.tagsSubShort', 'Escolha até 3')}>
+        {tagEdit ? (
+          <View style={{ paddingHorizontal: 16 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 10, marginBottom: 8 }}>
+              {[0, 1, 2].map((i) => (
+                <TouchableOpacity key={i} disabled={!tagEdit.tags[i]} onPress={() => setTagEdit((te) => (te ? { ...te, tags: te.tags.filter((x) => x !== te.tags[i]) } : te))}
+                  style={{ width: 46, height: 46, borderRadius: 12, borderWidth: 1, borderStyle: tagEdit.tags[i] ? 'solid' : 'dashed', borderColor: tagEdit.tags[i] ? colors.text : colors.border, alignItems: 'center', justifyContent: 'center' }}
+                  accessibilityRole="button" accessibilityLabel={tagEdit.tags[i] ? `${_tr(t, 'common.remove', 'Remover')} ${tagEdit.tags[i]}` : _tr(t, 'stickerMaker.tagsEmpty', 'Vazio')}>
+                  {tagEdit.tags[i] ? <Text style={{ fontSize: 26 }} allowFontScaling={false}>{tagEdit.tags[i]}</Text> : <IconPlus size={14} color={colors.textTertiary} />}
+                </TouchableOpacity>
+              ))}
+            </View>
+            <ScrollView style={{ maxHeight: 180 }} contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
+              {STICKER_PACKS[0].stickers.concat(STICKER_PACKS[1].stickers.slice(0, 12), STICKER_PACKS[2].stickers.slice(0, 12)).filter((e, i, a) => a.indexOf(e) === i).map((em) => {
+                const on = tagEdit.tags.includes(em);
+                return (
+                  <TouchableOpacity key={em} onPress={() => setTagEdit((te) => (te ? { ...te, tags: on ? te.tags.filter((x) => x !== em) : [...te.tags, em].slice(-3) } : te))}
+                    style={{ width: 42, height: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center', margin: 2, backgroundColor: on ? colors.text + '1F' : 'transparent' }}
+                    accessibilityRole="button" accessibilityState={{ selected: on }} accessibilityLabel={em}>
+                    <Text style={{ fontSize: 24 }} allowFontScaling={false}>{em}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <TouchableOpacity onPress={saveTags} style={{ height: 48, borderRadius: 12, backgroundColor: colors.text, alignItems: 'center', justifyContent: 'center', marginTop: 10 }} accessibilityRole="button">
+              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.background }}>{_tr(t, 'common.save', 'Salvar')}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+      </Sheet>
+
+      {/* Cabeçalho: busca · configurações · fechar */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, gap: 8 }}>
         {showSearch ? (
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.background, borderRadius: 20, paddingHorizontal: 10 }}>
@@ -748,462 +808,130 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail,
               ref={searchRef}
               value={searchQuery}
               onChangeText={setSearchQuery}
-              placeholder={t?.('chat.searchStickers') || 'Buscar figurinhas...'}
+              placeholder={_tr(t, 'stickerPicker.searchPh', 'Buscar por emoji ou palavra')}
               placeholderTextColor={colors.textTertiary}
               style={{ flex: 1, paddingVertical: 6, paddingHorizontal: 8, color: colors.text, fontSize: 13 }}
               autoFocus
               autoCorrect={false}
             />
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowSearch(false); setSearchQuery(''); }} hitSlop={8}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.clear', 'Limpar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowSearch(false); setSearchQuery(''); }}>
               <IconX size={14} color={colors.textTertiary} />
             </TouchableOpacity>
           </View>
         ) : (
-          <>
-            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, flex: 1 }}>
-              {t?.('chat.stickers') || 'Figurinhas'}
-            </Text>
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.search', 'Buscar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowSearch(true); setTimeout(() => searchRef.current?.focus(), 100); }} style={{ padding: 4 }}>
-              <IconSearch size={18} color={colors.textSecondary} />
-            </TouchableOpacity>
-            {/* [2026-10-13 sticker-one-create] O pill "+ Criar" do topo saiu: era o
-                3º atalho p/ a mesma folha (tile da grade + FAB). Criar = só o tile
-                "Criar figurinha" no início da grade (Recentes/Minhas). */}
-            <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={{ padding: 4 }}>
-              <IconX size={20} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </>
+          <TouchableOpacity
+            onPress={() => { setShowSearch(true); setTimeout(() => searchRef.current?.focus(), 100); }}
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: colors.background, borderRadius: 20, paddingHorizontal: 10, height: 32, gap: 8 }}
+            accessibilityRole="search"
+            accessibilityLabel={_tr(t, 'stickerPicker.searchPh', 'Buscar por emoji ou palavra')}
+            activeOpacity={0.7}
+          >
+            <IconSearch size={14} color={colors.textTertiary} />
+            <Text style={{ fontSize: 13, color: colors.textTertiary }} numberOfLines={1}>{_tr(t, 'stickerPicker.searchPh', 'Buscar por emoji ou palavra')}</Text>
+          </TouchableOpacity>
         )}
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={_tr(t, 'stickerPicker.settings', 'Organizar pacotes')} onPress={() => { try { onClose && onClose(); } catch {} setTimeout(() => router.push('/stickers/my'), 60); }} style={{ padding: 4 }} hitSlop={6}>
+          <IconSettings size={19} color={colors.textSecondary} />
+        </TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} onPress={onClose} style={{ padding: 4 }} hitSlop={6}>
+          <IconX size={20} color={colors.textSecondary} />
+        </TouchableOpacity>
       </View>
 
-      {/* Recently-used preview row — pinned at the very top so the most-used
-          stickers are always one tap away (Telegram parity). Renders only when
-          the user has actually used something and isn't on the recent tab. */}
-      {!showSearch && activePack !== 'recent' && recents.length > 0 && (
-        <View style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingTop: 4 }}>
-            <Text style={{ fontSize: 9, fontWeight: '800', color: colors.textTertiary, letterSpacing: 0.6, textTransform: 'uppercase' }}>
-              {_tr(t, 'chatConv.recents', 'Recentes')}
-            </Text>
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ maxHeight: 44 }}
-            contentContainerStyle={{ paddingHorizontal: 6, alignItems: 'center', gap: 4 }}
-          >
-            {recents.slice(0, 14).map((item, i) => (
-              <TouchableOpacity
-                key={`recent-strip-${i}-${typeof item === 'string' ? item.slice(0, 16) : i}`}
-                onPress={() => handleSelect(item)}
-                onLongPress={() => openStickerPreview(item)}
-                delayLongPress={350}
-                style={{ paddingHorizontal: 4, paddingVertical: 4, alignItems: 'center', justifyContent: 'center' }}
-                activeOpacity={0.6}
-              >
-                {isImg(item) ? (
-                  <CachedImage source={{ uri: resolveStickerUri(item) }} style={{ width: 30, height: 30 }} resizeMode="contain" />
-                ) : (
-                  <Text style={{ fontSize: 22 }}>{item}</Text>
-                )}
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      )}
+      {/* busca vazia: atalhos de emoji (conteúdo/tag, não ícone) */}
+      {showSearch && !q ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={{ flexGrow: 0, maxHeight: 44 }} contentContainerStyle={{ paddingHorizontal: 8, alignItems: 'center', gap: 2 }}>
+          {QUICK_EMOJIS.map((em) => (
+            <TouchableOpacity key={em} onPress={() => setSearchQuery(em)} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 10 }} accessibilityRole="button" accessibilityLabel={em}>
+              <Text style={{ fontSize: 24 }} allowFontScaling={false}>{em}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      ) : null}
 
-      {/* Favoritos preview row — only shown when user has favorites and isn't
-          on the favorites or recents tab. Long-press a sticker to add it to
-          favorites (handled in the main grid). */}
-      {/* [2026-10-12] Founder: a fileira fixa de Favoritos espremia a grade e cortava as
-          figurinhas — favoritos já têm a aba da estrela. Desligada. */}
-      {false && !showSearch && activePack !== 'favorites' && activePack !== 'recent' && favorites.length > 0 && (
-        <View style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingTop: 4, gap: 4 }}>
-            <IconStarFilled size={10} color={colors.primary} />
-            <Text style={{ fontSize: 9, fontWeight: '800', color: colors.primary, letterSpacing: 0.6, textTransform: 'uppercase' }}>
-              {_tr(t, 'photos.favorites', 'Favoritos')}
-            </Text>
+      {/* Grade em seções */}
+      <View style={{ flex: 1 }} onLayout={(e) => { const w = Math.round(e.nativeEvent.layout.width); if (w && w !== gridW) setGridW(w); }}>
+        {searching && rows.length === 0 ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+            <View style={{ marginBottom: 10 }}><IconSearch size={28} color={colors.textTertiary || colors.textSecondary} /></View>
+            <Text style={{ fontSize: 13, color: colors.textTertiary, textAlign: 'center' }}>{_tr(t, 'chat.noStickersFound', 'Nenhuma figurinha encontrada')}</Text>
+            <Text style={{ fontSize: 12, color: colors.textTertiary, textAlign: 'center', marginTop: 4 }}>{_tr(t, 'stickerPicker.searchTip', 'Dica: segure uma figurinha sua e escolha "Emojis de busca".')}</Text>
           </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ maxHeight: 44 }}
-            contentContainerStyle={{ paddingHorizontal: 6, alignItems: 'center', gap: 4 }}
-          >
-            {favorites.slice(0, 14).map((item, i) => (
-              <TouchableOpacity
-                key={`fav-strip-${i}-${typeof item === 'string' ? item.slice(0, 16) : i}`}
-                onPress={() => handleSelect(item)}
-                onLongPress={() => openStickerPreview(item)}
-                delayLongPress={350}
-                style={{ paddingHorizontal: 4, paddingVertical: 4, alignItems: 'center', justifyContent: 'center' }}
-                activeOpacity={0.6}
-              >
-                {isImg(item) ? (
-                  <CachedImage source={{ uri: resolveStickerUri(item) }} style={{ width: 30, height: 30 }} resizeMode="contain" />
-                ) : (
-                  <Text style={{ fontSize: 22 }}>{item}</Text>
-                )}
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      )}
+        ) : gridW > 0 ? (
+          <FlatList
+            ref={listRef}
+            data={rows}
+            keyExtractor={(r) => r.key}
+            renderItem={renderRow}
+            getItemLayout={getItemLayout}
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            removeClippedSubviews={Platform.OS === 'android'}
+            onViewableItemsChanged={onViewable}
+            viewabilityConfig={viewCfg}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={{ flex: 1 }}
+          />
+        ) : null}
+      </View>
 
-      {/* My-packs pill row — only visible on Mine tab. Lets the user filter
-          their personal stickers by pack, create a new pack, and see sticker
-          counts per pack. */}
-      {activePack === 'mine' && !showSearch && (myPacks.length > 0 || true) && (
+      {/* Abas — embaixo (WhatsApp): uma por seção, ícone SVG ou capa do pacote */}
+      {!searching ? (
         <ScrollView
+          ref={tabsRef}
           horizontal
           showsHorizontalScrollIndicator={false}
-          style={{ borderBottomWidth: 1, borderBottomColor: colors.border, maxHeight: 44 }}
-          contentContainerStyle={{ paddingHorizontal: 8, alignItems: 'center', gap: 6 }}
+          // [2026-10-10] Altura FIXA: com maxHeight a barra encolhia.
+          style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, height: 46, flexGrow: 0, flexShrink: 0 }}
+          contentContainerStyle={{ paddingHorizontal: 2, alignItems: 'center' }}
         >
+          {sections.map((sec, i) => (
+            <React.Fragment key={sec.key}>
+              {(sec.packId != null || sec.chatyy || sec.key === 'emoji') && i > 0 && !(sections[i - 1].packId != null || sections[i - 1].chatyy || sections[i - 1].key === 'emoji')
+                ? <View style={{ width: 1, height: 20, backgroundColor: colors.border, marginHorizontal: 3 }} /> : null}
+              <PackTab sec={sec} active={activeKey === sec.key} onPress={() => jumpTo(sec.key)} colors={colors} />
+            </React.Fragment>
+          ))}
+          {/* [2026-10-13 sticker-one-create] Loja de pacotes */}
           <TouchableOpacity
-            onPress={() => setSelectedMyPack(null)}
-            style={{
-              paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14,
-              backgroundColor: selectedMyPack === null ? (colors.primary + '20') : (colors.background),
-              borderWidth: 1, borderColor: selectedMyPack === null ? colors.primary : colors.border,
-            }}
+            onPress={() => router.push('/stickers/store')}
+            style={{ flexDirection: 'row', gap: 5, paddingHorizontal: 10, height: 32, marginLeft: 4, marginRight: 6, backgroundColor: colors.text + '10', borderRadius: 16, alignItems: 'center', justifyContent: 'center' }}
+            activeOpacity={0.6}
+            accessibilityRole="button"
+            accessibilityLabel={_tr(t, 'stickerPicker.storeA11y', 'Adicionar pacotes de figurinhas da loja')}
+            hitSlop={{ top: 6, bottom: 6 }}
           >
-            <Text style={{ fontSize: 11, fontWeight: '700', color: selectedMyPack === null ? colors.primary : colors.text }}>
-              {t?.('chat.allMyStickers') || 'Todas'} · {mineFull.length}
-            </Text>
+            <IconGrid size={15} color={colors.text} />
+            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text }} numberOfLines={1}>{_tr(t, 'stickerPicker.store', 'Loja')}</Text>
           </TouchableOpacity>
-          {myPacks.map(p => (
-            <TouchableOpacity
-              key={p.id}
-              onPress={() => setSelectedMyPack(p.id)}
-              style={{
-                paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14,
-                backgroundColor: selectedMyPack === p.id ? (colors.primary + '20') : (colors.background),
-                borderWidth: 1, borderColor: selectedMyPack === p.id ? colors.primary : colors.border,
-              }}
-            >
-              <Text style={{ fontSize: 11, fontWeight: '600', color: selectedMyPack === p.id ? colors.primary : colors.text }}>
-                {p.name} · {p.sticker_count || 0}
-              </Text>
-            </TouchableOpacity>
-          ))}
-          {/* Inline new-pack affordance */}
-          {showPackCreate ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: colors.background, borderRadius: 14, paddingHorizontal: 8, borderWidth: 1, borderColor: colors.primary }}>
-              <TextInput
-                value={newPackName}
-                onChangeText={setNewPackName}
-                placeholder={t?.('chat.packName') || 'Nome do pack'}
-                placeholderTextColor={colors.textTertiary}
-                style={{ width: 120, paddingVertical: 4, color: colors.text, fontSize: 11, outlineStyle: 'none' }}
-                autoFocus
-                onSubmitEditing={handleCreatePack}
-                maxLength={40}
-              />
-              <TouchableOpacity onPress={handleCreatePack}><Text style={{ color: colors.primary, fontWeight: '700', fontSize: 11 }}>{_tr(t, 'common.ok', 'OK')}</Text></TouchableOpacity>
-              <TouchableOpacity accessibilityRole="button" accessibilityLabel={a11yLabel('common.close', 'Fechar')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} onPress={() => { setShowPackCreate(false); setNewPackName(''); }}><IconX size={12} color={colors.textTertiary} /></TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity
-              onPress={() => setShowPackCreate(true)}
-              style={{
-                paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14,
-                backgroundColor: colors.background,
-                borderWidth: 1, borderColor: colors.border, borderStyle: 'dashed',
-                flexDirection: 'row', alignItems: 'center', gap: 4,
-              }}
-            >
-              <IconPlus size={11} color={colors.textSecondary} />
-              <Text style={{ fontSize: 11, fontWeight: '600', color: colors.textSecondary }}>
-                {t?.('chat.newPack') || 'Novo pack'}
-              </Text>
-            </TouchableOpacity>
-          )}
         </ScrollView>
-      )}
-
-      {/* Sticker grid */}
-      {currentStickers.length === 0 && !showCreateTile ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
-          {/* [2026-10-10 stickers-import] ícone SVG (antes emoji na UI) */}
-          <View style={{ marginBottom: 10 }}>
-            {(() => {
-              const EmptyIcon = showSearch && searchQuery.trim() ? IconSearch : activePack === 'recent' ? IconClock : activePack === 'favorites' ? IconStar : activePack === 'mine' ? IconPalette : IconPackage;
-              return <EmptyIcon size={30} color={colors.textTertiary || colors.textSecondary} />;
-            })()}
-          </View>
-          <Text style={{ fontSize: 13, color: colors.textTertiary, textAlign: 'center' }}>
-            {showSearch && searchQuery.trim()
-              ? (t?.('chat.noStickersFound') || 'Nenhuma figurinha encontrada')
-              : activePack === 'recent'
-                ? (t?.('chat.recentStickers') || 'Suas figurinhas recentes aparecerão aqui')
-                : activePack === 'favorites'
-                  ? (t?.('chat.noFavorites') || 'Segure em uma figurinha para favoritar')
-                  : activePack === 'mine'
-                    ? _tr(t, 'stickerPicker.mineEmpty', 'Toque em "Criar figurinha" para fazer a sua')
-                    : ''}
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={showCreateTile ? [CREATE_TILE, ...currentStickers] : currentStickers}
-          ListFooterComponent={showCreateTile && currentStickers.length === 0 ? (
-            <Text style={{ fontSize: 12, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: 24, paddingTop: 12 }}>
-              {activePack === 'recent'
-                ? (t?.('chat.recentStickers') || 'Suas figurinhas recentes aparecerão aqui')
-                : _tr(t, 'stickerPicker.mineEmpty', 'Toque em "Criar figurinha" para fazer a sua')}
-            </Text>
-          ) : null}
-          numColumns={5}
-          keyExtractor={(item, i) => `${activePack}-${i}-${typeof item === 'string' ? item.slice(0, 32) : i}`}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          style={{ flex: 1 }}
-          contentContainerStyle={{ paddingHorizontal: 2, paddingVertical: 2 }}
-          renderItem={({ item }) => (item === CREATE_TILE ? (
-            <TouchableOpacity
-              onPress={createSticker}
-              disabled={creating || picking}
-              style={{
-                flex: 1 / 5, aspectRatio: 1, alignItems: 'center', justifyContent: 'center',
-                borderRadius: 12, margin: 4, borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.textTertiary,
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={_tr(t, 'stickerMaker.pickTitle', 'Criar figurinha')}
-              activeOpacity={0.6}
-            >
-              {(creating || picking) ? <ActivityIndicator size="small" color={colors.text} /> : <IconStickerPlus size={24} color={colors.text} />}
-              <Text style={{ fontSize: 10, fontWeight: '700', color: colors.text, marginTop: 3, textAlign: 'center' }} numberOfLines={2}>{_tr(t, 'stickerMaker.pickTitle', 'Criar figurinha')}</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              onPress={() => handleSelect(item)}
-              onLongPress={() => {
-                if (activePack === 'mine' && isImg(item)) setMineSheet(item);
-                else openStickerPreview(item);
-              }}
-              delayLongPress={350}
-              style={{
-                flex: 1 / 5, aspectRatio: 1, alignItems: 'center', justifyContent: 'center',
-                padding: 4, borderRadius: 10, margin: 2,
-                backgroundColor: isFav(item) ? (colors.primary + '10') : 'transparent',
-              }}
-              activeOpacity={0.5}
-            >
-              {isImg(item) ? (
-                <CachedImage source={{ uri: resolveStickerUri(item) }} style={{ width: '90%', height: '90%', borderRadius: 6 }} resizeMode="contain" placeholder={STICKER_CLEAR_PLACEHOLDER} />
-              ) : (
-                <Text style={{ fontSize: 36 }}>{item}</Text>
-              )}
-              {isFav(item) && (
-                <View style={{ position: 'absolute', top: 2, right: 2 }}>
-                  <IconStarFilled size={9} color={colors.text} />
-                </View>
-              )}
-            </TouchableOpacity>
-          ))}
-        />
-      )}
-
-      {/* Pack tabs — bottom */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        // [2026-10-10] Altura FIXA: com maxHeight a barra encolhia (flexShrink)
-        // quando a grade enchia o painel e os emojis das abas saíam cortados.
-        style={{ borderTopWidth: 1, borderTopColor: colors.border, height: 48, flexGrow: 0, flexShrink: 0 }}
-        contentContainerStyle={{ paddingHorizontal: 2, alignItems: 'center' }}
-      >
-        {/* Recent */}
-        <PackTab icon={IconClock} active={activePack === 'recent'} onPress={() => setActivePack('recent')} colors={colors} />
-        {/* Favorites */}
-        <PackTab icon={IconStar} active={activePack === 'favorites'} onPress={() => setActivePack('favorites')} colors={colors} badge={favorites.length || null} />
-        {/* My stickers */}
-        <PackTab icon={IconPalette} active={activePack === 'mine'} onPress={() => setActivePack('mine')} colors={colors} badge={(mineFull.length || mine.length) || null} />
-        {/* Divider */}
-        <View style={{ width: 1, height: 20, backgroundColor: colors.border, marginHorizontal: 4 }} />
-        {/* Emoji packs */}
-        {STICKER_PACKS.map(pack => (
-          <PackTab key={pack.id} emoji={pack.thumb} active={activePack === pack.id} onPress={() => setActivePack(pack.id)} colors={colors} />
-        ))}
-        {/* Divider */}
-        <View style={{ width: 1, height: 20, backgroundColor: colors.border, marginHorizontal: 4 }} />
-        {/* Animated packs */}
-        {ANIMATED_PACKS.map(pack => (
-          <PackTab key={pack.id} emoji={pack.thumb} active={activePack === pack.id} onPress={() => setActivePack(pack.id)} colors={colors} />
-        ))}
-        {/* Installed marketplace packs (Telegram Premium-style store).
-            Render each as a pill tab with the pack's cover thumb. */}
-        {installedMarketPacks.length > 0 && (
-          <View style={{ width: 1, height: 20, backgroundColor: colors.border, marginHorizontal: 4 }} />
-        )}
-        {installedMarketPacks.map((pack) => {
-          const tabKey = `mkt-${pack.id}`;
-          const cover = (() => {
-            const u = pack.cover_url;
-            if (!u) return null;
-            if (/^https?:\/\//.test(u)) return u;
-            if (u.startsWith('/data/')) {
-              // [2026-10-08 sticker-maker] /data/* de figurinha só no US (edge devolve index.html)
-              try { return api.getMediaUrl(u); } catch { return 'https://chatyy.com.br' + u; }
-            }
-            return `https://media.chatyy.com.br/${u.replace(/^\/+/, '')}`;
-          })();
-          return (
-            <TouchableOpacity
-              key={tabKey}
-              onPress={() => setActivePack(tabKey)}
-              style={{
-                paddingHorizontal: 8, paddingVertical: 6,
-                borderBottomWidth: activePack === tabKey ? 2.5 : 0,
-                borderBottomColor: colors.primary,
-                backgroundColor: activePack === tabKey ? (colors.primary + '08') : 'transparent',
-                borderRadius: activePack === tabKey ? 8 : 0,
-                borderBottomLeftRadius: 0,
-                borderBottomRightRadius: 0,
-              }}
-              activeOpacity={0.6}
-            >
-              {cover ? (
-                <CachedImage source={{ uri: stkCache.stickerDisplayUri(cover) || cover }} style={{ width: 24, height: 24, borderRadius: 4 }} resizeMode="contain" placeholder={STICKER_CLEAR_PLACEHOLDER} showSpinner={false} />
-              ) : (
-                pack.animated ? <IconFilm size={20} color={colors.textSecondary} /> : <IconPackage size={20} color={colors.textSecondary} />
-              )}
-            </TouchableOpacity>
-          );
-        })}
-        {/* [2026-10-13 sticker-one-create] Loja de pacotes — antes um "+" que o
-            usuário confundia com "Criar". Agora ícone de grade + rótulo. */}
-        <TouchableOpacity
-          onPress={() => router.push('/stickers/store')}
-          style={{
-            flexDirection: 'row', gap: 5,
-            paddingHorizontal: 10, height: 32, marginLeft: 4, marginRight: 6,
-            backgroundColor: colors.text + '10',
-            borderRadius: 16, alignItems: 'center', justifyContent: 'center',
-          }}
-          activeOpacity={0.6}
-          accessibilityRole="button"
-          accessibilityLabel={_tr(t, 'stickerPicker.storeA11y', 'Adicionar pacotes de figurinhas da loja')}
-          hitSlop={{ top: 6, bottom: 6 }}
-        >
-          <IconGrid size={15} color={colors.text} />
-          <Text style={{ fontSize: 12, fontWeight: '600', color: colors.text }} numberOfLines={1}>
-            {_tr(t, 'stickerPicker.store', 'Loja')}
-          </Text>
-        </TouchableOpacity>
-      </ScrollView>
-
-      {/* [2026-10-13 sticker-one-create] FAB "+" preto removido — duplicava o
-          tile "Criar figurinha" (mesma folha Galeria/Câmera/Vídeo). */}
-
-      {/* Long-press preview modal — large render of the sticker plus an
-          "Adicionar aos favoritos" affordance. Tapping the dimmed backdrop or
-          the close button dismisses. */}
-      <Modal
-        visible={!!previewItem}
-        transparent
-        animationType="fade"
-        onRequestClose={closeStickerPreview}
-      >
-        <Pressable
-          onPress={closeStickerPreview}
-          style={{
-            flex: 1, backgroundColor: 'rgba(0,0,0,0.55)',
-            alignItems: 'center', justifyContent: 'center', padding: 24,
-          }}
-        >
-          <Animated.View
-            style={{
-              width: 240, padding: 20, borderRadius: 24,
-              backgroundColor: colors.surface,
-              alignItems: 'center', justifyContent: 'center', gap: 14,
-              transform: [{ scale: previewScale }],
-              shadowColor: '#000', shadowOpacity: 0.3,
-              shadowRadius: 20, shadowOffset: { width: 0, height: 8 },
-              elevation: 12,
-            }}
-          >
-            {previewItem && (
-              isImg(previewItem) ? (
-                <CachedImage
-                  source={{ uri: resolveStickerUri(previewItem) }}
-                  style={{ width: 180, height: 180 }}
-                  resizeMode="contain"
-                />
-              ) : (
-                <Text style={{ fontSize: 130 }}>{previewItem}</Text>
-              )
-            )}
-            <TouchableOpacity
-              onPress={() => {
-                if (previewItem != null) toggleFavorite(previewItem);
-              }}
-              activeOpacity={0.85}
-              style={{
-                flexDirection: 'row', alignItems: 'center', gap: 6,
-                paddingHorizontal: 14, paddingVertical: 9,
-                borderRadius: 999,
-                // [2026-10-21] tinta do tema: '#111111' fixo sumia no cartão escuro (estado favoritado).
-                backgroundColor: previewItem != null && isFav(previewItem)
-                  ? 'transparent'
-                  : colors.text,
-                borderWidth: previewItem != null && isFav(previewItem) ? 1.5 : 0,
-                borderColor: colors.text,
-              }}
-            >
-              <IconHeart
-                size={14}
-                color={previewItem != null && isFav(previewItem) ? colors.text : colors.background}
-              />
-              <Text style={{
-                fontSize: 12, fontWeight: '800',
-                color: previewItem != null && isFav(previewItem) ? colors.text : colors.background,
-              }}>
-                {previewItem != null && isFav(previewItem)
-                  ? _tr(t, 'stickerMaker.unfavorite', 'Remover dos favoritos')
-                  : _tr(t, 'stickerMaker.favorite', 'Adicionar aos favoritos')}
-              </Text>
-            </TouchableOpacity>
-          </Animated.View>
-        </Pressable>
-      </Modal>
-
+      ) : null}
     </View>
   );
 }
 
-function PackTab({ emoji, icon: Icon, active, onPress, colors, badge }) {
+function PackTab({ sec, active, onPress, colors }) {
+  const Icon = sec.icon;
   return (
     <TouchableOpacity
       onPress={onPress}
       style={{
-        paddingHorizontal: 10, paddingVertical: 8,
-        borderBottomWidth: active ? 2.5 : 0,
-        borderBottomColor: colors.primary,
-        backgroundColor: active ? (colors.primary + '08') : 'transparent',
-        borderRadius: active ? 8 : 0,
-        borderBottomLeftRadius: 0,
-        borderBottomRightRadius: 0,
-        position: 'relative',
+        width: TAB_W, height: 40, alignItems: 'center', justifyContent: 'center',
+        borderRadius: 10, backgroundColor: active ? (colors.text + '14') : 'transparent',
       }}
       activeOpacity={0.6}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: !!active }}
+      accessibilityLabel={sec.title}
     >
-      {/* [2026-10-10] Abas fixas (recentes/favoritas/minhas) = ícone SVG, não emoji. */}
+      {/* [2026-10-10] Abas fixas = ícone SVG, nunca emoji; pacotes = capa. */}
       {Icon
-        ? <View style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center' }}><Icon size={21} color={active ? colors.text : colors.textSecondary} /></View>
-        : <Text style={{ fontSize: 20 }}>{emoji}</Text>}
-      {badge > 0 && (
-        <View style={{
-          position: 'absolute', top: 2, right: 2,
-          minWidth: 14, height: 14, borderRadius: 7,
-          backgroundColor: colors.text,
-          alignItems: 'center', justifyContent: 'center',
-        }}>
-          <Text style={{ fontSize: 8, color: colors.background, fontWeight: '800' }}>{badge > 9 ? '9+' : badge}</Text>
-        </View>
-      )}
+        ? <Icon size={21} color={active ? colors.text : colors.textSecondary} />
+        : sec.cover
+          ? <CachedImage source={{ uri: stkCache.stickerDisplayUri(sec.cover) || sec.cover }} style={{ width: 26, height: 26, borderRadius: 4, opacity: active ? 1 : 0.8 }} resizeMode="contain" placeholder={STICKER_CLEAR_PLACEHOLDER} showSpinner={false} />
+          : sec.animated ? <IconFilm size={20} color={colors.textSecondary} /> : <IconPackage size={20} color={colors.textSecondary} />}
     </TouchableOpacity>
   );
 }
