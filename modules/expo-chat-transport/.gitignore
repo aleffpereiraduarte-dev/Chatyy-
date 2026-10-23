@@ -1,0 +1,3 @@
+# [quic-proto] libchatyy_net.so (native/chatyy-net/build-android.sh --install). Nunca commitar;
+# o android-build-local.yml (chatyy_net=true) libera só no runner.
+android/src/main/jniLibs/

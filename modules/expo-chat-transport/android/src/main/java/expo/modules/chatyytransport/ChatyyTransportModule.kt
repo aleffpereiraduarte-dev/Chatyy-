@@ -76,6 +76,16 @@ class ChatyyTransportModule : Module() {
 
     Function("version") { ChatTransport.VERSION }
 
+    // ─── [2026-10-23 quic-proto] fio QUIC+Noise (protótipo ESCURO, ver QuicWire.kt) ─────
+    /** Flag LOCAL (padrão false). Ligar não basta: o servidor também precisa mandar cfg.quic. */
+    Function("quicProtoSet") { enabled: Boolean ->
+      val ctx = appContext.reactContext?.applicationContext ?: return@Function false
+      QuicWire.setLocalEnabled(ctx, enabled)
+      true
+    }
+    /** {lib, libVersion, enabled, clientPub, lastWhy, denied, udpBlocked} — sem chave privada. */
+    Function("quicProtoInfo") { QuicWire.info(appContext.reactContext?.applicationContext) }
+
     /** Lança se a config for inválida (URL fora de *.chatyy.com.br etc.) → JS usa o WebSocket JS. */
     Function("open") { sid: String, config: Map<String, Any?> ->
       ChatTransport.open(sid, config)

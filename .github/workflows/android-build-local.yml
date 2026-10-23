@@ -43,6 +43,17 @@ on:
         options:
           - 'false'
           - 'true'
+      # [2026-10-23 quic-proto] fio QUIC+Noise (native/chatyy-net, Rust quinn+snow, JNI cru) →
+      # modules/expo-chat-transport/android/src/main/jniLibs. ESCURO: sem a flag local + cfg do
+      # servidor o app usa WSS. Compila da fonte (Cargo.lock --locked). Só build de teste.
+      chatyy_net:
+        description: 'QUIC+Noise: incluir libchatyy_net.so? Só teste, submit=false.'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
   push:
     paths:
       - '.github/triggers/mobile-build.txt'
@@ -232,6 +243,24 @@ jobs:
           ls modules/expo-chatyy-crypto/android/src/main/jniLibs/*/libchatyy_crypto.so
           test -s modules/expo-chatyy-crypto/android/src/main/java/com/chatyy/crypto/core/chatyy_crypto.kt
 
+      - name: QUIC+Noise — libchatyy_net.so → modules/expo-chat-transport (só com chatyy_net=true)
+        # [2026-10-23 quic-proto] OFF por padrão. Compila native/chatyy-net (testes do host +
+        # 3 ABIs, 16 KB, ≤ 3 MB/ABI) e libera SÓ neste runner a linha do .gitignore do módulo
+        # (o eas-cli copia a árvore filtrada pelo .gitignore — ver android752). Desfeito depois do build.
+        if: ${{ inputs.chatyy_net == 'true' }}
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/chatyy-net-target
+        run: |
+          if [ "${{ inputs.submit }}" = "true" ]; then
+            echo "::error::chatyy_net=true é só build de TESTE (submit=false)"; exit 1
+          fi
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)}}"
+          bash native/chatyy-net/build-android.sh --test --install modules/expo-chat-transport
+          sed -i.bak -e '\#^android/src/main/jniLibs/$#d' modules/expo-chat-transport/.gitignore
+          rm -f modules/expo-chat-transport/.gitignore.bak
+          ls -la modules/expo-chat-transport/android/src/main/jniLibs/*/libchatyy_net.so
+          cat native/chatyy-net/dist/android/size-report.txt >> "$GITHUB_STEP_SUMMARY" || true
+
       - name: Build Android .aab locally
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -277,6 +306,20 @@ jobs:
           git status --short | head -20
           if [ -f build.aab ]; then
             unzip -l build.aab | grep -E 'libchatyy_e2ee\.so|libjnidispatch\.so' || { echo "::error::AAB sem libchatyy_e2ee.so/JNA — o módulo não entrou"; exit 1; }
+          fi
+
+      - name: QUIC+Noise — confere a .so no AAB e desfaz o .gitignore (só com chatyy_net=true)
+        if: ${{ always() && inputs.chatyy_net == 'true' }}
+        run: |
+          git checkout -- modules/expo-chat-transport/.gitignore 2>/dev/null || true
+          git reset -q -- modules/expo-chat-transport/android/src/main/jniLibs 2>/dev/null || true
+          if [ -f build.aab ]; then
+            L=$(unzip -l build.aab); miss=""
+            for abi in arm64-v8a armeabi-v7a x86_64; do
+              echo "$L" | grep -q "base/lib/$abi/libchatyy_net.so" || miss="$miss $abi"
+            done
+            if [ -n "$miss" ]; then echo "::error::AAB SEM libchatyy_net.so:$miss"; exit 1; fi
+            echo "$L" | grep libchatyy_net.so
           fi
 
       - name: E2EE v5 — confere o núcleo no AAB e desfaz o .gitignore (só com chatyy_crypto=true)

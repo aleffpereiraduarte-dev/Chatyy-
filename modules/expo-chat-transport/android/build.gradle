@@ -11,6 +11,14 @@ android {
   defaultConfig {
     minSdkVersion safeExtGet("minSdkVersion", 24)
     targetSdkVersion safeExtGet("targetSdkVersion", 35)
+    // [quic-proto] R8 do app: nomes dos métodos JNI de ChatyyNetJni (libchatyy_net.so).
+    consumerProguardFiles 'consumer-rules.pro'
+  }
+
+  // [quic-proto] libchatyy_net.so (native/chatyy-net) é OPCIONAL: só existe em src/main/jniLibs
+  // quando o build roda com chatyy_net=true (gitignored). Sem ela o QuicWire cai no WSS.
+  packagingOptions {
+    doNotStrip '**/libchatyy_net.so' // já vem stripped e alinhada a 16 KB
   }
 
   compileOptions {

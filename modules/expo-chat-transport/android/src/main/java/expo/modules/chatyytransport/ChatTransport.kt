@@ -321,6 +321,9 @@ internal object ChatTransport {
       outboxMax = num(cfg["outboxMax"], 500L, 10L, 2000L).toInt(),
       account = ((cfg["account"] as? String) ?: "").trim().lowercase(),
       storeIngest = cfg["storeIngest"] == true,
+      // [quic-proto] cfg.quic = {transport:{quic,noise,noise_test}, region:{q,qp,nk}, raceMs} do client-lb
+      // (só p/ contas da allowlist). Ausente/false = WSS de sempre. Ver QuicWire.kt.
+      quic = (cfg["quic"] as? Map<*, *>)?.entries?.associate { (k, v) -> k.toString() to v },
     )
     post {
       PrewarmDns.enabled = c.dnsPrewarm
@@ -480,6 +483,8 @@ internal data class SessionConfig(
   val dnsPrewarm: Boolean = false,
   /** [v6] 1ª tentativa com prazo curto quando o último handshake foi rápido. */
   val fastFirst: Boolean = false,
+  /** [quic-proto] anúncio do servidor p/ esta conta/região (QuicWire.target). null = só WSS. */
+  val quic: Map<String, Any?>? = null,
 )
 
 /** Uma sessão LÓGICA (= um `new WebSocket()` do JS). Só tocada na thread do transporte. */
@@ -487,6 +492,8 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   companion object {
     private const val STABLE_MS = 10_000L
     private const val HTTP_REJECT_STOP = 4
+    /** [quic-proto] rede caiu com o fio QUIC autenticado: espera a próxima p/ MIGRAR em vez de derrubar. */
+    private const val QUIC_HOLD_MS = 3_000L
   }
 
   private enum class Phys { IDLE, CONNECTING, OPEN, AUTHED }
@@ -542,6 +549,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   private var resumeBgMs = 0L
   private var resumeGrace = false
   private var connectFast = false
+  private var quicHoldTask: ScheduledFuture<*>? = null
 
   /** [v6] Prazo CURTO da 1ª tentativa (ver iOS): último handshake do processo na
    *  MESMA rede < 1,5 s e RTT < 400 ms, sem timeout seguido → max(4 s, 3×hs+1,5 s). */
@@ -636,7 +644,9 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     } catch (t: Throwable) {
       fail("bad url: " + (t.message ?: "")); return
     }
-    ws = ChatTransport.client.newWebSocket(req, Listener(this, g))
+    // [quic-proto] fio QUIC+Noise (corrida com WSS) só se o portão deixar; senão o WSS de sempre.
+    ws = QuicWire.maybeRace(req, url, cfg.quic, cfg.account, authFrame, Listener(this, g))
+      ?: ChatTransport.client.newWebSocket(req, Listener(this, g))
     connectTimeoutTask = ChatTransport.schedule(effConnectTimeoutMs()) {
       if (g == gen && phys == Phys.CONNECTING) {
         ChatTransport.bump("connectTimeouts")
@@ -825,6 +835,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     emitState("authed", mapOf(
       "url" to curUrl, "reconnectMs" to since, "regionalBlocked" to regionalBlocked,
       "hsMs" to hsMs, "connectMs" to lastConnectMs, "authMs" to authMs, "attempt" to attempt,
+      "wire" to wireName(),
     ))
     // [fase 4] socket novo autenticado → fila nativa tenta já (WS)
     if (authedAccount != null) NativeOutbox.peek()?.kick("ws_authed")
@@ -839,6 +850,14 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     lastDropWhy = cls
     if (resumePending) finishResume(false, -1L, "probe_drop_$cls")
     teardownSocket(null)
+    // [quic-proto] fio QUIC recusado (go_ws/4003/4004) ou caiu antes do auth: NÃO é culpa da
+    // regional → reconecta JÁ (o portão do QuicWire manda para o WSS desta mesma região).
+    if (reason.contains(QuicWire.FALLBACK)) {
+      ChatTransport.bump("quicFallbacks")
+      if (was == Phys.AUTHED && lostAt == 0L) lostAt = now()
+      scheduleReconnect(reason, code, was == Phys.AUTHED, delayOverride = 0L)
+      return
+    }
     if (was == Phys.CONNECTING || was == Phys.OPEN) noteFailedBeforeAuth(url)
     // [v6] falhou antes do open: endereço pré-resolvido desse host não é mais confiável.
     if (was == Phys.CONNECTING) PrewarmDns.invalidate(try { URI(url ?: "").host } catch (_: Throwable) { null })
@@ -893,6 +912,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     ws = null
     phys = Phys.IDLE
     stopHeartbeat()
+    cancel(quicHoldTask); quicHoldTask = null
     cancel(stableTask); stableTask = null
     cancel(connectTimeoutTask); connectTimeoutTask = null
     cancel(authWatchdogTask); authWatchdogTask = null
@@ -1122,6 +1142,14 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
 
   fun onNetwork(kind: String) {
     if (closed) return
+    // [quic-proto] fio QUIC autenticado: troca o socket UDP para a rede nova (migração QUIC) e
+    // sonda com 1 ping — sem reconectar, sem novo auth. Sonda falhou → reconecta como sempre.
+    if (phys == Phys.AUTHED && (ws as? QuicRaceSocket)?.migrate(ChatTransport.currentNetwork) == true) {
+      cancel(quicHoldTask); quicHoldTask = null
+      ChatTransport.bump("quicMigrateTries")
+      probe(if (lastRttMs > 0) max(2500L, lastRttMs * 3 + 1000) else 2500L, "quic_migrate")
+      return
+    }
     if (kind == "net_up") {
       if (phys == Phys.AUTHED) { probe(2000, kind); return }
       if (phys == Phys.IDLE) {
@@ -1142,6 +1170,23 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   }
 
   fun onNetDown() {
+    if (closed) return
+    // [quic-proto] QUIC autenticado: segura o fio por QUIC_HOLD_MS esperando a próxima rede (migra).
+    if (phys == Phys.AUTHED && (ws as? QuicRaceSocket)?.isQuic() == true) {
+      if (quicHoldTask == null) {
+        ChatTransport.bump("quicNetDownHolds")
+        val g = gen
+        quicHoldTask = ChatTransport.schedule(QUIC_HOLD_MS) {
+          quicHoldTask = null
+          if (g == gen && !ChatTransport.netUp) netDownNow()
+        }
+      }
+      return
+    }
+    netDownNow()
+  }
+
+  private fun netDownNow() {
     if (closed) return
     val wasAuthed = phys == Phys.AUTHED
     if (wasAuthed && lostAt == 0L) lostAt = now()
@@ -1344,6 +1389,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     stopHeartbeat()
     cancel(connectTimeoutTask); connectTimeoutTask = null
     cancel(authWatchdogTask); authWatchdogTask = null
+    cancel(quicHoldTask); quicHoldTask = null
   }
 
   fun snapshot(): Map<String, Any?> = mapOf(
@@ -1358,7 +1404,10 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     "pongDeadlineMs" to pongDeadlineMs.toDouble(),
     "authRejected" to authRejected,
     "lastDropWhy" to lastDropWhy,
+    "wire" to wireName(),
   )
+
+  private fun wireName(): String = (ws as? QuicRaceSocket)?.wire() ?: if (ws != null) "wss" else "-"
 
   // ─── endpoint regional ───────────────────────────────────────────────────
 

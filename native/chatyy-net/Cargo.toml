@@ -1,0 +1,36 @@
+[package]
+name = "chatyy-net"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+rust-version = "1.85"
+description = "Chatyy F-Q2/F-N1 — fio QUIC (quinn, ALPN chatyy/1) + Noise IK (snow) do transporte nativo Android. Protótipo ESCURO. Plano: /root/quic-noise-2026-10-23/PLANO.md"
+
+[lib]
+name = "chatyy_net"
+# cdylib → Android libchatyy_net.so (JNI cru, sem UniFFI/JNA); lib → testes/exemplos no host.
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+webpki-roots = "1"
+snow = { version = "0.9", default-features = false, features = ["default-resolver"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
+jni = { version = "0.21", default-features = false }
+libc = "0.2"
+getrandom = "0.2"
+
+[dev-dependencies]
+rcgen = "0.13"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = "symbols"
+# unwind: o catch_unwind das funções JNI vira erro (handle 0 / false) em vez de matar o app.
+panic = "unwind"
+
+[workspace]
