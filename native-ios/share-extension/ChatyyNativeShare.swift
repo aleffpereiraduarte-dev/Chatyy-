@@ -163,6 +163,8 @@ enum ChatyyShareL10n {
   static var group: String { t("Grupo", "Group", "Grupo") }
   static var caption: String { t("Adicionar legenda…", "Add a caption…", "Añadir un comentario…") }
   static var message: String { t("Mensagem", "Message", "Mensaje") }
+  static var addMessage: String { t("Adicionar mensagem…", "Add a message…", "Añadir un mensaje…") }
+  static var link: String { t("Link", "Link", "Enlace", ptPT: "Ligação") }
   static var to: String { t("Para", "To", "Para") }
   static var send: String { t("Enviar", "Send", "Enviar") }
   static var sending: String { t("Enviando…", "Sending…", "Enviando…", ptPT: "A enviar…") }
@@ -1364,8 +1366,14 @@ final class ChatyyShareComposeController: UIViewController, UITextViewDelegate, 
   var onBack: (() -> Void)?
   var onCancel: (() -> Void)?
   var onSend: ((String) -> Void)?
+  /// [2026-10-23 share-link] token/base p/ a prévia do link (chat_link_preview).
+  var session: ChatyyShareSession?
 
   private let bar = ChatyyShareTopBar()
+  // texto/link (sem mídia): conteúdo rolável + cartão do link + campo pequeno
+  fileprivate let textScroll = UIScrollView()
+  fileprivate let linkCard = ChatyyShareLinkCard()
+  fileprivate var linkURL: URL?
   private let stage = UIScrollView()
   private let pageLabel = ChatyySharePaddedLabel()
   private let bottom = UIView()
@@ -1379,6 +1387,7 @@ final class ChatyyShareComposeController: UIViewController, UITextViewDelegate, 
   override func viewDidLoad() {
     super.viewDidLoad()
     view.backgroundColor = ChatyyShareTheme.bg
+    if mediaItems.isEmpty { setupTextMode(); return }   // [2026-10-23 share-link]
 
     bar.translatesAutoresizingMaskIntoConstraints = false
     if showsBack {
@@ -1442,12 +1451,7 @@ final class ChatyyShareComposeController: UIViewController, UITextViewDelegate, 
 
     let th = textView.heightAnchor.constraint(equalToConstant: 38)
     textHeight = th
-    let stageHeightRule: NSLayoutConstraint
-    if mediaItems.isEmpty {
-      stageHeightRule = stage.heightAnchor.constraint(equalToConstant: 0)
-    } else {
-      stageHeightRule = stage.bottomAnchor.constraint(equalTo: bottom.topAnchor)
-    }
+    let stageHeightRule = stage.bottomAnchor.constraint(equalTo: bottom.topAnchor)
     NSLayoutConstraint.activate([
       bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
       bar.leadingAnchor.constraint(equalTo: view.leadingAnchor), bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -1473,13 +1477,6 @@ final class ChatyyShareComposeController: UIViewController, UITextViewDelegate, 
       sendButton.bottomAnchor.constraint(equalTo: inputBox.bottomAnchor),
       sendButton.widthAnchor.constraint(equalToConstant: 40), sendButton.heightAnchor.constraint(equalToConstant: 40),
     ])
-    if mediaItems.isEmpty {
-      // texto/link: o campo é o editor principal
-      textView.font = ChatyyShareTheme.font(17)
-      th.isActive = false
-      textView.heightAnchor.constraint(greaterThanOrEqualToConstant: 38).isActive = true
-      bottom.topAnchor.constraint(equalTo: bar.bottomAnchor).isActive = true
-    }
     buildPages()
     updateTextHeight()
   }
@@ -1573,6 +1570,7 @@ final class ChatyyShareComposeController: UIViewController, UITextViewDelegate, 
 
   func textViewDidChange(_ textView: UITextView) {
     placeholder.isHidden = !textView.text.isEmpty
+    if mediaItems.isEmpty { refreshTextSend(); return }
     updateTextHeight()
   }
 
@@ -1583,7 +1581,7 @@ final class ChatyyShareComposeController: UIViewController, UITextViewDelegate, 
     textView.isScrollEnabled = fit > 120
   }
 
-  func enableSend() { sendButton.isEnabled = true }
+  func enableSend() { sendButton.isEnabled = true; bar.right.isEnabled = true }
 
   @objc private func tapBack() { onBack?() }
   @objc private func tapCancel() { onCancel?() }
@@ -1596,10 +1594,349 @@ final class ChatyyShareComposeController: UIViewController, UITextViewDelegate, 
   }
 }
 
-// MARK: - Overlay "Enviando…"
+// MARK: - Tela 2 (texto/link) — [2026-10-23 share-link]
+// Antes (QA 20261023-173744): o link ia cru para um UITextView com fundo cinza
+// esticado até o fim da tela. Agora, nível iMessage/WhatsApp:
+//   Cancelar/voltar · "Para" + avatar + nome · Enviar (no topo)
+//   cartão de prévia do link (og:image, título, descrição, domínio) — mesma
+//   chat_link_preview do app (cache 24 h + anti-SSRF no servidor); sem prévia
+//   = chip com ícone de link + domínio
+//   campo pequeno "Adicionar mensagem…" (opcional). Texto sem link: editor limpo.
+// Envio: comentário + "\n" + url (ou só a url) — mesma mensagem de texto de antes.
+
+extension ChatyyShareComposeController {
+  fileprivate func setupTextMode() {
+    // 1º link: item .link (Safari etc.) ou o 1º URL detectado no texto
+    let joined = initialText
+    var url: URL? = items.first(where: { $0.kind == .link }).flatMap { URL(string: $0.text) }
+    var urlString = url?.absoluteString ?? ""
+    if url == nil, let det = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+      let ns = joined as NSString
+      if let m = det.firstMatch(in: joined, options: [], range: NSRange(location: 0, length: ns.length)),
+         let u = m.url, let sch = u.scheme?.lowercased(), sch == "http" || sch == "https" {
+        url = u
+        urlString = ns.substring(with: m.range)
+      }
+    }
+    linkURL = url
+    var comment = joined
+    if url != nil {
+      for s in [urlString, url?.absoluteString ?? ""] where !s.isEmpty { comment = comment.replacingOccurrences(of: s, with: "") }
+      comment = comment.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // topo: Cancelar/voltar · Para + avatar · Enviar
+    bar.translatesAutoresizingMaskIntoConstraints = false
+    if showsBack {
+      bar.left.setImage(UIImage(systemName: "chevron.left", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)), for: .normal)
+      bar.left.accessibilityLabel = ChatyyShareL10n.sendTo
+      bar.left.addTarget(self, action: #selector(tapBackText), for: .touchUpInside)
+    } else {
+      bar.left.setTitle(ChatyyShareL10n.cancel, for: .normal)
+      bar.left.addTarget(self, action: #selector(tapCancelText), for: .touchUpInside)
+    }
+    bar.right.setTitle(ChatyyShareL10n.send, for: .normal)
+    bar.right.setTitleColor(ChatyyShareTheme.ink, for: .normal)
+    bar.right.setTitleColor(ChatyyShareTheme.secondary, for: .disabled)
+    bar.right.addTarget(self, action: #selector(tapSendText), for: .touchUpInside)
+    bar.titleLabel.isHidden = true
+    let who = UIStackView()
+    who.axis = .horizontal
+    who.spacing = 8
+    who.alignment = .center
+    who.translatesAutoresizingMaskIntoConstraints = false
+    if let first = recipients.first {
+      let av = ChatyyShareAvatarView()
+      av.translatesAutoresizingMaskIntoConstraints = false
+      av.configure(first)
+      av.widthAnchor.constraint(equalToConstant: 28).isActive = true
+      av.heightAnchor.constraint(equalToConstant: 28).isActive = true
+      who.addArrangedSubview(av)
+    }
+    let name = UILabel()
+    let names = recipients.map { $0.title }.joined(separator: ", ")
+    let att = NSMutableAttributedString(string: ChatyyShareL10n.to + " ", attributes: [
+      .font: ChatyyShareTheme.font(15), .foregroundColor: ChatyyShareTheme.secondary])
+    att.append(NSAttributedString(string: names, attributes: [
+      .font: ChatyyShareTheme.font(16, .semibold), .foregroundColor: ChatyyShareTheme.ink]))
+    name.attributedText = att
+    name.lineBreakMode = .byTruncatingTail
+    name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    who.addArrangedSubview(name)
+    who.isAccessibilityElement = true
+    who.accessibilityLabel = ChatyyShareL10n.to + " " + names
+    bar.addSubview(who)
+    view.addSubview(bar)
+
+    textScroll.translatesAutoresizingMaskIntoConstraints = false
+    textScroll.alwaysBounceVertical = true
+    textScroll.keyboardDismissMode = .interactive
+    textScroll.backgroundColor = ChatyyShareTheme.bg
+    view.addSubview(textScroll)
+    let col = UIStackView()
+    col.axis = .vertical
+    col.spacing = 12
+    col.translatesAutoresizingMaskIntoConstraints = false
+    textScroll.addSubview(col)
+
+    if let u = url {
+      linkCard.translatesAutoresizingMaskIntoConstraints = false
+      linkCard.configure(url: u)
+      col.addArrangedSubview(linkCard)
+    }
+
+    // campo: pequeno (comentário) com link; editor limpo sem link
+    inputBox.translatesAutoresizingMaskIntoConstraints = false
+    inputBox.backgroundColor = url != nil ? ChatyyShareTheme.fill : .clear
+    inputBox.layer.cornerRadius = 14
+    inputBox.layer.cornerCurve = .continuous
+    textView.translatesAutoresizingMaskIntoConstraints = false
+    textView.backgroundColor = .clear
+    textView.font = ChatyyShareTheme.font(url != nil ? 16 : 17)
+    textView.textColor = ChatyyShareTheme.ink
+    textView.tintColor = ChatyyShareTheme.ink
+    textView.delegate = self
+    textView.isScrollEnabled = false
+    textView.textContainerInset = UIEdgeInsets(top: 10, left: 8, bottom: 10, right: 8)
+    textView.text = url != nil ? comment : joined
+    inputBox.addSubview(textView)
+    placeholder.translatesAutoresizingMaskIntoConstraints = false
+    placeholder.text = url != nil ? ChatyyShareL10n.addMessage : ChatyyShareL10n.message
+    placeholder.font = textView.font
+    placeholder.textColor = ChatyyShareTheme.secondary
+    placeholder.isHidden = !textView.text.isEmpty
+    inputBox.addSubview(placeholder)
+    col.addArrangedSubview(inputBox)
+    let minH = textView.heightAnchor.constraint(greaterThanOrEqualToConstant: url != nil ? 44 : 120)
+
+    NSLayoutConstraint.activate([
+      bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+      bar.leadingAnchor.constraint(equalTo: view.leadingAnchor), bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      who.centerXAnchor.constraint(equalTo: bar.centerXAnchor), who.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+      who.leadingAnchor.constraint(greaterThanOrEqualTo: bar.left.trailingAnchor, constant: 8),
+      who.trailingAnchor.constraint(lessThanOrEqualTo: bar.right.leadingAnchor, constant: -8),
+      textScroll.topAnchor.constraint(equalTo: bar.bottomAnchor),
+      textScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor), textScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      textScroll.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+      col.topAnchor.constraint(equalTo: textScroll.contentLayoutGuide.topAnchor, constant: 16),
+      col.bottomAnchor.constraint(equalTo: textScroll.contentLayoutGuide.bottomAnchor, constant: -16),
+      col.leadingAnchor.constraint(equalTo: textScroll.frameLayoutGuide.leadingAnchor, constant: 16),
+      col.trailingAnchor.constraint(equalTo: textScroll.frameLayoutGuide.trailingAnchor, constant: -16),
+      textView.leadingAnchor.constraint(equalTo: inputBox.leadingAnchor, constant: 4),
+      textView.trailingAnchor.constraint(equalTo: inputBox.trailingAnchor, constant: -4),
+      textView.topAnchor.constraint(equalTo: inputBox.topAnchor),
+      textView.bottomAnchor.constraint(equalTo: inputBox.bottomAnchor),
+      minH,
+      placeholder.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: 13),
+      placeholder.topAnchor.constraint(equalTo: textView.topAnchor, constant: 10),
+    ])
+    refreshTextSend()
+    if let u = url { fetchLinkPreview(u) }
+  }
+
+  fileprivate func refreshTextSend() {
+    let has = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    bar.right.isEnabled = has || linkURL != nil
+  }
+
+  @objc fileprivate func tapBackText() { textView.resignFirstResponder(); onBack?() }
+  @objc fileprivate func tapCancelText() { textView.resignFirstResponder(); onCancel?() }
+  @objc fileprivate func tapSendText() {
+    let comment = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    var out = comment
+    if let u = linkURL { out = comment.isEmpty ? u.absoluteString : comment + "\n" + u.absoluteString }
+    if out.isEmpty { return }
+    bar.right.isEnabled = false
+    textView.resignFirstResponder()
+    onSend?(out)
+  }
+
+  /// chat_link_preview (POST JSON, Bearer) → cartão. Falhou/sem título = fica o chip.
+  fileprivate func fetchLinkPreview(_ url: URL) {
+    guard let s = session, let ep = URL(string: s.base + "/api/email.php?action=chat_link_preview") else { return }
+    var req = URLRequest(url: ep, timeoutInterval: 6)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.setValue("Bearer " + s.token, forHTTPHeaderField: "Authorization")
+    req.setValue("share-extension", forHTTPHeaderField: "X-Chatyy-Client")
+    req.httpBody = try? JSONSerialization.data(withJSONObject: ["url": url.absoluteString])
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.timeoutIntervalForRequest = 6
+    cfg.timeoutIntervalForResource = 10
+    let net = URLSession(configuration: cfg)
+    net.dataTask(with: req) { [weak self] data, _, _ in
+      guard let data = data,
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+            let pv = obj["data"] as? [String: Any] else { net.finishTasksAndInvalidate(); return }
+      let title = (pv["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      let desc = (pv["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      let site = (pv["site_name"] as? String) ?? ""
+      let imgStr = (pv["image"] as? String) ?? ""
+      DispatchQueue.main.async { self?.linkCard.apply(title: title, description: desc, site: site) }
+      guard let iu = URL(string: imgStr), iu.scheme?.lowercased() == "https" else { net.finishTasksAndInvalidate(); return }
+      net.dataTask(with: URLRequest(url: iu, timeoutInterval: 6)) { d, resp, _ in
+        defer { net.finishTasksAndInvalidate() }
+        guard let d = d, d.count > 0, d.count <= 4 * 1024 * 1024,
+              ((resp as? HTTPURLResponse)?.statusCode ?? 200) < 400,
+              let src = CGImageSourceCreateWithData(d as CFData, nil) else { return }
+        let opts: [CFString: Any] = [
+          kCGImageSourceCreateThumbnailFromImageAlways: true,
+          kCGImageSourceCreateThumbnailWithTransform: true,
+          kCGImageSourceThumbnailMaxPixelSize: 900,
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return }
+        let img = UIImage(cgImage: cg)
+        DispatchQueue.main.async { self?.linkCard.apply(image: img) }
+      }.resume()
+    }.resume()
+  }
+}
+
+/// Cartão de prévia de link (claro/escuro, SF Symbols). Começa como chip
+/// (ícone de link + domínio + caminho) e vira cartão quando a prévia chega:
+/// imagem larga (≥ 1,3:1) em faixa no topo; quadrada/pequena como miniatura à esquerda.
+final class ChatyyShareLinkCard: UIView {
+  private let banner = UIImageView()
+  private let thumb = UIImageView()
+  private let thumbGlyph = UIImageView()
+  private let titleLabel = UILabel()
+  private let descLabel = UILabel()
+  private let domainIcon = UIImageView()
+  private let domainLabel = UILabel()
+  private var bannerHeight: NSLayoutConstraint!
+  private var host = ""
+  private var hasTitle = false
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    backgroundColor = ChatyyShareTheme.fill
+    layer.cornerRadius = 14
+    layer.cornerCurve = .continuous
+    layer.borderWidth = 1.0 / UIScreen.main.scale
+    layer.borderColor = ChatyyShareTheme.hairline.cgColor
+    clipsToBounds = true
+    isAccessibilityElement = true
+    accessibilityTraits = .link
+
+    banner.contentMode = .scaleAspectFill
+    banner.clipsToBounds = true
+    banner.isHidden = true
+    banner.translatesAutoresizingMaskIntoConstraints = false
+    thumb.contentMode = .scaleAspectFill
+    thumb.clipsToBounds = true
+    thumb.layer.cornerRadius = 10
+    thumb.layer.cornerCurve = .continuous
+    thumb.backgroundColor = ChatyyShareTheme.hairline
+    thumb.translatesAutoresizingMaskIntoConstraints = false
+    thumbGlyph.image = UIImage(systemName: "link", withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold))
+    thumbGlyph.tintColor = ChatyyShareTheme.ink
+    thumbGlyph.contentMode = .center
+    thumbGlyph.translatesAutoresizingMaskIntoConstraints = false
+    thumb.addSubview(thumbGlyph)
+
+    titleLabel.font = ChatyyShareTheme.font(15, .semibold)
+    titleLabel.textColor = ChatyyShareTheme.ink
+    titleLabel.numberOfLines = 2
+    descLabel.font = ChatyyShareTheme.font(13)
+    descLabel.textColor = ChatyyShareTheme.secondary
+    descLabel.numberOfLines = 2
+    domainIcon.image = UIImage(systemName: "link", withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold))
+    domainIcon.tintColor = ChatyyShareTheme.secondary
+    domainIcon.setContentHuggingPriority(.required, for: .horizontal)
+    domainLabel.font = ChatyyShareTheme.font(12, .medium)
+    domainLabel.textColor = ChatyyShareTheme.secondary
+    domainLabel.lineBreakMode = .byTruncatingMiddle
+    let domainRow = UIStackView(arrangedSubviews: [domainIcon, domainLabel])
+    domainRow.axis = .horizontal
+    domainRow.spacing = 4
+    domainRow.alignment = .center
+    let texts = UIStackView(arrangedSubviews: [titleLabel, descLabel, domainRow])
+    texts.axis = .vertical
+    texts.spacing = 3
+    let row = UIStackView(arrangedSubviews: [thumb, texts])
+    row.axis = .horizontal
+    row.spacing = 12
+    row.alignment = .center
+    row.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(banner)
+    addSubview(row)
+    bannerHeight = banner.heightAnchor.constraint(equalToConstant: 0)
+    NSLayoutConstraint.activate([
+      banner.topAnchor.constraint(equalTo: topAnchor),
+      banner.leadingAnchor.constraint(equalTo: leadingAnchor), banner.trailingAnchor.constraint(equalTo: trailingAnchor),
+      bannerHeight,
+      row.topAnchor.constraint(equalTo: banner.bottomAnchor, constant: 12),
+      row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+      row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+      row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+      thumb.widthAnchor.constraint(equalToConstant: 56), thumb.heightAnchor.constraint(equalToConstant: 56),
+      thumbGlyph.centerXAnchor.constraint(equalTo: thumb.centerXAnchor), thumbGlyph.centerYAnchor.constraint(equalTo: thumb.centerYAnchor),
+    ])
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+    super.traitCollectionDidChange(previousTraitCollection)
+    layer.borderColor = ChatyyShareTheme.hairline.resolvedColor(with: traitCollection).cgColor
+  }
+
+  /// Estado chip (sem prévia): domínio em destaque + caminho.
+  func configure(url: URL) {
+    var h = (url.host ?? url.absoluteString).lowercased()
+    if h.hasPrefix("www.") { h = String(h.dropFirst(4)) }
+    host = h
+    titleLabel.text = h
+    var path = url.path
+    if let q = url.query, !q.isEmpty { path += "?" + q }
+    descLabel.text = (path.isEmpty || path == "/") ? url.absoluteString : path
+    descLabel.numberOfLines = 1
+    descLabel.lineBreakMode = .byTruncatingMiddle
+    domainLabel.text = ChatyyShareL10n.link
+    accessibilityLabel = ChatyyShareL10n.link + ", " + url.absoluteString
+  }
+
+  func apply(title: String, description: String, site: String) {
+    guard !title.isEmpty else { return }   // sem título = continua chip
+    hasTitle = true
+    titleLabel.text = title
+    descLabel.text = description
+    descLabel.isHidden = description.isEmpty
+    descLabel.numberOfLines = 2
+    descLabel.lineBreakMode = .byTruncatingTail
+    domainLabel.text = host.isEmpty ? site : host
+    accessibilityLabel = [title, description, host].filter { !$0.isEmpty }.joined(separator: ", ")
+  }
+
+  func apply(image: UIImage) {
+    guard hasTitle else { return }
+    let w = image.size.width, h = image.size.height
+    guard w > 1, h > 1 else { return }
+    let ratio = w / h
+    if ratio >= 1.3 && w >= 300 {
+      banner.image = image
+      banner.isHidden = false
+      bannerHeight.isActive = false
+      bannerHeight = banner.heightAnchor.constraint(equalTo: banner.widthAnchor, multiplier: min(1 / ratio, 0.6))
+      bannerHeight.isActive = true
+      thumb.isHidden = true
+    } else {
+      thumb.image = image
+      thumbGlyph.isHidden = true
+    }
+    UIView.animate(withDuration: 0.2) { self.superview?.layoutIfNeeded() }
+  }
+}
+
+// MARK: - Overlay "Enviando…" — [2026-10-23 share-link] HUD discreto
+// Antes: véu preto 28 % na tela toda + cartão branco 250 pt (a tela inteira ficava
+// cinza) e a barra de progresso aparecia até em texto/link (didSendBodyData do JSON).
+// Agora: sem véu (só segura os toques), cartão pequeno de material do sistema
+// (claro/escuro), barra só quando há mídia e some no "Enviado".
 
 final class ChatyyShareProgressOverlay: UIView {
-  private let card = UIView()
+  private let shadowWrap = UIView()
+  private let card = UIVisualEffectView(effect: UIBlurEffect(style: .systemThickMaterial))
   private let label = UILabel()
   private let bar = UIProgressView(progressViewStyle: .default)
   private let spinner = UIActivityIndicatorView(style: .medium)
@@ -1607,33 +1944,47 @@ final class ChatyyShareProgressOverlay: UIView {
 
   override init(frame: CGRect) {
     super.init(frame: frame)
-    backgroundColor = UIColor(white: 0, alpha: 0.28)
+    backgroundColor = .clear   // sem escurecer o fundo; a view ainda bloqueia toques
+    shadowWrap.translatesAutoresizingMaskIntoConstraints = false
+    shadowWrap.layer.shadowColor = UIColor.black.cgColor
+    shadowWrap.layer.shadowOpacity = 0.14
+    shadowWrap.layer.shadowRadius = 18
+    shadowWrap.layer.shadowOffset = CGSize(width: 0, height: 6)
+    addSubview(shadowWrap)
     card.translatesAutoresizingMaskIntoConstraints = false
-    card.backgroundColor = ChatyyShareTheme.bg
-    card.layer.cornerRadius = 18
-    addSubview(card)
-    for v in [label, bar, spinner, icon] as [UIView] { v.translatesAutoresizingMaskIntoConstraints = false; card.addSubview(v) }
-    label.font = ChatyyShareTheme.font(15, .semibold)
+    card.layer.cornerRadius = 16
+    card.layer.cornerCurve = .continuous
+    card.clipsToBounds = true
+    shadowWrap.addSubview(card)
+    let box = card.contentView
+    // label + barra numa pilha: barra escondida não deixa buraco no cartão
+    let texts = UIStackView(arrangedSubviews: [label, bar])
+    texts.axis = .vertical
+    texts.spacing = 10
+    for v in [texts, spinner, icon] as [UIView] { v.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(v) }
+    label.font = ChatyyShareTheme.font(14, .semibold)
     label.textColor = ChatyyShareTheme.ink
     label.textAlignment = .center
     label.numberOfLines = 2
     bar.progressTintColor = ChatyyShareTheme.ink
     bar.trackTintColor = ChatyyShareTheme.hairline
+    bar.isHidden = true
     spinner.color = ChatyyShareTheme.ink
     spinner.startAnimating()
     icon.tintColor = ChatyyShareTheme.ink
+    icon.contentMode = .scaleAspectFit
     icon.isHidden = true
     NSLayoutConstraint.activate([
-      card.centerXAnchor.constraint(equalTo: centerXAnchor), card.centerYAnchor.constraint(equalTo: centerYAnchor),
-      card.widthAnchor.constraint(equalToConstant: 250),
-      spinner.topAnchor.constraint(equalTo: card.topAnchor, constant: 20), spinner.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+      shadowWrap.centerXAnchor.constraint(equalTo: centerXAnchor), shadowWrap.centerYAnchor.constraint(equalTo: centerYAnchor),
+      card.leadingAnchor.constraint(equalTo: shadowWrap.leadingAnchor), card.trailingAnchor.constraint(equalTo: shadowWrap.trailingAnchor),
+      card.topAnchor.constraint(equalTo: shadowWrap.topAnchor), card.bottomAnchor.constraint(equalTo: shadowWrap.bottomAnchor),
+      card.widthAnchor.constraint(equalToConstant: 172),
+      spinner.topAnchor.constraint(equalTo: box.topAnchor, constant: 18), spinner.centerXAnchor.constraint(equalTo: box.centerXAnchor),
       icon.centerXAnchor.constraint(equalTo: spinner.centerXAnchor), icon.centerYAnchor.constraint(equalTo: spinner.centerYAnchor),
-      icon.widthAnchor.constraint(equalToConstant: 30), icon.heightAnchor.constraint(equalToConstant: 30),
-      label.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 12),
-      label.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16), label.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
-      bar.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 12),
-      bar.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20), bar.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
-      bar.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+      icon.widthAnchor.constraint(equalToConstant: 28), icon.heightAnchor.constraint(equalToConstant: 28),
+      texts.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 10),
+      texts.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 16), texts.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -16),
+      texts.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -16),
     ])
   }
 
@@ -1647,10 +1998,10 @@ final class ChatyyShareProgressOverlay: UIView {
   func done(_ text: String) {
     spinner.stopAnimating()
     spinner.isHidden = true
-    icon.image = UIImage(systemName: "checkmark.circle.fill")
+    icon.image = UIImage(systemName: "checkmark.circle.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 26, weight: .semibold))
     icon.isHidden = false
     label.text = text
-    bar.setProgress(1, animated: true)
+    bar.isHidden = true
   }
 }
 
@@ -1792,6 +2143,7 @@ final class ShareViewController: ChatyyShareIntentFallbackController {
     c.items = items
     c.recipients = convs
     c.showsBack = composeShowsBack
+    c.session = session
     let texts = items.filter { !$0.isMedia }.map { $0.text }.filter { !$0.isEmpty }
     c.initialText = texts.joined(separator: "\n")
     c.onBack = { [weak self] in
@@ -1831,7 +2183,7 @@ final class ShareViewController: ChatyyShareIntentFallbackController {
     let s = ChatyyShareSender(session: session)
     sender = s
     showOverlay(ChatyyShareL10n.sending, progress: media.isEmpty ? nil : 0)
-    s.onProgress = { [weak self] f in self?.overlay?.set(ChatyyShareL10n.sending, progress: f) }
+    if !media.isEmpty { s.onProgress = { [weak self] f in self?.overlay?.set(ChatyyShareL10n.sending, progress: f) } }
     s.onFinish = { [weak self] ok, fails in self?.sendFinished(ok: ok, fails: fails) }
     guard s.send(jobs: jobs) else {
       sender = nil
