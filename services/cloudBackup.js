@@ -734,7 +734,19 @@ async function _runBackup(opts) {
     _emit({ phase: 'backup', done: ci, total: convs.length, uploaded, uploadedBytes });
     let local = await _localMsgs(cid);
     let src = 'device';
-    if (!local.length && prefs.serverFill !== false) { local = await _serverMsgs(cid); src = 'server'; }
+    // [sgu F2 2026-10-23] conversa sem corpo no servidor (body_store ≥ 2): o servidor só tem esqueleto → nunca
+    // completa pelo servidor, e aparelho sem nada local mantém os blocos do backup anterior (nunca troca por vazio).
+    let _rtConv = false;
+    try { _rtConv = globalThis.__chatyy_rt_backup_guard !== false && require('./rtStore').convBodyStore(cid) >= 2; } catch {}
+    if (!local.length && prefs.serverFill !== false && !_rtConv) { local = await _serverMsgs(cid); src = 'server'; }
+    const _pc = _rtConv && !local.length ? ((st0.convs || {})[cid] || null) : null;
+    if (_pc && Array.isArray(_pc.blocks) && _pc.blocks.length) {
+      const pb = _pc.blocks;
+      for (const b of pb) { allObjs.add(b.o); msgCount += b.n || 0; }
+      manConvs.push({ ...meta, src: 'prev', n: pb.reduce((a, b) => a + (b.n || 0), 0), blocks: pb });
+      nextConvs[cid] = { ..._pc, mk: Array.isArray(_pc.mk) ? _pc.mk : [] };
+      continue;
+    }
     const newest = local.length ? String(local[local.length - 1].id) : '';
     const sig = `${local.length}:${newest}:${local.reduce((a, m) => (m.edited_at && m.edited_at > a ? m.edited_at : a), '')}`;
     const prev = prevConvs[cid];

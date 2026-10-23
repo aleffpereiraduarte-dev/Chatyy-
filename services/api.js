@@ -3014,8 +3014,14 @@ export function purgeOfflineLastKnown() {
 export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
   const _r0 = await _apiCallOuter(action, params, method, opts);
   try { _ingestAvatarFrom(action, _r0); } catch {}
+  // [sgu F2 2026-10-23] leitura de mensagens: esqueleto (corpo fora do PG, body:"local") → envelope do aparelho ou
+  // da fila do roteador (rtStore/rtInbox). Sem esqueleto = só uma varredura. Kill: __chatyy_rt_hydrate=false.
+  if (_RT_READ.has(action) && _r0 && typeof _r0 === 'object') {
+    try { return await require('./rtStore').hydrateResponse(action, params, _r0); } catch {}
+  }
   return _r0;
 }
+const _RT_READ = new Set(['chat_messages', 'chat_load_around', 'chat_messages_by_date', 'chat_sync', 'chat_ws_events', 'chat_list', 'chat_message_get', 'chat_get_message']);
 
 async function _apiCallOuter(action, params = {}, method = 'GET', opts = {}) {
   if (OFFLINE_LAST_KNOWN.has(action)) {

@@ -84,16 +84,18 @@ function _tooOld(m) {
  * @param {number|string} convId conversa do lote (ou null: usa m.conversation_id)
  * @param {object[]} messages linhas gravadas
  */
-export function noteSaved(convId, messages) {
+export function noteSaved(convId, messages, opts) {
   try {
-    if (isWeb || _off() || !Array.isArray(messages) || messages.length === 0) return;
+    // [sgu W1 2026-10-23] web só manda quando gravou no IndexedDB persistente (rtInbox → opts.web)
+    if ((isWeb && !(opts && opts.web)) || _off() || !Array.isArray(messages) || messages.length === 0) return;
     if (_pausedUntil > Date.now()) return;
     let any = false;
     for (const m of messages) {
       if (!m || !_isEnvelope(m) || m.deleted || m.deleted_at) continue;
       const mid = Number(m.id);
       const cid = Number(convId || m.conversation_id);
-      if (!(mid > 0) || !(cid > 0) || _tooOld(m)) continue;
+      // [sgu F1/F2] corpo vindo da fila do roteador (_rt): o persisted libera a inbox → vale em qualquer idade
+      if (!(mid > 0) || !(cid > 0) || (!m._rt && _tooOld(m))) continue;
       let q = _queue.get(cid);
       if (!q) { q = new Set(); _queue.set(cid, q); }
       q.add(mid);

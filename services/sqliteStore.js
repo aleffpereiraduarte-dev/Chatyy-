@@ -419,6 +419,9 @@ export function getSyncStatsSync() {
  */
 export function upsertMessagesSync(convId, messages) {
   if (isWeb || !Array.isArray(messages) || messages.length === 0) return 0;
+  // [sgu F2 2026-10-23] esqueleto (corpo fora do PG) nunca pisa no envelope local (rtStore). Kill: __chatyy_rt_guard=false.
+  try { messages = require('./rtStore').guardRowsSync(convId, messages); } catch {}
+  if (!messages || messages.length === 0) return 0;
   // [2026-10-15 native-store fase 2] escrita dupla (lote coalescido, nunca lança)
   try { require('./nativeChatStore').mirrorMessages(convId, messages); } catch {}
   const db = _getDb();

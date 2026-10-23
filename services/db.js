@@ -883,6 +883,9 @@ export async function dbUpdateConversationLastReadMessageId(conversationId, mess
 // ══════════════════════════════════════
 
 export async function dbSaveMessages(conversationId, messages) {
+  // [sgu F2 2026-10-23] esqueleto do servidor (content null, body:"local") nunca apaga o envelope local; sem cópia
+  // local ele não vira linha (rtStore.guardRowsSync; lote sem esqueleto = mesmo array). Kill: __chatyy_rt_guard=false.
+  if (!isWeb && messages?.length) { try { messages = require('./rtStore').guardRowsSync(conversationId, messages); } catch {} }
   _nsMirror('mirrorMessages', conversationId, messages);
   if (isWeb || !_db || !messages?.length) return;
   // Unified writer (2026-05-19): localDb.saveMessage / saveMessages delegate

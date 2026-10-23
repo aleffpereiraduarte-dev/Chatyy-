@@ -398,6 +398,8 @@ async function _poll() {
         try { w._handleMessage({ type: 'resume_full_sync', reason: 'http_' + (data.reason || 'full_sync'), current_event_id: cur }); } catch {}
         break;
       }
+      // [sgu F2 2026-10-23] esqueleto (corpo fora do PG) → envelope local/roteador antes de despachar (rtStore)
+      try { await require('./rtStore').hydrateResponse('chat_ws_events', {}, data); } catch {}
       const evs = Array.isArray(data.events) ? data.events : [];
       for (let i = 0; i < evs.length; i++) {
         const e = evs[i];

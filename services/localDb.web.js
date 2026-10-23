@@ -242,12 +242,73 @@ export async function webGetConversations() {
 // ── Messages ──
 export async function webSaveMessages(convId, msgs) {
   try {
-    const d = await getIDB(); if (!d) return;
-    await _quotaAwareWrite(d, 'messages', (store, track) => {
+    const d = await getIDB(); if (!d) return false;
+    // [sgu F2 2026-10-23] esqueleto do servidor (corpo fora do PG) nunca pisa no envelope guardado aqui (rtStore)
+    try { msgs = await require('./rtStore').guardRows(convId, msgs); } catch {}
+    if (!Array.isArray(msgs) || !msgs.length) return true;
+    return await _quotaAwareWrite(d, 'messages', (store, track) => {
       const _a = _idbAcct();
       msgs.forEach(m => track(store.put({ ...m, conversation_id: convId, _acct: _a || undefined, _ts: Date.now() })));
     });
+  } catch { return false; }
+}
+
+// [sgu F2 2026-10-23] Envelopes E2EE v5 guardados no IndexedDB, por id → Map(id → envelope).
+export async function webGetEnvelopesByIds(ids) {
+  const out = new Map();
+  try {
+    const d = await getIDB(); if (!d || !Array.isArray(ids) || !ids.length) return out;
+    const _a = _idbAcct();
+    await new Promise((resolve) => {
+      let tx;
+      try { tx = d.transaction('messages', 'readonly'); } catch { resolve(); return; }
+      const st = tx.objectStore('messages');
+      tx.oncomplete = () => resolve(); tx.onerror = () => resolve(); tx.onabort = () => resolve();
+      for (const id of [...new Set(ids.map(String))].slice(0, 2000)) {
+        const n = Number(id);
+        for (const key of (Number.isFinite(n) ? [n, id] : [id])) {
+          try {
+            const req = st.get(key);
+            req.onsuccess = () => {
+              const v = req.result;
+              if (v && typeof v.content === 'string' && v.content.startsWith('{"e2e":5') && _idbMine(v, _a)) out.set(String(id), v.content);
+            };
+          } catch {}
+        }
+      }
+    });
   } catch {}
+  return out;
+}
+
+// [sgu W1 2026-10-23] Store persistente: conversa sem corpo no servidor só pode morar num IndexedDB que o
+// navegador NÃO apaga sozinho (navigator.storage.persist). Sem isso a web não declara rtstore1 nem guarda corpo.
+// Kill OTA: globalThis.__chatyy_rt_web = false.
+let _persisted = null;
+export function webPersistedSync() {
+  try { if (globalThis.__chatyy_rt_web === false) return false; } catch {}
+  if (_persisted == null) {
+    _persisted = false;
+    // só CONSULTA (sem pedir: o Firefox mostraria um aviso a todo usuário web); o pedido é do rtInbox
+    try { navigator.storage?.persisted?.().then((ok) => { if (ok) _persisted = true; }).catch(() => {}); } catch {}
+  }
+  return _persisted === true;
+}
+let _persistP = null;
+/** Pede o store persistente (só quando há conversa body_store / servidor anuncia rtstore — rtInbox). */
+export function webRequestPersist() {
+  if (_persistP) return _persistP;
+  _persistP = (async () => {
+    try {
+      const st = typeof navigator !== 'undefined' ? navigator.storage : null;
+      if (!st) { _persisted = false; return false; }
+      let ok = st.persisted ? await st.persisted() : false;
+      if (!ok && st.persist) ok = await st.persist();
+      _persisted = !!ok;
+      return _persisted;
+    } catch { _persisted = false; return false; } finally { setTimeout(() => { _persistP = null; }, 60 * 1000); }
+  })();
+  return _persistP;
 }
 export async function webGetMessages(convId) {
   try {
@@ -356,6 +417,8 @@ export async function getCacheSize() {
 
 function _isPinnedConv(c) {
   if (!c) return false;
+  // [sgu W1 2026-10-23] conversa sem corpo no servidor (body_store) nunca sai por falta de espaço: é a única cópia
+  try { if (Number(c.body_store) >= 1 || require('./rtStore').convBodyStore(c.id) >= 1) return true; } catch {}
   return Boolean(c.is_pinned || c.pinned || c.pinned_at);
 }
 

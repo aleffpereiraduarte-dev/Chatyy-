@@ -15723,6 +15723,7 @@ export default {
   "e2ee5.learn.title": "End-to-end encryption",
   "e2ee5.lock.a11y": "End-to-end encryption",
   "e2ee5.msg.cannot_decrypt": "This message can't be displayed.",
+  "sgu.msg.unavailable": "Message unavailable on this device. Restore your backup in Settings > Chats > Backup.",
   "e2ee5.msg.new": "New message",
   "e2ee5.msg.learn_more": "Learn more",
   "e2ee5.msg.learn_more_tap": "Tap to learn more.",

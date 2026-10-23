@@ -15707,6 +15707,7 @@ export default {
   "e2ee5.learn.title": "Cifrado de extremo a extremo",
   "e2ee5.lock.a11y": "Cifrado de extremo a extremo",
   "e2ee5.msg.cannot_decrypt": "No se puede mostrar este mensaje.",
+  "sgu.msg.unavailable": "Mensaje no disponible en este dispositivo. Restaura la copia en Ajustes > Chats > Copia de seguridad.",
   "e2ee5.msg.new": "Nuevo mensaje",
   "e2ee5.msg.learn_more": "Más información",
   "e2ee5.msg.learn_more_tap": "Toca para obtener más información.",

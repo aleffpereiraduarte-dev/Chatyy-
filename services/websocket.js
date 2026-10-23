@@ -741,7 +741,10 @@ class MailWebSocket {
       ...((() => { try { return require('./e2ee/e2ee5').wsAuthFields() || {}; } catch { return {}; } })()),
       // [sgu F0 2026-10-23] capacidade "rtstore0" = este app manda `persisted` (gravado no SQLite) — só medir; a F1
       // (rtstore1) é que vai contar para a elegibilidade. Hub antigo ignora. Kill OTA: __chatyy_rtstore_cap=false.
-      ...((() => { try { return globalThis.__chatyy_rtstore_cap === false ? {} : { client_caps: ['rtstore0'] }; } catch { return {}; } })()),
+      // [sgu F1/F2 2026-10-23] "rtstore1" = guarda o corpo no store local ANTES do persisted e busca na fila do
+      // roteador (rtInbox) → conta para a elegibilidade body_store ≥ 2. Web só com IndexedDB persistente (W1).
+      // Kill OTA: __chatyy_rtstore_cap=false (as duas) · __chatyy_rt_inbox=false (só a rtstore1).
+      ...((() => { try { if (globalThis.__chatyy_rtstore_cap === false) return {}; let c1 = false; try { c1 = !!require('./rtInbox').capRtstore1(); } catch {} return { client_caps: c1 ? ['rtstore0', 'rtstore1'] : ['rtstore0'] }; } catch { return {}; } })()),
     };
   }
 
@@ -2542,6 +2545,8 @@ class MailWebSocket {
   }
 
   _handleMessage(msg) {
+    // [sgu F2 2026-10-23] mensagem com corpo fora do PG (esqueleto): envelope local ou pedido ao roteador (rtStore)
+    if (msg && msg.type && msg.type.charCodeAt(0) === 99 /* c */) { try { require('./rtStore').hydrateWsFrameSync(msg); } catch {} }
     // ACK: If server sent an ack_id, immediately acknowledge receipt
     if (msg.ack_id) {
       this._send({ type: 'ack', ack_id: msg.ack_id });

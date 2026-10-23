@@ -15801,6 +15801,7 @@ export default {
   "e2ee5.learn.title": "Criptografia de ponta a ponta",
   "e2ee5.lock.a11y": "Criptografia de ponta a ponta",
   "e2ee5.msg.cannot_decrypt": "Não foi possível exibir esta mensagem.",
+  "sgu.msg.unavailable": "Mensagem indisponível neste aparelho. Restaure o backup em Ajustes > Conversas > Backup.",
   "e2ee5.msg.new": "Nova mensagem",
   "e2ee5.msg.learn_more": "Saiba mais",
   "e2ee5.msg.learn_more_tap": "Toque para saber mais.",
