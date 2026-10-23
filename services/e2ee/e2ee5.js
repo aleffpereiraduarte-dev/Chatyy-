@@ -81,6 +81,7 @@ function _diag(step, kv) {
   } catch (_) {}
 }
 function _diagErr(step, e, extra) {
+  _maybeRecoverDevice(e, step); // [R1 2026-10-23] celular revogado → device_id novo (uma vez, com histórico garantido)
   const base = Object.assign({
     code: (e && e.code) || 'internal',
     what: e && e.details && e.details.what,
@@ -168,7 +169,9 @@ async function _http(action, body) {
     let j = null;
     try { j = await r.json(); } catch (_) {}
     if (r.ok && j && j.success) return { ok: true, status: r.status, data: j.data || {} };
-    return { ok: false, status: r.status, code: (j && j.data && j.data.code) || ('http_' + r.status), message: (j && j.message) || '' };
+    const _code = (j && j.data && j.data.code) || ('http_' + r.status);
+    if (_code === 'e2ee5_device_required') _maybeRecoverDevice({ code: _code }, action);
+    return { ok: false, status: r.status, code: _code, message: (j && j.message) || '' };
   } catch (e) {
     return { ok: false, status: 0, code: 'network' };
   } finally {
@@ -222,6 +225,7 @@ export function ensureSession() {
     const st = await c.status();
     if (!st || st.enabled !== true || st.kill === true) { _acctDisabled = !st || st.enabled !== true; throw _err('disabled', st ? (st.kill === true ? 'kill' : 'account') : 'no_status'); }
     if (_majorOf(st.contract) !== CONTRACT_MAJOR) throw _err('contract');
+    if (st.uid != null) _lastUid = String(st.uid);
     if (Platform.OS !== 'web' && !(st.flags && st.flags.e2ee5_native === true)) throw _err('disabled', 'native');
     stage = 'open';
     const op = await c.open(String(st.uid), _prefix());
@@ -267,6 +271,81 @@ export function ensureSession() {
   }).finally(() => { _sessP = null; });
   return _sessP;
 }
+
+// ───────────────────────────────────────────────────────────── R1: aparelho revogado (celular)
+// [R1 2026-10-23] O servidor responde 400 `e2ee5_device_required` quando este aparelho foi revogado/desvinculado
+// (ex.: R1 do RETENCAO: > 30 d sem uso) ou não está registrado. A web já trata (link.js → sai da conta). No
+// celular o E2EE ficava quebrado até reinstalar. Agora: apaga o store do núcleo e abre de novo com device_id novo
+// (o núcleo gera outro no open de um store vazio) — UMA vez por sessão JS, e SÓ com o histórico garantido:
+//   - backup cbk4 ligado → faz o backup incremental agora (o texto decifrado vai para a R2 cifrada) e só então troca;
+//   - ou não há nenhuma linha E2EE v5 no SQLite (nada a perder).
+// As pendências do aparelho antigo no roteador vêm pela herança A5 (rtInbox: chat_rt_inherit com o id antigo,
+// guardado no Keychain/SecureStore). Sem histórico garantido → espera (diag dev_recover_wait) e tenta na próxima
+// sessão do app. Kill OTA: globalThis.__chatyy_e2ee5_dev_recover = false (QA força: = true, pula a garantia).
+let _lastUid = '';
+let _devRecoverDone = false;
+let _devRecoverBusy = false;
+function _isDevRequired(e) {
+  if (!e) return false;
+  const d = e.details || {};
+  return e.code === 'e2ee5_device_required' || d.server_code === 'e2ee5_device_required' || d.code === 'e2ee5_device_required'
+    || /e2ee5_device_required/.test(String(e.message || ''));
+}
+function _maybeRecoverDevice(e, why) {
+  try {
+    if (Platform.OS === 'web' || !_isDevRequired(e)) return;
+    if (_g().__chatyy_e2ee5_dev_recover === false || _devRecoverDone || _devRecoverBusy || !isOn()) return;
+    _devRecoverBusy = true;
+    setTimeout(() => { _recoverDevice(String(why || '')).catch(() => {}).finally(() => { _devRecoverBusy = false; }); }, 0);
+  } catch (_) {}
+}
+function _localV5Rows() {
+  try {
+    const db = require('../sqliteStore').getSyncDb();
+    if (!db) return -1;
+    const r = db.getFirstSync(`SELECT COUNT(1) AS n FROM messages WHERE content LIKE '{"e2e":5%'`);
+    return Number(r && r.n) || 0;
+  } catch (_) { return -1; }
+}
+async function _historySafe() {
+  if (_g().__chatyy_e2ee5_dev_recover === true) return 'forced';
+  if (_localV5Rows() === 0) return 'empty';
+  let cb = null;
+  try { cb = require('../cloudBackup'); } catch (_) { cb = null; }
+  if (cb && typeof cb.isOn === 'function' && cb.isOn()) {
+    // núcleo aberto (decifra) → backup incremental agora. Núcleo fechado: um backup agora levaria linhas que não
+    // decifram e trocaria o último backup bom → só vale o backup que já existe, se recente (≤ 7 d).
+    if (_sess) {
+      try { await cb.runBackup({ reason: 'e2ee5_device_required' }); return 'cbk4'; } catch (e) { _diag('dev_recover_wait', { code: (e && e.code) || 'backup_fail', os: Platform.OS }); return null; }
+    }
+    try {
+      const ls = await cb.localSummary(_me());
+      const v = ls && ls.lastAt; const at = typeof v === 'number' ? v : (Date.parse(v || '') || 0);
+      if (at && Date.now() - at < 7 * 86400000) return 'cbk4_recent';
+    } catch (_) {}
+    _diag('dev_recover_wait', { code: 'backup_old', os: Platform.OS });
+    return null;
+  }
+  _diag('dev_recover_wait', { code: 'no_backup', os: Platform.OS });
+  return null;
+}
+async function _recoverDevice(why) {
+  const safe = await _historySafe();
+  if (!safe || _devRecoverDone) return;
+  _devRecoverDone = true;
+  const uid = (_sess && _sess.uid) || _lastUid;
+  const had = !!_sess;
+  const oldDev = (_sess && _sess.deviceId) || '';
+  _diag('dev_recover', { code: safe, why, os: Platform.OS });
+  try { await endSession({ wipe: true }); } catch (_) {}
+  if (!had && uid) { try { await _C().wipe(uid); } catch (_) {} }
+  _sessFailAt = 0; _acctDisabled = false;
+  const s = await ensureSession();
+  _diag('dev_recover_done', { code: s ? (s.deviceId && s.deviceId !== oldDev ? 'ok' : 'same_device') : 'fail', os: Platform.OS });
+  if (s) { requestSync(50); try { require('../rtInbox').pullNow('dev_recover'); } catch (_) {} }
+}
+/** Diagnóstico (QA). */
+export function devRecoverState() { return { done: _devRecoverDone, busy: _devRecoverBusy }; }
 
 /** WS autenticou: abre a sessão (se a flag estiver ligada) e sincroniza. */
 export function onWsAuth() {
