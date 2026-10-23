@@ -136,8 +136,15 @@ object ChatPushE2EE {
 
     private fun fetchEnvelope(ctx: Context, uid: String, cid: String, mid: String, t0: Long): String? {
         val auth = try { ChatyyCryptoAuth.resolve(ctx.applicationContext, uid) } catch (_: Throwable) { null } ?: return null
-        val body = JSONObject().put("conversation_id", cid.toLong()).put("message_id", mid.toLong())
-            .put("before", 1).put("after", 0).toString()
+        // [sgu F0 2026-10-23] sgu_why/device_id: só p/ o contador sgu_body_reads do servidor (motivo
+        // fetch_push, por aparelho); campos ignorados por servidor antigo. Nada mais muda no fetch.
+        val bodyObj = JSONObject().put("conversation_id", cid.toLong()).put("message_id", mid.toLong())
+            .put("before", 1).put("after", 0).put("sgu_why", "fetch_push")
+        try {
+            val dev = expo.modules.chatyycrypto.ChatyyCryptoSecrets.deviceId(ctx.applicationContext, uid)
+            if (Regex("^[A-Z][A-Z2-7]{12}$").matches(dev)) bodyObj.put("device_id", dev)
+        } catch (_: Throwable) {}
+        val body = bodyObj.toString()
         // 2 tentativas: a réplica regional pode ainda não ter a linha (alguns 100 ms de atraso).
         for (attempt in 0 until 2) {
             if (attempt > 0) {

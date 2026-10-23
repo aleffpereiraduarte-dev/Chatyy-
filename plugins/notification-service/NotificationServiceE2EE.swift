@@ -184,7 +184,14 @@ enum ChatyyNSEE2EE {
     cfg.waitsForConnectivity = false
     let session = URLSession(configuration: cfg)
     defer { session.finishTasksAndInvalidate() }
-    let body: [String: Any] = ["conversation_id": Int64(conv) ?? 0, "message_id": Int64(mid) ?? 0, "before": 1, "after": 0]
+    // [sgu F0 2026-10-23] sgu_why/device_id: só p/ o contador sgu_body_reads do servidor (motivo fetch_push,
+    // por aparelho); servidor antigo ignora. Nada mais muda no fetch.
+    var body: [String: Any] = ["conversation_id": Int64(conv) ?? 0, "message_id": Int64(mid) ?? 0, "before": 1, "after": 0,
+                               "sgu_why": "fetch_push"]
+    if ChatyyCryptoStore.isValidUid(uid), let dd = ChatyyCryptoKeychain.lookup("dev." + uid).data,
+       let dev = String(data: dd, encoding: .utf8), dev.range(of: "^[A-Z][A-Z2-7]{12}$", options: .regularExpression) != nil {
+      body["device_id"] = dev
+    }
     var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: fetchTimeout)
     req.httpMethod = "POST"
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
