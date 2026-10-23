@@ -18,7 +18,7 @@ import { useAuth } from '../../context/AuthContext';
 import * as api from '../../services/api';
 import {
   IconArrowLeft, IconTrash, IconPlus, IconStar, IconX, IconShare,
-  IconPackage, IconFilm, IconDownload,
+  IconPackage, IconFilm, IconDownload, IconChevronUp, IconChevronDown,
 } from '../../components/Icons';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { PLANS_ENABLED } from '../../constants/featureFlags';
@@ -108,7 +108,22 @@ export default function StickerMyPacksScreen() {
       }
     } catch {}
     try { api.stickerPackReorder?.(ids); } catch {}
+    // [2026-10-23 figurinhas-organizar] painel de figurinhas já abre na ordem nova (KV).
+    try { require('../../services/stickerCache').setInstalledPacksOrder(arr); } catch {}
   }, []);
+  // [2026-10-23 figurinhas-organizar] subir/descer com toque (arrastar no
+  // celular disputa com a rolagem; leitor de tela também usa estes botões).
+  const moveBy = useCallback((index, delta) => {
+    setPacks((prev) => {
+      const to = Math.max(0, Math.min(prev.length - 1, index + delta));
+      if (to === index) return prev;
+      const next = prev.slice();
+      const [moved] = next.splice(index, 1);
+      next.splice(to, 0, moved);
+      persistOrder(next);
+      return next;
+    });
+  }, [persistOrder]);
 
   // Drag-to-reorder. We track the index currently being dragged and the
   // pixel offset from its rest position. On release we swap based on the
@@ -194,6 +209,7 @@ export default function StickerMyPacksScreen() {
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('common.delete'), style: 'destructive', onPress: async () => {
         setPacks((prev) => prev.filter((p) => p.id !== pack.id));
+        try { const sc = require('../../services/stickerCache'); sc.setInstalledPacksOrder((sc.getStickerMeta('mkt_packs') || []).filter((p) => p && p.id !== pack.id)); sc.invalidateStickerLibrary(); } catch {}
         let r = null;
         try { r = await api.chatStickerPackDelete(pack.id); } catch { r = { success: false }; }
         if (r?.success === false) { Alert.alert(t('common.error'), t('stickers.actionFailed')); refresh(); }
@@ -213,6 +229,7 @@ export default function StickerMyPacksScreen() {
           onPress: async () => {
             // Optimistic update.
             setPacks((prev) => prev.filter((p) => p.id !== pack.id));
+            try { const sc = require('../../services/stickerCache'); sc.setInstalledPacksOrder((sc.getStickerMeta('mkt_packs') || []).filter((p) => p && p.id !== pack.id)); } catch {} // [2026-10-23 figurinhas-organizar] some do painel na hora
             try { await api.stickerPackUninstall(pack.id); /* [2026-10-19 sticker-cache] */ try { require('../../services/stickerCache').invalidateStickerLibrary(); } catch {} }
             catch (e) { Alert.alert(t?.('common.error') || 'Erro', e?.message || t('stickers.actionFailed')); refresh(); }
           },
@@ -360,6 +377,14 @@ export default function StickerMyPacksScreen() {
                   <View style={{ width: 14, height: 2, backgroundColor: colors.textSecondary, marginVertical: 2, borderRadius: 1 }} />
                   <View style={{ width: 14, height: 2, backgroundColor: colors.textSecondary, marginVertical: 2, borderRadius: 1 }} />
                   <View style={{ width: 14, height: 2, backgroundColor: colors.textSecondary, marginVertical: 2, borderRadius: 1 }} />
+                </View>
+                <View style={{ alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+                  <TouchableOpacity onPress={() => moveBy(index, -1)} disabled={index === 0} hitSlop={{ top: 4, bottom: 2, left: 8, right: 8 }} style={{ opacity: index === 0 ? 0.25 : 1 }} accessibilityRole="button" accessibilityLabel={t('stickers.moveUp') !== 'stickers.moveUp' ? t('stickers.moveUp') : 'Mover para cima'}>
+                    <IconChevronUp size={16} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => moveBy(index, 1)} disabled={index === packs.length - 1} hitSlop={{ top: 2, bottom: 4, left: 8, right: 8 }} style={{ opacity: index === packs.length - 1 ? 0.25 : 1 }} accessibilityRole="button" accessibilityLabel={t('stickers.moveDown') !== 'stickers.moveDown' ? t('stickers.moveDown') : 'Mover para baixo'}>
+                    <IconChevronDown size={16} color={colors.textSecondary} />
+                  </TouchableOpacity>
                 </View>
                 <View style={{
                   width: 52, height: 52, borderRadius: 10, overflow: 'hidden',

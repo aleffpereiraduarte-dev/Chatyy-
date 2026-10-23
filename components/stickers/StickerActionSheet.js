@@ -134,17 +134,10 @@ export default function StickerActionSheet({ visible, onClose, messageId = null,
       const fav = !!(r?.data?.favorited ?? r?.favorited);
       if (r?.success === false) throw new Error('x');
       setInfo((p) => ({ ...(p || {}), favorited: fav }));
-      // [2026-10-10] Espelha no cache local da bandeja de figurinhas
-      // (@chatyy_fav_stickers) p/ a favorita aparecer na hora, mesmo offline.
-      try {
-        const AS = Platform.OS === 'web' ? null : require('@react-native-async-storage/async-storage').default;
-        const KEY = '@chatyy_fav_stickers';
-        const raw = AS ? await AS.getItem(KEY) : (typeof localStorage !== 'undefined' ? localStorage.getItem(KEY) : null);
-        const cur = (() => { try { return JSON.parse(raw || '[]') || []; } catch { return []; } })();
-        const next = fav ? [favUrl, ...cur.filter(u => u !== favUrl)].slice(0, 200) : cur.filter(u => u !== favUrl);
-        const out = JSON.stringify(next);
-        if (AS) await AS.setItem(KEY, out); else if (typeof localStorage !== 'undefined') localStorage.setItem(KEY, out);
-      } catch {}
+      // [2026-10-23 figurinhas-organizar] espelho no KV da conta (o seletor lê
+      // dali; a chave AsyncStorage antiga já foi migrada e não era mais lida) +
+      // favoritar põe no topo dos Recentes na hora.
+      try { require('../../services/stickerCache').setStickerFavoriteLocal(favUrl, fav); } catch {}
       say(fav ? t('stickers.addedToFavorites') : t('stickers.removedFromFavorites'));
     } catch { say(t('stickers.actionFailed')); }
     finally { setBusy(''); }
@@ -159,6 +152,11 @@ export default function StickerActionSheet({ visible, onClose, messageId = null,
         say(reason === 'pack_full' ? t('stickers.packFull') : t('stickers.saveFailed'));
       } else {
         setInfo((p) => ({ ...(p || {}), saved: true }));
+        // [2026-10-23 figurinhas-organizar] entra em Minhas + topo dos Recentes na hora.
+        try {
+          const row = r?.data?.sticker || r?.sticker;
+          if (row && row.url) require('../../services/stickerCache').noteStickerAdded({ ...row, pack_id: row.pack_id || r?.data?.pack_id });
+        } catch {}
         say(r?.data?.already ? t('stickers.alreadySaved') : t('stickers.savedToMine'));
       }
     } catch { say(t('stickers.saveFailed')); }

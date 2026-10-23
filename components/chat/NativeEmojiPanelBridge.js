@@ -198,8 +198,10 @@ function _resolve(api, s) {
 }
 
 function useStickerSections(enabled, t, rich) {
-  const [recents, setRecents] = useState(() => _metaSync(RECENT_KEY));
-  const [recentsLottie, setRecentsLottie] = useState(() => _metaSync(RECENT_LOTTIE_KEY)); // [{u, ts}]
+  // [2026-10-23 figurinhas-organizar] recentes = lista ÚNICA da conta (imagem +
+  // Lottie) no stickerCache; criar/salvar/favoritar em qualquer tela entra no
+  // topo na hora (subscribeStickerLists) e sincroniza com os outros aparelhos.
+  const [recents, setRecents] = useState(() => { try { return _stk()?.getStickerRecents() || []; } catch { return []; } });
   const [favorites, setFavorites] = useState(() => _metaSync(FAV_KEY));
   const [mine, setMine] = useState(() => _metaSync(MINE_KEY));
   const [packs, setPacks] = useState(() => _metaSync('mkt_packs'));
@@ -208,23 +210,29 @@ function useStickerSections(enabled, t, rich) {
   const loadedOnce = useRef(false);
 
   useEffect(() => {
+    const st = _stk();
+    if (!st || !st.subscribeStickerLists) return undefined;
+    return st.subscribeStickerLists((name) => {
+      if (name === 'st_recent') setRecents(st.getStickerRecents());
+      else if (name === 'st_fav') setFavorites(_metaSync(FAV_KEY));
+      else if (name === 'st_mine') setMine(_metaSync(MINE_KEY));
+      else if (name === 'mkt_packs') setPacks(_metaSync('mkt_packs'));
+    });
+  }, []);
+
+  useEffect(() => {
     if (!enabled || loadedOnce.current) return;
     loadedOnce.current = true;
     let alive = true;
-    const api = require('../../services/api');
-    _storageGet(RECENT_KEY).then((v) => { if (alive) setRecents((p) => (p.length ? p : v)); });
-    if (rich) {
-      _storageGet(RECENT_LOTTIE_KEY).then((v) => {
-        if (alive && v.length) setRecentsLottie(v);
-      });
-    }
-    _storageGet(FAV_KEY).then((v) => { if (alive) setFavorites((p) => (p.length ? p : v)); });
-    _storageGet(MINE_KEY).then((v) => { if (alive) setMine((p) => (p.length ? p : v)); });
-    // [2026-10-19 sticker-cache] revalida no servidor (diff) e pré-busca p/ o disco.
-    void api;
     (async () => {
       const st = _stk();
       if (!st) return;
+      try { await st.migrateLegacyStickerLists(); } catch {}
+      if (!alive) return;
+      setRecents(st.getStickerRecents());
+      setFavorites((p) => (p.length ? p : _metaSync(FAV_KEY)));
+      setMine((p) => (p.length ? p : _metaSync(MINE_KEY)));
+      // [2026-10-19 sticker-cache] revalida no servidor (diff) e pré-busca p/ o disco.
       const pull = (name) => {
         if (!alive) return;
         if (name === 'st_fav' || name === '*') setFavorites(_metaSync(FAV_KEY));
@@ -270,20 +278,7 @@ function useStickerSections(enabled, t, rich) {
   }, [packItems]);
 
   const pushRecent = useCallback((item) => {
-    if (_isLottie(item)) {
-      setRecentsLottie((prev) => {
-        const next = [{ u: item, ts: Date.now() }, ...prev.filter((r) => r?.u !== item)].slice(0, 20);
-        _storageSet(RECENT_LOTTIE_KEY, next);
-        return next;
-      });
-      return;
-    }
-    setRecents((prev) => {
-      const next = [item, ...prev.filter((r) => r !== item)].slice(0, 40);
-      _storageSet(RECENT_KEY, next);
-      return next;
-    });
-    try { _stk()?.ensureStickerCached(item, { priority: 'high' }).catch(() => {}); } catch {}
+    try { _stk()?.pushStickerRecent(item); } catch {}
   }, []);
 
   const sections = useMemo(() => {
@@ -294,36 +289,38 @@ function useStickerSections(enabled, t, rich) {
       .map((u) => (_isLottie(u) ? { key: u, uri: _resolve(api, u), lottie: true } : { key: u, uri: _disp(api, u, kick) }));
     const out = [];
     const mascot = rich ? _mascotPack() : null;
-    // recentes = imagens + Lottie (mais novos primeiro; Lottie só com rich)
-    const lot = rich ? (recentsLottie || []).filter((r) => r && typeof r.u === 'string') : [];
-    const rec = toItems(lot.length ? [...lot.map((r) => r.u), ...recents].slice(0, 40) : recents);
+    // [2026-10-23 figurinhas-organizar] ordem WhatsApp: Recentes · Favoritas ·
+    // Minhas · pacotes adicionados (ordem do usuário) · pacotes do Chatyy.
+    const rec = toItems(recents);
     if (rec.length) out.push({ key: 'recent', title: _tr(t, 'chat.npanel.recent', 'Recentes'), icon: 'recent', items: rec });
     const fav = toItems(favorites);
     if (fav.length) out.push({ key: 'favorites', title: _tr(t, 'chat.npanel.favorites', 'Favoritas'), icon: 'favorites', items: fav });
     const mn = toItems(mine);
-    if (mn.length) out.push({ key: 'mine', title: _tr(t, 'chat.npanel.mine', 'Minhas'), icon: 'mine', items: mn });
-    // mascote = 1º pacote (logo depois das abas pessoais)
-    if (mascot) out.push(mascot);
-    for (const p of packs || []) {
+    if (mn.length) out.push({ key: 'mine', title: _tr(t, 'stickers.myStickers', 'Minhas figurinhas'), icon: 'mine', items: mn });
+    const packSection = (p) => {
       const id = p?.id ?? p?.pack_id;
-      if (id == null) continue;
-      const key = 'mkt-' + id;
       const raw = packItems[id];
       const items = Array.isArray(raw)
         ? toItems(raw.map((it) => it?.url || it?.image_url || it?.sticker_id), false)
         : [];
       const cover = p?.cover_url || p?.cover || p?.thumb_url || p?.icon_url || p?.preview_url || '';
-      out.push({
-        key,
+      return {
+        key: 'mkt-' + id,
         title: String(p?.name || p?.title || ''),
         icon: 'pack',
-        coverUri: cover ? _disp(api, cover, false) : null,
+        coverUri: cover ? _disp(api, cover, false) : (items[0] ? items[0].uri : null),
         loading: !Array.isArray(raw),
         items,
-      });
-    }
+      };
+    };
+    let groups = { added: packs || [], chatyy: [] };
+    try { const st = _stk(); if (st && st.groupStickerPacks) groups = st.groupStickerPacks(packs); } catch {}
+    for (const p of groups.added) out.push(packSection(p));
+    // mascote + oficiais do Chatyy por último
+    if (mascot) out.push(mascot);
+    for (const p of groups.chatyy) out.push(packSection(p));
     return out;
-  }, [recents, recentsLottie, favorites, mine, packs, packItems, t, rich]);
+  }, [recents, favorites, mine, packs, packItems, t, rich]);
 
   return { sections, loadPack, pushRecent };
 }
