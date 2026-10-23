@@ -6004,6 +6004,15 @@ export async function deleteAccount(password) {
   return apiCall('delete_account', { password }, 'POST');
 }
 
+// [excluir-conta-real 2026-10-23] Exclusão de verdade (desativa já, apaga em 30 dias; entrar de novo cancela).
+// status: métodos de confirmação mascarados + prazo; request: { password } ou { rid, code } (sessão da recuperação).
+export async function accountDeletionStatus() {
+  return apiCall('account_deletion_status', {}, 'GET');
+}
+export async function accountDeletionRequest(payload) {
+  return apiCall('account_deletion_request', { ...(payload || {}) }, 'POST');
+}
+
 // Token accessor for WebSocket auth
 export function getAuthToken() {
   return authToken || null;

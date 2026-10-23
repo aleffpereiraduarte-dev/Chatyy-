@@ -228,125 +228,255 @@ export default function AccountCategory() {
   );
 }
 
-// Zona de perigo — esvaziar lixeira + excluir conta (exigência da Apple).
+// Zona de perigo — esvaziar lixeira + excluir conta (Apple 5.1.1(v) / Play).
+// [excluir-conta-real 2026-10-23] Exclusão de verdade: a conta é DESATIVADA na hora e apagada em 30 dias
+// (servidor: account_deletion_request). Confirma com a senha OU com um código (telefone/e-mail de recuperação,
+// mesma sessão da recuperação de conta: recovery_lookup → recovery_send). Depois: limpa os dados locais desta
+// conta e sai. Entrar de novo dentro do prazo cancela (servidor reativa no login).
 function DangerZone() {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const confirm = useConfirm();
-  const { logout } = useAuth();
+  const { user, accounts, removeAccount } = useAuth();
+  const myEmail = String(user?.email || '');
   const [open, setOpen] = useState(false);
+  const [info, setInfo] = useState(null);          // account_deletion_status
+  const [mode, setMode] = useState('password');    // 'password' | 'code'
   const [password, setPassword] = useState('');
+  const [rid, setRid] = useState('');
+  const [sentTo, setSentTo] = useState('');
+  const [sending, setSending] = useState(false);
+  const [code, setCode] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
   const [ack, setAck] = useState(false);
-  const [typed, setTyped] = useState('');
-  const resetSheet = () => { setPassword(''); setError(''); setAck(false); setTyped(''); };
-
-  const confirmWord = t('settings.deleteAccountTypeWord') || 'DELETE';
-  const typedOk = (typed || '').trim().toUpperCase() === String(confirmWord).toUpperCase();
-  const canDelete = ack && typedOk && !!password.trim() && !deleting;
-  // [2026-10-18 settings-sub-native-2] Lista nativa: o formulário de exclusão
-  // (inline na tela JS) abre numa folha — mesmos campos e mesma chamada.
+  const days = Number(info?.grace_days) || 30;
+  const tt = (k, vars) => { let s = String(t(k) || ''); if (vars) for (const v of Object.keys(vars)) s = s.split('{' + v + '}').join(String(vars[v])); return s; };
+  const resetSheet = () => { setPassword(''); setRid(''); setSentTo(''); setCode(''); setError(''); setAck(false); };
+  const methods = info?.methods || {};
+  const codeTargets = [methods.phone ? { type: 'phone', masked: methods.phone } : null, methods.email ? { type: 'email', masked: methods.email } : null].filter(Boolean);
+  const canDelete = ack && !deleting && (mode === 'password' ? !!password.trim() : (!!rid && /^\d{6}$/.test(code.trim())));
+  // [2026-10-18 settings-sub-native-2] Lista nativa: o formulário abre numa folha — mesmos campos e mesma chamada.
   const collecting = !!useSettingsCollector();
 
+  const loadInfo = async () => {
+    try {
+      const { accountDeletionStatus } = await import('../../../services/api');
+      const r = await accountDeletionStatus();
+      if (r?.success && r.data) {
+        setInfo(r.data);
+        if (!r.data?.methods?.password && (r.data?.methods?.phone || r.data?.methods?.email)) setMode('code');
+      }
+    } catch {}
+  };
+
+  const errText = (r) => {
+    const reason = r?.data?.reason || '';
+    const map = {
+      wrong_password: 'delacc.errWrongPassword', wrong_code: 'delacc.errWrongCode', bad_code: 'delacc.errWrongCode',
+      expired: 'delacc.errExpired', session_expired: 'delacc.errExpired', too_many_attempts: 'delacc.errMany', locked: 'delacc.errMany',
+      parental: 'delacc.errParental', protected_account: 'delacc.errProtected', wrong_account: 'delacc.errWrongCode',
+    };
+    return t(map[reason] || 'delacc.errGeneric');
+  };
+
+  const sendCode = async (type) => {
+    if (sending) return;
+    setSending(true); setError('');
+    try {
+      const api = await import('../../../services/api');
+      let id = rid;
+      if (!id) {
+        const lk = await api.recoveryLookup(myEmail);
+        id = lk?.data?.rid || '';
+        if (!id) { setError(t('delacc.errGeneric')); return; }
+        setRid(id);
+      }
+      const r = await api.recoverySend(id, type);
+      if (r?.success) { setSentTo(r?.data?.masked || (codeTargets.find((x) => x.type === type)?.masked || '')); setCode(''); }
+      else setError(r?.data?.reason === 'method_unavailable' ? t('delacc.noMethod') : errText(r));
+    } catch { setError(t('common.networkError')); }
+    finally { setSending(false); }
+  };
+
+  const wipeLocalAndExit = async () => {
+    const em = myEmail;
+    const only = (accounts?.length || 0) <= 1;
+    try { require('../../../services/cache').clearUserCache?.(em); } catch {}
+    try { require('../../../services/settingsCache').purgeAccount?.(em); } catch {}
+    try { await require('../../../services/stickerCache').purgeStickerCacheForAccount?.(em); } catch {}
+    if (only) {
+      try { await require('../../../services/chatCache').clearChatCache?.(); } catch {}
+      try { await require('../../../services/mediaCache').clearMediaCache?.(); } catch {}
+    }
+    try { await removeAccount(em); } catch {}
+  };
+
+  const submit = async () => {
+    if (!canDelete) return;
+    setDeleting(true); setError('');
+    try {
+      const { accountDeletionRequest } = await import('../../../services/api');
+      const payload = mode === 'password' ? { password } : { rid, code: code.trim() };
+      const r = await accountDeletionRequest(payload);
+      if (r?.success) {
+        setOpen(false);
+        const when = r?.data?.purge_after ? new Date(r.data.purge_after) : new Date(Date.now() + days * 86400000);
+        let dateStr = '';
+        try { dateStr = when.toLocaleDateString(undefined, { day: '2-digit', month: 'long', year: 'numeric' }); } catch { dateStr = when.toISOString().slice(0, 10); }
+        const body = tt('delacc.doneBody', { date: dateStr });
+        if (Platform.OS === 'web') { try { window.alert(t('delacc.doneTitle') + '\n\n' + body); } catch {} }
+        else Alert.alert(t('delacc.doneTitle'), body);
+        await wipeLocalAndExit();
+      } else {
+        setError(errText(r));
+        if (r?.data?.reason === 'session_expired' || r?.data?.reason === 'expired') { setRid(''); setSentTo(''); }
+      }
+    } catch {
+      setError(t('common.networkError'));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const Bullet = ({ children, strong }) => (
+    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+      <View style={{ width: 6, height: 6, borderRadius: 3, marginTop: 7, backgroundColor: strong ? (colors.error || '#dc2626') : colors.textSecondary }} />
+      <Text style={{ flex: 1, color: colors.text, fontSize: 13, lineHeight: 19 }}>{children}</Text>
+    </View>
+  );
+  const Seg = ({ value, label }) => (
+    <TouchableOpacity
+      onPress={() => { setMode(value); setError(''); }}
+      accessibilityRole="button" accessibilityState={{ selected: mode === value }}
+      style={{ flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center', backgroundColor: mode === value ? colors.surface : 'transparent' }}
+    >
+      <Text style={{ color: colors.text, fontSize: 14, fontWeight: mode === value ? '700' : '500' }}>{label}</Text>
+    </TouchableOpacity>
+  );
+
   const renderBox = (inSheet) => (
-        <View style={inSheet ? null : [st.box, { backgroundColor: colors.errorBg || (colors.error + '08'), borderColor: colors.error + '30' }]}>
-          {inSheet ? null : <Text style={[st.title, { color: colors.error }]}>{t('settings.confirmAccountDeletion')}</Text>}
-          <View style={{
-            flexDirection: 'row', gap: 12, padding: 14,
-            backgroundColor: (colors.error || '#dc2626') + '15',
-            borderRadius: 12, borderWidth: 1,
-            borderColor: (colors.error || '#dc2626') + '40',
-            marginBottom: 16,
-          }}>
-            <IconAlertTriangle size={20} color={colors.error || '#dc2626'} />
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: colors.error || '#dc2626', fontSize: 14, fontWeight: '700', marginBottom: 4 }}>{t('settings.deleteAccountWarningTitle')}</Text>
-              <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18 }}>{t('settings.deleteAccountWarningBody')}</Text>
-            </View>
-          </View>
-          <Text style={[st.text, { color: colors.textSecondary }]}>{t('settings.deleteAccountPasswordMessage')}</Text>
-          <TextInput
-            style={[st.input, { color: colors.text, borderColor: colors.error + '40', backgroundColor: colors.surface }]}
-            {...(inSheet ? { defaultValue: password } : { value: password })}
-            onChangeText={setPassword}
-            placeholder={t('settings.yourPassword')}
-            placeholderTextColor={colors.textTertiary}
-            secureTextEntry
-          />
-          <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 12, marginBottom: 6 }}>
-            {(t('settings.deleteAccountTypeHint') || 'Type {word} to confirm').replace('{word}', confirmWord)}
-          </Text>
-          <TextInput
-            style={[st.input, {
-              color: colors.text,
-              borderColor: typedOk ? (colors.success || '#16a34a') + '60' : (colors.error + '40'),
-              backgroundColor: colors.surface, marginTop: 0, letterSpacing: 1, fontWeight: '700',
-            }]}
-            {...(inSheet ? { defaultValue: typed } : { value: typed })}
-            onChangeText={setTyped}
-            placeholder={confirmWord}
-            placeholderTextColor={colors.textTertiary}
-            autoCapitalize="characters"
-            autoCorrect={false}
-          />
-          <TouchableOpacity
-            onPress={() => setAck(v => !v)}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 14, paddingVertical: 4 }}
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: ack }}
-          >
-            <View style={{
-              width: 22, height: 22, borderRadius: 6, borderWidth: 2,
-              borderColor: ack ? (colors.error || '#dc2626') : colors.border,
-              backgroundColor: ack ? (colors.error || '#dc2626') : 'transparent',
-              alignItems: 'center', justifyContent: 'center',
-            }}>
-              {ack ? <IconCheck size={14} color="#fff" /> : null}
-            </View>
-            <Text style={{ flex: 1, color: colors.text, fontSize: 13, lineHeight: 18 }}>{t('settings.deleteAccountConfirmCheckbox')}</Text>
-          </TouchableOpacity>
-          {!!error && <Text style={[st.error, { color: colors.error, marginTop: 10 }]}>{error}</Text>}
-          <View style={st.actions}>
-            {inSheet ? null : (
-              <TouchableOpacity onPress={() => { setOpen(false); resetSheet(); }} style={[st.cancelBtn, { borderColor: colors.border }]}>
-                <Text style={[st.cancelText, { color: colors.text }]}>{t('common.cancel')}</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              onPress={async () => {
-                if (!canDelete) return;
-                setDeleting(true);
-                setError('');
-                try {
-                  const { deleteAccount } = await import('../../../services/api');
-                  const r = await deleteAccount(password);
-                  if (r?.success) {
-                    setOpen(false);
-                    if (Platform.OS === 'web') window.alert(t('settings.accountDeletedMessage'));
-                    else Alert.alert(t('settings.accountDeleted'), t('settings.accountDeletedMessage'));
-                    logout();
-                  } else {
-                    setError(r?.message || t('settings.deleteAccountError'));
-                  }
-                } catch {
-                  setError(t('common.networkError'));
-                } finally {
-                  setDeleting(false);
-                }
-              }}
-              disabled={!canDelete}
-              style={[st.confirmBtn, { backgroundColor: colors.error, opacity: canDelete ? 1 : 0.4 }]}
-            >
-              {deleting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={st.confirmBtnText}>{t('settings.deleteMyAccount')}</Text>}
-            </TouchableOpacity>
-          </View>
+    <View style={inSheet ? null : [st.box, { backgroundColor: colors.errorBg || (colors.error + '08'), borderColor: colors.error + '30' }]} testID="delete-account-box">
+      {inSheet ? null : <Text style={[st.title, { color: colors.error }]}>{t('delacc.title')}</Text>}
+      <View style={{
+        flexDirection: 'row', gap: 12, padding: 14,
+        backgroundColor: (colors.error || '#dc2626') + '15',
+        borderRadius: 12, borderWidth: 1, borderColor: (colors.error || '#dc2626') + '40', marginBottom: 14,
+      }}>
+        <IconAlertTriangle size={20} color={colors.error || '#dc2626'} />
+        <View style={{ flex: 1 }}>
+          <Bullet strong>{t('delacc.now')}</Bullet>
+          <Bullet strong>{tt('delacc.after', { days })}</Bullet>
+          <Bullet>{tt('delacc.cancel')}</Bullet>
+          <Bullet>{t('delacc.others')}</Bullet>
+          <Bullet>{t('delacc.legal')}</Bullet>
         </View>
+      </View>
+      {(info?.store_subscriptions?.apple || info?.store_subscriptions?.google || Platform.OS !== 'web') ? (
+        <View style={{ padding: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.border, marginBottom: 14 }}>
+          <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18 }}>{t('delacc.subs')}</Text>
+          <TouchableOpacity
+            onPress={() => {
+              const url = Platform.OS === 'android' ? 'https://play.google.com/store/account/subscriptions' : 'https://apps.apple.com/account/subscriptions';
+              Linking.openURL(url).catch(() => {});
+            }}
+            style={{ marginTop: 8, alignSelf: 'flex-start' }}
+          >
+            <Text style={{ color: colors.primary || colors.text, fontSize: 13, fontWeight: '700' }}>{t('delacc.subsBtn')}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700', marginBottom: 8 }}>{t('delacc.confirmWith')}</Text>
+      {codeTargets.length > 0 ? (
+        <View style={{ flexDirection: 'row', padding: 3, borderRadius: 10, backgroundColor: colors.border + '55', marginBottom: 10 }}>
+          <Seg value="password" label={t('delacc.byPassword')} />
+          <Seg value="code" label={t('delacc.byCode')} />
+        </View>
+      ) : null}
+
+      {mode === 'password' ? (
+        <TextInput
+          style={[st.input, { color: colors.text, borderColor: colors.error + '40', backgroundColor: colors.surface }]}
+          {...(inSheet ? { defaultValue: password } : { value: password })}
+          onChangeText={setPassword}
+          placeholder={t('delacc.passwordPh')}
+          placeholderTextColor={colors.textTertiary}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          testID="delete-account-password"
+        />
+      ) : (
+        <View>
+          {codeTargets.length === 0 ? <Text style={[st.text, { color: colors.textSecondary }]}>{t('delacc.noMethod')}</Text> : null}
+          {!sentTo ? codeTargets.map((m) => (
+            <TouchableOpacity key={m.type} onPress={() => sendCode(m.type)} disabled={sending}
+              style={[st.cancelBtn, { borderColor: colors.border, marginBottom: 8, alignItems: 'center', opacity: sending ? 0.5 : 1 }]}>
+              <Text style={[st.cancelText, { color: colors.text }]}>{tt('delacc.sendTo', { m: m.masked })}</Text>
+            </TouchableOpacity>
+          )) : (
+            <View>
+              <Text style={[st.text, { color: colors.textSecondary, marginBottom: 6 }]}>{tt('delacc.codeSent', { m: sentTo })}</Text>
+              <TextInput
+                style={[st.input, { color: colors.text, borderColor: colors.error + '40', backgroundColor: colors.surface, letterSpacing: 4, fontWeight: '700' }]}
+                {...(inSheet ? { defaultValue: code } : { value: code })}
+                onChangeText={(v) => setCode(String(v || '').replace(/\D/g, '').slice(0, 6))}
+                placeholder={t('delacc.codePh')}
+                placeholderTextColor={colors.textTertiary}
+                keyboardType="number-pad"
+                textContentType="oneTimeCode"
+                autoComplete="sms-otp"
+                maxLength={6}
+                testID="delete-account-code"
+              />
+              <TouchableOpacity onPress={() => { setSentTo(''); setCode(''); }} style={{ paddingVertical: 4 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 13, textDecorationLine: 'underline' }}>{t('delacc.resend')}</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      )}
+
+      <TouchableOpacity
+        onPress={() => setAck((v) => !v)}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, paddingVertical: 4 }}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: ack }}
+        testID="delete-account-ack"
+      >
+        <View style={{
+          width: 22, height: 22, borderRadius: 6, borderWidth: 2,
+          borderColor: ack ? (colors.error || '#dc2626') : colors.border,
+          backgroundColor: ack ? (colors.error || '#dc2626') : 'transparent',
+          alignItems: 'center', justifyContent: 'center',
+        }}>
+          {ack ? <IconCheck size={14} color="#fff" /> : null}
+        </View>
+        <Text style={{ flex: 1, color: colors.text, fontSize: 13, lineHeight: 18 }}>{tt('delacc.ack', { days })}</Text>
+      </TouchableOpacity>
+      {!!error && <Text style={[st.error, { color: colors.error, marginTop: 10 }]}>{error}</Text>}
+      <View style={st.actions}>
+        {inSheet ? null : (
+          <TouchableOpacity onPress={() => { setOpen(false); resetSheet(); }} style={[st.cancelBtn, { borderColor: colors.border }]}>
+            <Text style={[st.cancelText, { color: colors.text }]}>{t('common.cancel')}</Text>
+          </TouchableOpacity>
+        )}
+        <TouchableOpacity
+          onPress={submit}
+          disabled={!canDelete}
+          style={[st.confirmBtn, { backgroundColor: colors.error, opacity: canDelete ? 1 : 0.4 }]}
+          testID="delete-account-submit"
+        >
+          {deleting ? <ActivityIndicator size="small" color="#fff" /> : <Text style={st.confirmBtnText}>{t('delacc.submit')}</Text>}
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 
   return (
     <View>
-      <SettingsGroup footer={t('settings.deleteAccountDesc')}>
+      <SettingsGroup footer={t('delacc.rowSub')}>
         <SettingsRow
           title={t('settings.emptyTrash')}
           destructive
@@ -360,22 +490,13 @@ function DangerZone() {
         <SettingsRow
           title={t('settings.deleteAccount')}
           destructive
-          onPress={async () => {
-            const openSheet = () => { resetSheet(); setOpen(true); };
-            if (Platform.OS === 'web') { openSheet(); return; }
-            const ok = await confirm({
-              title: t('settings.deleteAccountConfirmTitle'),
-              message: t('settings.deleteAccountConfirmMessage'),
-              confirmLabel: t('settings.deleteAccount'),
-              destructive: true,
-            });
-            if (ok) openSheet();
-          }}
+          testID="settings-row-delete-account"
+          onPress={() => { resetSheet(); setOpen(true); loadInfo(); }}
         />
       </SettingsGroup>
 
       {collecting ? (
-        <SettingsFormSheet visible={open} onClose={() => { setOpen(false); if (!deleting) resetSheet(); }} title={t('settings.confirmAccountDeletion')} doneLabel={t('common.cancel')} testID="delete-account-sheet">
+        <SettingsFormSheet visible={open} onClose={() => { setOpen(false); if (!deleting) resetSheet(); }} title={t('delacc.title')} doneLabel={t('common.cancel')} testID="delete-account-sheet">
           {renderBox(true)}
         </SettingsFormSheet>
       ) : (open && renderBox(false))}
