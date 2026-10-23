@@ -213,6 +213,11 @@ defmodule ChatyyRouter.BodyStoreTest do
     eventually(fn -> on(c, "b", BodyHome, :check, [109]) == {:error, :not_e2ee} end)
     assert {:error, :not_e2ee} = put(c, "b", 109, 9001, "K")
     assert {:error, :bad_request} = put(c, "b", 108, nil, "K")
+    # o motivo vai no rótulo: {} (sonda do kit PHP) = no_cid; mid ausente = no_mid
+    assert {:error, :bad_request} = on(c, "b", BodyStore, :store, [%{}])
+    prom = on(c, "b", Metrics, :prometheus, [])
+    assert prom =~ ~s(chatyy_router_rt_store_total{result="bad_request",why="no_mid"} 1)
+    assert prom =~ ~s(chatyy_router_rt_store_total{result="bad_request",why="no_cid"} 1)
 
     # gancho do /fanout (R1): cópia assíncrona com src fanout
     :ok = on(c, "c", BodyStore, :from_fanout, [%{cid: 108, seq: 9002, body: "F", from: "u1@chatyy.com.br", ts: 1}])

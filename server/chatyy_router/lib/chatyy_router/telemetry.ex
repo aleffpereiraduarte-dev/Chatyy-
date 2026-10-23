@@ -109,6 +109,7 @@ defmodule ChatyyRouter.Metrics do
   # [sgu F1] (ChatyyRouter.BodyStore / BodyCompare)
   defp name_labels({:rt_f1_body_mismatch_events, k}), do: {"rt_f1_body_mismatch_events", [{"kind", to_string(k)}]}
   defp name_labels({:rt_store, r}), do: {"rt_store", [{"result", to_string(r)}]}
+  defp name_labels({:rt_store, r, why}), do: {"rt_store", [{"result", to_string(r)}, {"why", to_string(why)}]}
   defp name_labels({:rt_store_src, r}), do: {"rt_store_src", [{"src", to_string(r)}]}
   defp name_labels({a, r}) when a in @labeled, do: {to_string(a), [{"region", to_string(r)}]}
   defp name_labels(name), do: {fmt(name), []}

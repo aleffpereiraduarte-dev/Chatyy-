@@ -264,7 +264,18 @@ defmodule ChatyyRouter.BodyStore do
         {:error, _} -> :miss
       end
 
-    Metrics.inc({:rt_store, result})
+    if result == :bad_request do
+      # motivo no rótulo e no log (sem conteúdo): rt_store_total{result="bad_request",why="…"}
+      why = bad_why(req)
+      Metrics.inc({:rt_store, :bad_request, why})
+
+      Logger.warning(
+        "router f1: /store bad_request why=#{why} cid=#{inspect(is_map(req) && req[:cid])} kind=#{inspect(is_map(req) && req[:kind])} " <>
+          "src=#{inspect(is_map(req) && req[:src])} mid=#{inspect(is_map(req) && req[:mid])} env_bytes=#{if is_map(req) and is_binary(req[:env]), do: byte_size(req[:env]), else: "-"}"
+      )
+    else
+      Metrics.inc({:rt_store, result})
+    end
     if result in [:ok, :partial], do: Metrics.inc({:rt_store_src, (is_map(req) && req[:src]) || :store})
     if result in [:ok, :dup, :partial, :conflict], do: Metrics.hist(:rt_store, System.monotonic_time(:microsecond) - t0)
     res
@@ -314,6 +325,27 @@ defmodule ChatyyRouter.BodyStore do
 
       other ->
         other
+    end
+  end
+
+  @doc "Por que o pedido é inválido (só o 1º motivo; rótulo da métrica)."
+  def bad_why(req) when not is_map(req), do: :not_object
+
+  def bad_why(req) do
+    kind = to_string(req[:kind] || "msg")
+    env = req[:env]
+
+    cond do
+      req[:cid] == nil -> :no_cid
+      not is_integer(to_int(req[:cid])) -> :bad_cid
+      env == nil -> :no_env
+      not is_binary(env) -> :bad_env
+      env == "" -> :empty_env
+      kind == "reaction" and not is_integer(to_int(req[:ref])) -> :rx_no_ref
+      kind == "reaction" and canon(req[:from]) == "" -> :rx_no_from
+      kind == "reaction" and rx_type(req) == nil -> :rx_bad_type
+      req[:mid] == nil -> :no_mid
+      true -> :bad_mid
     end
   end
 
