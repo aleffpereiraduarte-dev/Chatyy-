@@ -187,6 +187,17 @@ defmodule ChatyyRouter.BodyStoreTest do
     assert has(c, "a", 108, 9003) == nil
   end
 
+  test "ponto de extensão da F3: chave com lápide não é regravada (store/cópia)", %{c: c} do
+    for r <- @regions, do: on(c, r, :application, :set_env, [:chatyy_router, :body_purge_module, ChatyyRouter.TestFakeF3])
+
+    conv(c, 111, "a")
+    assert {:ok, %{copies: 3}} = put(c, "e", 111, 11_001, "V")
+    assert {:ok, %{purged: true}} = put(c, "e", 111, 11_002, "V")
+    assert holders(c, 111, 11_002) == []
+    assert :ok = on(c, "b", BodyStore, :put_copies, [[%{has(c, "a", 111, 11_001) | mid: 11_002}]])
+    assert holders(c, 111, 11_002) == []
+  end
+
   test "persisted de todos tira do pull e conta 'apagaria' — a F1 NÃO apaga", %{c: c} do
     conv(c, 110, "a")
     {:ok, _} = put(c, "e", 110, 10_001, "P")

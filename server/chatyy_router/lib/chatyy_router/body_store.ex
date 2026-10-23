@@ -155,6 +155,14 @@ defmodule ChatyyRouter.BodyStore.Purge do
   na casa + `{:drop, ...}` nas cópias) e a compactação física fica no Seglog.
   """
   @callback all_persisted(key :: {term, term}, rec :: map) :: :ok
+  @doc "Opcional: chave já apagada pela F3 (lápide) — o BodyStore não regrava (cópia, reparo, reenvio)."
+  @callback purged?(cid :: term, sub :: term) :: boolean
+  @optional_callbacks purged?: 2
+
+  def purged?(cid, sub) do
+    m = impl()
+    Code.ensure_loaded?(m) and function_exported?(m, :purged?, 2) and m.purged?(cid, sub) == true
+  end
 
   def impl do
     case ChatyyRouter.Config.get(:body_purge_module) do
@@ -372,7 +380,12 @@ defmodule ChatyyRouter.BodyStore do
     lock(key)
 
     try do
-      case Store.get(:rt_body, key) do
+      case (if ChatyyRouter.BodyStore.Purge.purged?(req.cid, req.mid), do: :purged, else: Store.get(:rt_body, key)) do
+        :purged ->
+          # F3 já apagou (todos os aparelhos gravaram): reenvio tardio não ressuscita
+          Metrics.inc(:rt_store_after_purge)
+          {:ok, %{dup: true, purged: true, copies: 0, wanted: 1 + Config.body_copies(), acting: Net.me()}}
+
         %{sha: sha} = rec when sha == req.sha ->
           # duplicata: garante as cópias (idempotente; cura irmã que estava fora)
           copies = replicate([rec], BodyHome.copy_targets(rec.home || req.home, Net.me()))
@@ -451,7 +464,8 @@ defmodule ChatyyRouter.BodyStore do
   @doc false
   def put_copies(recs) do
     fresh =
-      for rec <- recs, keep?(Store.get(:rt_body, {rec.cid, rec.mid}), rec), do: {{rec.cid, rec.mid}, rec}
+      for rec <- recs, not ChatyyRouter.BodyStore.Purge.purged?(rec.cid, rec.mid),
+          keep?(Store.get(:rt_body, {rec.cid, rec.mid}), rec), do: {{rec.cid, rec.mid}, rec}
 
     Store.put_many(:rt_body, fresh)
   end
