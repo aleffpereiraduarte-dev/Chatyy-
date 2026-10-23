@@ -29,8 +29,10 @@ import java.util.concurrent.CopyOnWriteArrayList
 object ChatyyWsEndpoint {
     private const val TAG = "ChatyyWsEndpoint"
     /** Versão da API exposta ao JS (ChatyyChatCore.wsEndpointApi()).
-     *  1 = só setWsRegion(br|eu|us); 2 = + setWsEndpoint(region, url). */
-    const val API_VERSION = 2
+     *  1 = só setWsRegion(br|eu|us); 2 = + setWsEndpoint(region, url);
+     *  3 = [2026-10-22 ws-migrate] sockets nativos trocam de região sozinhos quando o JS grava
+     *      (o JS para de reconectar o fio nativo para seguir o client-lb). */
+    const val API_VERSION = 3
     const val US_URL = "wss://ws.chatyy.com.br/ws"
     private const val US_HOST = "ws.chatyy.com.br"
     private val REGIONAL = mapOf(

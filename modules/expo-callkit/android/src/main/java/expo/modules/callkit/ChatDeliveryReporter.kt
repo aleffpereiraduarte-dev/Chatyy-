@@ -38,6 +38,14 @@ import java.nio.charset.StandardCharsets
  * Dedupe: a small SharedPreferences ring of "conv:msg" keys so a re-delivered /
  * duplicated FCM frame doesn't POST twice (the server is idempotent anyway —
  * this just saves radio).
+ *
+ * [2026-10-22 dlv-device] Ack POR APARELHO (fila sombra chat_msg_device_dlv no servidor): o corpo
+ * leva `device_id` = id E2EE v5 do NÚCLEO deste aparelho para a conta do push (uid pelo mapa
+ * conta→uid do expo-chatyy-crypto, id lido do meta/<uid>.json — só leitura, nunca cria aparelho;
+ * o servidor confere que o id é desta conta, senão conta como '?'), e `persisted` = 1 quando a
+ * mensagem COMPLETA ficou no journal local (ChatBgJournal, chamado ANTES daqui) — 0 para
+ * prévia/E2EE/trancada (o envelope E2EE ainda não é gravado no store nativo pelo push; o app grava
+ * ao sincronizar). Pendentes guardam o persisted junto ("<token>|1").
  */
 object ChatDeliveryReporter {
     private const val TAG = "ChatDeliveryReporter"
@@ -53,7 +61,7 @@ object ChatDeliveryReporter {
      * Inspect an incoming FCM data map and, if it is a chat push carrying a
      * `d_ack`, report delivery on a background thread. Never throws.
      */
-    fun maybeReport(ctx: Context, data: Map<String, String>) {
+    fun maybeReport(ctx: Context, data: Map<String, String>, persisted: Boolean = false) {
         try {
             val nested = parseNested(data["body"])
             fun field(k: String): String? {
@@ -74,8 +82,9 @@ object ChatDeliveryReporter {
             // vai p/ uma fila (SharedPreferences) drenada aqui no próximo push e por
             // um WorkManager one-shot com rede (sobrevive ao processo morrer).
             val app = ctx.applicationContext
+            val item = if (persisted) "$dAck|1" else dAck
             Thread({
-                if (!post(dAck)) { addPending(app, dAck); scheduleRetry(app) }
+                if (!post(app, item)) { addPending(app, item); scheduleRetry(app) }
                 else drainPending(app, 5) // rede ok → reenvia pendentes antigos
             }, "chatyy-dack").apply { isDaemon = true }.start()
         } catch (t: Throwable) {
@@ -106,8 +115,32 @@ object ChatDeliveryReporter {
         }
     }
 
-    /** true = servidor respondeu definitivo (2xx, ou 4xx = token inválido/expirado → não reenvia). */
-    internal fun post(dAck: String): Boolean {
+    private val DEV_RE = Regex("^[A-Z][A-Z2-7]{12}$")
+
+    /** Conta (campo `e`) do payload do token d_ack — só p/ escolher o aparelho; a assinatura é do servidor. */
+    private fun acctOfDack(dAck: String): String {
+        return try {
+            val p = dAck.substringBefore('.')
+            val raw = android.util.Base64.decode(p, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP)
+            JSONObject(String(raw, StandardCharsets.UTF_8)).optString("e", "").trim().lowercase()
+        } catch (_: Throwable) { "" }
+    }
+
+    /** device_id E2EE v5 do núcleo p/ a conta ('' = sem núcleo/store). Nunca lança. */
+    internal fun deviceIdFor(ctx: Context, account: String): String {
+        return try {
+            val uid = (if (account.isNotEmpty()) expo.modules.chatyycrypto.ChatyyCryptoFlags.uidForAccount(ctx, account)
+                       else expo.modules.chatyycrypto.ChatyyCryptoFlags.lastUid(ctx)) ?: return ""
+            val d = expo.modules.chatyycrypto.ChatyyCryptoSecrets.deviceId(ctx, uid)
+            if (DEV_RE.matches(d)) d else ""
+        } catch (_: Throwable) { "" }
+    }
+
+    /** true = servidor respondeu definitivo (2xx, ou 4xx = token inválido/expirado → não reenvia).
+     *  [item] = "<d_ack>" ou "<d_ack>|1" (persisted). */
+    internal fun post(ctx: Context, item: String): Boolean {
+        val dAck = item.substringBefore('|')
+        val persisted = item.endsWith("|1")
         var conn: HttpURLConnection? = null
         try {
             conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
@@ -118,7 +151,10 @@ object ChatDeliveryReporter {
                 setRequestProperty("Content-Type", "application/json")
                 setRequestProperty("Accept", "application/json")
             }
-            val body = JSONObject().put("d_ack", dAck).toString().toByteArray(StandardCharsets.UTF_8)
+            val bodyObj = JSONObject().put("d_ack", dAck).put("persisted", if (persisted) 1 else 0)
+            val dev = deviceIdFor(ctx, acctOfDack(dAck))
+            if (dev.isNotEmpty()) bodyObj.put("device_id", dev)
+            val body = bodyObj.toString().toByteArray(StandardCharsets.UTF_8)
             conn.outputStream.use { it.write(body) }
             val code = conn.responseCode
             Log.d(TAG, "delivered ack HTTP $code")
@@ -171,7 +207,7 @@ object ChatDeliveryReporter {
     internal fun drainPending(ctx: Context, max: Int): Boolean {
         var allOk = true
         for (tok in takePending(ctx, max)) {
-            if (!post(tok)) { addPending(ctx, tok); allOk = false }
+            if (!post(ctx, tok)) { addPending(ctx, tok); allOk = false }
         }
         return allOk
     }

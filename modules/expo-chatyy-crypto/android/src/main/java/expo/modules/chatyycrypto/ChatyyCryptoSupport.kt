@@ -268,6 +268,15 @@ object ChatyyCryptoSecrets {
     return Secrets(nd, np, true)
   }
 
+  /** [2026-10-22 dlv-device] device_id do núcleo p/ o uid, SÓ leitura (nunca cria aparelho nem abre o
+   *  Keystore) — vai no ack de entrega do push (ChatDeliveryReporter). '' = sem store/segredo. */
+  @Synchronized fun deviceId(ctx: Context, uid: String): String {
+    if (uid.isEmpty() || uid.length > 20 || !uid.all { it in '0'..'9' }) return ""
+    return try {
+      if (!ChatyyCryptoFiles.storeDir(ctx, uid).isDirectory) "" else ChatyyCryptoFiles.readJson(file(ctx, uid)).optString("d")
+    } catch (_: Throwable) { "" }
+  }
+
   /** Store + segredos já existem (o push NUNCA cria store/aparelho). Sem decifrar nada. */
   @Synchronized fun exists(ctx: Context, uid: String): Boolean {
     if (!ChatyyCryptoFiles.storeDir(ctx, uid).isDirectory) return false

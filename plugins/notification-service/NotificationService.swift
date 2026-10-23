@@ -75,11 +75,13 @@ class NotificationService: UNNotificationServiceExtension {
         // espera no máximo ackGrace: se o iOS congelar a extensão, o próximo
         // push (ou o app) reenvia.
         let ackGroup = DispatchGroup()
-        Self.reportDelivered(p, group: ackGroup) { [weak self] t in self?.addTask(t) }
         // [2026-10-07 bgsync] Store the message in the App Group journal so the
         // app shows it instantly on open (merged before first paint by
         // services/bgJournal.js). No-op without the App Group entitlement.
-        Self.journalMessage(p)
+        // [2026-10-22 dlv-device] Journal ANTES do ack: o ack diz se a mensagem
+        // COMPLETA ficou gravada aqui (persisted=1) e leva o device_id do núcleo.
+        let persisted = Self.journalMessage(p)
+        Self.reportDelivered(p, persisted: persisted, group: ackGroup) { [weak self] t in self?.addTask(t) }
 
         let type = Self.str(p, "type") ?? ""
         let isChat = Self.chatTypes.contains(type)
@@ -451,21 +453,43 @@ class NotificationService: UNNotificationServiceExtension {
         return URLSession(configuration: cfg)
     }()
 
-    private static func reportDelivered(_ p: [String: Any], group: DispatchGroup,
+    // [2026-10-22 dlv-device] Ack POR APARELHO (fila sombra chat_msg_device_dlv): o corpo leva
+    // device_id = id E2EE v5 do núcleo p/ a conta do token (ChatyyNSEE2EE.deliveryDeviceId; o servidor
+    // confere que é desta conta, senão '?') e persisted = 1 quando a mensagem COMPLETA ficou no journal
+    // do App Group (journalMessage). Prévia/E2EE/trancada → 0: o envelope E2EE ainda não é gravado no
+    // store pela NSE (o app grava ao sincronizar). Pendentes guardam o persisted ("<token>|1").
+    private static func reportDelivered(_ p: [String: Any], persisted: Bool, group: DispatchGroup,
                                         track: (URLSessionTask) -> Void) {
         var toks: [String] = []
-        if let dAck = str(p, "d_ack"), dAck.contains(".") { toks.append(dAck) }
+        if let dAck = str(p, "d_ack"), dAck.contains(".") { toks.append(persisted ? dAck + "|1" : dAck) }
         // Reenvia até 5 pendentes de pushes anteriores (rede caiu / NSE expirou).
-        for t in takePendingAcks(max: 5) where !toks.contains(t) { toks.append(t) }
+        for t in takePendingAcks(max: 5) where !toks.contains(t) && !toks.contains(t + "|1") { toks.append(t) }
         for tok in toks {
             guard let t = postAck(tok, group: group) else { continue }
             track(t)
         }
     }
 
-    private static func postAck(_ dAck: String, group: DispatchGroup) -> URLSessionTask? {
+    /// Conta (campo `e`) do payload do token d_ack — só p/ escolher o aparelho (assinatura = servidor).
+    private static func acctOfDack(_ tok: String) -> String {
+        guard var b = tok.split(separator: ".").first.map(String.init), !b.isEmpty else { return "" }
+        b = b.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while b.count % 4 != 0 { b += "=" }
+        guard let d = Data(base64Encoded: b),
+              let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+              let e = o["e"] as? String else { return "" }
+        return e.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
+    /// [item] = "<d_ack>" ou "<d_ack>|1" (persisted).
+    private static func postAck(_ item: String, group: DispatchGroup) -> URLSessionTask? {
+        let persisted = item.hasSuffix("|1")
+        let dAck = persisted ? String(item.dropLast(2)) : item
+        var obj: [String: Any] = ["d_ack": dAck, "persisted": persisted ? 1 : 0]
+        let dev = ChatyyNSEE2EE.deliveryDeviceId(account: acctOfDack(dAck))
+        if !dev.isEmpty { obj["device_id"] = dev }
         guard let url = ackURL,
-              let body = try? JSONSerialization.data(withJSONObject: ["d_ack": dAck]) else { return nil }
+              let body = try? JSONSerialization.data(withJSONObject: obj) else { return nil }
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: ackTimeout)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -474,13 +498,13 @@ class NotificationService: UNNotificationServiceExtension {
         group.enter()
         // [push-preview 2026-10-21] pendente ANTES do POST: o banner não espera mais
         // o fim do POST, e se o iOS congelar/matar a extensão o próximo push reenvia.
-        addPendingAck(dAck)
+        addPendingAck(item)
         let task = ackSession.dataTask(with: req) { _, response, error in
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             // 2xx = servidor gravou (ou já estava entregue). 4xx = definitivo
             // (token inválido/expirado) → não reenvia. Resto = tenta depois.
             if !(error != nil || code == 0 || code >= 500 || code == 429) {
-                removePendingAck(dAck)
+                removePendingAck(item)
             }
             group.leave()
         }
@@ -602,11 +626,13 @@ class NotificationService: UNNotificationServiceExtension {
     // append keeps it atomic w.r.t. the app's read/commit. Bounded (384 KB).
     private static let journalTypes: Set<String> = ["chat_message", "chat_mention", "chat_keyword"]
 
-    private static func journalMessage(_ p: [String: Any]) {
+    /// [2026-10-22 dlv-device] true = a mensagem COMPLETA (texto/mídia, `full`) foi gravada no journal.
+    @discardableResult
+    private static func journalMessage(_ p: [String: Any]) -> Bool {
         guard let type = str(p, "type"), journalTypes.contains(type),
               let cid = str(p, "conversation_id"), let mid = str(p, "message_id"),
               let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.onemundo.mail")
-        else { return }
+        else { return false }
         let locked = str(p, "locked") == "1"
         let full = str(p, "bg_full") == "1" && !locked
         let isGroup = isTrue(str(p, "is_group")) || str(p, "conversation_type") == "group"
@@ -635,25 +661,27 @@ class NotificationService: UNNotificationServiceExtension {
             for (src, dst) in map { if let v = str(p, src) { o[dst] = v } }
         }
         guard let d = try? JSONSerialization.data(withJSONObject: o),
-              var line = String(data: d, encoding: .utf8), !line.contains("\n") else { return }
+              var line = String(data: d, encoding: .utf8), !line.contains("\n") else { return false }
         line += "\n"
         let dir = container.appendingPathComponent("chatyy_bg_journal", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let fd = open(dir.appendingPathComponent("inbox.lock").path, O_RDWR | O_CREAT, 0o644)
-        if fd < 0 { return }
+        if fd < 0 { return false }
         defer { close(fd) }
-        if flock(fd, LOCK_EX) != 0 { return }
+        if flock(fd, LOCK_EX) != 0 { return false }
         defer { flock(fd, LOCK_UN) }
         let file = dir.appendingPathComponent("inbox.jsonl")
         let size = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int) ?? 0
-        if size > 384 * 1024 { return }
+        if size > 384 * 1024 { return false }
         if !FileManager.default.fileExists(atPath: file.path) {
             FileManager.default.createFile(atPath: file.path, contents: nil)
         }
-        guard let h = try? FileHandle(forWritingTo: file), let bytes = line.data(using: .utf8) else { return }
+        guard let h = try? FileHandle(forWritingTo: file), let bytes = line.data(using: .utf8) else { return false }
         _ = h.seekToEndOfFile()
         h.write(bytes)
         try? h.close()
+        // E2EE (e2e=5): o journal só leva a prévia/marcador → não conta como gravada.
+        return full && str(p, "e2e") != "5" && (str(p, "bg_text") != nil || str(p, "bg_furl") != nil)
     }
 
     private static func extractImageURL(from p: [String: Any]) -> URL? {

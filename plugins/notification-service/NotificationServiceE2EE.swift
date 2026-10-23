@@ -58,6 +58,20 @@ enum ChatyyNSEE2EE {
 
   private static var ud: UserDefaults? { return UserDefaults(suiteName: ChatyyCryptoConst.appGroup) }
 
+  /// [2026-10-22 dlv-device] device_id E2EE v5 do NÚCLEO p/ a conta do push (Keychain "dev.<uid>",
+  /// gravado pelo app no open do núcleo) — vai no ack de entrega (ack POR APARELHO). Só leitura:
+  /// nunca cria aparelho. "" = sem App Group/uid/Keychain (ex.: antes do 1º desbloqueio).
+  static func deliveryDeviceId(account: String) -> String {
+    let acct = ChatyyCryptoAuth.normAccount(account)
+    var uid = ""
+    if !acct.isEmpty { uid = ChatyyCryptoFlags.uid(forAccount: acct) ?? "" }
+    else if let d = ud { uid = d.string(forKey: "chatyy.e2ee5.lastUid") ?? "" }
+    guard ChatyyCryptoStore.isValidUid(uid),
+          let data = ChatyyCryptoKeychain.lookup("dev." + uid).data,
+          let dev = String(data: data, encoding: .utf8) else { return "" }
+    return dev.range(of: "^[A-Z][A-Z2-7]{12}$", options: .regularExpression) != nil ? dev : ""
+  }
+
   /// uid do destinatário se ESTE push pode ser decifrado aqui (sem rede); nil = genérico.
   /// [WP-10c] push e2e=5 que cai no genérico conta o motivo (`skip_<código>`) nas métricas.
   static func candidateUid(_ p: [String: Any], type: String) -> String? {
@@ -332,6 +346,7 @@ enum ChatyyNSEE2EE {
   }
   static func preview(_ p: [String: Any], uid: String, completion: @escaping (String?) -> Void) { completion(nil) }
   static func noteDeadline() {}
+  static func deliveryDeviceId(account: String) -> String { return "" } // [dlv-device] sem núcleo → sem aparelho
 }
 
 #endif

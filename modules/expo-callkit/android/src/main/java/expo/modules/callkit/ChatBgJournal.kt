@@ -136,13 +136,15 @@ object ChatBgJournal {
      * it carries. Called from CallFirebaseMessagingService BEFORE any
      * rendering branch (some of them return early). Never throws.
      */
-    fun maybeAppendFromPush(ctx: Context, data: Map<String, String>) {
+    /** [2026-10-22 dlv-device] true = a mensagem COMPLETA (texto/mídia, `full`) ficou gravada no journal
+     *  local → o ack de entrega do push sai com persisted=1. Prévia/E2EE/trancada → false. */
+    fun maybeAppendFromPush(ctx: Context, data: Map<String, String>): Boolean {
         try {
-            val d = flatten(data) ?: return
-            val type = d["type"] ?: return
-            if (type !in CHAT_TYPES) return
-            val cid = d["conversation_id"]?.takeIf { it.isNotBlank() } ?: return
-            val mid = d["message_id"]?.takeIf { it.isNotBlank() } ?: return
+            val d = flatten(data) ?: return false
+            val type = d["type"] ?: return false
+            if (type !in CHAT_TYPES) return false
+            val cid = d["conversation_id"]?.takeIf { it.isNotBlank() } ?: return false
+            val mid = d["message_id"]?.takeIf { it.isNotBlank() } ?: return false
             // Backend without [2026-10-07 bgsync] fields → still journal a
             // conversation-only bump (preview + unread) — better than nothing.
             val o = JSONObject()
@@ -174,9 +176,11 @@ object ChatBgJournal {
                 cp("bg_fname", "fname"); cp("bg_fsize", "fsize"); cp("bg_w", "w"); cp("bg_h", "h")
                 cp("bg_dur", "dur"); cp("bg_thumb", "thumb"); cp("bg_reply", "reply"); cp("bg_rquote", "rquote")
             }
-            appendLines(ctx, listOf(o.toString()))
+            val n = appendLines(ctx, listOf(o.toString()))
+            return full && n > 0 && (d["bg_text"].orEmpty().isNotEmpty() || d["bg_furl"].orEmpty().isNotEmpty())
         } catch (t: Throwable) {
             Log.w(TAG, "maybeAppendFromPush failed: ${t.message}")
+            return false
         }
     }
 

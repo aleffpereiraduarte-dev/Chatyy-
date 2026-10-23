@@ -194,8 +194,11 @@ class ChatBgSyncWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, par
                 val cidL = cid.toLongOrNull() ?: continue
                 try {
                     val arr = JSONArray(); ids.take(100).forEach { arr.put(it) }
-                    post("$base/api/email.php?action=chat_delivery_ack", bearer,
-                        JSONObject().put("conversation_id", cidL).put("message_ids", arr).toString())
+                    // [2026-10-22 dlv-device] + device_id E2EE v5 do núcleo (ack POR APARELHO, fila sombra).
+                    val ackBody = JSONObject().put("conversation_id", cidL).put("message_ids", arr)
+                    val dev = ChatDeliveryReporter.deviceIdFor(ctx, acct)
+                    if (dev.isNotEmpty()) ackBody.put("device_id", dev)
+                    post("$base/api/email.php?action=chat_delivery_ack", bearer, ackBody.toString())
                 } catch (_: Throwable) {}
             }
             sp.edit().putLong(KEY_LAST_RUN, System.currentTimeMillis()).apply()

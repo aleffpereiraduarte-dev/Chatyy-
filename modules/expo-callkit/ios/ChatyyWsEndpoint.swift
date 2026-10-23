@@ -21,8 +21,10 @@ import CallKit
 /// porta/userinfo/query/fragmento. Thread-safe.
 enum ChatyyWsEndpoint {
     /// Versão da API exposta ao JS (ChatyyChatCore.wsEndpointApi()).
-    /// 1 = só setWsRegion(br|eu|us); 2 = + setWsEndpoint(region, url).
-    static let apiVersion = 2
+    /// 1 = só setWsRegion(br|eu|us); 2 = + setWsEndpoint(region, url);
+    /// 3 = [2026-10-22 ws-migrate] sockets nativos trocam de região sozinhos quando o JS grava
+    ///     (o JS para de reconectar o fio nativo para seguir o client-lb).
+    static let apiVersion = 3
 
     static let usURL = URL(string: "wss://ws.chatyy.com.br/ws")!
     private static let regionalURLs: [String: URL] = [

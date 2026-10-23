@@ -89,14 +89,15 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
         // not, before any rendering. Handles both FCM-direct (top-level data)
         // and Expo-routed (data["body"] JSON) shapes; no-op for non-chat pushes.
         // Mirrors the iOS Notification Service Extension's reportDelivered.
-        try { ChatDeliveryReporter.maybeReport(applicationContext, data) } catch (e: Throwable) {}
-
         // [2026-10-07 bgsync] WhatsApp-style background store: write the chat
         // message this push carries into the local journal (ChatBgJournal) so
         // the app shows it instantly on open — merged into expo-sqlite before
         // the chat list's first paint (services/bgJournal.js). Runs before any
         // rendering branch (several of them return early). ~1 ms, never throws.
-        try { ChatBgJournal.maybeAppendFromPush(applicationContext, data) } catch (e: Throwable) {}
+        // [2026-10-22 dlv-device] Journal ANTES do ack: o ack diz se a mensagem
+        // completa ficou gravada aqui (persisted=1) — base do "apagar ao entregar".
+        val dlvPersisted = try { ChatBgJournal.maybeAppendFromPush(applicationContext, data) } catch (e: Throwable) { false }
+        try { ChatDeliveryReporter.maybeReport(applicationContext, data, dlvPersisted) } catch (e: Throwable) {}
 
         // [2026-05-16 Stage 4] Silent push wake. When the web companion
         // device needs chat history that only this phone has in SQLite,
