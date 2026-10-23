@@ -212,6 +212,7 @@ export function ensureSession() {
   if (_acctDisabled && Date.now() - _sessFailAt < STATUS_TTL_MS) return Promise.resolve(null);
   if (!_acctDisabled && Date.now() - _sessFailAt < 20000) return Promise.resolve(null);
   let stage = 'setAuth';
+  const _sessT0 = Date.now();
   _sessP = (async () => {
     const c = _C();
     const email = _me();
@@ -231,9 +232,16 @@ export function ensureSession() {
     const op = await c.open(String(st.uid), _prefix());
     stage = 'sync0';
     let s1 = null;
-    try { s1 = await c.sync(); } catch (e) { _log('sync0_fail', { code: e && e.code }); _diagErr('sync0_fail', e); }
     let td = null;
-    try { td = await c.thisDevice(); } catch (_) {}
+    // [e2ee5 utd-wa 2026-10-23] aparelho JÁ assinado: decifrar só precisa do store local → a sessão fica pronta
+    // logo após o open e o 1º sync roda em 2º plano. Antes o sync0 (rede; p95 23 s entre status e 1º sync,
+    // até 35 s no Android) segurava TODA decifragem → "Aguardando esta mensagem" ao abrir o app.
+    let _bgSync0 = false;
+    if (_utdFix()) { try { td = await c.thisDevice(); } catch (_) { td = null; } _bgSync0 = !!(td && td.signedByOwner); }
+    if (!_bgSync0) {
+      try { s1 = await c.sync(); } catch (e) { _log('sync0_fail', { code: e && e.code }); _diagErr('sync0_fail', e); }
+      try { td = await c.thisDevice(); } catch (_) {}
+    }
     if (!(td && td.signedByOwner)) {
       // Celular = aparelho principal: assume a identidade (reinstalar = aparelho novo, como no
       // WhatsApp: os contatos veem "o código de segurança mudou"). Web = só pelo QR do celular
@@ -259,7 +267,10 @@ export function ensureSession() {
     _armPeriodic();
     try { require('./link').onSession(_sess); require('./backup').onSession(_sess); } catch (_) {} // [e2ee5 WP-12/WP-14]
     if (s1) _onSyncResult(s1);
-    for (const cid of Array.from(_waiting.keys())) _retryWaiting(cid); // "aguardando" de antes da sessão
+    _wireCoreEvents(); // [e2ee5 utd-wa]
+    if (_bgSync0) requestSync(0); // [e2ee5 utd-wa] 1º sync em 2º plano
+    _wNoteOpen(Date.now() - _sessT0, _bgSync0);
+    for (const cid of Array.from(_waiting.keys())) _retryWaiting(cid, 'session'); // "aguardando" de antes da sessão
     _log('session', { uid: _sess.uid, dev: _sess.deviceId, signed: _sess.signed });
     _diag('session_ok', { code: _sess.signed ? 'signed' : 'unsigned', os: Platform.OS });
     return _sess;
@@ -441,6 +452,7 @@ async function _runSync() {
   } finally {
     _syncRunning = false;
     if (_syncAgain) { _syncAgain = false; requestSync(300); }
+    _retryAllWaiting('sync'); // [e2ee5 utd-wa]
   }
 }
 
@@ -448,7 +460,7 @@ function _onSyncResult(r) {
   if (!r) return;
   try {
     const convs = Array.isArray(r.convsWithNewKeys) ? r.convsWithNewKeys : [];
-    for (const cid of convs) _retryWaiting(String(cid));
+    for (const cid of convs) _retryWaiting(String(cid), 'newkeys');
     // Sem saber a conversa (to-device com chave de sala nova), re-tenta tudo o que aguarda.
     if ((r.toDeviceProcessed || 0) > 0 && !convs.length) for (const cid of new Set([...Array.from(_waiting.keys()), ...Array.from(_rxWait.values()).map((w) => w.conv)])) _retryWaiting(cid); // [e2ee5 WP-09] + reações
   } catch (_) {}
@@ -523,6 +535,7 @@ function _wireOnce() {
     const d = dataOf(raw);
     invalidateDevices(d && d.uid != null ? d.uid : null);
     requestSync(300);
+    _prewarmOnDevices(d && d.uid != null ? String(d.uid) : null); // [e2ee5 utd-wa]
   });
   ws.on('conv_e2ee', (raw) => {
     if (!isOn()) return;
@@ -709,6 +722,7 @@ export async function prepareConversation(cid) {
   const s = await sP;
   if (!st) return null;
   if (s && st.mode === 1 && st.members.length) { try { _C().trackUsers(st.members).catch(() => {}); } catch (_) {} }
+  if (s && s.signed && st.mode === 1) _prewarm(String(cid), st.members); // [e2ee5 utd-wa] chave antes da 1ª mensagem
   return { ...st, ready: !!(s && s.signed), uid: s ? s.uid : null };
 }
 
@@ -1567,7 +1581,7 @@ export function decryptRow(row, convId) {
         text: _textOfPayload(payload),
         t: String(payload.t || 'text'), payload, sender: _norm(row.sender_email), ts: _rowTs(row), trust: d.trust,
       };
-      const wasWaiting = _fail.has(k);
+      const wasWaiting = _fail.has(k) || _wEp.has(k);
       _plainPut(env, entry);
       _notePlainLat(k);
       _unwait(conv, k);
@@ -1592,6 +1606,7 @@ function _setFail(k, reason, row, conv, forceState) {
   _fail.set(k, { reason, state, at: Date.now() });
   if (retry && state === 'waiting') {
     _wait(conv, k, row);
+    _utdKick(conv, k, String(reason)); // [e2ee5 utd-wa]
     try { _health()?.recordDecrypt(false, reason === 'no_session' || reason === 'sender_unknown' ? 'missing_session' : reason, k); } catch (_) {}
   }
   if (first) _emitLocal('e2ee5_plain', { conversation_id: conv, key: k, id: row && row.id, failed: state });
@@ -1606,18 +1621,20 @@ function _wait(conv, k, row) {
   if (!m) { m = new Map(); _waiting.set(conv, m); }
   if (!m.has(k)) {
     m.set(k, { row, at: Date.now(), reported: false });
+    _wStart(k, conv, false);
     try { setTimeout(() => _maybeReport(conv, k), REPORT_AFTER_MS + 500); } catch (_) {}
     _armKeyRequest(conv, k); // [e2ee5 1.7 keyreq]
   }
 }
-function _unwait(conv, k) { const m = _waiting.get(conv); if (m) { m.delete(k); if (!m.size) _waiting.delete(conv); } }
-function _retryWaiting(conv) {
+function _unwait(conv, k) { _wEnd(k); const m = _waiting.get(conv); if (m) { m.delete(k); if (!m.size) _waiting.delete(conv); } }
+function _retryWaiting(conv, via) {
   // [e2ee5 WP-09] reações/estados que aguardavam a chave desta conversa
   try { for (const [k, w] of Array.from(_rxWait)) if (w.conv === String(conv)) { _rxWait.delete(k); _rxDecrypt(w.conv, w.mid, w.env, w.email).catch(() => {}); } } catch (_) {}
   const m = _waiting.get(conv);
   if (!m) return;
   for (const [k, w] of Array.from(m)) {
     _fail.delete(k);
+    if (via) _wVia.set(k, via);
     decryptRow(w.row, conv).catch(() => {});
   }
 }
@@ -1640,15 +1657,27 @@ async function _maybeReport(conv, k) {
 // chatyy.room_key, que o núcleo importa sem passar pelo JS). Regras de membro/índice ficam no
 // servidor + núcleo; aqui só agenda, limita e conta. Flag OTA `globalThis.__chatyy_e2ee5_keyreq`.
 const KEYREQ_AT_MS = [3000, 20000, 50000];
+const KEYREQ_AT_MS_WA = [2500, 15000, 45000]; // [e2ee5 utd-wa] 1º pedido > 2 s, depois de um sync
 const KEYREQ_REASONS = new Set(['missing_session', 'unknown_index']);
 let _keyreqOff = false; // núcleo/servidor sem suporte nesta instalação
 const _keyreqAsked = new Set(); // k que pediram chave (para contar key_request_ok)
 const _keyreqServed = new Map(); // sessão|aparelho → ts
 let _keyreqServeWin = { t: 0, n: 0 };
-function _keyreqOn() { try { return !_keyreqOff && _g().__chatyy_e2ee5_keyreq === true; } catch (_) { return false; } }
+function _keyreqOn() {
+  try {
+    if (_keyreqOff) return false;
+    const g = _g().__chatyy_e2ee5_keyreq;
+    if (g === true) return true;
+    if (g === false) return false; // kill OTA
+    // [e2ee5 utd-wa] servidor liga por conta (E2EE5_FLAGS=keyreq → status.flags.e2ee5_keyreq)
+    const st = _sess && _sess.status;
+    return !!(st && st.flags && st.flags.e2ee5_keyreq === true);
+  } catch (_) { return false; }
+}
 function _armKeyRequest(conv, k) {
+  if (_utdFix()) { try { setTimeout(() => { _maybeBackupFetch(conv, k).catch(() => {}); }, KEYREQ_AT_MS_WA[0]); } catch (_) {} }
   if (!_keyreqOn()) return;
-  for (const ms of KEYREQ_AT_MS) { try { setTimeout(() => { _maybeKeyRequest(conv, k).catch(() => {}); }, ms); } catch (_) {} }
+  for (const ms of (_utdFix() ? KEYREQ_AT_MS_WA : KEYREQ_AT_MS)) { try { setTimeout(() => { _maybeKeyRequest(conv, k).catch(() => {}); }, ms); } catch (_) {} }
 }
 function _hcount(name) { try { _health()?.recordCounter?.(name); } catch (_) {} }
 function _keyreqUnsupported(e) { return !!(e && (e.code === 'unsupported' || e.code === 'not_supported')); }
@@ -1665,10 +1694,16 @@ async function _maybeKeyRequest(conv, k) {
   if (!sid) return;
   const su = await _senderUid(conv, w.row.sender_email, w.row.content, _hintUid(w.row));
   if (!su) return;
+  if (_utdFix()) {
+    // [e2ee5 utd-wa] antes de incomodar o remetente: a chave pode já estar na caixa to-device
+    await _syncAndWait(1500);
+    const m2 = _waiting.get(conv);
+    if (!m2 || !m2.has(k)) return;
+  }
   if (typeof _C().requestRoomKey !== 'function') { _keyreqOff = true; return; }
   try {
     const r = await _C().requestRoomKey(conv, sid[1], su, mid);
-    if (r && r.sent) { _keyreqAsked.add(k); _hcount('key_request_sent'); }
+    if (r && r.sent) { _keyreqAsked.add(k); _hcount('key_request_sent'); _wVia.set(k, 'keyreq'); }
     _log('keyreq', { conv, mid, sent: !!(r && r.sent), reason: r && r.reason });
   } catch (e) {
     if (_keyreqUnsupported(e)) { _keyreqOff = true; return; }
@@ -1699,6 +1734,203 @@ async function _onKeyRequest(ev) {
     if (_isTimeout(e)) _resetCore('keyshare_' + e.code);
   }
 }
+
+// ───────────────────────────────────────────────────────────── [e2ee5 utd-wa 2026-10-23] "Aguardando" nível WhatsApp
+// Dados de 21–23/10 (conversa 959): 3 sessões Megolm em 203 mensagens (rotação a cada 100) → falta de chave de sala
+// explica ≤ 3 casos; a maior parte do "Aguardando esta mensagem" era LOCAL: (a) a sessão do núcleo só ficava pronta
+// depois do 1º sync de rede (status→1º sync p50 1 s, p90 5 s, p95 23 s; 14 % das aberturas > 2,5 s = HOLD_MS);
+// (b) chave consumida por OUTRO caminho (ingestão nativa / NSE) → o JS não era avisado e só re-tentava num novo
+// to-device ou repintura; (c) falha local (timeout/lock_busy/store) sem nova tentativa; (d) decifrar falhava e o
+// JS não puxava o to-device (esperava o WS e2ee5_td ou o sync de 60 s).
+// Aqui: re-tentativa em 1,5/4/10 s + puxa to-device na 1ª falha por chave; re-tenta tudo após cada sync e ao
+// evento nativo onNewKeys; pedido de chave (flag do servidor e2ee5_keyreq) 2,5 s depois, precedido de sync; backup
+// de chaves (BUILD: backupFetchSession) e prewarm da chave ao abrir a conversa (BUILD: prewarmConversation);
+// telemetria do tempo em "aguardando" + motivo (beacon utd_wait + contadores utdw_*).
+// Kill OTA: globalThis.__chatyy_e2ee5_utdfix = false (volta ao comportamento anterior byte a byte nos ganchos).
+function _utdFix() { try { return _g().__chatyy_e2ee5_utdfix !== false; } catch (_) { return true; } }
+const UTD_RETRY_MS = [1500, 4000, 10000];
+const _kickArmed = new Set();
+let _kickSyncAt = 0;
+function _utdKick(conv, k, reason) {
+  if (!_utdFix() || _kickArmed.has(k)) return;
+  _kickArmed.add(k);
+  if (_kickArmed.size > 3000) _kickArmed.delete(_kickArmed.values().next().value);
+  // chave de sala: pode já estar na caixa to-device (o remetente manda ANTES da mensagem) → puxa agora
+  if (KEYREQ_REASONS.has(reason) && Date.now() - _kickSyncAt > 1500) { _kickSyncAt = Date.now(); requestSync(150); }
+  for (const ms of UTD_RETRY_MS) { try { setTimeout(() => _retryOne(conv, k, 'timer'), ms); } catch (_) {} }
+}
+function _retryOne(conv, k, via) {
+  const m = _waiting.get(conv);
+  const w = m && m.get(k);
+  if (!w || _inflight.has(k)) return;
+  // núcleo pendurado (timeout) = respeita o backoff; lock_busy (NSE segurando o store por instantes) tenta já
+  if (Date.now() < _stuckUntil && String((_fail.get(k) || {}).reason || '') === 'timeout') return;
+  _fail.delete(k);
+  _wVia.set(k, via);
+  decryptRow(w.row, conv).catch(() => {});
+}
+let _retryAllAt = 0;
+function _retryAllWaiting(via) {
+  if (!_utdFix() || Date.now() < _stuckUntil) return;
+  const convs = new Set([...Array.from(_waiting.keys()), ...Array.from(_rxWait.values()).map((w) => w.conv)]);
+  if (!convs.size || Date.now() - _retryAllAt < 1000) return;
+  _retryAllAt = Date.now();
+  let n = 0;
+  for (const cid of convs) { if (++n > 30) break; _retryWaiting(cid, via); }
+}
+// Núcleo nativo avisa chave nova em QUALQUER sync (ingestão nativa, fila, NSE entregue ao app) — o JS só via as suas.
+let _coreSubs = null;
+function _wireCoreEvents() {
+  if (_coreSubs || !_utdFix()) return;
+  _coreSubs = [];
+  try {
+    _coreSubs.push(_C().addListener('onNewKeys', (ev) => {
+      if (!isOn() || !_utdFix()) return;
+      const ids = ev && (Array.isArray(ev.convIds) ? ev.convIds : (Array.isArray(ev.conv_ids) ? ev.conv_ids : null));
+      if (ids && ids.length) for (const c of ids.slice(0, 30)) _retryWaiting(String(c), 'newkeys_native');
+      else _retryAllWaiting('newkeys_native');
+    }));
+  } catch (_) {}
+}
+function _syncAndWait(ms) {
+  requestSync(0);
+  return new Promise((r) => { try { setTimeout(r, ms); } catch (_) { r(); } });
+}
+// Backup de chaves ligado neste aparelho: busca SÓ a sessão que falta (BUILD; build antigo → 'unsupported' → desliga).
+let _bkOff = false;
+const _bkTried = new Set();
+async function _maybeBackupFetch(conv, k) {
+  if (!_utdFix() || _bkOff || !_sess) return;
+  const m = _waiting.get(conv);
+  const w = m && m.get(k);
+  if (!w || !KEYREQ_REASONS.has(String((_fail.get(k) || {}).reason || ''))) return;
+  if (typeof _C().backupFetchSession !== 'function') { _bkOff = true; return; }
+  let on = false;
+  try { on = require('./backup').backupOnSync(); } catch (_) { on = false; }
+  if (!on) return;
+  const sid = /"session_id":"([^"]+)"/.exec(w.row.content || '');
+  if (!sid || _bkTried.has(sid[1])) return;
+  _bkTried.add(sid[1]);
+  try {
+    const r = await _C().backupFetchSession(conv, sid[1]);
+    _wCount('bk_' + String((r && r.reason) || 'ok'));
+    if (r && r.imported > 0) { _wVia.set(k, 'backup'); _retryWaiting(conv, 'backup'); }
+  } catch (e) {
+    if (_keyreqUnsupported(e)) { _bkOff = true; return; }
+    _bkTried.delete(sid[1]);
+    if (_isTimeout(e)) _resetCore('bkfetch_' + e.code);
+  }
+}
+// Abrir a conversa = mandar a chave da sessão de saída para TODOS os aparelhos dos membros (BUILD). Quando o
+// usuário envia, a chave já está na caixa do destinatário (antes ia junto do 1º envio e corria com a mensagem).
+let _pwOff = false;
+const _pwAt = new Map();
+const PREWARM_TTL_MS = 10 * 60 * 1000;
+function _prewarm(conv, members) {
+  try {
+    if (!_utdFix() || _pwOff || !_sess || !_sess.signed) return;
+    if (typeof _C().prewarmConversation !== 'function') { _pwOff = true; return; }
+    const t = Date.now();
+    if (t - (_pwAt.get(conv) || 0) < PREWARM_TTL_MS) return;
+    _pwAt.set(conv, t);
+    if (_pwAt.size > 200) _pwAt.delete(_pwAt.keys().next().value);
+    const uids = Array.from(new Set([...(members || []).map(String), _sess.uid])).filter(Boolean);
+    if (uids.length < 2 || uids.length > 256) return;
+    _C().prewarmConversation(conv, uids).then((r) => {
+      if (r && r.keyShareRequests > 0) _wCount('prewarm_shared');
+      _log('prewarm', { conv, reqs: r && r.keyShareRequests });
+    }, (e) => {
+      if (_keyreqUnsupported(e)) { _pwOff = true; return; }
+      _pwAt.delete(conv);
+      if (_isTimeout(e)) _resetCore('prewarm_' + e.code);
+    });
+  } catch (_) {}
+}
+function _prewarmOnDevices(uid) {
+  if (!_utdFix() || _pwOff || !_sess) return;
+  try {
+    setTimeout(() => {
+      for (const [cid, st] of _conv) {
+        if (!st || st.mode !== 1 || !_watchers.has(cid)) continue; // só conversas abertas na tela
+        if (uid && !(st.members || []).includes(uid)) continue;
+        _pwAt.delete(cid);
+        _prewarm(cid, st.members);
+      }
+    }, 2500); // depois do sync que marca a lista de aparelhos do membro como suja
+  } catch (_) {}
+}
+
+// Telemetria: episódio "aguardando" = 1ª falha retentável OU fim do HOLD sem texto → texto na tela.
+const _wEp = new Map();  // keyOf → {t0, conv, vis, r}
+const _wVia = new Map(); // keyOf → origem da última tentativa (sync/newkeys/timer/keyreq/backup/session/render)
+let _wAgg = { n: 0, vis: 0, d: [], r: {}, via: {}, st60: 0 };
+let _wBeacons = 0;
+let _wOpenMs = -1;
+let _wOpenBg = 0;
+const _wSan = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24) || 'x';
+function _wCount(name) { try { _health()?.recordCounter?.('utdw_' + _wSan(name)); } catch (_) {} }
+function _wReason(k) { const f = _fail.get(k); return f ? f.reason : (_sess ? 'decrypting' : 'no_session'); }
+function _wStart(k, conv, visible) {
+  if (!_utdFix()) return;
+  let e = _wEp.get(k);
+  if (!e) {
+    const t0 = _seenAt.get(k);
+    e = { t0: t0 != null ? t0 : Date.now(), conv, vis: false, r: _wReason(k) };
+    _wEp.set(k, e);
+    if (_wEp.size > 2000) _wEp.delete(_wEp.keys().next().value);
+    try {
+      setTimeout(() => {
+        if (_wEp.get(k) !== e) return;
+        _wAgg.st60 += 1; _wCount('stuck60'); _wCount('stuck60_' + e.r); _wFlush(false);
+      }, 60000);
+    } catch (_) {}
+  } else if (_fail.has(k)) e.r = _wReason(k);
+  if (visible && !e.vis) { e.vis = true; _wCount('vis_start'); }
+}
+function _wEnd(k) {
+  const e = _wEp.get(k);
+  if (!e) return;
+  _wEp.delete(k);
+  const via = _wVia.get(k) || 'render';
+  _wVia.delete(k);
+  const dur = Math.max(0, Date.now() - e.t0);
+  _wAgg.n += 1;
+  _wAgg.r[e.r] = (_wAgg.r[e.r] || 0) + 1;
+  _wAgg.via[via] = (_wAgg.via[via] || 0) + 1;
+  if (e.vis) {
+    _wAgg.vis += 1; _wAgg.d.push(dur);
+    _wCount('vis'); _wCount(dur <= 5000 ? 'vis_le5s' : dur <= 15000 ? 'vis_le15s' : dur <= 60000 ? 'vis_le60s' : 'vis_gt60s');
+    _wCount('vis_r_' + e.r); _wCount('vis_via_' + via);
+  } else _wCount('hid');
+  if (_wAgg.n >= 10) _wFlush(false);
+}
+function _wNoteOpen(ms, bg) {
+  _wOpenMs = ms; _wOpenBg = bg ? 1 : 0;
+  _wCount(ms <= 1000 ? 'open_le1s' : ms <= 2500 ? 'open_le2500' : ms <= 5000 ? 'open_le5s' : 'open_gt5s');
+}
+function _wFlush(force) {
+  const a = _wAgg;
+  if ((!a.n && !a.st60) || _wBeacons >= 20) return;
+  if (!force && a.n < 10 && !a.st60) return;
+  _wAgg = { n: 0, vis: 0, d: [], r: {}, via: {}, st60: 0 };
+  _wBeacons += 1;
+  const d = a.d.slice().sort((x, y) => x - y);
+  const q = (p) => (d.length ? d[Math.min(d.length - 1, Math.floor(p * (d.length - 1)))] : 0);
+  const kv = (o) => Object.keys(o).map((x) => _wSan(x) + ':' + o[x]).join(',') || '-';
+  try {
+    require('../nativeTelemetry').nativeBeacon('e2ee5', 'utd_wait', 'n=' + a.n + ' vis=' + a.vis + ' p50=' + q(0.5) + ' p95=' + q(0.95) + ' max=' + (d.length ? d[d.length - 1] : 0)
+      + ' stuck60=' + a.st60 + ' r=' + kv(a.r) + ' via=' + kv(a.via) + ' open_ms=' + _wOpenMs + ' open_bg=' + _wOpenBg
+      + ' keyreq=' + (_keyreqOn() ? 1 : 0) + ' pw=' + (_pwOff ? 0 : 1) + ' os=' + Platform.OS);
+  } catch (_) {}
+}
+try { AppState.addEventListener('change', (st) => { if (st === 'background') _wFlush(true); }); } catch (_) {}
+/** Diagnóstico (QA): estado da fila "aguardando". */
+export function utdState() {
+  let waiting = 0;
+  for (const m of _waiting.values()) waiting += m.size;
+  return { on: _utdFix(), waiting, episodes: _wEp.size, keyreq: _keyreqOn(), prewarm: !_pwOff, backupFetch: !_bkOff, agg: { ..._wAgg, d: _wAgg.d.length } };
+}
+
 
 // ───────────────────────────────────────────────────────────── linhas da conversa
 
@@ -1755,6 +1987,7 @@ function _holdLeft(k, conv, id) {
         _holdTm.delete(k);
         if (_plain.has(k)) return;
         _latMiss += 1;
+        _wStart(k, conv, true); // [e2ee5 utd-wa] passou do hold: agora o usuário vê a bolha de espera
         _emitLocal('e2ee5_plain', { conversation_id: conv, key: k, id, hold: 'expired' });
       }, left + 20));
     } catch (_) {}
@@ -1783,6 +2016,7 @@ let _latNative = 0;
 let _latOff = 0;
 let _latSent = 0;
 function _notePlainLat(k) {
+  _wEnd(k); // [e2ee5 utd-wa]
   const t0 = _seenAt.get(k);
   const tm = _holdTm.get(k);
   if (tm) { try { clearTimeout(tm); } catch (_) {} _holdTm.delete(k); }
