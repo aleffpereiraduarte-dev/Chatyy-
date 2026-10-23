@@ -24,6 +24,7 @@ mod requests;
 mod rt;
 mod transport;
 mod util;
+mod utd; // [e2ee5 utd-wa 2026-10-23]
 
 pub use crate::backup::{BackupEnabled, BackupStatus, RestoreResult};
 pub use crate::core::{
@@ -39,6 +40,7 @@ pub use crate::link::{LinkPhone, LinkPhoneState, LinkWeb, LinkWebState, LINK_INF
 pub use crate::media::{decrypt_bytes, decrypt_file, encrypt_bytes, encrypt_file, EncryptedBytes, EncryptedFile};
 pub use crate::metrics::MetricsSnapshot;
 pub use crate::transport::{actions, HttpResponse, HttpTransport, TransportError};
+pub use crate::utd::{BackupFetchResult, PrewarmResult};
 
 /// Versão do contrato que este núcleo implementa (CONTRATO, cabeçalho).
 pub const CONTRACT_VERSION: &str = "e2ee5-contrato/1.7";
