@@ -51,6 +51,21 @@ class NotificationService: UNNotificationServiceExtension {
     private static let ackGrace: TimeInterval = 0.35
     private static let bannerDeadline: TimeInterval = 3.0
     private static let maxAvatarBytes = 3 * 1024 * 1024
+    // [2026-10-23 push-rapido item 6] TEXTO PRIMEIRO: o banner sai assim que o texto está pronto
+    // (claro = já no payload; E2EE = decifrado) e avatar/mídia só entram se chegarem até
+    // mediaBudget (contado do didReceive); senão entrega sem eles (o download segue e o avatar
+    // fica no cache p/ o próximo push). Antes o banner esperava avatar/mídia até bannerDeadline (3 s).
+    // Kill: App Group "chatyy.nse.text_first" = "0" → comportamento antigo.
+    // Orçamento: App Group "chatyy.nse.media_budget_ms" (Int, 100…3000; ausente/0 = padrão).
+    private static let mediaBudgetDefaultMs = 700
+    private var startedAt = DispatchTime.now()
+    private var ptWantMedia = false
+    private var ptWantAvatar = false
+    private var ptSkipMedia = false
+    private var ptSkipAvatar = false
+    private var ptTextFirst = false
+    private var ptE2E = false
+    private var ptExpired = false
 
     override func didReceive(_ request: UNNotificationRequest,
                              withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
@@ -60,8 +75,14 @@ class NotificationService: UNNotificationServiceExtension {
             return
         }
         self.bestAttemptContent = best
+        let t0 = DispatchTime.now()
+        self.startedAt = t0
 
         let p = Self.payload(request.content.userInfo)
+        let fastUD = UserDefaults(suiteName: Self.appGroupId)
+        let textFirst = (fastUD?.string(forKey: "chatyy.nse.text_first") ?? "1") != "0"
+        let budgetRaw = fastUD?.integer(forKey: "chatyy.nse.media_budget_ms") ?? 0
+        let mediaBudget: TimeInterval = Double(budgetRaw > 0 ? min(max(budgetRaw, 100), 3000) : Self.mediaBudgetDefaultMs) / 1000.0
         // [2026-10-13 dack-wait] O POST do ✓✓ entra no MESMO DispatchGroup das
         // mídias: antes era fire-and-forget e, em texto puro (avatar em cache →
         // finish em ms), o iOS podia congelar/matar a extensão logo após o
@@ -128,15 +149,24 @@ class NotificationService: UNNotificationServiceExtension {
         // O texto decifrado só vai para o conteúdo da notificação (nunca journal/cache/Intent).
         var e2eText: String?
         var e2ePending = false
+        // [push-rapido item 6] chamado quando o texto E2EE fica pronto (definido depois do finalize).
+        var textReadyHook: (() -> Void)?
         let e2eUid: String? = isChat ? ChatyyNSEE2EE.candidateUid(p, type: type) : nil
         if let uid = e2eUid {
             e2ePending = true
             group.enter()
             ChatyyNSEE2EE.preview(p, uid: uid) { txt in
-                resultLock.lock(); e2eText = txt; e2ePending = false; resultLock.unlock()
+                resultLock.lock(); e2eText = txt; e2ePending = false; let hook = textReadyHook; resultLock.unlock()
                 group.leave()
+                hook?()
             }
         }
+        lock.lock()
+        ptWantMedia = mediaURL != nil
+        ptWantAvatar = avatarURL != nil || groupAvatarURL != nil
+        ptTextFirst = textFirst
+        ptE2E = e2eUid != nil
+        lock.unlock()
 
         if let u = mediaURL {
             group.enter()
@@ -148,7 +178,7 @@ class NotificationService: UNNotificationServiceExtension {
         }
         if let u = avatarURL {
             group.enter()
-            let t = Self.loadAvatar(u) { d in
+            let t = Self.loadAvatar(u, staleFirst: textFirst) { d in
                 resultLock.lock(); avatarData = d; resultLock.unlock()
                 group.leave()
             }
@@ -156,7 +186,7 @@ class NotificationService: UNNotificationServiceExtension {
         }
         if let u = groupAvatarURL {
             group.enter()
-            let t = Self.loadAvatar(u) { d in
+            let t = Self.loadAvatar(u, staleFirst: textFirst) { d in
                 resultLock.lock(); groupAvatarData = d; resultLock.unlock()
                 group.leave()
             }
@@ -176,6 +206,22 @@ class NotificationService: UNNotificationServiceExtension {
                              resultLock: resultLock,
                              media: { mediaAttachment }, avatar: { avatarData }, groupAvatar: { groupAvatarData },
                              e2e: { e2eText })
+        }
+        // [push-rapido item 6] texto primeiro: passado o orçamento, entrega com o que tiver (sem
+        // esperar avatar/mídia) assim que o texto estiver pronto. O ✓✓ continua com a folga ackGrace
+        // DENTRO do finalize e o journal já foi gravado antes do ack (ordem da F0 intacta).
+        if textFirst {
+            resultLock.lock()
+            textReadyHook = {
+                DispatchQueue.global(qos: .userInitiated).async {
+                    if DispatchTime.now() >= t0 + mediaBudget { finalize() }
+                }
+            }
+            resultLock.unlock()
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: t0 + mediaBudget) {
+                resultLock.lock(); let waitE2E = e2ePending; resultLock.unlock()
+                if !waitE2E { finalize() }
+            }
         }
         // Avatar/mídia lentos (cache frio, rede ruim) não seguram o banner além do prazo.
         // [e2ee5 WP-10] decifrando ainda → espera até o teto da E2EE (depois entrega o genérico).
@@ -202,6 +248,10 @@ class NotificationService: UNNotificationServiceExtension {
         resultLock.lock()
         let media = mediaGet(), avatar = avatarGet(), groupAvatar = groupAvatarGet(), e2e = e2eGet()
         resultLock.unlock()
+        lock.lock()
+        ptSkipMedia = ptWantMedia && media == nil
+        ptSkipAvatar = ptWantAvatar && avatar == nil && groupAvatar == nil
+        lock.unlock()
         if let a = media { best.attachments = [a] }
         var p = p
         if let txt = e2e, !txt.isEmpty, !locked {
@@ -250,6 +300,7 @@ class NotificationService: UNNotificationServiceExtension {
         let pending = tasks
         lock.unlock()
         pending.forEach { $0.cancel() }
+        lock.lock(); ptExpired = !delivered; lock.unlock()
         if let best = bestAttemptContent { finish(best) }
     }
 
@@ -260,8 +311,41 @@ class NotificationService: UNNotificationServiceExtension {
         if delivered { lock.unlock(); return }
         delivered = true
         let handler = contentHandler
+        let ms = Int(clamping: (DispatchTime.now().uptimeNanoseconds &- startedAt.uptimeNanoseconds) / 1_000_000)
+        var codes: [String] = ["pt_banner" + Self.ptBucket(ms, [300, 700, 1500, 3000])]
+        if ptSkipAvatar { codes.append("pt_skip_avatar") }
+        if ptSkipMedia { codes.append("pt_skip_media") }
+        if ptExpired { codes.append("pt_expire") }
+        let line = "[ChatyyPushT] banner_ms=\(ms) text_first=\(ptTextFirst ? 1 : 0) e2e=\(ptE2E ? 1 : 0)"
+            + " skip_avatar=\(ptSkipAvatar ? 1 : 0) skip_media=\(ptSkipMedia ? 1 : 0) expire=\(ptExpired ? 1 : 0)"
         lock.unlock()
         handler?(content)
+        // Depois do contentHandler: nada disso atrasa o banner. Só tempos/códigos, nunca conteúdo.
+        NSLog("%@", line)
+        Self.ptCount(codes)
+    }
+
+    // MARK: - Tempos do push ([2026-10-23 push-rapido])
+    // Contadores no App Group "chatyy.nse.pt.counts" ([String: Int], máx. 24 chaves) — lidos e
+    // zerados junto com os do E2EE (ExpoCallKit.e2ee5PushMetricsTake → e2ee5_metrics nse_pt_*).
+    // Kill: App Group "chatyy.nse.timing" = "0".
+    private static let ptLock = NSLock()
+
+    private static func ptBucket(_ v: Int, _ edges: [Int]) -> String {
+        for e in edges where v <= e { return "_le\(e)" }
+        return "_gt\(edges.last ?? 0)"
+    }
+
+    private static func ptCount(_ codes: [String]) {
+        guard let ud = UserDefaults(suiteName: appGroupId) else { return }
+        if (ud.string(forKey: "chatyy.nse.timing") ?? "1") == "0" { return }
+        ptLock.lock(); defer { ptLock.unlock() }
+        var counts = ud.dictionary(forKey: "chatyy.nse.pt.counts") as? [String: Int] ?? [:]
+        for c in codes {
+            let k = String(c.prefix(40))
+            if counts[k] != nil || counts.count < 24 { counts[k] = (counts[k] ?? 0) + 1 }
+        }
+        ud.set(counts, forKey: "chatyy.nse.pt.counts")
     }
 
     private func addTask(_ t: URLSessionTask) {
@@ -461,13 +545,32 @@ class NotificationService: UNNotificationServiceExtension {
     private static func reportDelivered(_ p: [String: Any], persisted: Bool, group: DispatchGroup,
                                         track: (URLSessionTask) -> Void) {
         var toks: [String] = []
-        if let dAck = str(p, "d_ack"), dAck.contains(".") { toks.append(persisted ? dAck + "|1" : dAck) }
+        var current: String?
+        if let dAck = str(p, "d_ack"), dAck.contains(".") {
+            let it = persisted ? dAck + "|1" : dAck
+            toks.append(it); current = it
+        }
         // Reenvia até 5 pendentes de pushes anteriores (rede caiu / NSE expirou).
         for t in takePendingAcks(max: 5) where !toks.contains(t) && !toks.contains(t + "|1") { toks.append(t) }
+        // [2026-10-23 push-rapido 3-nativo] `ack_url` do servidor só p/ o ack DESTE push (pendentes = URL de sempre).
+        let primary = ackPrimaryURL(p)
         for tok in toks {
-            guard let t = postAck(tok, group: group) else { continue }
+            guard let t = postAck(tok, group: group, primary: tok == current ? primary : nil) else { continue }
             track(t)
         }
+    }
+
+    /// [2026-10-23 push-rapido 3-nativo] `ack_url` opcional do payload: só https em chatyy.com.br ou
+    /// *.chatyy.com.br, sem usuário/senha, porta 443. Kill: App Group "chatyy.dack.ack_url" = "0".
+    private static let ackPrimaryTimeout: TimeInterval = 2.5
+    private static func ackPrimaryURL(_ p: [String: Any]) -> URL? {
+        if (UserDefaults(suiteName: appGroupId)?.string(forKey: "chatyy.dack.ack_url") ?? "1") == "0" { return nil }
+        guard let raw = str(p, "ack_url")?.trimmingCharacters(in: .whitespacesAndNewlines), raw.count <= 512,
+              let u = URL(string: raw), u.scheme?.lowercased() == "https",
+              let host = u.host?.lowercased(),
+              host == "chatyy.com.br" || (host.hasSuffix(".chatyy.com.br") && host.count > 14),
+              u.user == nil, u.password == nil, u.port == nil || u.port == 443 else { return nil }
+        return u
     }
 
     /// Conta (campo `e`) do payload do token d_ack — só p/ escolher o aparelho (assinatura = servidor).
@@ -482,7 +585,7 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     /// [item] = "<d_ack>" ou "<d_ack>|1" (persisted).
-    private static func postAck(_ item: String, group: DispatchGroup) -> URLSessionTask? {
+    private static func postAck(_ item: String, group: DispatchGroup, primary: URL? = nil) -> URLSessionTask? {
         let persisted = item.hasSuffix("|1")
         let dAck = persisted ? String(item.dropLast(2)) : item
         var obj: [String: Any] = ["d_ack": dAck, "persisted": persisted ? 1 : 0]
@@ -490,23 +593,44 @@ class NotificationService: UNNotificationServiceExtension {
         if !dev.isEmpty { obj["device_id"] = dev }
         guard let url = ackURL,
               let body = try? JSONSerialization.data(withJSONObject: obj) else { return nil }
-        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: ackTimeout)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.httpBody = body
+        func makeReq(_ u: URL, _ timeout: TimeInterval) -> URLRequest {
+            var req = URLRequest(url: u, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("application/json", forHTTPHeaderField: "Accept")
+            req.httpBody = body
+            return req
+        }
         group.enter()
         // [push-preview 2026-10-21] pendente ANTES do POST: o banner não espera mais
         // o fim do POST, e se o iOS congelar/matar a extensão o próximo push reenvia.
         addPendingAck(item)
-        let task = ackSession.dataTask(with: req) { _, response, error in
-            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            // 2xx = servidor gravou (ou já estava entregue). 4xx = definitivo
-            // (token inválido/expirado) → não reenvia. Resto = tenta depois.
-            if !(error != nil || code == 0 || code >= 500 || code == 429) {
-                removePendingAck(item)
+        let t0 = DispatchTime.now()
+        let sendDefault: (String) -> URLSessionTask = { via in
+            let task = ackSession.dataTask(with: makeReq(url, ackTimeout)) { _, response, error in
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                // 2xx = servidor gravou (ou já estava entregue). 4xx = definitivo
+                // (token inválido/expirado) → não reenvia. Resto = tenta depois.
+                if !(error != nil || code == 0 || code >= 500 || code == 429) {
+                    removePendingAck(item)
+                }
+                NSLog("%@", "[ChatyyPushT] dack via=\(via) code=\(code) ms=\((DispatchTime.now().uptimeNanoseconds &- t0.uptimeNanoseconds) / 1_000_000)")
+                group.leave()
             }
-            group.leave()
+            task.resume()
+            return task
+        }
+        guard let pu = primary else { return sendDefault("default") }
+        // [push-rapido 3-nativo] ack_url primeiro; erro/não-2xx → URL de sempre (mesma entrada no group).
+        let task = ackSession.dataTask(with: makeReq(pu, ackPrimaryTimeout)) { _, response, error in
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if error == nil && (200..<300).contains(code) {
+                removePendingAck(item)
+                NSLog("%@", "[ChatyyPushT] dack via=ack_url code=\(code) ms=\((DispatchTime.now().uptimeNanoseconds &- t0.uptimeNanoseconds) / 1_000_000)")
+                group.leave()
+            } else {
+                _ = sendDefault("fallback")
+            }
         }
         task.resume()
         return task
@@ -764,7 +888,9 @@ class NotificationService: UNNotificationServiceExtension {
 
     /// Avatar → 256 px PNG data, cached 24 h in the extension's Caches dir.
     /// Returns nil task when served from cache.
-    private static func loadAvatar(_ url: URL, completion: @escaping (Data?) -> Void) -> URLSessionTask? {
+    /// [2026-10-23 push-rapido] staleFirst: cache VENCIDO responde na hora e o download só renova o
+    /// arquivo (o banner não espera a rede por um avatar que já temos).
+    private static func loadAvatar(_ url: URL, staleFirst: Bool = false, completion: @escaping (Data?) -> Void) -> URLSessionTask? {
         let cacheFile = avatarCacheFile(for: url)
         if let f = cacheFile,
            let attrs = try? FileManager.default.attributesOfItem(atPath: f.path),
@@ -774,17 +900,21 @@ class NotificationService: UNNotificationServiceExtension {
             completion(d)
             return nil
         }
+        let stale: Data? = staleFirst ? cacheFile.flatMap { try? Data(contentsOf: $0) } : nil
+        if let s = stale { completion(s) }
+        let answered = stale != nil
         let req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: downloadTimeout)
         let task = URLSession.shared.dataTask(with: req) { data, response, _ in
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard let data = data, (200..<300).contains(code), data.count <= maxAvatarBytes,
                   let png = downsampledPNG(data, maxPixel: 256) else {
+                if answered { return }
                 // Stale cache beats nothing.
                 if let f = cacheFile, let d = try? Data(contentsOf: f) { completion(d) } else { completion(nil) }
                 return
             }
             if let f = cacheFile { try? png.write(to: f, options: .atomic) }
-            completion(png)
+            if !answered { completion(png) }
         }
         task.resume()
         return task

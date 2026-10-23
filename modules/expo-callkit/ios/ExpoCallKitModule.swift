@@ -1974,13 +1974,31 @@ public class ExpoCallKitModule: Module {
     // JSON {"counts":{código:n},"ms":[…]} — só códigos e milissegundos, nunca conteúdo.
     Function("e2ee5PushMetricsTake") { () -> String in
       guard let d = UserDefaults(suiteName: "group.com.onemundo.mail") else { return "{}" }
-      let counts = d.dictionary(forKey: "chatyy.e2ee5.nse.counts") as? [String: Int] ?? [:]
+      var counts = d.dictionary(forKey: "chatyy.e2ee5.nse.counts") as? [String: Int] ?? [:]
       let ms = d.array(forKey: "chatyy.e2ee5.nse.ms") as? [Int] ?? []
       d.removeObject(forKey: "chatyy.e2ee5.nse.counts")
       d.removeObject(forKey: "chatyy.e2ee5.nse.ms")
+      // [2026-10-23 push-rapido] + tempos do banner da NSE (pt_*, NotificationService.ptCount).
+      if let pt = d.dictionary(forKey: "chatyy.nse.pt.counts") as? [String: Int] {
+        for (k, v) in pt { counts[k] = (counts[k] ?? 0) + v }
+        d.removeObject(forKey: "chatyy.nse.pt.counts")
+      }
       let obj: [String: Any] = ["counts": counts, "ms": ms]
       guard let data = try? JSONSerialization.data(withJSONObject: obj), let str = String(data: data, encoding: .utf8) else { return "{}" }
       return str
+    }
+
+    // [2026-10-23 push-rapido] Kill switches nativos do push rápido (App Group; padrão = ligado).
+    // JSON {"text_first":bool,"media_budget_ms":int,"ack_url":bool,"timing":bool} — só as chaves presentes.
+    Function("setPushFastFlags") { (json: String) -> Bool in
+      guard let d = UserDefaults(suiteName: "group.com.onemundo.mail"),
+            let data = json.data(using: .utf8),
+            let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+      if let v = o["text_first"] as? Bool { d.set(v ? "1" : "0", forKey: "chatyy.nse.text_first") }
+      if let v = o["media_budget_ms"] as? NSNumber { d.set(max(0, min(3000, v.intValue)), forKey: "chatyy.nse.media_budget_ms") }
+      if let v = o["ack_url"] as? Bool { d.set(v ? "1" : "0", forKey: "chatyy.dack.ack_url") }
+      if let v = o["timing"] as? Bool { d.set(v ? "1" : "0", forKey: "chatyy.nse.timing") }
+      return true
     }
 
     AsyncFunction("bgSyncConfigure") { (cfgJson: String) -> Void in
