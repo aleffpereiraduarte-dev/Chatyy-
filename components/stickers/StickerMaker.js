@@ -643,7 +643,15 @@ function StickerMakerInner({ sourceUri, onClose, onSaved, onSend, autoCutout = t
     setExporting(true);
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     try {
-      const uri = await captureRefFn(captureRef.current, { format: 'png', quality: 1, result: 'tmpfile', width: OUT, height: OUT });
+      let uri = await captureRefFn(captureRef.current, { format: 'png', quality: 1, result: 'tmpfile', width: OUT, height: OUT });
+      // [2026-10-23 sticker-fundo] iOS view-shot desenha em 512 pt × escala da tela (3x) → PNG
+      // 1536×1536; com foto de fundo (sem recorte) passava de 4 MB e o servidor recusava ("Não foi
+      // possível salvar"). Reduz p/ 512×512 PNG (mantém alfa) antes do upload — fica ~10× menor.
+      try {
+        const IM = require('expo-image-manipulator');
+        const r = await IM.manipulateAsync(uri, [{ resize: { width: OUT, height: OUT } }], { compress: 1, format: IM.SaveFormat.PNG });
+        if (r && r.uri) uri = r.uri;
+      } catch {}
       return { uri, name: 'sticker.png', type: 'image/png' };
     } finally {
       if (aliveRef.current) setExporting(false);
