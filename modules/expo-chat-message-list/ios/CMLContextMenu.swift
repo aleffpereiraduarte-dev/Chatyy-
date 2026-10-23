@@ -868,9 +868,13 @@ final class CMLContextMenuOverlay: UIView {
       addSubview(m)
       menu = m
     }
+    // [2026-10-22 ctx-blink] balão ACIMA do menu: o menu entra (translado p/ cima,
+    // escala 0,5) e sai passando por trás do balão — antes passava POR CIMA da
+    // foto/álbum e parecia um "retângulo cinza" sobre ela no 1º quadro e na volta.
+    // No estado final não há sobreposição; painel de emoji/voo seguem por cima.
+    if let m = menu { bringSubviewToFront(m) }
     bringSubviewToFront(bubbleBox)
     if let b = reactBar { bringSubviewToFront(b) }
-    if let m = menu { bringSubviewToFront(m) }
     layoutMenu()
     animateMenuIn()
   }
