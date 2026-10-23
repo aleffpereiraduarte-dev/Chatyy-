@@ -86,6 +86,7 @@ const PREVIEW_ICONS = {
   '🎵': 'music', '🎙': 'mic', '📍': 'pin',
   '👤': 'user', '📊': 'chart', '📅': 'calendar',
   '💫': 'sticker', '📄': 'file', '🎁': 'gift',
+  '🔒': 'lock', // [2026-10-23 lista-e2ee] "Mensagem criptografada" (iOS lock / Android ccl_ic_lock)
 };
 export function splitPreviewIcon(str) {
   if (typeof str !== 'string' || str.length < 2) return { icon: '', text: typeof str === 'string' ? str : '' };
@@ -241,7 +242,7 @@ export function buildRow(conv, ctx) {
   let previewDeleted = false;
   if (lastMsg && ctx.computePreview) {
     try {
-      const r = ctx.computePreview(lastMsg, isGroup, isChannel, me, conv.members) || {};
+      const r = ctx.computePreview(lastMsg, isGroup, isChannel, me, conv.members, conv.id) || {}; // [2026-10-23 lista-e2ee] conv.id: decifra/mantém a prévia v5 da linha
       preview = r.preview || '';
       previewSender = r.previewSender || null;
       statusType = r.statusType || null;

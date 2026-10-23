@@ -901,6 +901,7 @@ const PREVIEW_EMOJI_ICONS = {
   '\uD83C\uDFB5': IconMusic, '\uD83C\uDF99': IconMic, '\uD83D\uDCCD': IconMapPin,
   '\uD83D\uDC64': IconUser, '\uD83D\uDCCA': IconBarChart, '\uD83D\uDCC5': IconCalendar,
   '\uD83D\uDCAB': IconStickerMini, '\uD83D\uDCC4': IconFileText,
+  '\uD83D\uDD12': IconLock, // [2026-10-23 lista-e2ee] "Mensagem criptografada" (marcador → SVG)
 };
 // [2026-10-12 chatlist-polish] Voice-note length in the preview (WhatsApp:
 // mic glyph + "0:12"). `duration` = seconds (chat_upload / chat_forward probe).
@@ -1318,10 +1319,28 @@ function _rowEstimate() {
 // [2026-10-14 native-home] Derivação da prévia (texto, remetente, recibo) da
 // linha — extraída do useMemo do ConversationRow SEM mudar a lógica, para a
 // lista nativa (components/chatlist/nativeAdapter.js) usar exatamente a mesma.
-function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
+// [2026-10-23 lista-e2ee] última prévia PRONTA por conversa (só memória): enquanto a msg nova E2EE v5
+// decifra, a linha mantém a prévia anterior em vez de trocar por um rótulo genérico.
+const _e5RowPrev = new Map();
+function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members, convId) {
+  const r = _computeRowPreviewInner(lastMsg, isGroup, isChannel, _me, t, members, convId);
+  if (convId == null || !r) return r;
+  const ck = String(convId);
+  if (r._e5Pending) {
+    const prev = _e5RowPrev.get(ck);
+    if (prev) return prev;
+    const { _e5Pending, ...clean } = r; // sem anterior: rótulo (cadeado ou última prévia decifrada guardada)
+    return clean;
+  }
+  _e5RowPrev.set(ck, r);
+  if (_e5RowPrev.size > 2000) _e5RowPrev.delete(_e5RowPrev.keys().next().value);
+  return r;
+}
+function _computeRowPreviewInner(lastMsg, isGroup, isChannel, _me, t, members, convId) {
     let preview = '';
     let previewSender = null;
     let statusType = null;
+    let _e5Pending = false; // [2026-10-23 lista-e2ee]
     if (lastMsg) {
     if ((lastMsg.sender_email || '').toLowerCase() === _me) {
       // Defense-in-depth for group read receipts: only paint the blue
@@ -1361,6 +1380,10 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
     }
 
     let _callLabeled = false;
+    // [2026-10-23 lista-e2ee] v5: texto decifrado local / rótulo do tipo fino / cadeado (services/e2ee/listPreview.js)
+    let _e5Done = false;
+    let _e5lp = null;
+    try { if (lastMsg._e5pending || (typeof lastMsg.content === 'string' && lastMsg.content.startsWith('{"e2e":'))) _e5lp = require('../services/e2ee/listPreview').listPreview(lastMsg, t, convId != null ? convId : lastMsg.conversation_id); } catch {}
     let content = typeof lastMsg.content === 'string' ? lastMsg.content : (lastMsg.content ? JSON.stringify(lastMsg.content) : '');
     // Caption captured separately so media-type labels can surface real text
     // ("📷 sunset at the beach" instead of "📷 Foto").
@@ -1398,7 +1421,9 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
         // [e2ee5] v5 (N≥5): texto decifrado do cache local ou "Mensagem" genérica (decifra em 2º
         // plano; o evento e2ee5_plain repinta a linha). Sistema {"sys":"e2ee_*"} → texto do divisor.
         let _p5 = null;
-        try { if ((parsed && typeof parsed.e2e === 'number' && parsed.e2e >= 5) || (parsed && typeof parsed.sys === 'string' && (parsed.sys.indexOf('e2ee_') === 0 || parsed.sys === 'game' || parsed.sys === 'watch_session' /* [2026-10-22 e2ee5 D7] */))) _p5 = require('../services/e2ee/e2ee5').previewText(lastMsg, t); } catch {}
+        if (_e5lp) {
+          // já resolvido acima (o envelope aqui passou pelo achatamento de marcação — nunca decifrar desta cópia)
+        } else try { if ((parsed && typeof parsed.e2e === 'number' && parsed.e2e >= 5) || (parsed && typeof parsed.sys === 'string' && (parsed.sys.indexOf('e2ee_') === 0 || parsed.sys === 'game' || parsed.sys === 'watch_session' /* [2026-10-22 e2ee5 D7] */))) _p5 = require('../services/e2ee/e2ee5').previewText(lastMsg, t); } catch {}
         if (_p5 != null) {
           content = _p5;
         } else if (parsed && parsed.e2e) {
@@ -1495,7 +1520,8 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
           : (t('chat.message') || 'Mensagem');
       }
     }
-    if (lastMsg.type === 'call_card' && !_callLabeled) {
+    if (_e5lp) { content = _e5lp.text; caption = ''; _e5Done = true; _e5Pending = _e5lp.state === 'pending'; }
+    if (lastMsg.type === 'call_card' && !_callLabeled && !_e5Done) {
       content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada');
     }
     // [2026-10-05] Preview de foto/v\u00EDdeo: N\u00C3O mostrar nome de arquivo/URL (feio,
@@ -1510,7 +1536,8 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
       return false;
     };
     const _mediaCap = (cap, body) => cap || (body && !_isFileNameLike(body) ? body : '');
-    if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (_mediaCap(caption, _plainBody) || t('chat.photo') || 'Foto');
+    if (_e5Done) { /* [2026-10-23 lista-e2ee] prévia v5 pronta (tipo FINO do payload; o grosso em claro diria "Foto" p/ figurinha/GIF) */ }
+    else if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (_mediaCap(caption, _plainBody) || t('chat.photo') || 'Foto');
     else if (lastMsg.type === 'gif') content = '\uD83C\uDFAC ' + (caption || 'GIF');
     // [2026-10-12 sticker-preview] Figurinha = SEMPRE o rótulo (WhatsApp): nunca
     // URL/nome de arquivo/legenda/emoji-código. O glifo vira SVG no render.
@@ -1533,7 +1560,7 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
     // Hard guard (founder print 2026-09-29): if after ALL extraction the
     // preview STILL looks like a raw JSON envelope, never render it verbatim \u2014
     // try one last unwrap for a text-bearing key, else a clean generic label.
-    if (typeof content === 'string' && /^\{[\s\S]*\}$/.test(content.trim())) {
+    if (!_e5Done && typeof content === 'string' && /^\{[\s\S]*\}$/.test(content.trim())) {
       try {
         const p = JSON.parse(content.trim());
         const inner = p.text || p.body || p.caption || p.content || p.message;
@@ -1568,7 +1595,7 @@ function _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, members) {
       preview = content;
     }
     }
-    return { preview, previewSender, statusType };
+    return _e5Pending ? { preview, previewSender, statusType, _e5Pending: true } : { preview, previewSender, statusType };
 }
 
 const ConversationRow = React.memo(function ConversationRow({
@@ -1681,7 +1708,7 @@ const ConversationRow = React.memo(function ConversationRow({
   // typing the render shows the typing branch and never reads preview/
   // previewSender/statusType (the receipt icon only renders in the non-typing
   // branch), so deriving purely from lastMsg yields byte-identical output.
-  const { preview, previewSender, statusType } = useMemo(() => _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, conversation.members), [lastMsg, isGroup, isChannel, _me, t, conversation.members]);
+  const { preview, previewSender, statusType } = useMemo(() => _computeRowPreview(lastMsg, isGroup, isChannel, _me, t, conversation.members, conversation.id), [lastMsg, isGroup, isChannel, _me, t, conversation.members, conversation.id]);
   // [2026-10-21 lista-viva] miniatura 40×40 quando a última msg é foto/vídeo.
   const _thumb = useMemo(() => {
     if (!_vv) return null;
@@ -10410,12 +10437,12 @@ function ChatListTab({ colors: _themeColors, isDark, t, user, router, searchQuer
     const cache = new WeakMap();
     const loc = regionalLocale(language);
     return {
-      computePreview: (lastMsg, isGroup, isChannel, me, members) => {
-        if (!lastMsg || typeof lastMsg !== 'object') return _computeRowPreview(lastMsg, isGroup, isChannel, me, t, members);
+      computePreview: (lastMsg, isGroup, isChannel, me, members, convId) => {
+        if (!lastMsg || typeof lastMsg !== 'object') return _computeRowPreview(lastMsg, isGroup, isChannel, me, t, members, convId);
         const hit = cache.get(lastMsg);
-        if (hit && hit.g === isGroup && hit.c === isChannel && hit.me === me && hit.m === members) return hit.r;
-        const r = _computeRowPreview(lastMsg, isGroup, isChannel, me, t, members);
-        cache.set(lastMsg, { g: isGroup, c: isChannel, me, m: members, r });
+        if (hit && hit.g === isGroup && hit.c === isChannel && hit.me === me && hit.m === members && hit.cv === convId) return hit.r;
+        const r = _computeRowPreview(lastMsg, isGroup, isChannel, me, t, members, convId);
+        cache.set(lastMsg, { g: isGroup, c: isChannel, me, m: members, cv: convId, r });
         return r;
       },
       formatTime: (d) => formatChatTime(d, t, loc),

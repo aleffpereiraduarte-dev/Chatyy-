@@ -92,6 +92,30 @@ export function rowFromEntry(e) {
   };
 }
 
+// [2026-10-23 lista-e2ee] Push de conversa E2EE v5: o servidor não manda texto (msg_preview/bg_text
+// vazios) e a NSE grava "Nova mensagem" quando não decifra → a linha trocava o envelope por texto
+// vazio/genérico e a lista mostrava "Mensagem". Agora: envelope do push (e2e_c) vira o content (a lista
+// decifra LOCAL e guarda a prévia); sem envelope → `_e5pending` (a lista mantém a prévia anterior até a
+// linha real). Prévia já decifrada pela NSE (texto de verdade) continua valendo.
+// Kill switch OTA: globalThis.__chatyy_e5_list_preview = false → como antes.
+const _E5_GENERIC = new Set(['', 'nova mensagem', 'new message', 'nuevo mensaje', 'mensagem', 'message', 'mensaje', '...', '…']);
+function _e5LastMessage(lm, latest, full, conv, cid) {
+  try {
+    if (full || latest.locked === '1' || globalThis.__chatyy_e5_list_preview === false) return;
+    const env = _str(latest.e5c);
+    const old = conv && conv.last_message && typeof conv.last_message === 'object' ? conv.last_message : null;
+    let e2ee = latest.e5 === '1' || latest.e5 === 1 || !!env;
+    if (!e2ee && old && typeof old.content === 'string' && old.content.startsWith('{"e2e":5')) e2ee = true;
+    if (!e2ee) { try { e2ee = require('./e2ee/e2ee5').isConvE2eeSync(cid); } catch {} }
+    if (!e2ee) return;
+    lm.client_message_id = _str(latest.cmid) || null; // nunca o cmi da msg anterior (chave da decifra)
+    if (_str(latest.e5su)) lm.sender_uid = _str(latest.e5su);
+    delete lm._e5pending;
+    if (env.startsWith('{"e2e":5')) { lm.content = env; return; }
+    if (_E5_GENERIC.has(String(lm.content || '').trim().toLowerCase())) { lm.content = ''; lm._e5pending = 1; }
+  } catch {}
+}
+
 // ─── Pure: plan ──────────────────────────────────────────────────────────────
 /**
  * Decide what to write. No IO.
@@ -190,6 +214,7 @@ export function planMerge(parsed, ctx) {
       sender_name: _str(latest.sname) || _str(latest.sender),
       created_at: created,
     };
+    _e5LastMessage(lastMessage, latest, full, conv, cid);
     const isGroup = latest.grp === '1' || latest.grp === 1;
     const base = conv || {
       id: cid,
@@ -599,6 +624,13 @@ export function entryFromPush(p) {
     type: _str(p.bg_type),
     preview: _str(p.msg_preview).slice(0, 300),
     ts: _str(p.bg_ts),
+    // [2026-10-23 lista-e2ee] E2EE v5: envelope (ciphertext) + uid do remetente → a lista decifra local
+    ...(_str(p.e2e) === '5' ? {
+      e5: '1',
+      ...(_str(p.e2e_c).startsWith('{"e2e":5') && _str(p.e2e_c).length < 8192 ? { e5c: _str(p.e2e_c) } : {}),
+      ...(_str(p.e2e_sender_uid) ? { e5su: _str(p.e2e_sender_uid) } : {}),
+      ...(_str(p.e2e_cmid) ? { cmid: _str(p.e2e_cmid) } : {}),
+    } : {}),
     grp: isGroup ? '1' : '0',
     unread: _str(p.unread_count),
   };

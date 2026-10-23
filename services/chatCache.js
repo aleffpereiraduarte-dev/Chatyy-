@@ -696,6 +696,7 @@ export async function clearChatCache() {
       const SmartCache = require('./smartChatCache');
       SmartCache.clearChatCache?.();
     } catch {}
+    try { require('./e2ee/listPreview').clearAll(); } catch {} // [2026-10-23 lista-e2ee] prévias E2EE decifradas
     try {
       const keys = _kvGetAllKeys().filter(k => k.startsWith('chat_'));
       keys.forEach(k => _kvRemove(k));
