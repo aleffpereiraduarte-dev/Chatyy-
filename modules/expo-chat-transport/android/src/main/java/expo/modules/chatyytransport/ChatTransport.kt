@@ -321,8 +321,8 @@ internal object ChatTransport {
       outboxMax = num(cfg["outboxMax"], 500L, 10L, 2000L).toInt(),
       account = ((cfg["account"] as? String) ?: "").trim().lowercase(),
       storeIngest = cfg["storeIngest"] == true,
-      // [quic-proto] cfg.quic = {transport:{quic,noise,noise_test}, region:{q,qp,nk}, raceMs} do client-lb
-      // (só p/ contas da allowlist). Ausente/false = WSS de sempre. Ver QuicWire.kt.
+      // [quic-proto] cfg.quic (mesma forma do iOS) = {on, noise, noiseTest, regions:{<reg>:{kid,port}}, hsMs,
+      // migrate, raceMs} vindo do client-lb (só p/ contas da allowlist). Ausente/false = WSS. Ver QuicWire.kt.
       quic = (cfg["quic"] as? Map<*, *>)?.entries?.associate { (k, v) -> k.toString() to v },
     )
     post {

@@ -32,10 +32,11 @@ import java.util.concurrent.atomic.AtomicInteger
  *   1. a .so está no binário e carregou (senão → WSS, sem crash: loadLibrary em try/catch);
  *   2. flag LOCAL ligada (SharedPreferences "chatyy_quic_proto"/"enabled", via
  *      ChatyyTransport.quicProtoSet(true)) — padrão false;
- *   3. o SERVIDOR disse que a conta está na allowlist: cfg.quic.transport {quic:1, noise:1} que o JS
- *      repassa do client-lb.php (PROTOCOLO §1: `transport` só vem para contas da allowlist);
- *   4. a região anuncia QUIC (cfg.quic.region {q:1, qp:443, nk:"t1"}) e o host é api-<reg>
- *      (US/ws.chatyy.com.br não tem QUIC nesta fase);
+ *   3. o SERVIDOR disse que a conta está na allowlist: o JS repassa do client-lb.php (PROTOCOLO §1:
+ *      `transport` só vem p/ contas da allowlist) como cfg.quic — forma comum com o iOS:
+ *      {on:true, noise:true, noiseTest:true, regions:{<reg>:{kid:"t1", port:443}}, hsMs?, migrate?, raceMs?}
+ *      (também aceita a forma crua {transport:{quic,noise,noise_test}, region:{q,qp,nk}});
+ *   4. a região do host api-<reg> está em cfg.quic.regions (US/ws.chatyy.com.br não tem QUIC nesta fase);
  *   5. a chave pinada existe para o kid: hoje SÓ a de TESTE t1, e só com transport.noise_test=1;
  *   6. nada de go_ws/noise_fail recente p/ (conta, região) e UDP não marcado bloqueado nesta rede;
  *   7. JS não mandou o kill (cfg.quic ausente ou false = WSS de sempre).
@@ -77,6 +78,8 @@ internal class QuicTarget(
   val ua: String,
   val timeoutMs: Int,
   val account: String,
+  /** cfg.quic.migrate=false → troca de rede reconecta como no WSS (sem rebind). */
+  val migrate: Boolean = true,
 )
 
 internal object QuicWire {
@@ -217,23 +220,38 @@ internal object QuicWire {
     if (quic == null || account.isEmpty() || authFrame == null) return null
     val ctx = ChatTransport.appCtx ?: return null
     if (!localEnabled(ctx)) return null
-    val tr = quic["transport"] as? Map<*, *> ?: return null
-    if (!truthy(tr["quic"]) || !truthy(tr["noise"])) return null
     val host = try { URI(url).host?.lowercase() } catch (_: Throwable) { null } ?: return null
     val region = REGION_RE.matchEntire(host)?.groupValues?.get(1) ?: return null
-    val rg = quic["region"] as? Map<*, *> ?: return null
-    if (!truthy(rg["q"])) return null
-    val port = (rg["qp"] as? Number)?.toInt() ?: 443
-    if (port !in 1..65535) return null
-    val kid = rg["nk"] as? String ?: return null
-    val pub = pinFor(kid, truthy(tr["noise_test"])) ?: return null
+    val on: Boolean
+    val noise: Boolean
+    val noiseTest: Boolean
+    val kid: String
+    val port: Int
+    val tr = quic["transport"] as? Map<*, *>
+    if (tr == null) {
+      // Forma do iOS (ChatTransport.swift TransportQuicConfig — a mesma que o JS manda p/ os dois):
+      // {on:true, noise:true, noiseTest:bool, regions:{<reg>:{kid, port}}, hsMs?, migrate?, raceMs?}
+      on = truthy(quic["on"]); noise = truthy(quic["noise"]); noiseTest = truthy(quic["noiseTest"])
+      val r = (quic["regions"] as? Map<*, *>)?.get(region) as? Map<*, *> ?: return null
+      kid = r["kid"] as? String ?: return null
+      port = (r["port"] as? Number)?.toInt() ?: 443
+    } else {
+      // Forma crua do client-lb (PROTOCOLO §1): transport{quic,noise,noise_test} + region{q,qp,nk}
+      val rg = quic["region"] as? Map<*, *> ?: return null
+      on = truthy(tr["quic"]) && truthy(rg["q"]); noise = truthy(tr["noise"]); noiseTest = truthy(tr["noise_test"])
+      kid = rg["nk"] as? String ?: return null
+      port = (rg["qp"] as? Number)?.toInt() ?: 443
+    }
+    if (!on || !noise || port !in 1..65535) return null
+    val pub = pinFor(kid, noiseTest) ?: return null
     if (denied(account, region) || udpBlocked(ChatTransport.netEpoch)) return null
     if (!libAvailable()) return null
     val ck = clientKey(ctx) ?: return null
     val dev = try { JSONObject(authFrame).optString("e2ee5_device", "") } catch (_: Throwable) { "" }
     val ua = "Chatyy-Android/${Build.VERSION.RELEASE} ${libVersion ?: ""}".take(120)
-    val tmo = ((quic["hsTimeoutMs"] as? Number)?.toInt() ?: 3000).coerceIn(1000, 10_000)
-    return QuicTarget(host, region, port, kid, pub, ck.copyOfRange(0, 32), dev, ua, tmo, account)
+    val tmo = ((quic["hsMs"] as? Number)?.toInt() ?: 3000).coerceIn(600, 10_000)
+    val migrate = quic["migrate"] != false
+    return QuicTarget(host, region, port, kid, pub, ck.copyOfRange(0, 32), dev, ua, tmo, account, migrate)
   }
 
   fun maybeRace(req: Request, url: String, quic: Map<String, Any?>?, account: String, authFrame: String?, listener: WebSocketListener): QuicRaceSocket? = try {
@@ -335,6 +353,7 @@ internal class QuicRaceSocket(
 
   /** Rede padrão trocou: socket UDP novo na Network nova, mesma conexão QUIC. */
   fun migrate(n: Network?): Boolean {
+    if (!t.migrate) return false
     val qh = synchronized(lock) { if (winner != QUIC || cancelled || quicDead) 0L else h }
     if (qh == 0L) return false
     return try { ChatyyNetJni.nativeMigrate(qh, n?.networkHandle ?: 0L) } catch (_: Throwable) { false }
