@@ -227,6 +227,7 @@ defmodule ChatyyRouter.BodyStore do
   @inflight :rt_body_inflight
   @inherit :rt_body_inherit_mem
   @purged :rt_body_would_purge
+  @status :rt_body_status
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -891,7 +892,7 @@ defmodule ChatyyRouter.BodyStore do
   def init(_) do
     BodyHome.init_tables()
 
-    for t <- [@inflight, @inherit, @purged], :ets.whereis(t) == :undefined do
+    for t <- [@inflight, @inherit, @purged, @status], :ets.whereis(t) == :undefined do
       :ets.new(t, [:named_table, :public, :set, write_concurrency: true, read_concurrency: true])
     end
 
@@ -903,7 +904,7 @@ defmodule ChatyyRouter.BodyStore do
     if pg, do: Process.send_after(self(), :ack_poll, 5_000)
 
     {:ok, %{pg: pg, col: nil, acting: MapSet.new(), conv_err: nil, conv_rows: 0, ack_rows: 0, ack_err: nil,
-            last_repair: nil, inherit_wm: %{}}}
+            last_repair: nil, inherit_wm: %{}} |> snap()}
   end
 
   @impl true
@@ -927,29 +928,35 @@ defmodule ChatyyRouter.BodyStore do
     {:noreply, s}
   end
 
-  def handle_call({:keys, cid}, _from, s), do: {:reply, for({sub, {_, sha, _, _}} <- aux(cid), do: {sub, sha}), s}
+  # [23/10 mad] NENHUMA resposta a outro nó sai DESTE processo: com a porta de distribuição de um par ruim
+  # cheia (busy_dist_port; mad↔sg "not responding"), o send da resposta SUSPENDE quem envia — o BodyStore
+  # inteiro ficava parado (status suspended em gen:reply, fila 145, /f1/status sem resposta). Cada resposta
+  # sai de um processo à parte; se travar, trava só ele.
+  def handle_call({:keys, cid}, from, s), do: async_reply(from, fn -> for({sub, {_, sha, _, _}} <- aux(cid), do: {sub, sha}) end, s)
 
   def handle_call({:get, cid, subs}, from, s) do
     spawn(fn -> GenServer.reply(from, for(x <- subs, r = Store.get(:rt_body, {cid, x}), r != nil, do: r)) end)
     {:noreply, s}
   end
 
-  def handle_call(:inherit_all, _from, s), do: {:reply, inherits(), s}
+  def handle_call(:inherit_all, from, s), do: async_reply(from, fn -> inherits() end, s)
 
-  def handle_call({:acks_of, cid, subs}, _from, s) do
-    rows =
+  def handle_call({:acks_of, cid, subs}, from, s) do
+    async_reply(from, fn ->
       for sub <- subs,
           {:rt_body_ack, {^cid, ^sub, dev}, {a, p}} <- :mnesia.dirty_select(:rt_body_ack, [{{:rt_body_ack, {cid, sub, :_}, :_}, [], [:"$_"]}]),
           do: {dev, cid, sub, a, p}
-
-    {:reply, rows, s}
+    end, s)
   end
-  def handle_call({:put_conv, cid, c}, _from, s) do
-    was = BodyHome.acting?(cid) and BodyHome.check(cid) == :ok
-    :ok = BodyHome.put_local(cid, c)
-    # virou a casa em exercício (A2 casa troca): completa já o que falta
-    if not was and BodyHome.check(cid) == :ok and BodyHome.acting?(cid), do: spawn(fn -> repair([cid]) end)
-    {:reply, :ok, s}
+
+  def handle_call({:put_conv, cid, c}, from, s) do
+    async_reply(from, fn ->
+      was = BodyHome.acting?(cid) and BodyHome.check(cid) == :ok
+      :ok = BodyHome.put_local(cid, c)
+      # virou a casa em exercício (A2 casa troca): completa já o que falta
+      if not was and BodyHome.check(cid) == :ok and BodyHome.acting?(cid), do: spawn(fn -> repair([cid]) end)
+      :ok
+    end, s)
   end
 
   def handle_call(:repair_now, from, s) do
@@ -963,15 +970,17 @@ defmodule ChatyyRouter.BodyStore do
     {:noreply, s}
   end
 
-  def handle_call(:status, _from, s) do
-    {:reply,
-     Map.merge(Map.drop(s, [:acting, :inherit_wm]), %{
-       store_on: ChatyyRouter.Flags.get(:store),
-       enabled_cids: BodyHome.enabled_cids(),
-       acting_cids: Enum.filter(BodyHome.enabled_cids(), &BodyHome.acting?/1),
-       entries: Store.size(:rt_body),
-       inherits: :ets.info(@inherit, :size)
-     }), s}
+  def handle_call(:status, from, s), do: (snap(s); async_reply(from, fn -> status() end, s))
+
+  defp async_reply(from, fun, s) do
+    spawn(fn -> GenServer.reply(from, try_(fun)) end)
+    {:noreply, s}
+  end
+
+  # foto do estado p/ o /f1/status, lida SEM passar pelo processo
+  defp snap(s) do
+    if :ets.whereis(@status) != :undefined, do: :ets.insert(@status, {:snap, Map.drop(s, [:acting, :inherit_wm]), System.monotonic_time(:millisecond)})
+    s
   end
 
   defp try_(f) do
@@ -984,7 +993,47 @@ defmodule ChatyyRouter.BodyStore do
     end
   end
 
-  def status, do: GenServer.call(__MODULE__, :status, 10_000)
+  @doc """
+  /f1/status. NUNCA chama o processo (responde em ms mesmo com ele ocupado/suspenso): foto do estado (ETS,
+  gravada a cada volta) + ETS/flags na hora. `warn` lista o que estiver estranho (processo suspenso, fila
+  grande, foto velha); `proc` = estado do processo agora.
+  """
+  def status do
+    {st, age} =
+      case :ets.whereis(@status) != :undefined and :ets.lookup(@status, :snap) do
+        [{:snap, m, t}] -> {m, System.monotonic_time(:millisecond) - t}
+        _ -> {%{}, nil}
+      end
+
+    proc =
+      case Process.whereis(__MODULE__) do
+        nil -> %{alive: false}
+        pid -> Map.new(Process.info(pid, [:status, :message_queue_len]) || [], fn {k, v} -> {k, v} end) |> Map.put(:alive, true)
+      end
+
+    warn =
+      [
+        proc[:alive] == false && "processo BodyStore fora",
+        proc[:status] == :suspended && "processo BodyStore SUSPENSO (porta de distribuição de algum par cheia)",
+        (proc[:message_queue_len] || 0) > 100 && "fila do BodyStore #{proc[:message_queue_len]}",
+        (age == nil or age > 60_000) && "foto do estado com #{if age, do: div(age, 1000), else: "?"} s"
+      ]
+      |> Enum.filter(&is_binary/1)
+
+    en = BodyHome.enabled_cids()
+
+    Map.merge(st, %{
+      store_on: ChatyyRouter.Flags.get(:store),
+      enabled_cids: en,
+      acting_cids: Enum.filter(en, &BodyHome.acting?/1),
+      entries: Store.size(:rt_body),
+      inherits: if(:ets.whereis(@inherit) == :undefined, do: 0, else: :ets.info(@inherit, :size)),
+      snap_age_ms: age,
+      proc: proc,
+      warn: warn,
+      partial: warn != []
+    })
+  end
 
   @impl true
   def handle_cast({:acks, rows}, s), do: (apply_acks(rows); {:noreply, s})
@@ -998,7 +1047,7 @@ defmodule ChatyyRouter.BodyStore do
     new = MapSet.difference(acting, s.acting) |> MapSet.to_list()
     if new != [], do: spawn(fn -> repair(new) end)
     Process.send_after(self(), :conv_load, int_cfg(:body_conv_ms, 10_000))
-    {:noreply, %{s | acting: acting}}
+    {:noreply, snap(%{s | acting: acting})}
   end
 
   def handle_info(:repair, s) do
@@ -1025,7 +1074,7 @@ defmodule ChatyyRouter.BodyStore do
 
   def handle_info({:repaired, r}, s) do
     Process.send_after(self(), :repair, int_cfg(:body_repair_ms, 60_000))
-    {:noreply, %{s | last_repair: r || s.last_repair}}
+    {:noreply, snap(%{s | last_repair: r || s.last_repair})}
   end
 
   def handle_info(:ack_poll, s) do
@@ -1037,7 +1086,7 @@ defmodule ChatyyRouter.BodyStore do
       end
 
     Process.send_after(self(), :ack_poll, int_cfg(:body_ack_poll_ms, 10_000))
-    {:noreply, s}
+    {:noreply, snap(s)}
   end
 
   def handle_info(_, s), do: {:noreply, s}

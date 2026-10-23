@@ -74,6 +74,9 @@ defmodule ChatyyRouter.Control do
           route(method, path, qs, body)
         rescue
           e -> {500, "application/json", json(%{error: Exception.message(e)})}
+        catch
+          # chamada a um processo ocupado estourou o tempo: responde em vez de fechar mudo
+          :exit, e -> {503, "application/json", json(%{error: "busy", detail: inspect(e) |> String.slice(0, 200)})}
         end
 
       :gen_tcp.send(sock, [

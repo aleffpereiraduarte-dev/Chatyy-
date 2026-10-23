@@ -296,7 +296,8 @@ defmodule ChatyyRouter.Directory do
   def put_devices(uid, devs), do: broadcast({:devices, uid, devs})
 
   def push_sync(region) do
-    Net.cast(region, __MODULE__, {:sync, :ets.tab2list(@members), :ets.tab2list(@devices)})
+    # chamado no processo Net.Cluster (nodeup): envio grande a um par lento não pode suspender o Cluster
+    Net.cast_async(region, __MODULE__, {:sync, :ets.tab2list(@members), :ets.tab2list(@devices)})
   end
 
   defp broadcast(msg) do

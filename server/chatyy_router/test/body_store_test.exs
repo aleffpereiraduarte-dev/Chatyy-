@@ -265,6 +265,19 @@ defmodule ChatyyRouter.BodyStoreTest do
     assert [_] = on(c, "e", BodyStore, :pull, ["outro", [cid: 113, mids: [13_001]]]).messages
   end
 
+  test "status responde na hora mesmo com o processo BodyStore parado (busy_dist_port de 23/10 no mad)", %{c: c} do
+    conv(c, 114, "a")
+    pid = on(c, "b", Process, :whereis, [BodyStore])
+    :ok = on(c, "b", :sys, :suspend, [pid])
+    for _ <- 1..150, do: on(c, "b", :erlang, :send, [pid, :encher_fila])
+    {t, st} = :timer.tc(fn -> on(c, "b", BodyStore, :status, []) end)
+    assert t < 1_000_000
+    assert 114 in st.enabled_cids
+    assert st.partial and Enum.any?(st.warn, &(&1 =~ "fila do BodyStore")), inspect(st)
+    :ok = on(c, "b", :sys, :resume, [pid])
+    eventually(fn -> on(c, "b", BodyStore, :status, []).warn == [] end)
+  end
+
   test "persisted de todos tira do pull e conta 'apagaria' — a F1 NÃO apaga", %{c: c} do
     conv(c, 110, "a")
     {:ok, _} = put(c, "e", 110, 10_001, "P")

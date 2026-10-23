@@ -22,5 +22,5 @@ exec "$BINDIR/erlexec" \
   -boot "$ROOT/releases/$REL_VSN/start" -boot_var RELEASE_LIB "$ROOT/lib" \
   -config "$ROOT/releases/$REL_VSN/sys" \
   -mode embedded -noshell -noinput \
-  +S "${ROUTER_SCHEDULERS:-2}" +sbwt none +sbwtdcpu none +sbwtdio none \
+  +S "${ROUTER_SCHEDULERS:-2}" +sbwt none +sbwtdcpu none +sbwtdio none +zdbbl "${ROUTER_DIST_BUF_KB:-8192}" \
   -elixir ansi_enabled false
