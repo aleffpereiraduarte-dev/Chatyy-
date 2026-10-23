@@ -3582,6 +3582,11 @@ class MailWebSocket {
   sendTyping(conversationId, recording = false) {
     // [2026-10-22 ws-warm] 1ª tecla: garante o fio pronto antes do "enviar".
     try { this.warmForSend(recording ? 'recording' : 'typing'); } catch {}
+    // [2026-10-23 envio-scl] E2EE v5: renova o estado da conversa (cache 10 min) ENQUANTO digita —
+    // antes o 1º envio depois de 10 min esperava o POST e2ee5_conversation_state ao US antes de
+    // cifrar (+0,3-1,5 s visto 22/10 do Chile). Só renova se faltar < 3 min p/ vencer; nunca bloqueia.
+    // Kill OTA: globalThis.__chatyy_e2ee5_warm_state = false.
+    try { if (!recording && globalThis.__chatyy_e2ee5_warm_state !== false) require('./e2ee/e2ee5').warmConvState?.(conversationId); } catch {}
     if (!this.isConnected) return;
     // [2026-10-06 rt-client] gate de privacidade (ver setTypingPrivacy).
     if (!this.typingAllowed()) return;
@@ -4037,6 +4042,12 @@ class MailWebSocket {
 
   get isConnected() {
     return this.connected && this.authenticated;
+  }
+
+  // [2026-10-23 envio-scl] Região em que o socket JS/transporte está DE FATO (telemetria send_ack:
+  // saber se o ✓ saiu do edge local ou de um edge longe — ex.: iOS no usw estando em Santiago).
+  get effRegion() {
+    return _wsEffRegion;
   }
 
   get isHealthy() {

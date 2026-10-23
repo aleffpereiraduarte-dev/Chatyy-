@@ -562,6 +562,31 @@ export async function convState(cid, opts) {
   return p;
 }
 
+/**
+ * [2026-10-23 envio-scl] Pré-aquece o estado da conversa (chamado na digitação). Se o cache vence em
+ * < WARM_AHEAD_MS (ou já venceu), dispara a renovação em 2º plano — o envio que vier depois acha o
+ * estado novo e não espera o POST ao servidor. Mesma regra de frescor de sempre (≤ CONV_TTL_MS).
+ * No máx. 1 renovação por conversa a cada 60 s. Nunca lança.
+ */
+const WARM_AHEAD_MS = 3 * 60 * 1000;
+const _warmAt = new Map();
+export function warmConvState(cid) {
+  try {
+    if (!isOn() || cid == null || cid === '' || !_sess) return 'skip';
+    const k = String(cid);
+    const cur = _conv.get(k);
+    if (!cur || cur.mode !== 1) return 'skip'; // só conversa protegida já conhecida (abrir a conversa carrega)
+    if (Date.now() - cur.at < CONV_TTL_MS - WARM_AHEAD_MS) return 'fresh';
+    if (_convP.has(k)) return 'inflight';
+    const t = Date.now();
+    if (t - (_warmAt.get(k) || 0) < 60000) return 'throttled';
+    _warmAt.set(k, t);
+    if (_warmAt.size > 200) { try { _warmAt.delete(_warmAt.keys().next().value); } catch (_) {} }
+    convState(k, { force: true }).catch(() => {});
+    return 'warming';
+  } catch (_) { return 'error'; }
+}
+
 function _applyState(k, d, prev) {
   const members = (Array.isArray(d.members) ? d.members : []).map((m) => (m && m.uid != null ? String(m.uid) : '')).filter(Boolean);
   // e-mail canônico ↔ uid (o servidor manda `email` desde o WP-05 de 21/10; antes só uid)

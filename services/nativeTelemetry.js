@@ -198,6 +198,9 @@ export function sendSocketSnapshot(net) {
       o.hl = ws.isHealthy ? 1 : 0;
       o.pong = ws.lastPongTime ? Math.min(999999, Date.now() - ws.lastPongTime) : -1;
       o.cap = Array.isArray(ws.serverCaps) && ws.serverCaps.includes('native_send') ? 1 : 0;
+      // [2026-10-23 envio-scl] onde o socket está + RTT do último ping (trace por mensagem sem depender do relógio)
+      try { const er = ws.effRegion; if (typeof er === 'string' && er) o.wr = er.slice(0, 8); } catch {}
+      try { if (Number(ws._latency) > 0) o.rtt = Math.min(99999, Math.round(Number(ws._latency))); } catch {}
     }
   } catch {}
   try { const nc = require('./nativeCore'); o.nc = nc.canSendNative?.() ? 1 : 0; } catch {}
@@ -245,9 +248,24 @@ export function noteSendAck(info) {
     s1: info.s1 || null,
     e2e: info.e2e ? 1 : 0,
     at: Date.now(),
+    // [2026-10-23 envio-scl] id do servidor (Snowflake: ms + região que aceitou) e cmi → junta com o banco
+    // sem depender do relógio do celular (visto 22/10: iPhone até ~1 s atrasado no roaming).
+    mid: _sendAckMid(r),
+    cmi: _sendAckCmi(r, info),
   });
   _ensureLifecycle();
   if (_ackBuf.length >= SEND_ACK_BATCH) _flushAcks();
+}
+
+function _sendAckMid(r) {
+  try { const id = r && r.data && r.data.id; if (id != null && /^[0-9]{1,20}$/.test(String(id))) return String(id); } catch {}
+  return '';
+}
+function _sendAckCmi(r, info) {
+  try {
+    const c = (info && info.cmi) || (r && r.data && r.data.client_message_id) || '';
+    return typeof c === 'string' ? c.slice(0, 40) : '';
+  } catch { return ''; }
 }
 
 function _flushAcks() {
