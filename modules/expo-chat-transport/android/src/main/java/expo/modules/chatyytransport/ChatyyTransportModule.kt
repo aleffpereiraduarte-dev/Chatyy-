@@ -65,6 +65,8 @@ class ChatyyTransportModule : Module() {
     Function("outboxKick") { reason: String -> NativeOutbox.peek()?.kick(reason); Unit }
 
     Function("outboxStats") { NativeOutbox.peek()?.snapshot() ?: emptyMap<String, Any?>() }
+    // [2026-10-23 midia-wa] BUILD: capacidades da fila (JS: r2DirectUpload.nativePutSupported). put_url = PUT direto no R2.
+    Function("outboxCaps") { mapOf<String, Any?>("v" to 1, "put_url" to true) }
 
     /** Logout: apaga credenciais e cancela o Worker (a tabela some com o wipe do store). */
     Function("outboxForget") {

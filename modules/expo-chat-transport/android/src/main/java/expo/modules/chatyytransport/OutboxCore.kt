@@ -603,12 +603,23 @@ class OutboxCore(
     }
     val name = up.optString("filename").ifEmpty { f.name }
     val mime = up.optString("mime").ifEmpty { "application/octet-stream" }
+    // [2026-10-23 midia-wa] BUILD: PUT DIRETO no R2 (URL pré-assinada que o JS pôs em up.put_url,
+    // services/r2DirectUpload.presignFor). Bytes celular → R2, sem multipart nem PHP/Rust. Só 1 tentativa:
+    // falha → up.put_fails=1 e a próxima volta usa o caminho de sempre (/api/rust/upload).
+    val putUrl = directPutUrl(up)
+    if (putUrl == null && up.optString("put_url").isNotEmpty()) {
+      up.remove("put_url"); up.put("put_fails", 1) // vencida/inválida: o uploadDone não confunde esta resposta com a do PUT
+      storage.patch(a, cmi, JSONObject().put("up", up.toString()))
+    }
+    val putHeaders = parseObj(up.opt("put_headers"))
+    val putCt = putHeaders.optString("Content-Type").ifEmpty { putHeaders.optString("content-type") }.ifEmpty { "application/octet-stream" }
     // [2026-10-18 outbox-progress] REAL bytes-sent progress for the bubble ring
     // (was a fake 10% → 50% → 100%). Throttled; posted on exec and dropped if
     // the attempt is no longer current. Old JS ignores state "progress".
     var lastAt = 0L
     var lastPct = -1
-    val fileBody = ProgressRequestBody(f.asRequestBody(mime.toMediaType())) { sent, total ->
+    // PUT: o tipo do corpo É o Content-Type assinado (o OkHttp grava o do corpo no cabeçalho)
+    val fileBody = ProgressRequestBody(f.asRequestBody((if (putUrl != null) putCt else mime).toMediaType())) { sent, total ->
       val pct = if (total > 0L) ((sent * 100L) / total).toInt().coerceIn(0, 100) else 0
       val t = now()
       at.lastIoAt = t // [net-change] bytes andando = upload vivo (thread do OkHttp; @Volatile)
@@ -622,13 +633,21 @@ class OutboxCore(
         }
       }
     }
-    val mb = MultipartBody.Builder().setType(MultipartBody.FORM)
-      .addFormDataPart("file", name, fileBody)
-      .addFormDataPart("user_email", up.optString("user_email").ifEmpty { a })
-      .addFormDataPart("context", up.optString("context").ifEmpty { "chat" })
-      .addFormDataPart("filename", name)
-      .build()
-    val req = Request.Builder().url("$base/api/rust/upload").post(mb).header("Authorization", "Bearer " + c.token).build()
+    val req = if (putUrl != null) {
+      val rb = Request.Builder().url(putUrl).put(fileBody)
+      val ks = putHeaders.keys()
+      while (ks.hasNext()) { val k = ks.next(); if (!k.equals("content-type", true) && !k.equals("content-length", true) && !k.equals("host", true)) rb.header(k, putHeaders.optString(k)) }
+      bump("uploadsPut")
+      rb.build()
+    } else {
+      val mb = MultipartBody.Builder().setType(MultipartBody.FORM)
+        .addFormDataPart("file", name, fileBody)
+        .addFormDataPart("user_email", up.optString("user_email").ifEmpty { a })
+        .addFormDataPart("context", up.optString("context").ifEmpty { "chat" })
+        .addFormDataPart("filename", name)
+        .build()
+      Request.Builder().url("$base/api/rust/upload").post(mb).header("Authorization", "Bearer " + c.token).build()
+    }
     bump("uploads")
     val call = upHttp.newCall(req)
     at.call = call
@@ -643,8 +662,40 @@ class OutboxCore(
   }
 
   /** Também chamado pelo iOS-equivalente (sessão em 2º plano) — aqui só Android/JVM. */
+  /** [2026-10-23 midia-wa] BUILD: URL de PUT pré-assinado válida em up? (https R2, não vencida, sem falha anterior) */
+  private fun directPutUrl(up: JSONObject): String? {
+    val u = up.optString("put_url")
+    if (u.isEmpty() || up.optLong("put_fails") >= 1 || up.optString("cdn_url").isEmpty()) return null
+    val host: String = (try { java.net.URI(u).let { if (it.scheme == "https") it.host else null } } catch (_: Throwable) { null }) ?: return null
+    if (!host.endsWith(".r2.cloudflarestorage.com")) return null
+    val exp = up.optLong("put_exp") // epoch s
+    if (exp > 0L && exp * 1000L < now() + 60000L) return null
+    return u
+  }
+
   private fun uploadDone(at: Attempt, code: Int, text: String) {
     uploads.remove(at.cmi)
+    // [2026-10-23 midia-wa] BUILD: resposta do PUT direto no R2 (corpo vazio; cdn_url veio do presign).
+    // put_url só fica na linha enquanto o PUT é a tentativa em curso (startUpload limpa se não usar).
+    val prow = findItem(at.account, at.cmi)
+    val pup = parseObj(prow?.opt("up"))
+    if (prow != null && pup.optString("put_url").isNotEmpty() && pup.optLong("put_fails") < 1L) {
+      val cdnP = pup.optString("cdn_url")
+      if (code in 200..299 && cdnP.isNotEmpty()) {
+        val body = parseObj(prow.opt("body"))
+        body.put("file_url", cdnP)
+        body.put("file_name", pup.optString("filename"))
+        if (pup.optLong("put_size") > 0L) body.put("file_size", pup.optLong("put_size"))
+        storage.patch(at.account, at.cmi, JSONObject().put("body", body.toString()).put("state", "queued").put("next_at", 0).put("err", JSONObject.NULL))
+        bump("uploaded"); bump("uploadedPut")
+        emit(mapOf("account" to at.account, "cmi" to at.cmi, "conv" to at.conv, "state" to "uploaded", "cdn_url" to cdnP))
+        pumpNow(); return
+      }
+      pup.remove("put_url"); pup.put("put_fails", 1)
+      storage.patch(at.account, at.cmi, JSONObject().put("up", pup.toString()).put("state", "uploading").put("next_at", 0).put("err", "put_http_$code"))
+      bump("putFallback")
+      pumpNow(); return
+    }
     val j = try { JSONObject(text) } catch (_: Throwable) { null }
     val cdn = j?.optString("cdn_url") ?: ""
     if (code in 200..299 && j != null && j.optBoolean("success", false) && cdn.isNotEmpty()) {

@@ -69,6 +69,8 @@ public class ChatyyTransportModule: Module {
     Function("outboxCancel") { (account: String, cmi: String) in ChatOutbox.shared.cancel(account: account, cmi: cmi) }
     Function("outboxKick") { (reason: String) in ChatOutbox.shared.kick(reason) }
     Function("outboxStats") { () -> [String: Any] in return ChatOutbox.shared.snapshot() }
+    /// [2026-10-23 midia-wa] BUILD: capacidades da fila (JS: r2DirectUpload.nativePutSupported). put_url = PUT direto no R2.
+    Function("outboxCaps") { () -> [String: Any] in return ["v": 1, "put_url": true] }
 
     /// Logout: apaga credenciais (a tabela some com o wipe do store).
     Function("outboxForget") { () in ChatOutbox.shared.forgetAll() }

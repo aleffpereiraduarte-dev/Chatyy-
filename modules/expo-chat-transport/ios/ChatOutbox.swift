@@ -725,6 +725,25 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
     }
     ensureBgSessionLocked()
     guard let session = bgSession else { return }
+    // [2026-10-23 midia-wa] BUILD: PUT DIRETO no R2 (URL pré-assinada que o JS pôs em up.put_url,
+    // services/r2DirectUpload.presignFor). Bytes celular → R2, sem multipart nem PHP/Rust. Só 1 tentativa:
+    // qualquer falha marca up.put_fails=1 e a próxima volta usa o caminho de sempre (/api/rust/upload).
+    if let req = Self.directPutRequest(up), FileManager.default.fileExists(atPath: path) {
+      let task = session.uploadTask(with: req, fromFile: URL(fileURLWithPath: path))
+      task.taskDescription = "u|\(a)|\(cmi)|\(conv)"
+      let at = Attempt(a, cmi, conv, "upload")
+      at.task = task
+      uploads[cmi] = at
+      emit(["account": a, "cmi": cmi, "conv": conv, "state": "uploading"])
+      bump("uploadsPut")
+      task.resume()
+      return
+    }
+    if !ChatyyOutboxUtil.str(up["put_url"]).isEmpty {
+      // URL vencida/inválida: tira da linha p/ o uploadDone não confundir esta resposta com a do PUT
+      var up2 = up; up2.removeValue(forKey: "put_url"); up2["put_fails"] = NSNumber(value: 1)
+      store.outboxPatch(account: a, cmi: cmi, patch: ["up": ChatyyOutboxUtil.jsonString(up2) ?? "{}"])
+    }
     // [2026-10-18 outbox-progress] Regional media edge (`up.base`, set by JS)
     // first; after regionalUploadMaxFails consecutive failed uploads (every
     // earlier try of this item went to the regional base) → US origin. `tries`
@@ -779,9 +798,47 @@ final class ChatOutbox: NSObject, URLSessionDataDelegate {
     task.resume()
   }
 
+  /// [2026-10-23 midia-wa] BUILD: PUT pré-assinado válido em up? (https R2, não vencido, sem falha anterior)
+  static func directPutRequest(_ up: [String: Any]) -> URLRequest? {
+    let u = ChatyyOutboxUtil.str(up["put_url"])
+    if u.isEmpty || ChatyyOutboxUtil.i64(up["put_fails"]) >= 1 || ChatyyOutboxUtil.str(up["cdn_url"]).isEmpty { return nil }
+    guard let url = URL(string: u), url.scheme == "https", let h = url.host, h.hasSuffix(".r2.cloudflarestorage.com") else { return nil }
+    let exp = ChatyyOutboxUtil.i64(up["put_exp"]) // epoch s
+    if exp > 0 && exp * 1000 < Int64(Date().timeIntervalSince1970 * 1000) + 60000 { return nil }
+    var req = URLRequest(url: url)
+    req.httpMethod = "PUT"
+    for (k, v) in ChatyyOutboxUtil.obj(up["put_headers"]) where k.lowercased() != "content-length" && k.lowercased() != "host" {
+      req.setValue(ChatyyOutboxUtil.str(v), forHTTPHeaderField: k)
+    }
+    return req
+  }
+
   private func uploadDone(_ at: Attempt, _ code: Int, _ d: Data) {
     uploads.removeValue(forKey: at.cmi)
     try? FileManager.default.removeItem(at: bodyFile(at.cmi))
+    // [2026-10-23 midia-wa] BUILD: resposta do PUT direto no R2 (corpo vazio; cdn_url já veio do presign)
+    // (put_url só sobrevive na linha enquanto o PUT é a tentativa em curso — startUpload limpa se não usar)
+    if let row2 = findItem(at.account, at.cmi), !ChatyyOutboxUtil.str(ChatyyOutboxUtil.obj(row2["up"])["put_url"]).isEmpty,
+       ChatyyOutboxUtil.i64(ChatyyOutboxUtil.obj(row2["up"])["put_fails"]) < 1 {
+      var up = ChatyyOutboxUtil.obj(row2["up"])
+      let cdn = ChatyyOutboxUtil.str(up["cdn_url"])
+      if (200...299).contains(code), !cdn.isEmpty {
+        var body = ChatyyOutboxUtil.obj(row2["body"])
+        body["file_url"] = cdn
+        body["file_name"] = ChatyyOutboxUtil.str(up["filename"])
+        let sz = ChatyyOutboxUtil.i64(up["put_size"]); if sz > 0 { body["file_size"] = NSNumber(value: sz) }
+        store.outboxPatch(account: at.account, cmi: at.cmi, patch: ["body": ChatyyOutboxUtil.jsonString(body) ?? "{}", "state": "queued", "next_at": 0, "err": NSNull()])
+        bump("uploaded"); bump("uploadedPut")
+        emit(["account": at.account, "cmi": at.cmi, "conv": at.conv, "state": "uploaded", "cdn_url": cdn])
+        pumpNow(); return
+      }
+      // falhou (403 assinatura/expirada, rede…) → sem PUT daqui em diante; já volta pelo caminho de sempre
+      up["put_fails"] = NSNumber(value: 1)
+      up.removeValue(forKey: "put_url")
+      store.outboxPatch(account: at.account, cmi: at.cmi, patch: ["up": ChatyyOutboxUtil.jsonString(up) ?? "{}", "state": "uploading", "next_at": 0, "err": "put_http_\(code)"])
+      bump("putFallback")
+      pumpNow(); return
+    }
     let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
     let cdn = ChatyyOutboxUtil.str(j?["cdn_url"])
     let ok = (j?["success"] as? Bool) == true || (j?["success"] as? NSNumber)?.boolValue == true
