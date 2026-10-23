@@ -134,6 +134,12 @@ export function touchOwned(cmi) {
   const k = String(cmi);
   if (_owned.has(k)) _owned.set(k, Date.now());
 }
+/** [lb-sticky 2026-10-23] Envios em voo nesta sessão (claims frescos) — o client-lb não troca de região com isso > 0. */
+export function sendingCount() {
+  let n = 0;
+  try { const now = Date.now(); for (const t of _owned.values()) if (now - t < OWN_STALE_MS) n++; } catch {}
+  return n;
+}
 export function isOwnedSending(cmi) {
   const t = _owned.get(String(cmi));
   if (!!t && (Date.now() - t) < OWN_STALE_MS) return true;

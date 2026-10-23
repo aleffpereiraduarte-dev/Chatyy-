@@ -511,7 +511,10 @@ _restoreCachedServer();
 try {
   const _mm = require('./mmkv');
   if (typeof _mm.waitForCacheReady === 'function' && !(typeof _mm.isCacheReady === 'function' && _mm.isCacheReady())) {
-    _mm.waitForCacheReady().then(() => { if (!_bestServer) _restoreCachedServer(); }).catch(() => {});
+    // [lb-sticky 2026-10-23] estado do LB lido ANTES do cache hidratar ficava vazio p/ sempre
+    // (_lbS memoizado) → boot caía no cache LEGADO (só us/br/eu/… → 'br' velho) e o WS abria no
+    // br antes do client-lb voltar ao scl (founder em Santiago: todo boot "prev=br").
+    _mm.waitForCacheReady().then(() => { try { _lbRehydrate(); } catch {} if (!_bestServer) _restoreCachedServer(); }).catch(() => {});
   }
 } catch {}
 
@@ -670,7 +673,36 @@ function _lbS() {
     origin: (p && typeof p.origin === 'string') ? p.origin : null,
     pending: null, session: null, confirmTimer: null, verifyAt: 0, switches: 0,
   };
+  try { const mm = _edgeMmkv(); if (mm && typeof mm.isCacheReady === 'function' && !mm.isCacheReady()) _lbSt._pre = true; } catch {}
   return _lbSt;
+}
+// [lb-sticky 2026-10-23] _lbS() criado antes do cache hidratar → completa com o persistido (só
+// campos ainda vazios; o que esta sessão já mediu/decidiu vale mais).
+function _lbRehydrate() {
+  const st = _lbSt;
+  if (!st || !st._pre) return;
+  const mm = _edgeMmkv();
+  if (mm && typeof mm.isCacheReady === 'function' && !mm.isCacheReady()) return;
+  st._pre = false;
+  let p = null;
+  try { p = _lb()?.loadState(); } catch {}
+  if (!p) return;
+  if ((!st.results || !Object.keys(st.results).length) && p.results && typeof p.results === 'object') st.results = p.results;
+  if (!st.measuredAt && Number(p.measuredAt)) { st.measuredAt = Number(p.measuredAt); st.measuredNet = p.measuredNet || null; }
+  if (!st.lastGood && typeof p.lastGood === 'string') st.lastGood = p.lastGood;
+  if (!st.region && typeof p.region === 'string') { st.region = p.region; st.origin = typeof p.origin === 'string' ? p.origin : null; }
+}
+// [lb-sticky 2026-10-23] (c) envio pendente (WS: confirmação/fila; HTTP: outbox enviando) ou
+// ligação → nenhuma troca VOLUNTÁRIA de região (falha real continua trocando).
+function _lbBusy() {
+  try {
+    const g = globalThis;
+    if (g.__chatyy_inCall) return true;
+    const w = g.__chatyy_mailWs;
+    if (w && (w._callActive || (w._pendingOutgoing && w._pendingOutgoing.size > 0) || (Array.isArray(w._messageQueue) && w._messageQueue.length > 0))) return true;
+  } catch {}
+  try { if ((require('./messageOutbox').sendingCount?.() || 0) > 0) return true; } catch {}
+  return false;
 }
 function _lbPersist() {
   const st = _lbS();
@@ -783,6 +815,7 @@ async function _lbDetect(opts) {
         await Promise.race([mm.waitForCacheReady(), new Promise(r => setTimeout(r, 2500))]);
       }
     } catch {}
+    try { _lbRehydrate(); } catch {}
     const st = _lbS();
     // [client-lb 2026-10-22] lista buscada em OUTRA rede → o hash do IP dela não vale aqui: força.
     const listStale = !!(L.listNetStale && L.listNetStale());
@@ -807,8 +840,21 @@ async function _lbDetect(opts) {
     const cfg = list.cfg || {};
     const eco = L.isEconomy();
     const mem = mem0 && L.isUsable(L.regionById(mem0.reg, list)) ? mem0 : null;
+    const stk = !!(L.stickyOn && L.stickyOn());
     // Rede nova com edge lembrado → volta a ele JÁ (a medição abaixo confirma/corrige).
-    if (mem && (netChanged || st.session.fresh) && (!_bestServer || _bestServer.region !== mem.reg)) {
+    let memJump = !!(mem && (netChanged || st.session.fresh) && (!_bestServer || _bestServer.region !== mem.reg));
+    // [lb-sticky 2026-10-23] com um edge atual utilizável, a memória da rede NÃO pula às cegas
+    // (Wi-Fi do founder piscava p/ o celular → mex lembrado 233 × scl 367 → pulava e voltava):
+    // só se as RTTs lembradas DESTA rede mostram o atual ruim pela regra sticky, e sem envio/ligação.
+    if (memJump && stk && _bestServer && _bestServer.src && _bestServer.src !== 'hint') {
+      const cr = _bestServer.region;
+      const crOk = L.isUsable(L.regionById(cr, list)) && (cr === 'us' || !_originIsDown(_originOf(_bestServer)));
+      if (crOk) {
+        const r = mem.rtt || {};
+        memJump = typeof r[cr] === 'number' && L.stickyWouldSwitch(r[mem.reg], r[cr]) && !_lbBusy();
+      }
+    }
+    if (memJump) {
       const ms = _lbServerFor(mem.reg);
       if (ms) {
         const prevR = _bestServer ? _bestServer.region : '';
@@ -878,15 +924,25 @@ async function _lbDetect(opts) {
     // [client-lb 2026-10-22] 1ª medição numa rede NOVA também: sem histerese/confirmação (a base é
     // o edge lembrado desta rede, senão o palpite geo — e o geo perde se a medição contradiz).
     const freshNet = !!st.session.fresh;
-    const decCur = (freshNet || (!st.session.picked && (!_bestServer || _bestServer.src === 'hint' || !_bestServer.src))) ? null : (curUsable ? cur : (cur || null));
+    let decCur = (freshNet || (!st.session.picked && (!_bestServer || _bestServer.src === 'hint' || !_bestServer.src))) ? null : (curUsable ? cur : (cur || null));
+    // [lb-sticky 2026-10-23] o edge em uso (restaurado/lembrado/escolhido) é SEMPRE o "atual":
+    // boot e rede nova não começam do zero (antes: 1ª medição da sessão sem histerese).
+    // (d) troca de rede → 1 reavaliação por sessão em que 1 medição basta (com a regra sticky).
+    let oneShot = false;
+    if (stk) {
+      decCur = (cur && _bestServer && _bestServer.src && _bestServer.src !== 'hint') ? cur : null;
+      if (decCur && (netChanged || why === 'net') && !st.session.oneShotUsed) { oneShot = true; st.session.oneShotUsed = true; }
+    }
     const physReg = L.physNearest ? L.physNearest(phys, list) : null; // [geo-fisica] vence país CF/fuso
     const geoGuess = physReg || (near || L.tzGuess(L.deviceTz())).find(id => L.isUsable(L.regionById(id, list))) || 'us';
     const guess = mem ? mem.reg : geoGuess;
-    const d = L.decide({ results: scores, current: decCur, pending: freshNet ? null : st.pending, session: st.session, cfg, list, base: guess });
+    // sticky: decide SÓ pelo /health — o pong do WS passa pelo hub US e penalizava edges longe dele
+    // (Android em Santiago 23/10 03:27: scl /health 16 ms, pong 397 → "faster_50ms" p/ br 80).
+    const d = L.decide({ results: stk ? results : scores, current: decCur, pending: freshNet ? null : st.pending, session: st.session, cfg, list, base: guess, sticky: stk, busy: stk ? _lbBusy() : false, oneShot });
     st.session.fresh = false;
     st.pending = d.pending;
-    if (d.pending && !st.confirmTimer) {
-      st.confirmTimer = setTimeout(() => { st.confirmTimer = null; detectFastestServer({ why: 'confirm' }); }, _LB_CONFIRM_MS);
+    if (d.pending && !st.confirmTimer && d.why !== 'busy') { // busy: segue no próximo tick (sem sondar em loop na ligação)
+      st.confirmTimer = setTimeout(() => { st.confirmTimer = null; detectFastestServer({ why: 'confirm' }); }, stk && L.STICKY ? L.STICKY.gap_ms : _LB_CONFIRM_MS);
     }
     const pickSrv = (d.pick === cur && curSrv) ? curSrv : (_lbServerFor(d.pick) || EDGE_SERVERS[0]);
     const prev = cur;

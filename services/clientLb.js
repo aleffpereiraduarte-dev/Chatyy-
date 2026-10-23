@@ -14,6 +14,9 @@
 //  3. DECISÃO (`decide`): só troca se a candidata for >25 % E >30 ms melhor em 2 medições
 //     seguidas; fixação por sessão (rede): no máx. 2 trocas voluntárias por sessão e 30 min
 //     entre elas. Failover (erro/timeout) é imediato p/ a próxima do ranking; US = última.
+//     [lb-sticky 2026-10-23] SUBSTITUÍDO por regras sticky (ver STICKY abaixo): atual com RTT ≤
+//     max(80 ms, 1,5× a melhor) não troca; troca só ≥40 % E ≥40 ms em 3 medições (~45 s) ou falha
+//     real; nunca c/ envio/ligação; rede nova = 1 reavaliação. Kill: globalThis.__chatyy_lb_sticky=false.
 //  4. Região active=false ou health=down NUNCA é escolhida (US sempre pode).
 //  5. Telemetria: beacon POST /api/client-lb.php (pick/switch/failover + RTTs, incl. US →
 //     dá p/ comparar com o que o Cloudflare faria: sempre US) + crashReporter step client_lb.
@@ -342,6 +345,62 @@ export function nearestTo(id, list, skip) {
 export const _beats = (cand, cur, cfg) =>
   cand < cur * (1 - cfg.switch_ratio) && (cur - cand) > cfg.switch_ms;
 
+// ── [lb-sticky 2026-10-23] SEGURAR o edge atual enquanto o RTT dele for bom ─────
+// Visto 22-23/10 (founder em Santiago, scl 16 ms): o socket pulava scl→br/mex sem o scl
+// piorar — boot restaurava região velha (br), memória do celular (mex) aplicada sem medir,
+// e o placar com o pong do WS (passa pelo hub US: scl 397 ms) derrubava o scl. Regras:
+//  (a) atual responde ao /health com RTT ≤ max(80 ms, 1,5× a melhor) → NÃO troca;
+//  (b) troca voluntária só com vantagem GRANDE (≥40 % E ≥40 ms) em 3 medições espaçadas
+//      (~45 s) da MESMA candidata — ou falha real (atual mudo/fora/inativa);
+//  (c) nunca troca voluntariamente com envio pendente ou ligação (`busy`);
+//  (d) troca de rede/boot = 1 reavaliação (1 medição basta, ainda c/ (a) e a margem grande).
+// Decisão só pelo /health (sem o RTT do WS). Kill a quente: globalThis.__chatyy_lb_sticky = false.
+export const STICKY = { abs_ms: 80, factor: 1.5, ratio: 0.40, ms: 40, confirm: 3, gap_ms: 45 * 1000 };
+export function stickyOn() { try { return globalThis.__chatyy_lb_sticky !== false; } catch { return true; } }
+/** (a) RTT do atual é "bom": ≤ max(80 ms, 1,5× o melhor medido). */
+export function stickyHolds(curRtt, bestRtt) {
+  if (!(typeof curRtt === 'number' && curRtt > 0)) return false;
+  const b = typeof bestRtt === 'number' && bestRtt > 0 ? bestRtt : curRtt;
+  return curRtt <= Math.max(STICKY.abs_ms, STICKY.factor * b);
+}
+/** (b) vantagem grande: ≥40 % E ≥40 ms. */
+export function beatsBig(cand, cur) {
+  return typeof cand === 'number' && typeof cur === 'number' && cand > 0
+    && cand <= cur * (1 - STICKY.ratio) && (cur - cand) >= STICKY.ms;
+}
+/** Vale trocar de `cur` p/ `cand` (só RTTs): nem (a) segura, e (b) a margem é grande. */
+export function stickyWouldSwitch(cand, cur) {
+  if (!(typeof cand === 'number' && cand > 0)) return false;
+  if (!(typeof cur === 'number' && cur > 0)) return true;
+  return !stickyHolds(cur, cand) && beatsBig(cand, cur);
+}
+
+function _decideSticky({ ok, results, current, pending, session, now, L, base, busy, oneShot }) {
+  const best = ok[0];
+  if (!current) {
+    // 1ª escolha (sem atual): fica no palpite (memória da rede/geo) se ele é "bom" pela regra (a).
+    if (base && base !== best && typeof results[base] === 'number' && isUsable(regionById(base, L)) && !stickyWouldSwitch(results[best], results[base])) {
+      return { pick: base, pending: null, kind: 'initial', why: 'first_base' };
+    }
+    return { pick: best, pending: null, kind: 'initial', why: 'first' };
+  }
+  if (!isUsable(regionById(current, L))) return { pick: best, pending: null, kind: 'failover', why: 'current_unusable' };
+  const curRtt = results[current];
+  if (typeof curRtt !== 'number') return { pick: best, pending: null, kind: 'failover', why: 'current_no_reply' };
+  if (best === current) return { pick: current, pending: null, kind: 'keep', why: 'best' };
+  if (stickyHolds(curRtt, results[best])) return { pick: current, pending: null, kind: 'keep', why: 'sticky' };
+  if (!beatsBig(results[best], curRtt)) return { pick: current, pending: null, kind: 'keep', why: 'hysteresis' };
+  // Vantagem grande nesta medição. Envio pendente/ligação → adia (não conta, não perde).
+  if (busy) return { pick: current, pending: pending && pending.id === best ? pending : null, kind: 'keep', why: 'busy' };
+  if (oneShot) return { pick: best, pending: null, kind: 'switch', why: 'net_' + Math.round(curRtt - results[best]) + 'ms' };
+  const n = pending && pending.id === best ? (pending.n || 0) + 1 : 1;
+  if (n < STICKY.confirm) return { pick: current, pending: { id: best, n }, kind: 'pending', why: 'confirm_' + n + '/' + STICKY.confirm };
+  const s = session || {};
+  if ((s.voluntary || 0) >= PIN_MAX_VOLUNTARY) return { pick: current, pending: null, kind: 'keep', why: 'pinned_max' };
+  if (s.lastSwitchAt && now - s.lastSwitchAt < PIN_MIN_GAP_MS) return { pick: current, pending: { id: best, n }, kind: 'keep', why: 'pinned_gap' };
+  return { pick: best, pending: null, kind: 'switch', why: 'faster_' + Math.round(curRtt - results[best]) + 'ms' };
+}
+
 /**
  * Decisão com histerese (exportada p/ teste).
  *   results: { [regionId]: rttMs | null }   (null = falhou/timeout)
@@ -349,13 +408,14 @@ export const _beats = (cand, cur, cfg) =>
  *   session: { voluntary, lastSwitchAt }   ·  cfg: { switch_ratio, switch_ms, confirm }
  * → { pick, pending, kind: 'keep'|'initial'|'switch'|'failover'|'pending', why }
  */
-export function decide({ results, current, pending, session, cfg, now = Date.now(), list, base } = {}) {
+export function decide({ results, current, pending, session, cfg, now = Date.now(), list, base, sticky, busy = false, oneShot = false } = {}) {
   const C = { ...DEFAULT_CFG, ...(cfg || {}) };
   const L = list || getList();
   const ok = Object.keys(results || {})
     .filter((id) => typeof results[id] === 'number' && results[id] > 0 && isUsable(regionById(id, L)))
     .sort((a, b) => results[a] - results[b]);
   if (!ok.length) return { pick: current && isUsable(regionById(current, L)) ? current : 'us', pending: null, kind: 'keep', why: 'no_results' };
+  if (sticky === undefined ? stickyOn() : sticky) return _decideSticky({ ok, results, current, pending, session, now, L, base, busy, oneShot });
   const best = ok[0];
   const curUsable = current && isUsable(regionById(current, L));
   if (!current) {
@@ -577,5 +637,5 @@ export default {
   getList, refreshList, isClientLbOn, isUsable, usableRegions, regionById, pickCandidates, decide,
   rankRegions, loadState, saveState, isEconomy, beacon, tzGuess, deviceTz, validateList, regionsNear, distKm,
   netSignature, netKeys, listNetStale, netMemGet, netMemPut, noteWsRtt, wsRttFor, blendScores, wsLeafFor, fnv1a, nearestTo,
-  physNearest,
+  physNearest, stickyOn, stickyHolds, beatsBig, stickyWouldSwitch, STICKY,
 };
