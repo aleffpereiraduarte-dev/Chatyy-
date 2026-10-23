@@ -2428,6 +2428,11 @@ async function _rawApiCallOnce(action, params = {}, method = 'GET', _baseOverrid
   if (deviceTrustToken) headers['X-Device-Trust-Token'] = deviceTrustToken;
   const _devHdr = _chatyyDeviceHeader();
   if (_devHdr) headers['X-Chatyy-Device'] = _devHdr;
+  // [sgu F0 2026-10-23] leitura de mensagens: motivo + aparelho e2ee5 p/ o contador sgu_body_reads do servidor
+  // (só contagem; servidor antigo ignora). Kill OTA: __chatyy_sgu_read_hint=false.
+  if (action === 'chat_messages' || action === 'chat_load_around' || action === 'chat_messages_by_date' || action === 'chat_sync' || action === 'chat_ws_events') {
+    try { const _sh = require('./sguReadHint').sguReadHeaders(action, params); if (_sh) Object.assign(headers, _sh); } catch {}
+  }
 
   let url = `${_baseOverride ? _baseOverride + '/api/email.php' : API_URL}?action=${action}`;
   // [rodada3 2026-10-11] Capacidade: este app desenha a mensagem apagada pelo flag

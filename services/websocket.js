@@ -739,6 +739,9 @@ class MailWebSocket {
       ...(_presenceAppState() ? { app_state: _presenceAppState() } : {}),
       // [e2ee5 WP-08c] §5.1: aparelho E2EE desta conexão (só com a flag + sessão aberta).
       ...((() => { try { return require('./e2ee/e2ee5').wsAuthFields() || {}; } catch { return {}; } })()),
+      // [sgu F0 2026-10-23] capacidade "rtstore0" = este app manda `persisted` (gravado no SQLite) — só medir; a F1
+      // (rtstore1) é que vai contar para a elegibilidade. Hub antigo ignora. Kill OTA: __chatyy_rtstore_cap=false.
+      ...((() => { try { return globalThis.__chatyy_rtstore_cap === false ? {} : { client_caps: ['rtstore0'] }; } catch { return {}; } })()),
     };
   }
 

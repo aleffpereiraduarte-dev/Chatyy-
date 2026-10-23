@@ -491,6 +491,8 @@ export function upsertMessagesSync(convId, messages) {
     if (__DEV__) console.warn('[sqliteStore] upsertMessagesSync failed:', e?.message);
     return 0;
   }
+  // [sgu F0 2026-10-23] COMMIT ok → sinal "persisted" dos envelopes E2EE v5 (sombra; não mexe no ✓✓).
+  if (written > 0) { try { require('./dlvPersisted').noteSaved(convId, messages); } catch {} }
   return written;
 }
 

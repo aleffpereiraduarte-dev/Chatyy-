@@ -966,6 +966,9 @@ export async function dbSaveMessages(conversationId, messages) {
       }
     } finally { await stmt.finalizeAsync(); }
   });
+  // [sgu F0 2026-10-23] COMMIT feito (o _runTx lança em falha) → envelopes E2EE v5 deste lote estão gravados
+  // neste aparelho: sinal "persisted" (sombra, não mexe no ✓✓). Kill: __chatyy_dlv_persisted=false.
+  try { require('./dlvPersisted').noteSaved(conversationId, messages); } catch {}
 }
 
 export async function dbGetMessages(conversationId, limit = 50, beforeId = null) {

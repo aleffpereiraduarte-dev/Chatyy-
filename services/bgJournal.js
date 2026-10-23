@@ -116,6 +116,28 @@ function _e5LastMessage(lm, latest, full, conv, cid) {
   } catch {}
 }
 
+// [sgu F0 2026-10-23] Push E2EE v5 com o envelope inline (e5c, gravado pela NSE/FCM com fsync — BUILD F0 — ou pelo
+// handler JS do push): vira a LINHA da mensagem (content = envelope, cifrado; o app decifra como qualquer linha do
+// servidor). Antes só a prévia da lista usava o e5c e a mensagem esperava o sync. INSERT OR IGNORE: nunca pisa numa
+// linha que já veio do servidor (o delta-sync depois faz INSERT OR REPLACE com a linha completa).
+// Base do `persisted` do push: o nativo só diz persisted=1 quando o e5c ficou no journal, e é aqui que ele chega ao
+// SQLite. Kill OTA: globalThis.__chatyy_e5_journal_rows = false → como antes (só prévia).
+function _e5Row(e) {
+  try {
+    if (globalThis.__chatyy_e5_journal_rows === false) return null;
+    if (!e || e.locked === '1' || e.locked === 1) return null;
+    const env = _str(e.e5c);
+    if (!env.startsWith('{"e2e":5') || env.length >= 8192) return null;
+    const r = rowFromEntry(e);
+    r.content = env;
+    r.client_message_id = _str(e.cmid) || null;
+    if (_str(e.e5su)) r.sender_uid = _str(e.e5su);
+    r.reply_to_id = null; r.reply_quote_text = null; r.file_url = null; r.file_name = null; r.file_size = null; r.thumbnail_url = null;
+    r._bg = (_str(e.src) || 'bg') + ':e5';
+    return r;
+  } catch { return null; }
+}
+
 // ─── Pure: plan ──────────────────────────────────────────────────────────────
 /**
  * Decide what to write. No IO.
@@ -180,6 +202,7 @@ export function planMerge(parsed, ctx) {
     const fresh = list.filter((e) => !ctx.hasMessage(_num(e.mid)));
     for (const e of fresh) {
       if ((e.full === '1' || e.full === 1) && e.locked !== '1') messages.push(rowFromEntry(e));
+      else if (_e5Row(e)) messages.push(_e5Row(e));
     }
     applied += fresh.length;
 
@@ -473,6 +496,8 @@ function _applyParsedSync(parsed, reason, t0) {
           }
         }
         db.execSync('COMMIT');
+        // [sgu F0 2026-10-23] envelopes E2EE v5 gravados no SQLite → sinal "persisted" (sombra; não mexe no ✓✓).
+        if (plan.messages.length) { try { require('./dlvPersisted').noteSaved(null, plan.messages); } catch {} }
       } catch (e) {
         // Only roll back OUR transaction — a failed BEGIN means someone else's is open.
         if (_began) { try { db.execSync('ROLLBACK'); } catch {} }
