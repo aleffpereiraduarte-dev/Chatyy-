@@ -137,11 +137,21 @@ function _targets() {
 }
 
 // País da dica region_hint (Cloudflare) que o services/api.js já guardou.
-function _hintCountry() {
+// [video-fullhd 2026-10-22] país só se a dica for RECENTE (≤ 6 h) e da MESMA rede: o founder em
+// Santiago mandava cc=US da dica do dia anterior (estava nos EUA) e o roteamento de chamada tratava
+// Chile↔Chile como América do Norte (sala em NY). Servidor também descarta cc contradito pelo RTT.
+const HINT_CC_MAX_AGE_MS = 6 * 3600 * 1000;
+function _hintCountry(net) {
   try {
     const raw = _mm()?.getString('edge_region_hint');
-    const c = raw ? JSON.parse(raw)?.country : null;
-    return typeof c === 'string' && /^[A-Z]{2}$/.test(c) ? c : null;
+    const h = raw ? JSON.parse(raw) : null;
+    const c = h ? h.country : null;
+    if (!(typeof c === 'string' && /^[A-Z]{2}$/.test(c))) return null;
+    if (globalThis.__chatyy_rtt_cc_fresh === false) return c; // kill switch: comportamento antigo
+    const ts = Number(h.ts) || 0;
+    if (!ts || Date.now() - ts > HINT_CC_MAX_AGE_MS) return null;
+    if (net && h.net && _netClass(h.net) !== net) return null;
+    return c;
   } catch { return null; }
 }
 
@@ -258,7 +268,7 @@ export async function measureAndReport(opts = {}) {
     try {
       const { apiCall } = require('./api');
       const body = { rtt: m.rtt, v: MEASURE_VERSION, n: SAMPLES, net, jit: m.jit };
-      const cc = _hintCountry();
+      const cc = _hintCountry(net);
       if (cc) body.cc = cc;
       // [hint-11] região do client-lb (HTTP+WS) → servidor grava como hint da casa regional (fonte 'lb')
       const pick = _lbPick(lb);
