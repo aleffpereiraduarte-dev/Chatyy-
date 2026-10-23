@@ -625,6 +625,20 @@ export function quicTransportFor(email) {
   return { on: true, noise: true, noiseTest: !!t.noise_test, regions, hsMs: 1500, migrate: true };
 }
 
+/**
+ * [quic-proto 2026-10-23] Conta na allowlist do QUIC (transport.acc tem o FNV-1a do e-mail normal
+ * ou canônico). Sem `acc` = false (o client-lb é GET sem bearer: sem a lista não dá p/ saber a conta).
+ * Usado só para mostrar o interruptor escondido em Ajuda > Sobre.
+ */
+export function quicAllowedFor(email) {
+  const t = getList().transport;
+  if (!t || !t.quic || !Array.isArray(t.acc) || !t.acc.length) return false;
+  const e = String(email || '').trim().toLowerCase();
+  if (!e) return false;
+  const canon = e.replace(/@onemundo\.com\.br$/, '@chatyy.com.br');
+  return t.acc.includes(fnv1a(e)) || t.acc.includes(fnv1a(canon));
+}
+
 // ── Economia de bateria/dados ──────────────────────────────────────────────
 export function isEconomy() {
   try { if (require('./liveLocTickGate').isLowBatteryNow?.()) return true; } catch {}
@@ -674,6 +688,6 @@ export function beacon(ev, data = {}) {
 export default {
   getList, refreshList, isClientLbOn, isUsable, usableRegions, regionById, pickCandidates, decide,
   rankRegions, loadState, saveState, isEconomy, beacon, tzGuess, deviceTz, validateList, regionsNear, distKm,
-  netSignature, netKeys, listNetStale, netMemGet, netMemPut, noteWsRtt, wsRttFor, blendScores, wsLeafFor, fnv1a, nearestTo, quicTransportFor,
+  netSignature, netKeys, listNetStale, netMemGet, netMemPut, noteWsRtt, wsRttFor, blendScores, wsLeafFor, fnv1a, nearestTo, quicTransportFor, quicAllowedFor,
   physNearest, stickyOn, stickyHolds, beatsBig, stickyWouldSwitch, STICKY,
 };

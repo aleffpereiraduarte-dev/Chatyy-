@@ -13,6 +13,9 @@ import { USE_NATIVE_SHEETS } from '../../NativeSheet';
 import { PrivacyModal, TermsModal } from '../../LoginModals';
 import { SettingsGroup, SettingsRow } from '../SettingsKit';
 import { useSettingsHost, useSection } from './shared';
+import { useAuth } from '../../../context/AuthContext';
+// [quic-proto 2026-10-23] interruptor escondido (7 toques na versão, só allowlist)
+import QuicExperimentalPanel, { quicPanelAllowed } from '../QuicExperimentalPanel';
 
 export function appVersionLabel() {
   const ver = Constants?.expoConfig?.version || Constants?.manifest?.version || '?';
@@ -29,6 +32,16 @@ export default function HelpCategory() {
   const [aboutOpen, setAboutOpenState] = useState(false);
   const [aboutMounted, setAboutMounted] = useState(false);
   const setAboutOpen = (v) => { if (v) setAboutMounted(true); setAboutOpenState(v); };
+  // [quic-proto] 7 toques na versão (em até 4 s) → mostra o transporte experimental (allowlist).
+  const { user } = useAuth() || {};
+  const [quicTaps, setQuicTaps] = useState({ n: 0, at: 0 });
+  const [quicShown, setQuicShown] = useState(false);
+  const onVersionTap = () => {
+    const now = Date.now();
+    const n = now - quicTaps.at < 4000 ? quicTaps.n + 1 : 1;
+    setQuicTaps({ n, at: now });
+    if (n >= 7 && !quicShown && quicPanelAllowed(user?.email)) setQuicShown(true);
+  };
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   // Procura e aplica a atualização (OTA) na hora — sem fechar/abrir 2x.
@@ -130,8 +143,9 @@ export default function HelpCategory() {
           <View style={{ alignItems: 'center', marginBottom: 14 }}>
             <ChatyyMascot pose="wave" size={96} dark={isDark} />
             <Text accessibilityRole="header" style={{ color: colors.text, fontWeight: '800', fontSize: 22, letterSpacing: -0.4, marginTop: 6 }}>Chatyy</Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 2, fontVariant: ['tabular-nums'] }}>{build ? `${verLabel} • build ${build}` : verLabel}</Text>
+            <Text onPress={onVersionTap} suppressHighlighting style={{ color: colors.textSecondary, fontSize: 13, marginTop: 2, fontVariant: ['tabular-nums'] }}>{build ? `${verLabel} • build ${build}` : verLabel}</Text>
           </View>
+          {quicShown && <QuicExperimentalPanel email={user?.email} />}
           <TouchableOpacity onPress={() => after(() => setShowTerms(true))} style={[st.link, { borderBottomColor: colors.borderLight }]}>
             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.terms') || 'Termos de uso'}</Text>
             <IconChevronRight size={16} color={colors.textTertiary} />

@@ -193,7 +193,11 @@ class NativeTransportSocket {
       const hasQuic = (typeof m.quicVersion === 'function' && m.quicVersion() >= 1) || typeof m.quicProtoInfo === 'function';
       if (globalThis.__chatyy_quic !== false && hasQuic) {
         const q = require('./clientLb').quicTransportFor(cfg.account);
-        if (q) cfg.quic = q;
+        if (q) {
+          cfg.quic = q;
+          // registro da chave Noise do aparelho (1x por conta/aparelho/chave; só com a flag local)
+          setTimeout(() => { try { require('./quicProto').maybeRegisterNoiseKey(cfg.account, 'open'); } catch {} }, 5000);
+        }
       }
     } catch {}
     _sockets.set(this.sid, this);
