@@ -7219,7 +7219,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             c.start()
             adaptiveVideo = c
         }
-        for (delay, tag) in [(8.0, "t8"), (45.0, "t45")] {
+        // [video-fullhd 2026-10-22] + t20 (BWE já subiu: no t8 quase sempre só a camada q 270p está no ar,
+        // e as ligações de teste acabam antes do t45 → zero dado pós-rampa em 7 dias) e t120 (regime).
+        for (delay, tag) in [(8.0, "t8"), (20.0, "t20"), (45.0, "t45"), (120.0, "t120")] {
             let w = DispatchWorkItem { [weak self] in self?.reportVideoQuality(tag: tag) }
             videoQualityDiagWork.append(w)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: w)

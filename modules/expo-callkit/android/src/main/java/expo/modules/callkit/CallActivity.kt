@@ -4139,8 +4139,14 @@ class CallActivity : ComponentActivity() {
       try {
         delay(8_000)
         if (!isFinishing) CallVideoQuality.reportVideoQuality(applicationContext, r, "t8", callId, state.localQuality)
-        delay(37_000)
+        // [video-fullhd 2026-10-22] + t20 (pós-rampa do BWE; no t8 só a camada q costuma estar no ar e
+        // as ligações curtas nunca chegavam ao t45) e t120 (regime).
+        delay(12_000)
+        if (!isFinishing) CallVideoQuality.reportVideoQuality(applicationContext, r, "t20", callId, state.localQuality)
+        delay(25_000)
         if (!isFinishing) CallVideoQuality.reportVideoQuality(applicationContext, r, "t45", callId, state.localQuality)
+        delay(75_000)
+        if (!isFinishing) CallVideoQuality.reportVideoQuality(applicationContext, r, "t120", callId, state.localQuality)
       } catch (_: Throwable) {}
     }
   }
