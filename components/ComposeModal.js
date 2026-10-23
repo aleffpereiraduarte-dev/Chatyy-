@@ -168,7 +168,7 @@ export default function ComposeModal({ params, onClose }) {
           const orig = r.data;
 
           if (params?.reply_uid) {
-            setTo(parseEmailsParam(orig.from));
+            setTo(parseEmailsParam(orig.reply_to || orig.from)); // [deep-20261023] respeita Reply-To
 
             if (params?.reply_all) {
               const allRecipients = (orig.to || '').split(',')

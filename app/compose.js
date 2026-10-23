@@ -802,7 +802,9 @@ export default function ComposeScreen() {
           setOrigMsg(orig);
 
           if (params.reply_uid) {
-            setTo(parseEmailsParam(orig.from));
+            // [deep-20261023] responder respeita Reply-To (formulário/lista/noreply); o servidor
+            // devolve reply_to = From quando o cabeçalho não existe.
+            setTo(parseEmailsParam(orig.reply_to || orig.from));
 
             // Reply All: add all recipients + original CC to CC field.
             // The sender already goes in To (setTo above) — on lists/group
@@ -817,6 +819,7 @@ export default function ComposeScreen() {
                 const clean = e.toLowerCase();
                 if (user?.email && clean === user.email.toLowerCase()) return false;
                 if (fromLower && clean === fromLower) return false;
+                if (orig.reply_to && clean === String(orig.reply_to).trim().toLowerCase()) return false;
                 return true;
               };
               const allRecipients = splitAddressList(orig.to)

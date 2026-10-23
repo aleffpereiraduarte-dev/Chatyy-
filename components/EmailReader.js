@@ -1573,8 +1573,13 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                       const replySubject = (email.subject || '').startsWith('Re:') ? email.subject : `Re: ${email.subject || ''}`;
                       const dateStr = email.date || '';
                       const quotedBody = `\n\n---------- ${t('reader.originalMessage')} ----------\n${t('reader.quotedFrom')}: ${senderDisplayName} <${senderAddress}>\n${t('reader.quotedDate')}: ${dateStr}\n${t('reader.quotedSubject')}: ${email.subject || ''}\n${t('reader.quotedTo')}: ${email.to || ''}\n\n${email.body_text || email.body || email.body_html?.replace(/<[^>]+>/g, ' ') || ''}`;
-                      const fullBody = inlineReplyText + quotedBody;
-                      const result = await sendEmail(email.from, replySubject, fullBody, '', '', email.uid, folder || 'INBOX');
+                      // [deep-20261023] o servidor trata `body` como HTML quando acha uma tag — a linha
+                      // "De: Nome <addr>" da citação casava, então o nl2br era pulado (resposta numa linha só
+                      // e o <addr> sumia). Manda já escapado com <br>, como o compose.
+                      const fullBody = (inlineReplyText + quotedBody)
+                        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                        .replace(/\r?\n/g, '<br>');
+                      const result = await sendEmail(email.reply_to || email.from, replySubject, fullBody, '', '', email.uid, folder || 'INBOX');
                       if (result.success) {
                         setInlineReplyText('');
                         setInlineReplyExpanded(false);
