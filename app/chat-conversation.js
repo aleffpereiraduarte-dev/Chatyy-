@@ -18889,6 +18889,7 @@ function ChatConversationInnerBody() {
                 }
                 const next = [...prev];
                 next[existingIdx] = { ...msg, ..._keepOwnLocal(existing, msg), _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
+                try { _e5SeedOwnShown(_e5ShownRef, existing, next[existingIdx], currentEmail); } catch {} // [conv-tail] própria E2EE nunca some
                 // [2026-10-14 caos] Relays chegam fora de ordem quando o remetente reconecta
                 // (fila do WS + retry de 3 s disparam juntos) → a linha real herdava a posição
                 // errada do relay e ficava fora de ordem até reabrir. Reposiciona pelo id.
@@ -18952,6 +18953,7 @@ function ChatConversationInnerBody() {
                 } catch {}
               }
               next[tempIdx] = { ...msg, ..._keepOwnLocal(optimistic, msg), _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
+              try { _e5SeedOwnShown(_e5ShownRef, optimistic, next[tempIdx], currentEmail); } catch {} // [conv-tail]
               return next;
             }
             // Out-of-order arrival guard: if msg.id is numeric AND smaller
@@ -20574,6 +20576,7 @@ function ChatConversationInnerBody() {
               if (existingTempId) _tcpCleanupPending(existingTempId, preservedClientId); // [2026-10-06 thread-tech] deferred, once
               const next = [...prev];
               next[existingIdx] = { ...msg, ..._keepOwnLocal(existing, msg), _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
+              try { _e5SeedOwnShown(_e5ShownRef, existing, next[existingIdx], currentEmail); } catch {} // [conv-tail] própria E2EE nunca some
               return next;
             }
           }
@@ -20600,6 +20603,7 @@ function ChatConversationInnerBody() {
               _tcpCleanupPending(optimistic.id, preservedClientId); // [2026-10-06 thread-tech] deferred, once
             }
             next[tempIdx] = { ...msg, ..._keepOwnLocal(optimistic, msg), _pending: false, sender_email: preservedSenderEmail, _client_id: preservedClientId };
+            try { _e5SeedOwnShown(_e5ShownRef, optimistic, next[tempIdx], currentEmail); } catch {} // [conv-tail]
             return next;
           }
           // [2026-10-06 thread-tech] genuinely new row → schedule the effect
@@ -47877,6 +47881,35 @@ function _e5KeepShownRow(m, shown) {
     }
   }
   return m;
+}
+// [conv-tail 2026-10-23] Minha mensagem E2EE (áudio/mídia/texto) trocada pela confirmação do servidor
+// ainda cifrada (_e5Hidden / decifrando / aguardando): a bolha otimista que EU já via continua na tela
+// (mesmo _e2eRaw → _e5KeepShownRow devolve esta versão) até o texto/mídia decifrados chegarem.
+// Antes a bolha sumia (linha escondida) e só voltava ao sair e entrar. Kill: __chatyy_conv_tail=false.
+function _e5SeedOwnShown(shownRef, prevRow, row, me) {
+  if (!shownRef || !shownRef.current || !prevRow || !row || global.__chatyy_conv_tail === false) return;
+  if (typeof row._e2eRaw !== 'string' || row.id == null) return;
+  const st = row._e5State;
+  if (!(row._e5Hidden || st === 'decrypting' || st === 'waiting')) return;
+  const mine = String(prevRow.sender_email || row.sender_email || '').toLowerCase() === String(me || '').toLowerCase();
+  if (!mine || prevRow._e5Hidden || prevRow._e5State === 'decrypting' || prevRow._e5State === 'waiting') return;
+  if (typeof prevRow.content !== 'string' || /^\{"e2e":/.test(prevRow.content)) return;
+  const m = shownRef.current.m;
+  if (!m) return;
+  m.set(String(row.id), {
+    ...row,
+    type: prevRow.type || row.type,
+    content: prevRow.content,
+    file_url: prevRow.file_url != null ? prevRow.file_url : row.file_url,
+    _localUri: prevRow._localUri || row._localUri,
+    duration: prevRow.duration != null ? prevRow.duration : row.duration,
+    waveform: prevRow.waveform || row.waveform,
+    thumb_b64: prevRow.thumb_b64 || row.thumb_b64,
+    image_width: prevRow.image_width || row.image_width,
+    image_height: prevRow.image_height || row.image_height,
+    _e5Hidden: false, _e5State: undefined, _e5Ty: undefined, _e2e: true, _pending: false, _uploading: false,
+  });
+  if (m.size > _E5_SHOWN_MAX) m.delete(m.keys().next().value);
 }
 function _e5KeepShownList(list, shown) {
   if (!Array.isArray(list) || !shown || global.__chatyy_e5_keep_shown === false) return list;
