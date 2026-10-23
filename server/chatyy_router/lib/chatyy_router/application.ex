@@ -54,7 +54,7 @@ defmodule ChatyyRouter.Application do
       ] ++
         ChatyyRouter.Delivery.child_specs() ++
         ChatyyRouter.Fanout.child_specs() ++
-        if(ChatyyRouter.Config.pg_enabled?(), do: [ChatyyRouter.AckSource], else: []) ++
+        if(ChatyyRouter.Config.pg_enabled?(), do: [ChatyyRouter.AckSource, ChatyyRouter.DlvCompare], else: []) ++
         [
           ChatyyRouter.AckOutbox,
           ChatyyRouter.Net.Cluster,
