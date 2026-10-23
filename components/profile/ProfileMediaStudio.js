@@ -18,9 +18,10 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   Modal, View, Text, StyleSheet, Platform, Pressable, ActivityIndicator, Animated,
-  PanResponder, Alert, Linking, Image as RNImage, useWindowDimensions,
+  PanResponder, Alert, Linking, Image as RNImage, useWindowDimensions, StatusBar,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets, initialWindowMetrics } from 'react-native-safe-area-context';
+import { useLanguageOptional } from '../../context/LanguageContext';
 import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, RadialGradient, Stop } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
 import { useGroupedColors } from '../settings/SettingsKit';
@@ -263,9 +264,23 @@ export default function ProfileMediaStudio({
   onAvatarChanged, onCoverChanged,
 }) {
   const g = useGroupedColors();
-  const insets = useSafeAreaInsets();
+  // [2026-10-23 capa-safe-area] Dentro do Modal (fullScreen + statusBarTranslucent)
+  // o contexto às vezes devolve top=0 → Cancelar/Salvar ficavam por cima do
+  // relógio/bateria. Piso = métricas da janela (iOS) / altura da status bar (Android).
+  const _ctxInsets = useSafeAreaInsets();
+  const _wm = (initialWindowMetrics && initialWindowMetrics.insets) || {};
+  const insets = {
+    top: Math.max(_ctxInsets.top || 0, _wm.top || 0, Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0),
+    bottom: Math.max(_ctxInsets.bottom || 0, _wm.bottom || 0),
+  };
   const { width: winW } = useWindowDimensions();
-  const tr = (k, fb) => { try { const v = t?.(k); return v && v !== k ? v : fb; } catch { return fb; } };
+  // [2026-10-23 capa-i18n] t do idioma do app (LanguageContext); prop t só de reserva.
+  const _ctxT = useLanguageOptional()?.t || null;
+  const tr = (k, fb) => {
+    try { const v = (_ctxT || t)?.(k); if (v && v !== k) return v; } catch {}
+    try { const v = t?.(k); if (v && v !== k) return v; } catch {}
+    return fb;
+  };
   const isCover = kind === 'cover';
   const [stage, setStage] = useState('menu'); // menu | crop
   const [src, setSrc] = useState(null);       // { uri, w, h }
@@ -542,7 +557,7 @@ export default function ProfileMediaStudio({
             </View>
           ) : null}
         />
-        <Text style={st.cropHint}>{tr('photoStudio.adjustHint', 'Arraste para posicionar · use dois dedos para ampliar')}</Text>
+        <Text style={st.cropHint}>{tr('photoStudio.adjustHint', 'Arraste para posicionar · pince para ampliar')}</Text>
       </View>
     </View>
   ) : null;

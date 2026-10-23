@@ -146,7 +146,7 @@ export default {
   "photoStudio.avatarHint": "Aparece nas conversas, nos contatos e no seu perfil.",
   "photoStudio.coverHint": "Fica no topo do seu perfil. Fotos na horizontal ficam melhores — depois de escolher, arraste para enquadrar.",
   "photoStudio.adjust": "Mover e ajustar",
-  "photoStudio.adjustHint": "Arraste para posicionar · use dois dedos para ampliar",
+  "photoStudio.adjustHint": "Arraste para posicionar · pince para ampliar",
   "photoStudio.preview": "Prévia",
   "photoStudio.preparing": "Preparando…",
   "photoStudio.uploading": "Enviando…",
