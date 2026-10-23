@@ -575,11 +575,11 @@ function _mediaMetaFields(p, msgType) {
     if (!_e2e && !p.view_once && (msgType === 'image' || msgType === 'video' || msgType === 'video_note' || msgType === 'gif')) {
       try { cm = require('./imageSendPipeline').getClientMetaSync?.(p.temp_id, p.client_message_id) || null; } catch {}
     }
-    // vídeo: o LQIP do quadro só vai como thumb_b64 com o kit do servidor aplicado (o chat.php
-    // antigo pula o pôster ffmpeg quando recebe thumb_b64) → __chatyy_video_lqip === true.
+    // vídeo: o LQIP do quadro vai como thumb_b64 (kit thumb php LIVE nos 12 hosts desde 23/10 16:41Z —
+    // o chat.php gera o pôster ffmpeg mesmo com thumb_b64). Kill: __chatyy_video_lqip === false.
     if (!tb && cm && cm.lqip && msgType === 'image' && cm.kind !== 'video') tb = cm.lqip;
     if (!tb && cm && cm.lqip && cm.kind === 'video' && (msgType === 'video' || msgType === 'video_note')) {
-      try { if (globalThis.__chatyy_video_lqip === true) tb = cm.lqip; } catch {}
+      try { if (globalThis.__chatyy_video_lqip !== false) tb = cm.lqip; } catch {}
     }
     // view-once: sem prévia borrada (vazaria o conteúdo antes de abrir).
     if (tb && !p.view_once && !_e2e && tb.length < 6000 && /^[A-Za-z0-9+/=]+$/.test(tb)) out.thumb_b64 = tb;
