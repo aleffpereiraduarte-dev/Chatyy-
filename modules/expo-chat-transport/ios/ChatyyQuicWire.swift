@@ -196,8 +196,43 @@ final class ChatyyQuicWire {
   /// CONNECTION_CLOSE de aplicação recebido (código + texto), se o SO expuser.
   private func quicAppError() -> (UInt64, String)? {
     guard let c = conn, let m = c.metadata(definition: NWProtocolQUIC.definition) as? NWProtocolQUIC.Metadata else { return nil }
-    if let ae = m.applicationError { return (ae.error, ae.reason ?? "") }
-    return nil
+    // O tipo de `applicationError` muda entre SDKs (tupla opcional antiga;
+    // NWProtocolQUIC.ApplicationError não-opcional nos novos). Lido por reflexão
+    // para compilar em qualquer um: 1º inteiro = código, 1ª String = motivo.
+    let v: Any = m.applicationError
+    guard let r = ChatyyQuicWire.reflectCodeReason(v) else { return nil }
+    if r.0 == 0 && r.1.isEmpty { return nil } // "nenhum erro"
+    return r
+  }
+
+  /// Procura (código, motivo) em tupla/struct/enum/Optional, até 4 níveis.
+  static func reflectCodeReason(_ v: Any) -> (UInt64, String)? {
+    var code: UInt64?
+    var reason: String?
+    func walk(_ x: Any, _ depth: Int) {
+      if depth > 4 { return }
+      switch x {
+      case let n as UInt64: if code == nil { code = n }; return
+      case let n as Int: if code == nil, n >= 0 { code = UInt64(n) }; return
+      case let n as Int64: if code == nil, n >= 0 { code = UInt64(n) }; return
+      case let n as UInt32: if code == nil { code = UInt64(n) }; return
+      case let n as UInt16: if code == nil { code = UInt64(n) }; return
+      case let s as String: if reason == nil { reason = s }; return
+      default: break
+      }
+      let mir = Mirror(reflecting: x)
+      if mir.displayStyle == .optional && mir.children.isEmpty { return } // nil
+      for c in mir.children { walk(c.value, depth + 1) }
+    }
+    walk(v, 0)
+    if code == nil, reason == nil {
+      // enum sem payload / tipo opaco: tenta os dígitos do texto (ex.: "ApplicationError(257)")
+      let txt = String(describing: v)
+      let digits = txt.split(whereSeparator: { !$0.isNumber }).first.map(String.init)
+      if let d = digits, let n = UInt64(d) { code = n }
+    }
+    guard let c = code else { return nil }
+    return (c, reason ?? "")
   }
 
   /// PROTOCOLO §4.2: exporter TLS 1.3, label "EXPORTER-chatyy-noise-v1", contexto vazio, 32 B.
