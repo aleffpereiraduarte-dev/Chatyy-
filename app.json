@@ -49,6 +49,9 @@
         "tinted": "./assets/ios-icon-tinted.png"
       },
       "bundleIdentifier": "com.onemundo.mail",
+      "config": {
+        "usesNonExemptEncryption": true
+      },
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
@@ -81,7 +84,7 @@
       "infoPlist": {
         "CFBundleDisplayName": "Chatyy",
         "CFBundleName": "Chatyy",
-        "ITSAppUsesNonExemptEncryption": false,
+        "ITSAppUsesNonExemptEncryption": true,
         "NSCameraUsageDescription": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat — for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR.",
         "NSMicrophoneUsageDescription": "Chatyy uses your microphone to record voice messages (hold the mic button in a chat), make voice and video calls, and broadcast audio during live streams when you tap Go Live.",
         "NSContactsUsageDescription": "Chatyy uploads your contacts' phone numbers and emails (in encrypted/hashed SHA-256 form, only after you tap Continue on our in-app disclosure) to our servers solely to check which of them already use Chatyy. Contacts are not stored after the lookup and never shared with anyone. You can revoke this permission anytime from iOS Settings or in-app Privacy settings.",
