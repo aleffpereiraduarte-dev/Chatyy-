@@ -276,6 +276,50 @@ function _flushAcks() {
   _send('send_ack', `send_ack n=${rows.length} ` + Object.keys(paths).map((k) => `${k}:${paths[k]}`).join(' '), { rows });
 }
 
+// ─── media_send: envio de foto/vídeo/áudio/arquivo ─────────────────────────
+/**
+ * [2026-10-23 midia-wa] Uma amostra por mensagem de mídia (mesmo canal/lote do
+ * send_ack: 10/POST, teto 60/sessão, sem conteúdo). row: { type, bytes_in,
+ * bytes_out, level, t_bubble, t_prep_ms, t_up_ms, t_commit_ms, via
+ * ('native'|'rust_edge'|'rust_us'|'r2'|'php'|'pre'), base (host), attempts, e2e
+ * (toque→✓ ms), e2ee, mid, cmi }. -1 = não medido. Lote parcial sai em 20 s ou
+ * quando o app vai p/ o fundo. Kill: globalThis.__chatyy_media_send_telemetry === false.
+ */
+export function reportMediaSend(row) {
+  const st = reportMediaSend._st || (reportMediaSend._st = { buf: [], total: 0, timer: null, sub: null });
+  const flush = () => {
+    if (st.timer) { try { clearTimeout(st.timer); } catch {} st.timer = null; }
+    if (!st.buf.length) return;
+    const rows = st.buf; st.buf = [];
+    const vias = {};
+    for (const x of rows) vias[x.via || '?'] = (vias[x.via || '?'] || 0) + 1;
+    _send('media_send', `media_send n=${rows.length} ` + Object.keys(vias).map((k) => `${k}:${vias[k]}`).join(' '), { rows });
+  };
+  if (row === '__flush') { try { flush(); } catch {} return; }
+  try {
+    if (_off() || globalThis.__chatyy_media_send_telemetry === false) return;
+  } catch {}
+  if (!row || typeof row !== 'object' || st.total >= 60) return;
+  st.total++;
+  const n = (v) => { const x = Number(v); return Number.isFinite(x) ? Math.round(x) : -1; };
+  const t = (v, m) => (typeof v === 'string' ? v.slice(0, m) : '');
+  st.buf.push({
+    type: t(row.type, 12), bytes_in: n(row.bytes_in), bytes_out: n(row.bytes_out), level: t(row.level, 10),
+    t_bubble: n(row.t_bubble), t_prep_ms: n(row.t_prep_ms), t_up_ms: n(row.t_up_ms), t_commit_ms: n(row.t_commit_ms),
+    via: t(row.via, 12), base: t(row.base, 40), attempts: n(row.attempts), e2e: n(row.e2e),
+    e2ee: row.e2ee ? 1 : 0, mid: t(row.mid, 24), cmi: t(row.cmi, 40),
+    net: (() => { try { return String(require('./networkInfo').getNetworkType?.() || '').slice(0, 10); } catch { return ''; } })(),
+    at: Date.now(),
+  });
+  if (!st.sub) {
+    try {
+      st.sub = AppState.addEventListener('change', (s) => { if (s === 'background' || s === 'inactive') { try { flush(); } catch {} } });
+    } catch { st.sub = { remove() {} }; }
+  }
+  if (st.buf.length >= 10) { flush(); return; }
+  if (!st.timer) st.timer = setTimeout(() => { st.timer = null; try { flush(); } catch {} }, 20000);
+}
+
 // ─── conv_open ─────────────────────────────────────────────────────────────
 /**
  * 1º frame da conversa. path: 'shell' (casca leve) | 'native' | 'js'.

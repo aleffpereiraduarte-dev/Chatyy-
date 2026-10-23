@@ -567,15 +567,50 @@ function _mediaMetaFields(p, msgType) {
         tb = mc.getThumbB64Sync?.(p.temp_id) || mc.getThumbB64Sync?.(p.client_message_id) || null;
       } catch {}
     }
+    // [2026-10-23 midia-wa] conversa protegida: nada de prévia em claro (o envelope leva a dele).
+    const _e2e = !!(p._e2e || p._e2eWanted || p.e2e_env || p.e2e_draft || p.e2e || p.envelopes);
+    // [2026-10-23 midia-wa] blurhash/LQIP gerados no aparelho (imageSendPipeline), em
+    // paralelo à compressão/upload → o destinatário pinta algo já no 1º evento.
+    let cm = null;
+    if (!_e2e && !p.view_once && (msgType === 'image' || msgType === 'video' || msgType === 'video_note' || msgType === 'gif')) {
+      try { cm = require('./imageSendPipeline').getClientMetaSync?.(p.temp_id, p.client_message_id) || null; } catch {}
+    }
+    // vídeo: o LQIP do quadro só vai como thumb_b64 com o kit do servidor aplicado (o chat.php
+    // antigo pula o pôster ffmpeg quando recebe thumb_b64) → __chatyy_video_lqip === true.
+    if (!tb && cm && cm.lqip && msgType === 'image' && cm.kind !== 'video') tb = cm.lqip;
+    if (!tb && cm && cm.lqip && cm.kind === 'video' && (msgType === 'video' || msgType === 'video_note')) {
+      try { if (globalThis.__chatyy_video_lqip === true) tb = cm.lqip; } catch {}
+    }
     // view-once: sem prévia borrada (vazaria o conteúdo antes de abrir).
-    if (tb && !p.view_once && tb.length < 6000 && /^[A-Za-z0-9+/=]+$/.test(tb)) out.thumb_b64 = tb;
-    const w = Math.round(Number(p.image_width || p.width) || 0);
-    const h = Math.round(Number(p.image_height || p.height) || 0);
+    if (tb && !p.view_once && !_e2e && tb.length < 6000 && /^[A-Za-z0-9+/=]+$/.test(tb)) out.thumb_b64 = tb;
+    let w = Math.round(Number(p.image_width || p.width) || 0);
+    let h = Math.round(Number(p.image_height || p.height) || 0);
+    // vídeo sem dimensões no payload: as do quadro (só p/ a proporção da caixa)
+    if (!(w > 0 && h > 0) && cm && cm.kind === 'video' && cm.w > 0 && cm.h > 0) { w = Math.round(cm.w); h = Math.round(cm.h); }
     if (w > 0 && h > 0) { out.image_width = w; out.image_height = h; out.width = w; out.height = h; }
+    if (cm && cm.blurhash && !_e2e && !p.view_once) {
+      try { if (globalThis.__chatyy_client_blurhash !== false && require('./imageSendPipeline').isValidBlurhash?.(cm.blurhash)) out.blurhash = cm.blurhash; } catch {}
+    }
     if (p.batch_id) out.batch_id = String(p.batch_id);
   } catch {}
   return out;
 }
+
+// [2026-10-23 midia-wa] dispara (sem esperar) o LQIP/blurhash de uma linha de mídia.
+function _kickClientMeta(p) {
+  try {
+    if (!p || p.view_once || p._e2e || p._e2eWanted || p.e2e_env || p.e2e_draft) return null;
+    const t = p.type;
+    if (t !== 'image' && t !== 'video' && t !== 'video_note') return null;
+    const uri = p.local_uri || p.uri || null;
+    if (!uri || !/^(file:|content:|ph:|\/)/.test(String(uri))) return null;
+    return require('./imageSendPipeline').prepareClientMeta?.({
+      keys: [p.temp_id, p.client_message_id], uri, type: t === 'image' ? 'image' : 'video',
+      durationMs: Number(p.duration_ms) || 0,
+    }) || null;
+  } catch { return null; }
+}
+export function kickClientMeta(p) { return _kickClientMeta(p); }
 
 /** [2026-10-15 fase 4] mesmos metadados p/ o commit feito pela fila nativa. */
 export function mediaMetaFields(p, msgType) { return _mediaMetaFields(p, msgType); }
@@ -616,6 +651,8 @@ async function _uploadAndSendMedia(row) {
     size: fileSize,
   };
 
+  // [2026-10-23 midia-wa] LQIP/blurhash em paralelo ao upload (só quando o upload é aqui).
+  const _cmP = !p.cdn_url ? _kickClientMeta(p) : null;
   try {
     // Try Rust direct-to-R2 upload first; fall back to PHP chatUploadFile.
     let cdnUrl = p.cdn_url || null;
@@ -644,6 +681,8 @@ async function _uploadAndSendMedia(row) {
       // chat_send — sem file_url/nome/legenda/miniatura em claro.
       r = await api.chatSend(p.conversation_id, p.e2e_env, msgType, p.reply_to_id || null, null, null, p.temp_id || null, cmi, p.topic_id || null, { skipRust: true });
     } else if (cdnUrl) {
+      // [2026-10-23 midia-wa] o upload já levou segundos: o blurhash quase sempre está pronto (teto 120 ms)
+      if (_cmP) { try { await Promise.race([_cmP, new Promise((res) => setTimeout(res, 120))]); } catch {} }
       // Rust uploaded — call chat_send with the cdn_url.
       r = await api.apiCall('chat_send', {
         conversation_id: p.conversation_id,

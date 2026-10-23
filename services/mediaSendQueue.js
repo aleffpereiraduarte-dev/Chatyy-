@@ -52,7 +52,9 @@ import messageOutbox, {
 // (Padrão 1600/0.8 · HD 2560/0.9 · Full HD original/0.92); `lite` is the
 // automatic 2G/3G downgrade of an AUTO Padrão send.
 export const IMAGE_PROFILES = {
-  standard: { maxDim: 1600, quality: 0.8 },   // [2026-10-08 upload-br] WhatsApp-like ~0.8
+  // [2026-10-23 midia-wa] preset WA: Padrão 1600 px q0.75 (era 0.8). Getter →
+  // kill __chatyy_media_wa_preset === false volta a 0.8 sem recarregar.
+  get standard() { return _waPreset() ? { maxDim: 1600, quality: 0.75 } : { maxDim: 1600, quality: 0.8 }; },
   lite:     { maxDim: 1280, quality: 0.65 }, // 2g/3g
   hd:       { maxDim: 2560, quality: 0.9 },  // HD
   full:     { maxDim: 8192, quality: 0.92 }, // Full HD / original pixels
@@ -73,6 +75,20 @@ export const MAX_MEDIA_BYTES = 200 * 1024 * 1024;
 // Rust chunked path above this size (resumable); below → single POST.
 const CHUNKED_MIN_BYTES = 1 * 1024 * 1024;
 const MAX_CONCURRENT = 2;
+// [2026-10-23 midia-wa] pipeline v2: 3 uploads em paralelo (1 em enlace lento) e
+// compressão FORA do slot de upload (até 2 preparando à frente). Kill:
+// globalThis.__chatyy_media_pipeline_v2 === false → 2 slots, compressão no slot.
+const MAX_CONCURRENT_V2 = 3;
+const PREP_AHEAD_MAX = 2;
+// Teto de memória: decodificações simultâneas (12 MP ≈ 48 MB RGBA cada; 48 MP ≈
+// 190 MB) somando slot + preparo antecipado; vídeo (encoder nativo) 1 por vez.
+const IMAGE_COMPRESS_MAX = 2;
+const VIDEO_COMPRESS_MAX = 1;
+// Foto JPEG já pequena: não reencoda (só tira EXIF/GPS ou gira, se precisar).
+const SMALL_JPEG_MAX_BYTES = 350 * 1024;
+function _pipeV2() { try { return globalThis.__chatyy_media_pipeline_v2 !== false; } catch { return true; } }
+function _waPreset() { try { return globalThis.__chatyy_media_wa_preset !== false; } catch { return true; } }
+function _maxConcurrent() { return _pipeV2() ? MAX_CONCURRENT_V2 : MAX_CONCURRENT; }
 function _slowLink() { try { return require('./networkInfo').getLinkClass() !== 'fast'; } catch { return false; } }
 const DURABLE_DIR = 'chat-outbox/';
 
@@ -80,6 +96,9 @@ export const MEDIA_UPLOAD_TYPES = new Set(['image', 'video', 'voice', 'audio', '
 
 // ─── State ───────────────────────────────────────────────────────────────────
 const _running = new Map(); // cmi -> { ctrl, conv }
+// [2026-10-23 midia-wa] preparo antecipado (fora do slot de upload):
+// cmi -> { ctrl, promise, done }. A entrada fica até o _process consumir (ou 2 min).
+const _prepAhead = new Map();
 const _progressSubs = new Set();
 const _lastProgress = new Map(); // cmi -> { pct, phase, at }
 let _drainPromise = null;
@@ -225,6 +244,135 @@ async function _deleteDurable(p) {
   }
 }
 
+// ─── [2026-10-23 midia-wa] semáforo de compressão (teto de memória) ──────────
+function _sem(max) {
+  let n = 0; const q = [];
+  const release = () => { n--; const nx = q.shift(); if (nx) { n++; nx(); } };
+  return {
+    async run(fn) {
+      if (n >= max) await new Promise((r) => q.push(r)); else n++;
+      try { return await fn(); } finally { release(); }
+    },
+  };
+}
+const _imgSem = _sem(IMAGE_COMPRESS_MAX);
+const _vidSem = _sem(VIDEO_COMPRESS_MAX);
+function _withSem(sem, fn) { return _pipeV2() ? sem.run(fn) : fn(); }
+
+// ─── [2026-10-23 midia-wa] cabeçalho JPEG (EXIF/GPS/orientação/dimensões) ────
+const _B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+let _B64R = null;
+function _b64bytes(b64) {
+  if (!_B64R) { _B64R = new Int16Array(128).fill(-1); for (let i = 0; i < 64; i++) _B64R[_B64.charCodeAt(i)] = i; }
+  const s = String(b64 || '').replace(/[^A-Za-z0-9+/]/g, '');
+  const out = new Uint8Array(Math.floor((s.length * 3) / 4));
+  let o = 0; let acc = 0; let bits = 0;
+  for (let i = 0; i < s.length; i++) {
+    acc = (acc << 6) | _B64R[s.charCodeAt(i)]; bits += 6;
+    if (bits >= 8) { bits -= 8; out[o++] = (acc >> bits) & 0xff; }
+  }
+  return o === out.length ? out : out.subarray(0, o);
+}
+/**
+ * Lê só o começo do arquivo (≤128 KB). → null (não é JPEG / falhou) |
+ * { width, height, orientation, gps } — gps = IFD de GPS com coordenada.
+ */
+export function parseJpegHeader(b) {
+  try {
+    if (!b || b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
+    const r = { width: 0, height: 0, orientation: 1, gps: false, exif: false };
+    let i = 2;
+    while (i + 4 <= b.length) {
+      if (b[i] !== 0xff) return r.width ? r : null;
+      const m = b[i + 1];
+      if (m === 0xff) { i++; continue; }
+      if (m === 0xd9 || m === 0xda) break;
+      if (m >= 0xd0 && m <= 0xd7) { i += 2; continue; }
+      const len = (b[i + 2] << 8) | b[i + 3];
+      if (len < 2) return null;
+      if (m === 0xe1 && i + 10 <= b.length && b[i + 4] === 0x45 && b[i + 5] === 0x78 && b[i + 6] === 0x69 && b[i + 7] === 0x66) {
+        r.exif = true;
+        const t = i + 10; const le = b[t] === 0x49;
+        const u16 = (o) => (o + 2 > b.length ? -1 : (le ? (b[o] | (b[o + 1] << 8)) : ((b[o] << 8) | b[o + 1])));
+        const u32 = (o) => (o + 4 > b.length ? -1 : (le ? (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0 : ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0));
+        const ifd = u32(t + 4); const n = ifd >= 0 ? u16(t + ifd) : -1;
+        for (let k = 0; k < n && k < 64; k++) {
+          const e = t + ifd + 2 + k * 12;
+          const tag = u16(e); if (tag < 0) break;
+          if (tag === 0x0112) r.orientation = u16(e + 8) || 1;
+          else if (tag === 0x8825) {
+            const go = u32(e + 8); const gn = go > 0 ? u16(t + go) : -1;
+            // só GPSVersionID (1 entrada) não é localização; desconhecido (fora do trecho lido) = tem.
+            r.gps = gn < 0 || gn > 1;
+          }
+        }
+      } else if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+        r.height = (b[i + 5] << 8) | b[i + 6];
+        r.width = (b[i + 7] << 8) | b[i + 8];
+        return r;
+      }
+      i += 2 + len;
+    }
+    return r.width ? r : (r.exif ? r : null);
+  } catch { return null; }
+}
+async function _jpegHeader(uri) {
+  const FS = _FS();
+  if (!FS || !uri) return null;
+  try {
+    const b64 = await FS.readAsStringAsync(uri, { encoding: 'base64', position: 0, length: 131072 });
+    return parseJpegHeader(_b64bytes(b64));
+  } catch { return null; }
+}
+
+// ─── [2026-10-23 midia-wa] contratos A (R2 direto) e B (pré-upload) ──────────
+function _r2() { try { const m = require('./r2DirectUpload'); return m?.default && !m.uploadDirect ? m.default : m; } catch { return null; } }
+function _pre() { try { const m = require('./mediaPreupload'); return m?.default && !m.claim ? m.default : m; } catch { return null; } }
+function _e2eConv(conv) {
+  try { const e5 = require('./e2ee/e2ee5'); return !!(e5.isOn?.() && conv != null && e5.convModeSync?.(conv)); } catch { return false; }
+}
+function _levelFor(p) {
+  const lv = _rowLevel(p);
+  if (lv) return lv;
+  try { return require('./mediaUploadQuality').defaultUploadLevel() || 'standard'; } catch { return 'standard'; }
+}
+
+// ─── [2026-10-23 midia-wa] telemetria por mensagem (beacon 'media_send') ─────
+const _tries = new Map(); // cmi → tentativas neste processo
+function _hostOf(u) { try { const m = /^https?:\/\/([^/:]+)/i.exec(String(u || '')); return m ? m[1].toLowerCase().slice(0, 40) : ''; } catch { return ''; } }
+function _viaForBase(base) {
+  const h = _hostOf(base);
+  if (!h) return 'rust_us';
+  return (h === 'chatyy.com.br' || h === 'www.chatyy.com.br') ? 'rust_us' : 'rust_edge';
+}
+function _reportMedia(p, serverMsg) {
+  try {
+    if (!p) return;
+    const now = Date.now();
+    const tap = Number(p.tap_at) || 0;
+    const upEnd = Number(p.m_up_end) || 0;
+    const row = {
+      type: p.type || '',
+      bytes_in: Number(p.m_src_size) || 0,
+      bytes_out: Number(p.server_size) || Number(p.file_size) || 0,
+      level: p.m_level || _rowLevel(p) || '',
+      t_bubble: Number.isFinite(Number(p.bubble_ms)) && p.bubble_ms != null ? Math.round(Number(p.bubble_ms)) : -1,
+      t_prep_ms: Number.isFinite(Number(p.m_prep_ms)) && p.m_prep_ms != null ? Math.round(Number(p.m_prep_ms)) : -1,
+      t_up_ms: Number.isFinite(Number(p.m_up_ms)) && p.m_up_ms != null ? Math.round(Number(p.m_up_ms)) : -1,
+      t_commit_ms: upEnd > 0 ? Math.max(0, now - upEnd) : -1,
+      via: p.m_via || (p.upload_via === 'php' || p.type === 'audio' || p.type === 'voice' ? 'php' : ''),
+      base: p.m_base || _hostOf(p.rust_upload_base) || '',
+      attempts: Math.max(1, Number(p.m_tries) || _tries.get(String(p.client_message_id)) || 1),
+      e2e: tap > 0 ? Math.max(0, now - tap) : -1,
+      e2ee: _e2eConv(p.conversation_id) ? 1 : 0,
+      mid: serverMsg?.id != null ? String(serverMsg.id).slice(0, 24) : '',
+      cmi: String(p.client_message_id || '').slice(0, 40),
+    };
+    _tries.delete(String(p.client_message_id));
+    require('./nativeTelemetry').reportMediaSend?.(row);
+  } catch {}
+}
+
 // ─── Compression ─────────────────────────────────────────────────────────────
 function _imageProfile(p) {
   const lv = _rowLevel(p);
@@ -323,25 +471,94 @@ async function _prepare(row, p, signal) {
   let ownTemp = false;
   const extra = {};
   const isGif = /\.gif$/i.test(name || uri || '') || /image\/gif/i.test(mime);
+  // [2026-10-23 midia-wa] métricas p/ o beacon media_send (viajam no payload).
+  const _t0 = Date.now();
+  extra.m_src_size = Number(p.file_size) || 0;
+  extra.m_level = (type === 'image' || type === 'video') ? _levelFor(p) : null;
 
-  if (type === 'image' && !isGif && !p.original_quality) {
+  // [2026-10-23 midia-wa] contrato B: a prévia já comprimiu (e talvez subiu) este
+  // item → usa o arquivo dela (pula a compressão) e, com cdn_url, nem sobe de novo.
+  // Conversa E2EE nunca usa cdn_url em claro (o pré-upload já pula E2EE; guarda dupla).
+  let _claimed = null;
+  if ((type === 'image' || type === 'video') && !p.pre_tried && !isGif) {
+    extra.pre_tried = true;
+    const pre = _pre();
+    if (pre && typeof pre.claim === 'function') {
+      try {
+        _claimed = await pre.claim(p.orig_uri || p.local_uri, extra.m_level || 'standard', { waitMs: type === 'video' ? 2500 : 1500 });
+      } catch { _claimed = null; }
+    }
+    if (_claimed && signal?.aborted) {
+      try { if (_claimed.prepared?.owned && _claimed.prepared.local_uri) await _FS()?.deleteAsync?.(_claimed.prepared.local_uri, { idempotent: true }); } catch {}
+      return null;
+    }
+    const pr = _claimed?.prepared || null;
+    if (pr && pr.local_uri && await _fileInfo(pr.local_uri)) {
+      uri = pr.local_uri; ownTemp = !!pr.owned;
+      name = pr.file_name || name; mime = pr.mime_type || mime; size = Number(pr.file_size) || size;
+      if (pr.image_width > 0 && pr.image_height > 0) { extra.image_width = pr.image_width; extra.image_height = pr.image_height; }
+      if (pr.duration_ms > 0) extra.duration_ms = Math.round(pr.duration_ms);
+      if (_claimed.cdn_url && !_e2eConv(p.conversation_id)) {
+        extra.cdn_url = _claimed.cdn_url;
+        extra.server_size = Number(_claimed.server_size) || size;
+        extra.server_file_name = name;
+        extra.m_via = 'pre';
+        extra.m_up_ms = 0;
+        extra.m_up_end = Date.now();
+      }
+    } else {
+      _claimed = null;
+    }
+  }
+
+  if (_claimed) {
+    // já preparado pela prévia
+  } else if (type === 'image' && !isGif && !p.original_quality) {
     _emit(p, cmi, 0, 'compress');
     try {
       const prof = _imageProfile(p);
-      const out = await compressImage(uri, prof, name);
-      // Keep the re-encode unless it is pathologically bigger than a JPEG
-      // source that already fit (EXIF strip is worth a few %, not 2×).
-      const isJpegSrc = /jpe?g/i.test(mime) || /\.jpe?g$/i.test(name);
-      if (out?.uri && !(isJpegSrc && size > 0 && out.size > size * 1.5)) {
-        uri = out.uri; name = out.name; mime = out.mime; size = out.size || size; ownTemp = true;
-        if (out.width && out.height) { extra.image_width = out.width; extra.image_height = out.height; }
+      const wa = _waPreset();
+      // [2026-10-23 midia-wa] cabeçalho real (magic bytes): JPEG? GPS? orientação? dimensões.
+      const hdr = wa ? await _jpegHeader(uri) : null;
+      const isJpegSrc = hdr ? true : (/jpe?g/i.test(mime) || /\.jpe?g$/i.test(name));
+      const isPngSrc = !hdr && (/png/i.test(mime) || /\.png$/i.test(name));
+      const needsStrip = !!(hdr && (hdr.gps || (hdr.orientation && hdr.orientation !== 1)));
+      const longest = hdr && hdr.width > 0 ? Math.max(hdr.width, hdr.height) : 0;
+      const srcSize = size || (await _fileInfo(uri))?.size || 0;
+      if (wa && hdr && longest > 0 && longest <= prof.maxDim && srcSize > 0 && srcSize <= SMALL_JPEG_MAX_BYTES && !needsStrip) {
+        // JPEG já pequeno e limpo → vai como está (reencodar só perderia qualidade).
+        size = srcSize;
+        extra.image_width = hdr.width; extra.image_height = hdr.height;
+        if (!/\.jpe?g$/i.test(name)) name = (String(name || 'photo').replace(/\.\w+$/, '') || 'photo') + '.jpg';
+        mime = 'image/jpeg';
+      } else {
+        // pequeno mas com GPS/rotação → só tira o EXIF (sem reduzir, q alta).
+        const smallStrip = wa && hdr && longest > 0 && longest <= prof.maxDim && srcSize > 0 && srcSize <= SMALL_JPEG_MAX_BYTES && needsStrip;
+        const useProf = smallStrip ? { maxDim: prof.maxDim, quality: Math.max(prof.quality, 0.85) } : prof;
+        const out = await _withSem(_imgSem, () => compressImage(uri, useProf, name));
+        let keep = !!out?.uri;
+        if (keep && isJpegSrc && srcSize > 0) {
+          if (wa && hdr) {
+            // nunca maior que o original — salvo quando precisa tirar GPS/girar.
+            if (!needsStrip && out.size >= srcSize) keep = false;
+          } else if (out.size > srcSize * 1.5) keep = false; // regra antiga (cabeçalho ilegível: GPS desconhecido)
+        } else if (keep && wa && isPngSrc && srcSize > 0 && out.size >= srcSize) {
+          keep = false; // PNG menor que o JPEG gerado (print/arte) → vai o PNG
+        }
+        if (keep) {
+          uri = out.uri; name = out.name; mime = out.mime; size = out.size || size; ownTemp = true;
+          if (out.width && out.height) { extra.image_width = out.width; extra.image_height = out.height; }
+        } else {
+          if (out?.uri) { try { await _FS()?.deleteAsync?.(out.uri, { idempotent: true }); } catch {} }
+          if (hdr && hdr.width > 0) { extra.image_width = hdr.width; extra.image_height = hdr.height; }
+        }
       }
     } catch {}
   } else if ((type === 'video') && !p.original_quality) {
     const info = size ? { size } : await _fileInfo(uri);
     if ((info?.size || 0) > VIDEO_COMPRESS_MIN_BYTES) {
       _emit(p, cmi, 0, 'compress');
-      const out = await _compressVideo(p, uri, signal, (pct) => _emit(p, cmi, pct, 'compress'));
+      const out = await _withSem(_vidSem, () => _compressVideo(p, uri, signal, (pct) => _emit(p, cmi, pct, 'compress')));
       if (out?.uri && out.size > 0 && (!size || out.size < size)) {
         uri = out.uri; size = out.size; mime = 'video/mp4'; ownTemp = true;
         name = (String(name || 'video').replace(/\.\w+$/, '') || 'video') + '.mp4';
@@ -376,6 +593,7 @@ async function _prepare(row, p, signal) {
     mime_type: mime,
     file_size: size,
     ...extra,
+    m_prep_ms: Date.now() - _t0,
   };
   await updatePayload(cmi, patch);
   return { ...p, ...patch };
@@ -464,6 +682,12 @@ export async function onCommitted(p, serverMsg) {
   } catch {}
   await _deleteDurable(p);
   _emit(p, p?.client_message_id, 100, 'done');
+  // [2026-10-23 midia-wa] beacon media_send (toque→bolha→preparo→upload→✓).
+  try {
+    if (p && p.m_via === 'native' && Number(p.m_up_start) > 0 && p.m_up_ms == null) {
+      _reportMedia({ ...p, m_up_ms: Date.now() - Number(p.m_up_start), m_up_end: 0 }, serverMsg);
+    } else _reportMedia(p, serverMsg);
+  } catch {}
 }
 
 async function _process(row) {
@@ -486,6 +710,17 @@ async function _process(row) {
     if (p._blob_lost) { hardFailed = true; await markFailed(cmi, 'blob_lost', { kind: 'hard' }); _emit(p, cmi, 0, 'failed'); return; }
     if (_offline()) { await markFailed(cmi, 'offline', { kind: 'offline' }); _emit(p, cmi, 0, 'queued'); return; }
 
+    _tries.set(String(cmi), (_tries.get(String(cmi)) || 0) + 1);
+    // [2026-10-23 midia-wa] pipeline: o preparo pode já ter rodado (ou estar
+    // rodando) à frente, fora do slot de upload → espera/usa o resultado dele.
+    const _ahead = _prepAhead.get(cmi);
+    if (_ahead) {
+      let r = null;
+      try { r = await _ahead.promise; } catch { r = null; }
+      if (_prepAhead.get(cmi) === _ahead) _prepAhead.delete(cmi);
+      if (ctrl.signal.aborted) return;
+      if (r && r.prepared) p = { ...p, ...r };
+    }
     // 1. Prepare (compress + durable copy) — once per message.
     if (!p.prepared) {
       const prepared = await _prepare(row, p, ctrl.signal);
@@ -540,7 +775,7 @@ async function _process(row) {
           const msg = fr.data.message || fr.data;
           await markSent(cmi, msg?.id ?? null);
           _publish(p, cmi, fr);
-          await onCommitted({ ...p, client_message_id: cmi }, msg);
+          await onCommitted({ ...p, client_message_id: cmi, m_via: 'php', m_up_end: Date.now() }, msg);
           return;
         }
       } catch {}
@@ -558,10 +793,26 @@ async function _process(row) {
     if (!p.cdn_url && !(p.upload_via === 'php' || p.type === 'audio' || p.type === 'voice')) {
       try {
         const no = require('./nativeOutbox');
-        if (no.nativeOutboxEnabled && no.nativeOutboxEnabled() && size <= no.NATIVE_MEDIA_MAX_BYTES && !_slowLink()) {
+        // [2026-10-23 midia-wa] binário SEM PUT nativo: o multipart nativo vai a base/api/rust/upload
+        // (6 de 11 edges encaminham os bytes ao US pelo WG; Rust síncrono). Com o presign ligado,
+        // o JS sobe direto ao R2 (abaixo) e só o commit vai à fila nativa. Kill: __chatyy_r2_over_native=false.
+        let _r2js = false;
+        try {
+          if (globalThis.__chatyy_r2_over_native !== false && !(no.nativePutSupported && no.nativePutSupported())
+            && !p.rust_upload_id && (Number(p.r2_fail) || 0) < 2) {
+            const r2 = _r2();
+            _r2js = !!(r2 && typeof r2.uploadDirect === 'function' && r2.directEnabled?.());
+          }
+        } catch { _r2js = false; }
+        if (!_r2js && no.nativeOutboxEnabled && no.nativeOutboxEnabled() && size <= no.NATIVE_MEDIA_MAX_BYTES && !_slowLink()) {
           let meta = null;
+          // [2026-10-23 midia-wa] o nativo congela os metadados no handoff: espera (≤120 ms) o
+          // LQIP/blurhash local gerado no enqueue (vídeo pela fila nativa ficava sem prévia).
+          try { await require('./imageSendPipeline').waitClientMeta?.(p.temp_id || cmi, 120); } catch {}
           try { meta = require('./sendWorker').mediaMetaFields?.(p, p.type) || null; } catch {}
           if (await no.handoffUpload(row, p, file, size, meta)) {
+            // [2026-10-23 midia-wa] telemetria: o nativo sobe + faz o chat_send.
+            try { updatePayload(cmi, { m_via: 'native', m_up_start: Date.now(), m_tries: _tries.get(String(cmi)) || 1 }).catch(() => {}); } catch {}
             // [2026-10-18 outbox-progress] transport ≥ 3: começa em 0 e segue os
             // bytes REAIS ('progress' → emitProgressExternal). Binário antigo:
             // degrau fixo de 10% (o máximo monotônico seguraria o anel em 10).
@@ -578,9 +829,36 @@ async function _process(row) {
       const usePhp = p.upload_via === 'php' || p.type === 'audio' || p.type === 'voice';
       let rr = null;
       let _sessionThisRun = false;
+      const _upT0 = Date.now();
+      let _via = null; let _base = '';
       if (!usePhp) {
         const onPct = (f) => _emit(p, cmi, Math.round((Number(f) || 0) * 100), 'upload');
-        try {
+        // [2026-10-23 midia-wa] contrato A: PUT direto no R2 (URL pré-assinada)
+        // primeiro. Não com sessão chunked aberta (retomar é mais barato), nem
+        // arquivo grande em enlace lento (PUT único não retoma), nem depois de 2
+        // falhas desta linha. Falha não-hard → caminho atual (Rust/PHP).
+        const r2 = _r2();
+        let _r2on = false;
+        try { _r2on = !!(r2 && typeof r2.uploadDirect === 'function' && r2.directEnabled?.()); } catch { _r2on = false; }
+        if (_r2on && !p.rust_upload_id && (Number(p.r2_fail) || 0) < 2 && (!_slowLink() || size <= 2 * 1024 * 1024)) {
+          let d = null;
+          try { d = await r2.uploadDirect(file, { context: 'chat', signal: ctrl.signal, onPct, cmi }); }
+          catch (e) { d = { success: false, error: e?.message || 'r2_exception' }; }
+          if (ctrl.signal.aborted || d?.aborted) return;
+          if (d?.success && d.cdn_url) {
+            rr = { success: true, cdn_url: d.cdn_url, size: Number(d.size) || size, filename: p.file_name };
+            _via = 'r2'; _base = _hostOf(d.cdn_url);
+          } else if (d?.hard && TOO_LARGE_RE.test(String(d?.error || ''))) {
+            hardFailed = true;
+            await markFailed(cmi, TOO_LARGE_REASON, { kind: 'hard' });
+            _emit(p, cmi, 0, 'failed');
+            return;
+          } else {
+            p = { ...p, r2_fail: (Number(p.r2_fail) || 0) + 1 };
+            updatePayload(cmi, { r2_fail: p.r2_fail }).catch(() => {});
+          }
+        }
+        if (!rr) try {
           // [2026-10-09 net-resilience] enlace lento: >256 KB já vai em pedaços
           // retomáveis (POST único que cai recomeça do zero).
           if (size > (_slowLink() ? 256 * 1024 : CHUNKED_MIN_BYTES) && api.rustChunkedUpload) {
@@ -592,12 +870,14 @@ async function _process(row) {
               // (resume must keep it; rows without it start a fresh session).
               chunkSize: Number(p.rust_upload_chunk) || null,
               bgTitle: p.file_name || null,
-              onUploadId: (id, base, chunk) => { _sessionThisRun = !!id; updatePayload(cmi, { rust_upload_id: id, rust_upload_size: size, rust_upload_base: base || null, rust_upload_chunk: Number(chunk) || null }).catch(() => {}); },
+              onUploadId: (id, base, chunk) => { _sessionThisRun = !!id; if (base) _base = String(base); updatePayload(cmi, { rust_upload_id: id, rust_upload_size: size, rust_upload_base: base || null, rust_upload_chunk: Number(chunk) || null }).catch(() => {}); },
             };
+            if (!_base && p.rust_upload_base) _base = String(p.rust_upload_base);
             rr = await api.rustChunkedUpload(file, p.sender_email || null, 'chat', onPct, ctrl.signal, resume);
           } else if (api.rustUpload) {
             rr = await api.rustUpload(file, p.sender_email || null, 'chat', ctrl.signal, onPct);
           }
+          if (!_via) { if (!_base) { try { _base = String(api.getRustUploadBase?.() || ''); } catch {} } _via = _viaForBase(_base); _base = _hostOf(_base); }
         } catch (e) { rr = { success: false, error: e?.message || 'rust_exception' }; }
         if (ctrl.signal.aborted || rr?.aborted) return;
         // [2026-10-08 upload-br] Over the server cap → permanent, never retried
@@ -622,8 +902,9 @@ async function _process(row) {
           return;
         }
         if (rr?.success && rr.cdn_url) {
-          p = { ...p, cdn_url: rr.cdn_url, server_size: rr.size || size, server_file_name: rr.filename || p.file_name };
-          await markUploadReady(cmi, { cdn_url: p.cdn_url, server_size: p.server_size, server_file_name: p.server_file_name, rust_upload_id: null });
+          const _m = { m_via: _via || 'rust_us', m_base: _base || '', m_up_ms: Date.now() - _upT0, m_up_end: Date.now(), m_tries: _tries.get(String(cmi)) || 1 };
+          p = { ...p, cdn_url: rr.cdn_url, server_size: rr.size || size, server_file_name: rr.filename || p.file_name, ..._m };
+          await markUploadReady(cmi, { cdn_url: p.cdn_url, server_size: p.server_size, server_file_name: p.server_file_name, rust_upload_id: null, ..._m });
           if (ctrl.signal.aborted) return;
         }
       }
@@ -646,7 +927,8 @@ async function _process(row) {
           const msg = r.data.message || r.data;
           await markSent(cmi, msg?.id ?? null);
           _publish(p, cmi, r);
-          await onCommitted({ ...p, client_message_id: cmi }, msg);
+          // [2026-10-23 midia-wa] PHP sobe + grava junto (t_commit incluso no t_up).
+          await onCommitted({ ...p, client_message_id: cmi, m_via: 'php', m_up_ms: Date.now() - _upT0, m_up_end: Date.now(), m_tries: _tries.get(String(cmi)) || 1 }, msg);
           return;
         }
         const k = _kindFor(r, null);
@@ -659,7 +941,8 @@ async function _process(row) {
       }
     } else {
       if (ctrl.signal.aborted) return;
-      await markUploadReady(cmi, null);
+      // [2026-10-23 midia-wa] cdn_url já veio (pré-upload da prévia / tentativa anterior).
+      await markUploadReady(cmi, p.m_via === 'pre' ? { m_tries: _tries.get(String(cmi)) || 1 } : null);
     }
     // [2026-10-12 P2] cancelado durante o upload/markUploadReady → não promove.
     if (ctrl.signal.aborted) return;
@@ -700,21 +983,60 @@ function _scheduleWake(at) {
   _wakeTimer = setTimeout(() => { _wakeTimer = null; _wakeAt = 0; drain(); }, due - now);
 }
 
+function _prepAheadActive() {
+  let n = 0;
+  for (const [, e] of _prepAhead) if (!e.done) n++;
+  return n;
+}
+
+/** [2026-10-23 midia-wa] Comprime o próximo item enquanto outros sobem. A linha
+ *  continua 'queued' no outbox (não é reivindicada); o _process dela espera/usa
+ *  o resultado. Ordem do chat_send intocada (promoteReady ordena por seq). */
+function _startPrepAhead(row) {
+  const cmi = row.client_message_id;
+  const ctrl = new AbortController();
+  const e = { ctrl, promise: null, done: false };
+  e.promise = _prepare(row, row.payload || {}, ctrl.signal).catch(() => null);
+  _prepAhead.set(cmi, e);
+  e.promise.finally(() => {
+    e.done = true;
+    setTimeout(() => { if (_prepAhead.get(cmi) === e) _prepAhead.delete(cmi); }, 120000);
+    setTimeout(() => { drain(); }, 0);
+  });
+}
+
 async function _drainOnce() {
   if (Platform.OS === 'web') return;
   // [2026-10-09 net-resilience] enlace lento: 1 upload por vez (2 disputando o
   // uplink de 2G/3G atrasam os dois e o texto/recibo junto).
-  const free = (_slowLink() ? 1 : MAX_CONCURRENT) - _running.size;
-  if (free > 0) {
-    const rows = await dequeueUploads(MAX_CONCURRENT * 2);
+  // [2026-10-23 midia-wa] rápido: 3 (pipeline v2) — kill → 2.
+  const v2 = _pipeV2();
+  const max = _slowLink() ? 1 : _maxConcurrent();
+  const free = max - _running.size;
+  const prepFree = v2 ? PREP_AHEAD_MAX - _prepAheadActive() : 0;
+  if (free > 0 || prepFree > 0) {
+    const rows = await dequeueUploads(v2 ? max * 2 + PREP_AHEAD_MAX + 2 : MAX_CONCURRENT * 2);
     let launched = 0;
+    const left = [];
     for (const row of rows) {
-      if (launched >= free) break;
       if (_running.has(row.client_message_id)) continue;
+      if (launched >= free) { left.push(row); continue; }
       const claimed = await markSending(row.client_message_id);
       if (!claimed) continue;
       launched++;
       _process(row).finally(() => { setTimeout(() => { drain(); }, 0); });
+    }
+    if (v2) {
+      let pf = PREP_AHEAD_MAX - _prepAheadActive();
+      for (const row of left) {
+        if (pf <= 0) break;
+        const p = row.payload || {};
+        const cmi = row.client_message_id;
+        if (p.prepared || p._blob_lost || _running.has(cmi) || _prepAhead.has(cmi)) continue;
+        if (p.type !== 'image' && p.type !== 'video') continue;
+        pf--;
+        _startPrepAhead(row);
+      }
     }
   }
   try {
@@ -779,6 +1101,8 @@ export async function enqueueMedia(payload) {
   if (!r && _srcCopy) { try { await _deleteDurable({ durable_name: _srcCopy }); } catch {} }
   if (r) {
     _emit(payload, payload.client_message_id, 0, 'queued');
+    // [2026-10-23 midia-wa] LQIP + blurhash locais em paralelo à compressão/upload (nunca em claro p/ E2EE: mediaMetaFields filtra).
+    try { require('./sendWorker').kickClientMeta?.(payload); } catch {}
     drain();
   }
   return r;
@@ -790,8 +1114,14 @@ export async function cancel(cmi) {
   const key = String(cmi);
   const run = _running.get(key);
   try { run?.ctrl?.abort?.(); } catch {}
+  // [2026-10-23 midia-wa] preparo antecipado em curso também para.
+  try { const pa = _prepAhead.get(key); if (pa) { pa.ctrl.abort(); _prepAhead.delete(key); } } catch {}
   let p = null;
   try { p = (await getStatus(key))?.payload || null; } catch {}
+  // [2026-10-23 midia-wa] contrato B: o pré-upload desse original não serve mais.
+  try { if (p?.orig_uri && !p.pre_tried) _pre()?.discard?.(p.orig_uri); } catch {}
+  // [2026-10-23 midia-wa] contrato A: aborta o upload em partes direto no R2 (não fica órfão).
+  try { require('./r2DirectUpload').abortDirect?.(key)?.catch?.(() => {}); } catch {}
   // Never cancel something the server already owns.
   try {
     const st = (await getStatus(key))?.state;
@@ -842,6 +1172,8 @@ export function stop() {
   _stopped = true;
   if (_wakeTimer) { try { clearTimeout(_wakeTimer); } catch {} _wakeTimer = null; _wakeAt = 0; }
   for (const [, r] of _running) { try { r.ctrl.abort(); } catch {} }
+  for (const [, e] of _prepAhead) { try { e.ctrl.abort(); } catch {} }
+  _prepAhead.clear();
 }
 
 export default {

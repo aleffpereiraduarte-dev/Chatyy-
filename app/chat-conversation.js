@@ -4746,6 +4746,10 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
         const _am = ai[_k] || {};
         const _bm = bi[_k] || {};
         if ((_am._uploadPct ?? -1) !== (_bm._uploadPct ?? -1) ||
+            // [2026-10-23 midia-wa] estado por célula (anel/fila/falha/LQIP)
+            _am._uploading !== _bm._uploading || _am._queued !== _bm._queued ||
+            _am._failed !== _bm._failed || _am._upIndet !== _bm._upIndet ||
+            _am.thumb_b64 !== _bm.thumb_b64 || _am.width !== _bm.width || _am.height !== _bm.height ||
             _am.file_url !== _bm.file_url ||
             _am._localUri !== _bm._localUri) { _albumItemsEqual = false; break; }
       }
@@ -4783,6 +4787,9 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     (a._searchTerm || null) === (b._searchTerm || null) &&
     a._heartPop === b._heartPop &&
     a._uploadPct === b._uploadPct &&
+    a._upIndet === b._upIndet && // [2026-10-23 midia-wa]
+    // [2026-10-23 midia-wa] caixa/LQIP da bolha otimista repintam na hora.
+    a.width === b.width && a.height === b.height && a.thumb_b64 === b.thumb_b64 &&
     a._readStatus === b._readStatus &&
     a._delivered === b._delivered &&
     a._blurred === b._blurred &&
@@ -7774,7 +7781,19 @@ function VideoPreviewNativeInner({ uri, trim, Video, useVideoPlayer }) {
 // [2026-10-19 media-quality] hdMode = level picked for THIS send ('standard'|
 // 'hd'|'full') or null (= qualityDefault, the saved per-network default);
 // onToggleHD(level) sets it. Applies to every item of the album.
-function MediaPreview({ visible, onClose, onSend, onSchedule, files: filesProp, colors, hdMode, onToggleHD, qualityDefault = 'standard' }) {
+// [2026-10-23 midia-wa] Pré-upload (contrato B, services/mediaPreupload.js):
+// sempre via require em try/catch; kill __chatyy_media_preupload === false é do módulo.
+function _mpPre() { try { return require('../services/mediaPreupload'); } catch { return null; } }
+function _mpPreCall(fn, ...args) { try { const m = _mpPre(); const f = m && (m[fn] || (m.default && m.default[fn])); if (typeof f === 'function') f(...args); } catch {} }
+function _mpAssetOf(f) {
+  if (!f || !f.uri || f.blob || f._raw || f._asFile) return null;
+  const mime = String(f.type || '');
+  const isVid = mime.startsWith('video') || /\.(mp4|mov|m4v|3gp|webm|mkv)$/i.test(f.name || f.uri || '');
+  const isImg = mime.startsWith('image') || /\.(jpe?g|png|heic|heif|webp|bmp)$/i.test(f.name || f.uri || '');
+  if (!isVid && !isImg) return null;
+  return { uri: f.uri, type: isVid ? 'video' : 'image', mime: mime || null, name: f.name || null, size: f.size || null, width: f.width || null, height: f.height || null, duration: f.duration || null };
+}
+function MediaPreview({ visible, onClose, onSend, onSchedule, files: filesProp, colors, hdMode, onToggleHD, qualityDefault = 'standard', conversationId = null }) {
   const { t } = useLanguage();
   const [schedPickOpen, setSchedPickOpen] = useState(false); // [2026-10-21 tg4] segurar enviar = agendar mídia
   const _previewInsets = useSafeAreaInsets(); // [2026-10-07 native-ui-build] bottomBar = safe-area real
@@ -7925,6 +7944,27 @@ function MediaPreview({ visible, onClose, onSend, onSchedule, files: filesProp, 
     onSendRef.current?.(p.caption, p.viewOnce, p.files, [p.caption]);
   }, [pendingNativeTick, hdMode]);
 
+  // [2026-10-23 midia-wa] Pré-upload enquanto o usuário escolhe/legenda (nível
+  // mostrado no chip; mudou o chip → de novo no nível novo). Só nativo, só
+  // arquivos ainda NÃO editados (editado/cortado/removido → discard). O editor
+  // nativo de 1 mídia re-exporta o arquivo → não pré-sobe (bytes perdidos).
+  const _mpLevel = _mqNorm(hdMode) || qualityDefault || 'standard';
+  useEffect(() => {
+    if (!visible || Platform.OS === 'web' || _nativeEligible) return;
+    files.forEach((f, i) => {
+      if (edits[i] || trims[i] || nativeMeta[i]) return;
+      const a = _mpAssetOf(f);
+      if (a) _mpPreCall('preupload', a, { quality: _mpLevel, conversationId });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, files, _mpLevel, _nativeEligible]);
+  useEffect(() => {
+    if (!visible) return;
+    const idxs = new Set([...Object.keys(edits), ...Object.keys(trims), ...Object.keys(nativeMeta)]);
+    idxs.forEach((k) => { const f = files[parseInt(k, 10)]; if (f && f.uri) _mpPreCall('discard', f.uri); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edits, trims, nativeMeta]);
+
   if (!visible || files.length === 0) return null;
   if (_nativeEligible) return null; // [2026-10-15 native-editor] o nativo está na tela
 
@@ -7956,6 +7996,7 @@ function MediaPreview({ visible, onClose, onSend, onSchedule, files: filesProp, 
   };
 
   const removeAt = (idx) => {
+    try { const _rf = files[idx]; if (_rf && _rf.uri) _mpPreCall('discard', _rf.uri); } catch {} // [2026-10-23 midia-wa]
     // Snapshot the active photo's in-progress caption so the reindex below
     // doesn't lose what the user just typed into the buffer.
     const capsNow = { ...captions, [activeIdx]: caption };
@@ -10758,6 +10799,51 @@ function _useStateTraced(init) {
   return r;
 }
 const _useStateT = _PERF_WHY_ON ? _useStateTraced : useState;
+
+// [2026-10-23 midia-wa] Bolha instantânea (álbum/foto): a pintura não espera o
+// enqueue. A ORDEM do enqueue (cópia durável + e2ee convState) fica numa fila
+// sequencial de promessas por conversa; o lugar é reservado de forma SÍNCRONA no
+// toque, então o item 1 sempre entra antes do 2 mesmo se o 1 aguardar o reply.
+// Kill: globalThis.__chatyy_album_instant === false → loop antigo (pool 4 + await).
+const _albumInstantOn = () => { try { return globalThis.__chatyy_album_instant !== false; } catch { return true; } };
+const _mediaEnqTails = new Map(); // conversa → promessa do último enqueue reservado
+function _reserveMediaEnqSlot(convKey) {
+  const k = String(convKey == null ? '' : convKey);
+  const prev = _mediaEnqTails.get(k) || Promise.resolve();
+  let _res = null;
+  const own = new Promise((r) => { _res = r; });
+  // Transitivo: o próximo só anda quando ESTE e todos os anteriores acabaram
+  // (um item liberado cedo não fura a fila de quem veio antes).
+  const prevCapped = Promise.race([prev, new Promise((r) => setTimeout(r, 10000))]).catch(() => {});
+  const tail = Promise.all([prevCapped, own]).then(() => {}, () => {});
+  _mediaEnqTails.set(k, tail);
+  let released = false;
+  let guard = null;
+  const release = () => {
+    if (released) return;
+    released = true;
+    if (guard) { try { clearTimeout(guard); } catch {} }
+    try { _res && _res(); } catch {}
+    if (_mediaEnqTails.get(k) === tail) _mediaEnqTails.delete(k);
+  };
+  // never-worse: um item travado nunca segura os seguintes mais que 20 s.
+  guard = setTimeout(release, 20000);
+  return {
+    release,
+    run: async (fn) => {
+      try { await prevCapped; } catch {}
+      try { return await fn(); } finally { release(); }
+    },
+  };
+}
+// _negId estritamente crescente: N bolhas no mesmo ms não se embaralham.
+let _lastMediaNegId = 0;
+function _nextMediaNegId() {
+  let v = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  if (v <= _lastMediaNegId) v = _lastMediaNegId + 1;
+  _lastMediaNegId = v;
+  return v;
+}
 
 // [vanish 2026-10-19] modo temporário: tema escuro só nesta conversa (escopo acima do useTheme da tela).
 function ChatConversationInner() {
@@ -14117,6 +14203,28 @@ function ChatConversationInnerBody() {
       if (!tid || !Object.prototype.hasOwnProperty.call(prev, tid)) return prev;
       const n = { ...prev }; delete n[tid]; return n;
     });
+    // [2026-10-23 midia-wa] Fila NATIVA com binário antigo (transport < 3) não
+    // manda bytes reais: só o degrau 10/50 → o anel "travava" em 10%. Nesse caso
+    // o upload vira animação indeterminada até o commit. Detecta pelo 1º evento
+    // de upload (degrau do handoff) ou por ev.indeterminate se a fila mandar.
+    // Kill: globalThis.__chatyy_album_instant === false.
+    const _indetByKey = new Map(); // tid|cmi → boolean (decidido no 1º evento 'upload')
+    const _nativeNoPct = () => {
+      try {
+        const no = require('../services/nativeOutbox');
+        return !!(no.nativeOutboxEnabled && no.nativeOutboxEnabled() && no.hasNativeProgress && !no.hasNativeProgress());
+      } catch { return false; }
+    };
+    const _upIndetFor = (ev) => {
+      if (!_albumInstantOn()) return false;
+      const key = String(ev.temp_id || ev.client_message_id || '');
+      if (ev.phase !== 'upload') { if (ev.phase === 'commit') _indetByKey.delete(key); return false; }
+      if (ev.indeterminate === true || ev.indeterminate === false) { _indetByKey.set(key, ev.indeterminate === true); return ev.indeterminate === true; }
+      if (_indetByKey.has(key)) return _indetByKey.get(key);
+      const v = _nativeNoPct() && [10, 37, 50, 65].includes(Number(ev.pct));
+      _indetByKey.set(key, v);
+      return v;
+    };
     const unsubP = mediaSendQueue.subscribeProgress((ev) => {
       if (!mountedRef.current || !ev || String(ev.conversation_id) !== String(conversationId)) return;
       const tid = ev.temp_id;
@@ -14124,8 +14232,9 @@ function ChatConversationInnerBody() {
       if (ev.phase === 'compress' || ev.phase === 'upload' || ev.phase === 'commit') {
         // [2026-10-12 P2] monotônico: o anel nunca volta (fila já pondera fases).
         if (tid) setUploadProgress(prev => ((typeof prev[tid] === 'number' && prev[tid] >= ev.pct) ? prev : { ...prev, [tid]: ev.pct }));
-        patchMsg(tid, cmi, { _uploading: ev.phase !== 'commit', _compressing: ev.phase === 'compress', _queued: false, _failed: false, _pending: true });
+        patchMsg(tid, cmi, { _uploading: ev.phase !== 'commit', _compressing: ev.phase === 'compress', _queued: false, _failed: false, _pending: true, _upIndet: _upIndetFor(ev) });
       } else if (ev.phase === 'queued') {
+        _indetByKey.delete(String(tid || cmi || ''));
         dropPct(tid);
         patchMsg(tid, cmi, { _uploading: false, _compressing: false, _queued: true, _failed: false, _pending: true, pending_state: 'queued' });
       } else if (ev.phase === 'failed') {
@@ -14145,6 +14254,15 @@ function ChatConversationInnerBody() {
       patchMsg(p.temp_id, snap.client_message_id, { _uploading: false, _compressing: false, _queued: false, _failed: true, _pending: false });
     });
     return () => { try { unsubP(); } catch {} try { unsubS(); } catch {} };
+  }, [conversationId]);
+  // [2026-10-23 midia-wa] Saiu da conversa sem enviar → descarta pré-uploads.
+  // Com mídia desta tela ainda na fila (pode não ter feito claim), não descarta:
+  // o módulo expira sozinho e a fila aproveita o pré-upload.
+  useEffect(() => () => {
+    try {
+      const _inFlight = (messagesRef.current || []).some(m => m && typeof m.id === 'string' && m.id.startsWith('tmp_upload_') && (m._pending || m._uploading || m._queued));
+      if (!_inFlight) _mpPreCall('discardAll');
+    } catch {}
   }, [conversationId]);
 
   // [2026-10-04] Tap-to-resend from the failed-media overlay (MediaSendOverlay).
@@ -23459,10 +23577,27 @@ function ChatConversationInnerBody() {
       return;
     }
 
+    // [2026-10-23 midia-wa] Bolha no MESMO frame do toque: só o caminho da fila
+    // durável nativa (web/legado seguem como antes). Reserva o lugar do enqueue
+    // agora (ordem do álbum) e lê o reply de forma síncrona quando o alvo já tem
+    // ack; alvo ainda tmp_ (raro) → espera como antes (até 5 s).
+    const _tapAt = Number(file?._tapAt) > 0 ? Number(file._tapAt) : Date.now();
+    const _instant = _albumInstantOn() && OUTBOX_V2_ONLY && Platform.OS !== 'web' && !file?.blob && !!file?.uri;
+    const _enqSlot = _instant ? _reserveMediaEnqSlot(conversationId) : null;
+    const _negIdEarly = _instant ? _nextMediaNegId() : null;
     setUploading(true);
     // [2026-10-12 reply-media] Foto/vídeo/arquivo respondendo. Álbum passa
     // rtOverride (só a 1ª mídia cita; as demais null) — ver MediaPreview onSend.
-    const { replyId, replyObj } = await _takeReplyForAsync(rtOverride);
+    let replyId = null, replyObj = null;
+    try {
+      const _rr = (_instant && !_replyTargetPending(_currentReplyTarget(rtOverride)))
+        ? _takeReplyFor(rtOverride)
+        : await _takeReplyForAsync(rtOverride);
+      replyId = _rr.replyId; replyObj = _rr.replyObj;
+    } catch (e) {
+      if (_enqSlot) _enqSlot.release();
+      throw e;
+    }
     const tempId = 'tmp_upload_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     // Stable client_message_id so server-side dedup, recipient WS dedup, and
     // retry-after-timeout all reconcile to a single message row. Without it,
@@ -23492,7 +23627,7 @@ function ChatConversationInnerBody() {
       id: tempId,
       // [2026-10-13 vídeo-sumiu] chave de ordem no FIM (sem ela = 0 → a bolha
       // ia p/ o topo do histórico a cada reordenação e "sumia").
-      _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000),
+      _negId: _negIdEarly || (Date.now() * 1000 + Math.floor(Math.random() * 1000)),
       sender_email: user?.email,
       sender_name: '',
       content: caption || '',
@@ -23517,6 +23652,24 @@ function ChatConversationInnerBody() {
         ? { width: Math.round(Number(file.width)), height: Math.round(Number(file.height)) } : null),
     };
     setMessages(prev => [...prev, optimisticMsg]);
+    // [2026-10-23 midia-wa] t_bubble: toque em Enviar → setMessages (beacon media_send lê p.tap_at/p.bubble_ms).
+    const _bubbleMs = Math.max(0, Date.now() - _tapAt);
+    if (_instant) {
+      try { setUploadProgress(prev => (Object.prototype.hasOwnProperty.call(prev, tempId) ? prev : { ...prev, [tempId]: 0 })); } catch {}
+      // Sem largura/altura do picker: a caixa nasce na proporção padrão e o
+      // tamanho real (lido do arquivo LOCAL, sem rede) entra logo depois, bem
+      // antes do eco do servidor que fazia o mesmo ajuste segundos mais tarde.
+      if ((fileType === 'image') && !(Number(file.width) > 0 && Number(file.height) > 0) && localUri) {
+        try {
+          const { Image: _RNImage } = require('react-native');
+          _RNImage.getSize(localUri, (w, h) => {
+            if (!(w > 0 && h > 0) || !mountedRef.current) return;
+            setMessages(prev => _mapKeep(prev, m => (m.id === tempId && !(Number(m.width) > 0 && Number(m.height) > 0))
+              ? { ...m, width: Math.round(w), height: Math.round(h) } : m));
+          }, () => {});
+        } catch {}
+      }
+    }
     // [LQIP 2026-07-12] Wire imageSendPipeline's blur placeholder into the
     // optimistic bubble. The bubble already paints the full local URI, but a
     // large camera-roll JPEG can take a beat to decode on-device; the ~40px
@@ -23588,8 +23741,14 @@ function ChatConversationInnerBody() {
     // [send-media] effect. Web (blob: URLs) keeps the legacy inline path below.
     if (OUTBOX_V2_ONLY && Platform.OS !== 'web' && !file?.blob && file?.uri) {
       let _queued = null;
+      // [2026-10-23 midia-wa] enqueue em ORDEM pela fila de promessas (a bolha já pintou).
+      const _enqRun = _enqSlot ? _enqSlot.run : ((fn) => fn());
       try {
-        _queued = await mediaSendQueue.enqueueMedia({
+        _queued = await _enqRun(() => mediaSendQueue.enqueueMedia({
+          // [2026-10-23 midia-wa] contrato B: a fila chama mediaPreupload.claim(orig_uri).
+          orig_uri: file.uri,
+          tap_at: _tapAt,
+          bubble_ms: _bubbleMs,
           client_message_id: msgId,
           conversation_id: conversationId,
           temp_id: tempId,
@@ -23608,16 +23767,18 @@ function ChatConversationInnerBody() {
           batch_id: batchId || null,
           duration: file.duration || null,
           reply_to_id: replyId, topic_id: activeTopic?.id || null /* [2026-10-21 tg4] */,
-        });
+        }));
       } catch { _queued = null; }
       if (_queued) {
-        setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
+        // [2026-10-23 midia-wa] nunca rebaixa o anel (a fila pode já ter emitido progresso).
+        setUploadProgress(prev => (typeof prev[tempId] === 'number' && prev[tempId] > 0) ? prev : ({ ...prev, [tempId]: 0 }));
         setUploading(false);
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
         return;
       }
       // Outbox unavailable (SQLite failed to open) → legacy inline path.
     }
+    if (_enqSlot) _enqSlot.release(); // [2026-10-23 midia-wa] caminho legado: libera a ordem
     // [SEND-01, 2026-05-19] Persist optimistic media to local SQLite BEFORE
     // upload kicks off so it survives app kill / network loss. Mirrors the
     // text-send durability pattern. `_localUri` lets the bubble re-render
@@ -31911,7 +32072,29 @@ function ChatConversationInnerBody() {
                 shows live progress and each cell clears the ring the instant
                 its message swaps to the confirmed server row (no more "stuck
                 at 100%"). */}
-            {m._uploading && !m.deleted_at && (
+            {/* [2026-10-23 midia-wa] Célula do álbum = mesmo overlay da foto única:
+                anel desde 0 (fila → spinner, nativo sem bytes reais → indeterminado),
+                X cancela (mediaSendQueue.cancelByTempId via cancelUpload), falha →
+                toque p/ reenviar (mediaSendQueue.retry). Kill __chatyy_album_instant. */}
+            {_albumInstantOn() && !m.deleted_at && typeof m.id === 'string' && m.id.startsWith('tmp') && (() => {
+              const _cUp = !!m._uploading;
+              const _cAct = _cUp || (Platform.OS !== 'web' && !!m._queued && !m._failed);
+              return (
+                <MediaSendOverlay
+                  active={_cAct}
+                  progress={(!_cUp || m._uploadPct === undefined || m._upIndet) ? undefined : (m._uploadPct || 0)}
+                  compressing={false}
+                  sizeBytes={0}
+                  failed={!!m._failed && !_cAct}
+                  onCancel={() => cancelUpload(m.id)}
+                  onRetry={() => retryFailedMediaSend(m)}
+                  cancelLabel={t('common.cancel') || 'Cancelar'}
+                  retryLabel={t('chatConv.tapToResend') || 'Toque para reenviar'}
+                  failedLabel={t('chatConv.sendFailed') || 'Falha no envio'}
+                />
+              );
+            })()}
+            {!_albumInstantOn() && m._uploading && !m.deleted_at && (
               <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
                 <View style={{ width: 44, height: 44, borderRadius: 22, borderWidth: 2.5, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center' }}>
                   <CircularProgressArc pct={m._uploadPct || 0} size={44} strokeWidth={3} style={{ position: 'absolute' }} />
@@ -32326,7 +32509,7 @@ function ChatConversationInnerBody() {
           // spinner indeterminado + X p/ cancelar (antes sumia sem como cancelar).
           const imgSendOverlay = imgUploading || (Platform.OS !== 'web' && !!msg._queued && msg.pending_state === 'queued' && !msg._failed && typeof msg.id === 'string' && msg.id.startsWith('tmp'));
           const imgProgress = msg._uploadPct || 0;
-          const imgIndeterminate = imgUploading && (msg._uploadPct === undefined);
+          const imgIndeterminate = imgUploading && (msg._uploadPct === undefined || !!msg._upIndet /* [2026-10-23 midia-wa] fila nativa sem bytes reais */);
           // [#1239 2026-05-20] Prefer SQLite local_path so tap-to-open works
           // offline even when the optimistic _localUri hint isn't populated
           // (e.g. cold-open after iOS reinstall, hydrate from cache without
@@ -33127,7 +33310,7 @@ function ChatConversationInnerBody() {
           // [2026-10-12 P2] fila → spinner indeterminado + X (ver imgSendOverlay).
           const vidSendOverlay = vidUploading || (Platform.OS !== 'web' && !!msg._queued && msg.pending_state === 'queued' && !msg._failed && typeof msg.id === 'string' && msg.id.startsWith('tmp'));
           const vidProgress = msg._uploadPct || 0;
-          const vidIndeterminate = vidUploading && (msg._uploadPct === undefined);
+          const vidIndeterminate = vidUploading && (msg._uploadPct === undefined || !!msg._upIndet /* [2026-10-23 midia-wa] */);
           // Web pre-upload re-encode (compressVideoWeb): while this runs the
           // ring shows compression progress, not bytes sent — so we swap the
           // "X / Y MB" counter for a "comprimindo…" label to stay honest.
@@ -41821,6 +42004,7 @@ function ChatConversationInnerBody() {
         onPick={handlePickAttachment}
         onSendMedia={handleAttachRecentMedia}
         onSendDirect={handleAttachSendDirect}
+        conversationId={conversationId /* [2026-10-23 midia-wa] pré-upload na folha nativa */}
         colors={colors}
         giftEnabled={DIAMONDS_ENABLED && conversationType === 'direct' && !isSavedMode && !!conversationId}
         gamesEnabled={gamesOn && !isSavedMode && !!conversationId && (conversationType === 'direct' || conversationType === 'group')}
@@ -43524,7 +43708,9 @@ function ChatConversationInnerBody() {
         visible={_lmV}
         files={mediaPreview.files || []}
         colors={colors}
-        onClose={() => setMediaPreview({ visible: false, files: [] })}
+        conversationId={conversationId /* [2026-10-23 midia-wa] pré-upload */}
+        // [2026-10-23 midia-wa] fechou sem enviar → descarta os pré-uploads.
+        onClose={() => { _mpPreCall('discardAll'); setMediaPreview({ visible: false, files: [] }); }}
         onSchedule={handleScheduleMedia /* [2026-10-21 tg4] agendar com mídia */}
         // [2026-10-15 native-attach] Mesmo envio reaproveitado pela folha nativa
         // (handleAttachSendDirect) via mediaPreviewSendRef.
@@ -43534,6 +43720,7 @@ function ChatConversationInnerBody() {
           // albumBatchId so the album grouper collapses them in the chat
           // even if uploads finish out of order.
           const batch = Array.isArray(outFiles) ? outFiles : [];
+          const _sendTapAt = Date.now(); // [2026-10-23 midia-wa] t_bubble parte do toque
           setMediaPreview({ visible: false, files: [] });
           if (batch.length === 0) return;
           // Multi-photo album: when 2+ photos go out together, every upload
@@ -43643,6 +43830,23 @@ function ChatConversationInnerBody() {
           // 30 simultaneous photo uploads spike RAM enough to OOM-kill the
           // app. Stream the batch through a 4-wide worker pool so memory
           // stays bounded and the user still gets fast wifi throughput.
+          // [2026-10-23 midia-wa] Bolha instantânea (nativo + fila durável): TODAS
+          // as bolhas no mesmo frame do toque. uploadAndSendFile pinta de forma
+          // síncrona (sem await antes do setMessages) e enfileira em ordem pela
+          // fila de promessas; memória fica limitada pela própria fila
+          // (MAX_CONCURRENT), não por este pool. A fila já re-codifica (EXIF).
+          // Kill: globalThis.__chatyy_album_instant === false → pool 4 abaixo.
+          const _albumInstant = _albumInstantOn() && OUTBOX_V2_ONLY && Platform.OS !== 'web'
+            && batch.every(f => f && f.uri && !f.blob);
+          if (_albumInstant) {
+            batch.forEach((f, i) => {
+              const cap = (Array.isArray(captions) && captions[i] != null) ? String(captions[i]) : (i === 0 ? (caption || '') : '');
+              try {
+                Promise.resolve(uploadAndSendFile({ ...f, _tapAt: _sendTapAt }, viewOnce, cap, albumBatchId, i === 0 ? _albumRt : null)).catch(() => {});
+              } catch {}
+            });
+            return;
+          }
           (async () => {
             const stripExif = await stripExifPromise;
             const queue = batch.map((f, i) => ({ file: f, rt: i === 0 ? _albumRt : null, cap: (Array.isArray(captions) && captions[i] != null) ? String(captions[i]) : (i === 0 ? (caption || '') : '') }));

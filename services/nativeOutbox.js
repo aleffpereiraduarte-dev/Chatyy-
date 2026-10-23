@@ -401,6 +401,17 @@ export async function handoffUpload(row, p, file, size, metaFields) {
       ]);
       if (rb && /^https:\/\/([a-z0-9-]+\.)?chatyy\.com\.br$/i.test(String(rb).replace(/\/+$/, ''))) up.base = String(rb).replace(/\/+$/, '');
     } catch {}
+    // [2026-10-23 midia-wa] BUILD: PUT direto no R2 por URL pré-assinada (kill: __chatyy_r2_direct=false)
+    try {
+      const r2 = require('./r2DirectUpload');
+      if (r2.nativePutSupported(_resolve()) && r2.directEnabled()) {
+        const ps = await Promise.race([
+          Promise.resolve(r2.presignFor({ uri: path, name: up.filename, type: up.mime, size }, { context: 'chat' })).catch(() => null),
+          new Promise((r) => setTimeout(() => r(null), 1500)),
+        ]);
+        if (ps && ps.put_url && ps.cdn_url) Object.assign(up, { put_url: ps.put_url, put_headers: ps.headers || {}, cdn_url: ps.cdn_url, put_exp: ps.expires_at || 0, put_size: ps.size || size });
+      }
+    } catch {}
     const item = {
       cmi, conv: String(pp.conversation_id), kind: 'media',
       body: _mediaBody(pp, metaFields),
@@ -644,6 +655,8 @@ function _hasNativeProgress() {
 
 /** [2026-10-18] Binário reporta bytes reais ('progress', transport ≥ 3)? */
 export function hasNativeProgress() { return _hasNativeProgress(); }
+/** [2026-10-23 midia-wa] binário com PUT direto no R2 (outboxCaps().put_url) — BUILD. */
+export function nativePutSupported() { try { return require('./r2DirectUpload').nativePutSupported(_resolve()); } catch { return false; } }
 
 function _mediaProgress(cmi, pct, phase, conv) {
   const c = _mediaCtx.get(cmi);

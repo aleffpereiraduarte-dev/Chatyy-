@@ -96,7 +96,153 @@ export function shouldStripExif() {
 // renders in <1ms via <Image source={{ uri: 'data:image/jpeg;base64,...' }}>.
 // Result format matches the server's chat_messages.thumb_b64 column so the
 // existing `persistThumbB64` cache accepts it unchanged.
+//
+// [2026-10-23 midia-wa] LQIP "tipo WhatsApp": lado maior 72 px q0.5 (era 40 px)
+// com teto de 3000 caracteres em base64 (o WS/eco carregam o thumb_b64; o push
+// NÃO). Passou do teto → reduz a PRÓPRIA miniatura (barato, já é minúscula)
+// para 52 px q0.45; ainda grande → recai no LQIP antigo de 40 px. Do mesmo
+// arquivinho sai o blurhash (expo-image, ~ms num JPEG de 72 px) + as dimensões,
+// em 2º plano — o b64 volta na hora (a bolha não espera o blurhash).
+// Kill: __chatyy_lqip_wa === false (40 px antigo); __chatyy_client_blurhash === false (sem blurhash).
+const LQIP_MAX_B64 = 3000;
+const LQIP_HARD_MAX_B64 = 4000; // persistThumbB64 recusa > 4096
+function _g() { return typeof globalThis !== 'undefined' ? globalThis : global; }
+function _lqipWaOn() { try { return _g().__chatyy_lqip_wa !== false; } catch { return true; } }
+function _clientBhOn() { try { return _g().__chatyy_client_blurhash !== false; } catch { return true; } }
+function _lqipDim() {
+  try { const d = Number(_g().__chatyy_lqip_dim); if (d >= 32 && d <= 128) return Math.round(d); } catch {}
+  return 72;
+}
+export const BLURHASH_RE = /^[0-9A-Za-z#$%*+,\-.:;=?@[\]^_{|}~]{6,100}$/;
+// blurhash válido de verdade: tamanho = 4 + 2·cx·cy (1º caractere codifica cx/cy)
+export function isValidBlurhash(bh) {
+  if (typeof bh !== 'string' || !BLURHASH_RE.test(bh)) return false;
+  const B83 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~';
+  const v = B83.indexOf(bh[0]);
+  if (v < 0) return false;
+  const cx = (v % 9) + 1; const cy = Math.floor(v / 9) + 1;
+  return bh.length === 4 + 2 * cx * cy;
+}
+
+// ── metadados do cliente (blurhash/dimensões/LQIP) por mensagem ────────────
+// _lqMeta: chave do LQIP → entrada; _keyMeta: temp_id / client_message_id → entrada.
+// entrada = { blurhash, w, h, lqip, done, p }  (p = promessa do cálculo)
+const _lqMeta = new Map();
+const _keyMeta = new Map();
+const META_MAX = 200;
+function _lqKey(b64) { return typeof b64 === 'string' && b64 ? b64.length + ':' + b64.slice(-80) : ''; }
+function _trim(m) {
+  if (m.size <= META_MAX) return;
+  const drop = m.size - META_MAX;
+  let i = 0;
+  for (const k of m.keys()) { if (i++ >= drop) break; m.delete(k); }
+}
+function _newEntry(lqip) { return { blurhash: null, w: 0, h: 0, lqip: lqip || null, done: false, p: null }; }
+
+async function _bhFromFile(fileUri, w, h) {
+  if (!fileUri || !_clientBhOn()) return null;
+  try {
+    const EI = require('expo-image');
+    const Img = EI?.Image || EI?.default?.Image;
+    if (!Img || typeof Img.generateBlurhashAsync !== 'function') return null;
+    const comps = (w > 0 && h > 0 && h > w) ? [3, 4] : [4, 3]; // mesmo critério do servidor
+    const bh = await Promise.race([
+      Img.generateBlurhashAsync(String(fileUri), comps),
+      new Promise((r) => setTimeout(() => r(null), 1500)),
+    ]);
+    return isValidBlurhash(bh) ? bh : null;
+  } catch { return null; }
+}
+
+async function _readB64(uri) {
+  const FS = require('expo-file-system/legacy');
+  return FS.readAsStringAsync(String(uri).replace('file://', ''), { encoding: FS.EncodingType.Base64 });
+}
+async function _rm(uri) { try { await require('expo-file-system/legacy').deleteAsync(uri, { idempotent: true }); } catch {} }
+
+// Caminho novo (nativo): devolve { b64, w, h, file } — file = arquivinho p/ o blurhash (o chamador apaga).
+async function _lqipWaNative(uri) {
+  const dim = _lqipDim();
+  try {
+    const NativeImage = require('../modules/expo-native-toolkit').Image;
+    if (NativeImage?.resize) {
+      let r = await NativeImage.resize({ uri, maxWidth: dim, maxHeight: dim, quality: 0.5, format: 'jpeg' });
+      if (r?.uri) {
+        let b64 = await _readB64(r.uri);
+        if (b64 && b64.length > LQIP_MAX_B64) {
+          const r2 = await NativeImage.resize({ uri: r.uri, maxWidth: 52, maxHeight: 52, quality: 0.45, format: 'jpeg' }).catch(() => null);
+          if (r2?.uri) {
+            const b2 = await _readB64(r2.uri).catch(() => null);
+            if (b2 && b2.length < b64.length) { await _rm(r.uri); r = r2; b64 = b2; } else await _rm(r2.uri);
+          }
+        }
+        if (b64 && b64.length <= LQIP_HARD_MAX_B64) return { b64, w: r.width || 0, h: r.height || 0, file: r.uri };
+        await _rm(r.uri);
+      }
+    }
+  } catch {}
+  try {
+    const IM = require('expo-image-manipulator');
+    let r = await IM.manipulateAsync(uri, [{ resize: { width: dim } }], { compress: 0.5, format: IM.SaveFormat.JPEG, base64: true });
+    if (r && r.height > r.width && r.uri) {
+      // retrato: o lado maior é a altura → reduz a própria miniatura (barato)
+      const r2 = await IM.manipulateAsync(r.uri, [{ resize: { height: dim } }], { compress: 0.5, format: IM.SaveFormat.JPEG, base64: true }).catch(() => null);
+      if (r2?.base64) { await _rm(r.uri); r = r2; }
+    }
+    if (r?.base64 && r.base64.length > LQIP_MAX_B64 && r.uri) {
+      const r3 = await IM.manipulateAsync(r.uri, [{ resize: r.height > r.width ? { height: 52 } : { width: 52 } }], { compress: 0.45, format: IM.SaveFormat.JPEG, base64: true }).catch(() => null);
+      if (r3?.base64 && r3.base64.length < r.base64.length) { await _rm(r.uri); r = r3; }
+    }
+    if (r?.base64 && r.base64.length <= LQIP_HARD_MAX_B64) return { b64: r.base64, w: r.width || 0, h: r.height || 0, file: r.uri || null };
+    if (r?.uri) await _rm(r.uri);
+  } catch {}
+  return null;
+}
+
+/**
+ * LQIP + blurhash do mesmo arquivinho. → { b64, entry } | null. entry.p resolve
+ * quando o blurhash termina (ou falha). Nunca lança.
+ */
+export async function generateLocalLQIPWithMeta(uri) {
+  if (!uri) return null;
+  if (!_lqipWaOn()) {
+    const b64 = await generateLocalLQIP(uri);
+    return b64 ? { b64, entry: null } : null;
+  }
+  if (Platform.OS === 'web') {
+    const r = await _generateLocalLQIPWeb(uri, _lqipDim(), true);
+    if (!r || !r.b64) return null;
+    const e = _newEntry(r.b64);
+    e.blurhash = r.blurhash || null; e.w = r.W || 0; e.h = r.H || 0; e.done = true; e.p = Promise.resolve(e);
+    _lqMeta.set(_lqKey(r.b64), e); _trim(_lqMeta);
+    return { b64: r.b64, entry: e };
+  }
+  const r = await _lqipWaNative(uri);
+  if (!r) {
+    const b64 = await _generateLocalLQIPLegacy(uri);
+    return b64 ? { b64, entry: null } : null;
+  }
+  const e = _newEntry(r.b64);
+  e.p = (async () => {
+    try { e.blurhash = await _bhFromFile(r.file, r.w, r.h); } catch {}
+    if (r.file) await _rm(r.file);
+    e.done = true;
+    return e;
+  })();
+  _lqMeta.set(_lqKey(r.b64), e); _trim(_lqMeta);
+  return { b64: r.b64, entry: e };
+}
+
 export async function generateLocalLQIP(uri) {
+  if (!uri) return null;
+  if (_lqipWaOn()) {
+    try { const r = await generateLocalLQIPWithMeta(uri); if (r && r.b64) return r.b64; } catch {}
+  }
+  return _generateLocalLQIPLegacy(uri);
+}
+
+// LQIP antigo (40 px) — kill switch e reserva.
+async function _generateLocalLQIPLegacy(uri) {
   if (!uri) return null;
   if (Platform.OS === 'web') return _generateLocalLQIPWeb(uri);
   // Try native toolkit first (5-10× faster, GPU path).
@@ -136,22 +282,48 @@ export async function generateLocalLQIP(uri) {
   return null;
 }
 
-function _generateLocalLQIPWeb(uri) {
+// web: dim = lado maior (40 = antigo, só largura); withMeta → { b64, blurhash, W, H }
+function _generateLocalLQIPWeb(uri, dim = 40, withMeta = false) {
   return new Promise((resolve) => {
     try {
       const img = new window.Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         try {
-          const w = 40;
-          const h = Math.max(1, Math.round((img.height / img.width) * w));
+          let w; let h;
+          if (!withMeta) { w = 40; h = Math.max(1, Math.round((img.height / img.width) * w)); }
+          else {
+            const s = Math.min(1, dim / Math.max(img.width || 1, img.height || 1));
+            w = Math.max(1, Math.round((img.width || 1) * s)); h = Math.max(1, Math.round((img.height || 1) * s));
+          }
           const canvas = document.createElement('canvas');
           canvas.width = w; canvas.height = h;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, w, h);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
-          const b64 = dataUrl.split(',')[1];
-          resolve(b64 && b64.length < 4096 ? b64 : null);
+          let b64 = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
+          if (withMeta && b64 && b64.length > LQIP_MAX_B64) {
+            const s2 = 52 / Math.max(w, h);
+            const c2 = document.createElement('canvas');
+            c2.width = Math.max(1, Math.round(w * s2)); c2.height = Math.max(1, Math.round(h * s2));
+            c2.getContext('2d').drawImage(canvas, 0, 0, c2.width, c2.height);
+            const b2 = c2.toDataURL('image/jpeg', 0.45).split(',')[1];
+            if (b2 && b2.length < b64.length) b64 = b2;
+          }
+          if (!withMeta) { resolve(b64 && b64.length < 4096 ? b64 : null); return; }
+          if (!b64 || b64.length > LQIP_HARD_MAX_B64) { resolve(null); return; }
+          let blurhash = null;
+          if (_clientBhOn()) {
+            try {
+              const s3 = Math.min(1, 32 / Math.max(w, h));
+              const bw = Math.max(1, Math.round(w * s3)); const bhh = Math.max(1, Math.round(h * s3));
+              const c3 = document.createElement('canvas'); c3.width = bw; c3.height = bhh;
+              const x3 = c3.getContext('2d'); x3.drawImage(canvas, 0, 0, bw, bhh);
+              const enc = require('./e2ee/e2ee5Media').blurhashEncode;
+              const bh = enc(x3.getImageData(0, 0, bw, bhh).data, bw, bhh, bhh > bw ? 3 : 4, bhh > bw ? 4 : 3);
+              if (isValidBlurhash(bh)) blurhash = bh;
+            } catch {}
+          }
+          resolve({ b64, blurhash, W: img.width || 0, H: img.height || 0 });
         } catch { resolve(null); }
       };
       img.onerror = () => resolve(null);
@@ -160,6 +332,90 @@ function _generateLocalLQIPWeb(uri) {
   });
 }
 
+/** Liga um LQIP já gerado (preflightOutgoing/generateLocalLQIP) à mensagem. */
+function _linkMeta(key, b64) {
+  if (key == null || !b64) return;
+  const e = _lqMeta.get(_lqKey(b64));
+  if (!e) return;
+  _keyMeta.set(String(key), e); _trim(_keyMeta);
+}
+
+/**
+ * Metadados do cliente já prontos (síncrono) p/ o chat_send:
+ * { blurhash?, w?, h?, lqip? } | null. Só devolve o que terminou.
+ */
+export function getClientMetaSync(...keys) {
+  for (const k of keys) {
+    if (k == null || k === '') continue;
+    const e = _keyMeta.get(String(k));
+    if (!e) continue;
+    const out = {};
+    if (e.blurhash && isValidBlurhash(e.blurhash)) out.blurhash = e.blurhash;
+    if (e.w > 0 && e.h > 0) { out.w = e.w; out.h = e.h; }
+    if (e.lqip) out.lqip = e.lqip;
+    if (e.kind) out.kind = e.kind;
+    return Object.keys(out).length ? out : null;
+  }
+  return null;
+}
+
+/** Espera (no máx. ms) o blurhash da mensagem ficar pronto. Nunca lança. */
+export async function waitClientMeta(key, ms = 150) {
+  const e = key != null ? _keyMeta.get(String(key)) : null;
+  if (!e || e.done || !e.p) return getClientMetaSync(key);
+  await Promise.race([e.p.catch(() => null), new Promise((r) => setTimeout(r, Math.max(0, ms)))]);
+  return getClientMetaSync(key);
+}
+
+/**
+ * Gera LQIP + blurhash de uma mídia LOCAL e guarda sob as chaves (temp_id, cmi).
+ * type 'image' → do próprio arquivo; 'video' → de um quadro (~0,5 s) pequeno.
+ * Fire-and-forget: devolve a promessa da entrada (ou null). Nunca lança.
+ * Uso: mediaSendQueue.enqueueMedia / sendWorker (em paralelo à compressão/upload).
+ */
+export function prepareClientMeta({ keys, uri, type, durationMs } = {}) {
+  try {
+    const ks = (Array.isArray(keys) ? keys : [keys]).filter((k) => k != null && k !== '').map(String);
+    if (!ks.length || !uri) return null;
+    if (!_clientBhOn() && type !== 'video') return null;
+    for (const k of ks) { const e0 = _keyMeta.get(k); if (e0) return e0.p || Promise.resolve(e0); }
+    const e = _newEntry(null);
+    e.kind = type === 'video' ? 'video' : 'image';
+    e.p = (async () => {
+      try {
+        let src = uri; let tmp = null;
+        if (type === 'video') {
+          if (Platform.OS === 'web') return e;
+          let atMs = 500;
+          const d = Number(durationMs) || 0;
+          if (d > 0 && d < 1200) atMs = Math.max(0, Math.floor(d / 2));
+          let fr = null;
+          try {
+            const NV = require('../modules/expo-native-video');
+            const mod = NV?.default || NV;
+            if (mod?.generateThumbnail) fr = await mod.generateThumbnail(uri, atMs, 160);
+          } catch {}
+          if (!fr?.uri) { const pp = await require('./videoSendPipeline').preparePoster(uri, d || null).catch(() => null); fr = pp ? { uri: pp.posterUri, width: pp.width, height: pp.height } : null; }
+          if (!fr?.uri) return e;
+          src = fr.uri; tmp = fr.uri;
+          if (fr.width > 0 && fr.height > 0) { e.w = fr.width; e.h = fr.height; }
+        }
+        const r = await generateLocalLQIPWithMeta(src);
+        if (r && r.b64) {
+          e.lqip = r.b64;
+          if (r.entry) { await r.entry.p?.catch(() => null); if (r.entry.blurhash) e.blurhash = r.entry.blurhash; if (!(e.w > 0) && r.entry.w > 0) { e.w = r.entry.w; e.h = r.entry.h; } }
+        }
+        if (type !== 'video') { e.w = 0; e.h = 0; } // dimensões de foto = as do arquivo enviado (payload)
+        if (tmp) await _rm(tmp);
+      } catch {}
+      e.done = true;
+      return e;
+    })();
+    for (const k of ks) _keyMeta.set(k, e);
+    _trim(_keyMeta);
+    return e.p;
+  } catch { return null; }
+}
 // ── EXIF strip ─────────────────────────────────────────────────────────────
 // Re-encode through the native toolkit (or ImageManipulator fallback). The
 // JPEG/PNG encoders both drop EXIF chunks by default, which is what scrubs
@@ -293,6 +549,8 @@ export function bindOptimisticToServer(tempId, realId, localUri, serverUrl) {
 // of a blank gray box. `tempId` is the optimistic message's client id.
 export function attachLqipToTempMessage(tempId, thumbB64) {
   if (!tempId || !thumbB64) return;
+  // [2026-10-23 midia-wa] o blurhash/dimensões do mesmo LQIP passam a valer p/ esta mensagem
+  try { _linkMeta(tempId, thumbB64); } catch {}
   try {
     const mc = require('./mediaCache');
     mc.persistThumbB64?.(tempId, thumbB64);

@@ -4,7 +4,8 @@
 // [2026-10-19 media-quality] Three levels (was Padrão/HD, video-only):
 //
 //   level       photo (long edge / JPEG q)        video (H.264 High + AAC)
-//   'standard'  1600 px / 0.80   (~0.3 MB 12 MP)   720p  @ 1.5 Mbps + 96 kbps  (~12 MB/min)
+//   'standard'  1600 px / 0.75   (~0.2 MB 12 MP)   720p  @ 1.5 Mbps + 96 kbps  (~12 MB/min)
+//               [2026-10-23 midia-wa] era 0.80; padrão Wi-Fi E dados = standard
 //   'hd'        2560 px / 0.90   (~1.2 MB 12 MP)   1080p @ 4.5 Mbps + 128 kbps (~35 MB/min)
 //   'full'      original px / 0.92 (HEIC→JPEG)     1080p @ 8 Mbps + 160 kbps  (~61 MB/min);
 //                                                  ≤1080p source ≤12 Mbps → sent as-is
@@ -27,27 +28,40 @@ import { Platform } from 'react-native';
 export const MEDIA_UPLOAD_QUALITY_KEY = 'media_upload_quality'; // legacy (v1)
 export const MEDIA_UPLOAD_QUALITY_KEY_V2 = 'media_upload_quality_v2';
 export const QUALITY_LEVELS = ['standard', 'hd', 'full'];
-export const DEFAULT_PREFS = Object.freeze({ wifi: 'hd', cell: 'standard' });
+// [2026-10-23 midia-wa] Padrão WhatsApp: 'standard' em Wi-Fi E dados (HD é
+// opcional, pílula da prévia / Configurações). Medido 48 h: com Wi-Fi=HD a foto
+// p50 era 328 KB (2560 px q0.90); WA manda ~1600 px q~0.75 (~100–250 KB).
+// Kill: globalThis.__chatyy_media_wa_preset === false → padrão antigo (HD no Wi-Fi).
+export const DEFAULT_PREFS = Object.freeze({ wifi: 'standard', cell: 'standard' });
+const LEGACY_DEFAULT_PREFS = Object.freeze({ wifi: 'hd', cell: 'standard' });
+export function waPresetOn() {
+  try { return globalThis.__chatyy_media_wa_preset !== false; } catch { return true; }
+}
+function _defaults() { return waPresetOn() ? DEFAULT_PREFS : LEGACY_DEFAULT_PREFS; }
 
 // ─── Profiles (single source of truth for every send path) ──────────────────
 // Photos: never upscaled. 'full' keeps the original pixels (cap 8192 px so a
 // 48-200 MP sensor can't OOM the decoder on low-RAM phones).
+// [2026-10-23 midia-wa] Padrão 0.80 → 0.75 (preset WA): 12 MP → 1600×1200 ≈
+// 0,13 B/px ≈ 200–260 KB (0.80 dava ~300–330 KB, acima da faixa 150–300).
+// Kill __chatyy_media_wa_preset === false → 0.80. Ver photoProfileFor().
 export const PHOTO_PROFILES = Object.freeze({
-  standard: { maxDim: 1600, quality: 0.8 },
+  standard: { maxDim: 1600, quality: 0.75 },
   hd: { maxDim: 2560, quality: 0.9 },
   full: { maxDim: 8192, quality: 0.92 },
 });
+const LEGACY_STANDARD_PHOTO = Object.freeze({ maxDim: 1600, quality: 0.8 });
 // Video label per level → videoSendPipeline QUALITY_PROFILES.
 export const VIDEO_LABELS = Object.freeze({ standard: '720p', hd: '1080p', full: '1080p_full' });
 // Approximate JPEG bytes per output pixel at each quality (camera photos).
-const _JPEG_BPP = { standard: 0.16, hd: 0.25, full: 0.3 };
+const _JPEG_BPP = { standard: 0.13, hd: 0.25, full: 0.3 }; // [2026-10-23 midia-wa] standard q0.75
 // Video bits/s (video + audio) per level — mirrors videoSendPipeline.
 const _VIDEO_BPS = { standard: 1_500_000 + 96_000, hd: 4_500_000 + 128_000, full: 8_000_000 + 160_000 };
 const _VIDEO_BOX = { standard: [1280, 720], hd: [1920, 1080], full: [1920, 1080] };
 // Full HD keeps the original when it already fits 1080p and is ≤ this bitrate.
 export const FULL_PASSTHROUGH_MAX_BPS = 12_000_000;
 
-let _store = {}; // email → { wifi, cell }
+let _store = {}; // email → { wifi, cell, x?: ['wifi'|'cell'] (colunas escolhidas de fato) }
 let _hydrated = false;
 let _legacy = null;
 const _subs = new Set();
@@ -117,23 +131,52 @@ function _persist() {
   } catch {}
 }
 
+// [2026-10-23 midia-wa] Só vale o que o usuário ESCOLHEU. Até hoje
+// setUploadQualityPref gravava as DUAS colunas (a outra com o padrão da época,
+// Wi-Fi='hd'), então um 'hd' gravado no Wi-Fi sem a marca `x` é indistinguível
+// do padrão antigo → tratado como padrão (passa a 'standard'). 'standard'/'full'
+// no Wi-Fi diferem do padrão antigo → escolha real, mantida. A chave v1 legada
+// só existia se o usuário mudou o ajuste → escolha real. Gravações novas levam
+// `x` com as colunas escolhidas de fato.
+function _colExplicit(row, col) {
+  if (!row) return false;
+  if (Array.isArray(row.x)) return row.x.includes(col);
+  const lv = normalizeLevel(row[col]);
+  if (!lv) return false;
+  return lv !== LEGACY_DEFAULT_PREFS[col];
+}
+
 /** Saved prefs for the active account: { wifi, cell } (levels). */
 export function getUploadQualityPrefs() {
   _hydrate();
   const row = _store[_acct()] || null;
+  if (!waPresetOn()) {
+    const base = _legacy ? { wifi: _legacy, cell: 'standard' } : LEGACY_DEFAULT_PREFS;
+    return {
+      wifi: normalizeLevel(row?.wifi) || base.wifi,
+      cell: normalizeLevel(row?.cell) || base.cell,
+    };
+  }
   const base = _legacy ? { wifi: _legacy, cell: 'standard' } : DEFAULT_PREFS;
   return {
-    wifi: normalizeLevel(row?.wifi) || base.wifi,
-    cell: normalizeLevel(row?.cell) || base.cell,
+    wifi: (_colExplicit(row, 'wifi') && normalizeLevel(row.wifi)) || base.wifi,
+    cell: (_colExplicit(row, 'cell') && normalizeLevel(row.cell)) || base.cell,
   };
 }
 
 /** Save one column ('wifi' | 'cell') for the active account. */
 export function setUploadQualityPref(net, level) {
   const col = net === 'cell' ? 'cell' : 'wifi';
-  const lv = normalizeLevel(level) || DEFAULT_PREFS[col];
+  const lv = normalizeLevel(level) || _defaults()[col];
   const key = _acct();
-  _store = { ..._store, [key]: { ...getUploadQualityPrefs(), [col]: lv } };
+  const prev = _store[key] || null;
+  const x = new Set([col]);
+  for (const c of ['wifi', 'cell']) if (c !== col && _colExplicit(prev, c)) x.add(c);
+  // só as colunas escolhidas (a outra segue o padrão vigente, inclusive com o kill).
+  const cur = getUploadQualityPrefs();
+  const rowNew = { x: [...x] };
+  for (const c of x) rowNew[c] = c === col ? lv : cur[c];
+  _store = { ..._store, [key]: rowNew };
   _hydrated = true;
   _persist();
   _notify();
@@ -187,7 +230,9 @@ export function nextLevel(level) {
 }
 
 export function photoProfileFor(level) {
-  return PHOTO_PROFILES[normalizeLevel(level) || 'standard'];
+  const lv = normalizeLevel(level) || 'standard';
+  if (lv === 'standard' && !waPresetOn()) return LEGACY_STANDARD_PHOTO;
+  return PHOTO_PROFILES[lv];
 }
 
 export function videoLabelFor(level) {
@@ -219,7 +264,7 @@ export function estimateBytes(item, level) {
   }
   let w = Number(item?.width) || 0; let h = Number(item?.height) || 0;
   if (!(w > 0 && h > 0)) { w = 4032; h = 3024; } // typical 12 MP camera photo
-  const p = PHOTO_PROFILES[lv];
+  const p = photoProfileFor(lv);
   const [ow, oh] = _fit(w, h, p.maxDim, p.maxDim);
   const est = Math.round(ow * oh * _JPEG_BPP[lv]);
   return src > 0 && lv !== 'full' ? Math.min(src, est) : est;
@@ -301,6 +346,8 @@ export default {
   QUALITY_LEVELS,
   PHOTO_PROFILES,
   VIDEO_LABELS,
+  DEFAULT_PREFS,
+  waPresetOn,
   normalizeLevel,
   getUploadQualityPrefs,
   setUploadQualityPref,

@@ -384,6 +384,16 @@ async function _uploadOpaque(conv, f, o) {
     ? { blob: f.blob, name, type: 'application/octet-stream', size: f.size }
     : { uri: f.uri, name, type: 'application/octet-stream', size: f.size };
   let r = null;
+  // [2026-10-23 midia-wa] contrato A: PUT direto no R2 (r2DirectUpload) antes do Rust; falha não-hard → caminho de hoje.
+  try {
+    const D = require('../r2DirectUpload');
+    if (D && typeof D.directEnabled === 'function' && D.directEnabled() && typeof D.uploadDirect === 'function') {
+      const d = await D.uploadDirect(file, { context: 'e2e', signal: o.signal || null, onPct: o.onPct || null });
+      if (o.signal && o.signal.aborted) throw _err('aborted');
+      if (d && d.success && isE2eUrl(d.cdn_url)) return d.cdn_url;
+      if (d && d.hard) throw _err(/too.?large|413/i.test(String(d.error || '')) ? 'too_large' : 'upload_failed');
+    }
+  } catch (e) { if (e && (e.code === 'aborted' || e.code === 'too_large' || e.code === 'upload_failed')) throw e; }
   try {
     if (f.size > CHUNKED_MIN && api.rustChunkedUpload) r = await api.rustChunkedUpload(file, null, 'e2e', o.onPct || null, o.signal || null, null);
     else if (api.rustUpload) r = await api.rustUpload(file, null, 'e2e', o.signal || null, o.onPct || null);
@@ -428,6 +438,110 @@ function _phpOpaque(conv, file, o) {
  * kind = t do payload (image|gif|sticker|video|voice|audio|file). → {M, extra:{round}}
  */
 export async function buildMedia(conv, kind, src, opts) {
+  // [2026-10-23 midia-wa] paralelo: t320/pôster e o principal sobem juntos; LQIP/blurhash enquanto o
+  // principal cifra. Kill: __chatyy_e2ee5_media_parallel === false → caminho serial de antes.
+  let _par = true;
+  try { _par = _g().__chatyy_e2ee5_media_parallel !== false; } catch (_) {}
+  if (_par) return _buildMediaParallel(conv, kind, src, opts);
+  return _buildMediaSerial(conv, kind, src, opts);
+}
+
+// LQIP + blurhash do mesmo arquivinho (imageSendPipeline); sem blurhash → o de antes (expo-image no arquivo).
+async function _lqipAndBlurhash(uri) {
+  let lq = null; let bh = null;
+  try {
+    const r = await require('../imageSendPipeline').generateLocalLQIPWithMeta(uri);
+    if (r && r.b64) {
+      lq = r.b64;
+      if (r.entry) { try { await r.entry.p; } catch (_) {} bh = r.entry.blurhash || null; }
+    }
+  } catch (_) {}
+  if (!lq) lq = await _lqip(uri);
+  if (!bh) bh = await _blurhash(uri);
+  return { lq, bh };
+}
+
+async function _buildMediaParallel(conv, kind, src, opts) {
+  const o = opts || {};
+  const M = { kind: kind === 'voice' || kind === 'audio' ? 'audio' : (kind === 'video' ? 'video' : (kind === 'file' ? 'file' : 'image')), mime: src.mime || 'application/octet-stream' };
+  let uri = src.uri;
+  if (Platform.OS === 'web' && !uri && src.blob) uri = URL.createObjectURL(src.blob);
+  // progresso monotônico: o principal vai de 0,05 a 0,98; 1 só quando tudo terminou
+  let _last = 0;
+  const _emitPct = (v) => { const x = Math.max(_last, Math.max(0, Math.min(1, Number(v) || 0))); if (x === _last && v !== 0) return; _last = x; try { o.onPct && o.onPct(x); } catch (_) {} };
+  const pct = (a, b) => (f) => _emitPct(a + (b - a) * Math.max(0, Math.min(1, Number(f) || 0)));
+  const thumbs = [];
+  const later = [];
+  const side = []; // tarefas que correm junto do principal
+  const aborted = () => !!(o.signal && o.signal.aborted);
+  if (kind === 'image' || kind === 'gif' || kind === 'sticker') {
+    let w = Number(src.width) || 0; let h = Number(src.height) || 0;
+    if (!(w > 0 && h > 0)) { const s = await _imgSize(uri); if (s) { w = s.w; h = s.h; } }
+    if (w > 0 && h > 0) { M.w = w; M.h = h; }
+    // [2026-10-22 figurinha-e2ee] figurinha (transparente): sem LQIP/blurhash (JPEG pintaria um quadro de fundo)
+    if (!o.noPreview) side.push(_lqipAndBlurhash(uri).then(({ lq, bh }) => { if (lq) M.lqip = lq; if (bh) M.blurhash = bh; }));
+    if (kind === 'image' && Math.max(w, h) > 400) {
+      side.push((async () => {
+        const t = await _resizeJpeg(uri, w >= h ? 320 : Math.round(320 * w / Math.max(1, h)), 0.7);
+        if (!t || aborted()) return;
+        try {
+          const up = await encryptUpload(conv, { uri: t.uri }, { signal: o.signal });
+          const F = { kind: 't320', url: up.url, file: up.file, w: t.w, h: t.h, size: up.size, mime: 'image/jpeg' };
+          thumbs.push(F); later.push({ F, uri: t.uri });
+        } catch (e) {
+          // miniatura é opcional: sem ela o destinatário pinta LQIP/blurhash → principal
+          if (aborted() || (e && e.code === 'aborted')) throw e;
+          _log('t320_fail', { code: e && e.code });
+        }
+      })());
+    }
+  } else if (kind === 'video') {
+    let poster = null;
+    if (Platform.OS === 'web') poster = await _webPoster(uri);
+    else { try { const r = await require('../videoSendPipeline').preparePoster(uri, Number(src.durationMs) || null); if (r && r.posterUri) poster = { uri: r.posterUri, w: r.width, h: r.height }; } catch (_) {} }
+    const w = Number(src.width) || (poster && poster.w) || 0; const h = Number(src.height) || (poster && poster.h) || 0;
+    if (w > 0 && h > 0) { M.w = w; M.h = h; }
+    const durMs = Number(src.durationMs) || (poster && poster.durMs) || 0;
+    if (durMs > 0) M.dur = Math.max(1, Math.round(durMs / 1000));
+    if (poster) {
+      side.push(_lqipAndBlurhash(poster.uri).then(({ lq, bh }) => { if (lq) M.lqip = lq; if (bh) M.blurhash = bh; }));
+      side.push((async () => {
+        try {
+          const up = await encryptUpload(conv, poster.blob ? { blob: poster.blob } : { uri: poster.uri }, { signal: o.signal });
+          M.poster = { kind: 'poster', url: up.url, file: up.file, w: poster.w || w || 0, h: poster.h || h || 0, size: up.size, mime: 'image/jpeg' };
+          later.push({ F: M.poster, uri: poster.uri });
+        } catch (e) {
+          if (aborted() || (e && e.code === 'aborted')) throw e;
+          _log('poster_fail', { code: e && e.code });
+        }
+      })());
+    }
+  } else if (kind === 'voice' || kind === 'audio') {
+    const P = _P();
+    const dur = Number(src.durationSec) || (Number(src.durationMs) ? Math.round(Number(src.durationMs) / 1000) : 0);
+    if (dur > 0) M.dur = dur;
+    if (kind === 'voice') { const wf = P.waveformToB64(src.waveform); if (wf) M.waveform = wf; }
+    if (kind === 'audio' && src.name) M.title = String(src.name).replace(/\.[a-z0-9]{1,5}$/i, '').slice(0, 120);
+  }
+  if (kind === 'file' || kind === 'audio') M.name = String(src.name || 'arquivo').slice(0, 200);
+  if (kind === 'voice') M.name = 'voice' + (/\.([a-z0-9]{1,5})$/i.exec(String(src.name || '')) ? '.' + /\.([a-z0-9]{1,5})$/i.exec(String(src.name || ''))[1].toLowerCase() : '.m4a');
+  if (aborted()) throw _err('aborted');
+  const mainP = encryptUpload(conv, src.blob && Platform.OS === 'web' ? { blob: src.blob } : { uri }, { signal: o.signal, onPct: pct(0.05, 0.98) });
+  const all = await Promise.allSettled([mainP, ...side]);
+  if (aborted()) throw _err('aborted');
+  if (all[0].status === 'rejected') throw all[0].reason;
+  for (let i = 1; i < all.length; i++) if (all[i].status === 'rejected') throw all[i].reason; // só 'aborted' chega aqui
+  const main = all[0].value;
+  M.url = main.url; M.file = main.file; M.size = main.size;
+  if (thumbs.length) M.thumbs = thumbs;
+  _emitPct(1);
+  // o remetente já tem os arquivos em claro (não baixa o que acabou de mandar)
+  try { await adoptLocal(M, uri); for (const x of later) await adoptLocal(x.F, x.uri); } catch (_) {}
+  _log('built', { kind, size: M.size, thumbs: thumbs.length, poster: !!M.poster, par: 1 });
+  return M;
+}
+
+async function _buildMediaSerial(conv, kind, src, opts) {
   const o = opts || {};
   const P = _P();
   const pct = (a, b) => (f) => { try { o.onPct && o.onPct(a + (b - a) * Math.max(0, Math.min(1, Number(f) || 0))); } catch (_) {} };

@@ -146,6 +146,36 @@ function toFiles(items, extra) {
   }));
 }
 
+// [2026-10-23 midia-wa] Pré-upload (services/mediaPreupload, contrato B): a
+// folha nativa só devolve a seleção no Enviar/prévia (sem evento por toque —
+// ver relatório: evento de seleção = BUILD). Na hora do resultado já começa a
+// comprimir (e subir, rede/conversa permitindo) cada foto/vídeo, em paralelo,
+// ANTES de a conversa enfileirar; a fila pega com claim(). "Como arquivo" não
+// pré-sobe. Conversa = prop conversationId ou a conversa ativa (push).
+// Kill switch: globalThis.__chatyy_media_preupload === false.
+function _preupConv(cid) {
+  if (cid != null && cid !== '') return cid;
+  try { return require('../../services/pushNotifications').getActiveConversation?.() ?? null; } catch { return null; }
+}
+function startPreupload(files, quality, conversationId) {
+  try {
+    if (globalThis.__chatyy_media_preupload === false || Platform.OS === 'web') return;
+    // eslint-disable-next-line global-require
+    const pu = require('../../services/mediaPreupload');
+    const cid = _preupConv(conversationId);
+    if (cid == null) return;
+    (Array.isArray(files) ? files : []).forEach((f) => {
+      if (!f || !f.uri || f._asFile) return;
+      const isVid = /^video\//i.test(f.type || '');
+      if (!isVid && !/^image\//i.test(f.type || '')) return;
+      pu.preupload({
+        uri: f.uri, type: isVid ? 'video' : 'image', mime: f.type, name: f.name, size: f.size,
+        width: f.width, height: f.height, duration: f.duration,
+      }, { quality, conversationId: cid });
+    });
+  } catch {}
+}
+
 /**
  * Câmera nativa. Resolve { action, files } ou null (indisponível / erro →
  * o chamador usa a câmera JS). action: 'capture' | 'pick' | 'gallery' | 'cancel'.
@@ -244,10 +274,11 @@ function reportArmMetric(mm, timing) {
 
 export default function NativeAttachSheet({
   visible, onClose, onPick, onSendMedia, onSendDirect, onFail, colors, items, t, instantRef,
+  conversationId, // [2026-10-23 midia-wa] opcional: conversa da folha (senão a ativa)
 }) {
   const openRef = useRef(false);
   const propsRef = useRef(null);
-  propsRef.current = { onClose, onPick, onSendMedia, onSendDirect, onFail, colors, items, t };
+  propsRef.current = { onClose, onPick, onSendMedia, onSendDirect, onFail, colors, items, t, conversationId };
   const openNowRef = useRef(null);
   const hdDefaultRef = useRef(false); // [2026-10-20 attach-armed]
   const handleResultRef = useRef(null);
@@ -362,10 +393,23 @@ export default function NativeAttachSheet({
         // desligado = Padrão). "Como arquivo" = original, sem compressão.
         const _hdTouched = typeof r.hd === 'boolean' && r.hd !== _hdDefault;
         const files = toFiles(r.items, { ...(_hdTouched ? { _hd: !!r.hd } : null), ...(r.asFile ? { _asFile: true } : null) });
+        // [2026-10-23 midia-wa] chip intocado = nível AUTO (o mesmo que a fila resolve agora).
+        if (!r.asFile) {
+          let _lv = null;
+          try { const mq = require('../../services/mediaUploadQuality'); _lv = _hdTouched ? mq.levelFromHdToggle(!!r.hd) : mq.defaultUploadLevel(); } catch {}
+          startPreupload(files, _lv, cur.conversationId);
+        }
         if (typeof cur.onSendDirect === 'function') cur.onSendDirect(files, { caption: r.caption || '', hd: !!r.hd, asFile: !!r.asFile });
         else if (typeof cur.onSendMedia === 'function') cur.onSendMedia(files);
       } else if (r.action === 'preview') {
         const files = toFiles(r.items);
+        // [2026-10-23 midia-wa] prévia (legenda/HD) abre em seguida: já comprime/sobe no nível
+        // padrão que ela mostra; chip HD mudado/editado → claim não casa e a fila faz o normal.
+        if (files.length) {
+          let _lv = null;
+          try { _lv = require('../../services/mediaUploadQuality').defaultUploadLevel(); } catch {}
+          startPreupload(files, _lv, cur.conversationId);
+        }
         if (files.length && typeof cur.onSendMedia === 'function') cur.onSendMedia(files);
       }
     } catch (e) {
