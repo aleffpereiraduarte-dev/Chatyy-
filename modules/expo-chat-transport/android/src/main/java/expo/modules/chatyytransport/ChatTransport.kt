@@ -22,6 +22,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -334,6 +335,8 @@ internal object ChatTransport {
       // [quic-proto] cfg.quic (mesma forma do iOS) = {on, noise, noiseTest, regions:{<reg>:{kid,port}}, hsMs,
       // migrate, raceMs} vindo do client-lb (só p/ contas da allowlist). Ausente/false = WSS. Ver QuicWire.kt.
       quic = (cfg["quic"] as? Map<*, *>)?.entries?.associate { (k, v) -> k.toString() to v },
+      // [cbin 2026-10-24] fio binário compacto (ChatyyCbin): só com a flag do JS (__chatyy_cbin) e só no WSS
+      cbin = cfg["cbin"] == true,
     )
     post {
       PrewarmDns.enabled = c.dnsPrewarm
@@ -495,6 +498,8 @@ internal data class SessionConfig(
   val fastFirst: Boolean = false,
   /** [quic-proto] anúncio do servidor p/ esta conta/região (QuicWire.target). null = só WSS. */
   val quic: Map<String, Any?>? = null,
+  /** [cbin 2026-10-24] manda cbin_hello depois do auth_success (servidor decide: flag HUB_CBIN + allowlist). */
+  val cbin: Boolean = false,
 )
 
 /** Uma sessão LÓGICA (= um `new WebSocket()` do JS). Só tocada na thread do transporte. */
@@ -565,6 +570,37 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   private var resumeGrace = false
   private var connectFast = false
   private var quicHoldTask: ScheduledFuture<*>? = null
+  // [cbin 2026-10-24] geração do cbin_hello (aceita binário cbin) / do cbin_ok (manda binário); troca de geração
+  // = volta a JSON; cbinOff = frame inválido nesta sessão → nunca mais.
+  private var cbinHelloGen = -1
+  private var cbinOkGen = -1
+  private var cbinOff = false
+
+  /** [cbin 2026-10-24] envio de frame de dados: cbin depois do cbin_ok desta geração (senão/auth/cbin_* → texto). */
+  private fun wsSend(w: WebSocket, text: String): Boolean {
+    if (gen == cbinOkGen && !cbinOff && !ChatyyCbin.jsonOnly(text)) {
+      val b = ChatyyCbin.encode(text)
+      if (b != null) {
+        ChatTransport.bump("cbinFramesOut"); ChatTransport.bump("cbinBytesOut", b.size.toLong()); ChatTransport.bump("cbinJsonBytesOut", text.length.toLong())
+        return w.send(b.toByteString())
+      }
+    }
+    return w.send(text)
+  }
+
+  /** [cbin 2026-10-24] binário que chegou: numa sessão cbin vira JSON texto (o JS só vê texto). */
+  fun onBinary(g: Int, bytes: ByteString) {
+    if (g != gen || closed) return
+    if (g == cbinHelloGen && !cbinOff) {
+      val s = ChatyyCbin.decode(bytes.toByteArray())
+      if (s != null) { ChatTransport.bump("cbinFramesIn"); ChatTransport.bump("cbinBytesIn", bytes.size.toLong()); onText(g, s); return }
+      cbinOff = true
+      ChatTransport.bump("cbinDecodeErr")
+      forceReconnect("cbin_decode")
+      return
+    }
+    markInbound(); ChatTransport.bump("binaryDropped")
+  }
 
   /** [v6] Prazo CURTO da 1ª tentativa (ver iOS): último handshake do processo na
    *  MESMA rede < 1,5 s e RTT < 400 ms, sem timeout seguido → max(4 s, 3×hs+1,5 s). */
@@ -633,7 +669,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   fun sendNativeFrame(account: String, text: String): Boolean {
     if (!nativeSendReady(account)) return false
     lastOutboundAt = now()
-    val ok = ws?.send(text) ?: false
+    val ok = ws?.let { wsSend(it, text) } ?: false
     if (ok) ChatTransport.bump("outboxWsFrames")
     return ok
   }
@@ -683,7 +719,8 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
       // Hub só manda binário depois de upgrade_msgpack/CWP, que o modo nativo
       // nunca negocia (o JS desliga essas flags quando usa este transporte).
-      ChatTransport.post { if (g == s.currentGen()) { s.markInbound(); ChatTransport.bump("binaryDropped") } }
+      // [cbin 2026-10-24] … ou, depois do cbin_hello, o fio binário compacto (Session.onBinary).
+      ChatTransport.post { s.onBinary(g, bytes) }
     }
     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
       try { webSocket.close(1000, null) } catch (_: Throwable) {}
@@ -755,7 +792,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     // Go serializa map com chaves em ordem alfabética, então "type" não é o 1º
     // campo — a agulha + parse confirma o type de TOPO.
     var type: String? = null
-    if (text.length < 8192 && (text.contains("\"pong\"") || text.contains("\"auth_success\"") || text.contains("\"auth_error\""))) {
+    if (text.length < 8192 && (text.contains("\"pong\"") || text.contains("\"auth_success\"") || text.contains("\"auth_error\"") || text.contains("\"cbin_"))) {
       type = topType(text)
     }
     when (type) {
@@ -771,6 +808,11 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
         enqueueFrame(text)
         onAuthSuccess()
       }
+      "cbin_ok" -> {
+        // [cbin 2026-10-24] servidor aceitou: daqui em diante esta geração manda binário
+        if (g == cbinHelloGen && !cbinOff) { cbinOkGen = g; ChatTransport.bump("cbinOk") }
+      }
+      "cbin_no" -> ChatTransport.bump("cbinNo")
       "auth_error" -> {
         authRejected = true
         cancel(authWatchdogTask); authWatchdogTask = null
@@ -828,6 +870,13 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
 
   private fun onAuthSuccess() {
     cancel(authWatchdogTask); authWatchdogTask = null
+    // [cbin 2026-10-24] pede o fio binário (sem esperar: segue em JSON até o cbin_ok; só WSS)
+    val cw = ws
+    if (cfg.cbin && !cbinOff && cw != null && (cw as? QuicRaceSocket)?.isQuic() != true && cbinHelloGen != gen) {
+      cbinHelloGen = gen
+      cw.send(ChatyyCbin.helloFrame())
+      ChatTransport.bump("cbinHello")
+    }
     phys = Phys.AUTHED
     httpRejects = 0
     authRejected = false
@@ -1015,7 +1064,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     lastPingSentAt = t
     lastOutboundAt = t
     ChatTransport.bump("pings")
-    w.send("{\"type\":\"ping\",\"ts\":" + System.currentTimeMillis() + "}")
+    wsSend(w, "{\"type\":\"ping\",\"ts\":" + System.currentTimeMillis() + "}")
     return t
   }
 
@@ -1288,7 +1337,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
           kaMarkPing()
           lastPingSentAt = now()
           lastOutboundAt = lastPingSentAt
-          ws?.send(text)
+          ws?.let { wsSend(it, text) }
         }
         return
       }
@@ -1296,7 +1345,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     if (phys == Phys.AUTHED) {
       val w = ws
       if (w != null) lastOutboundAt = now()
-      if (w != null && w.send(text)) {
+      if (w != null && wsSend(w, text)) {
         ChatTransport.bump("framesOut")
         return
       }
@@ -1334,7 +1383,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
       val o = outbox.peekFirst() ?: break
       if (t - o.at > o.ttl) { outbox.pollFirst(); ChatTransport.bump("outboxExpired"); continue }
       lastOutboundAt = now()
-      if (!w.send(o.text)) break
+      if (!wsSend(w, o.text)) break
       outbox.pollFirst()
       n++
     }

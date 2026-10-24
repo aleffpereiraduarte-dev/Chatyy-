@@ -48,6 +48,16 @@ function _msgpackEnabled() {
   } catch { return false; }
 }
 
+// ─── [cbin 2026-10-24] cbin v1 — fio binário compacto (services/cbin.js) ──
+// Só no WebSocket JS (o nativo tem o próprio ChatyyCbin, ligado por cfg.cbin em nativeTransport.js).
+// Padrão DESLIGADO: globalThis.__chatyy_cbin === true + servidor (HUB_CBIN=1 + allowlist) responde cbin_ok.
+// Depois do cbin_hello aceita binário cbin; depois do cbin_ok manda binário. Frame inválido → desliga e reconecta.
+let _cbinMod = null;
+function _getCbin() {
+  if (!_cbinMod) { try { _cbinMod = require('./cbin'); } catch { _cbinMod = { __unavailable: true }; } }
+  return _cbinMod;
+}
+
 // ─── CWP/1 binary signaling (Agent 3, 2026-05-21) ──────────────────────
 // Negotiates `cwp.1` subprotocol when `globalThis.__chatyy_cwp_ws === true`,
 // advertising `json.legacy` as fallback so the server can pick either side.
@@ -1483,6 +1493,18 @@ class MailWebSocket {
           // subprotocol, but sniffing keeps us correct during transitions.
           const u8 = new Uint8Array(event.data);
           let handled = false;
+          // [cbin 2026-10-24] sessão cbin deste socket: binário = cbin (antes do sniff CWP/msgpack)
+          if (this._cbinHelloWs && this._cbinHelloWs === this.ws && !this._cbinOff) {
+            try {
+              msg = _getCbin().decode(u8);
+              handled = true;
+            } catch (e) {
+              this._cbinOff = true; // nunca mais nesta execução; reconecta em JSON
+              console.warn('[WS] cbin decode falhou, desligando:', e?.message);
+              try { this.ws.close(4000, 'cbin_decode'); } catch {}
+              return;
+            }
+          }
           if (this.cwpNegotiated || (u8.length > 0 && u8[0] === 0xc7)) {
             try {
               const cwp = _getCwp();
@@ -1519,6 +1541,10 @@ class MailWebSocket {
         // start emitting msgpack-encoded frames upstream too.
         if (msg && msg.type === 'msgpack_upgraded' && msg.ok) {
           this.binaryUpgraded = true;
+        }
+        // [cbin 2026-10-24] servidor aceitou o cbin neste socket → _encodeOutbound passa a mandar binário
+        if (msg && msg.type === 'cbin_ok' && this._cbinHelloWs === this.ws && !this._cbinOff) {
+          this._cbinWs = this.ws;
         }
         this._handleMessage(msg);
       } catch (e) { console.warn('[WS] Message parse error:', e?.message); }
@@ -1936,6 +1962,13 @@ class MailWebSocket {
   // anything outside that set silently falls through to JSON/msgpack so
   // chat_message and other legacy types keep working unchanged.
   _encodeOutbound(data) {
+    // [cbin 2026-10-24] socket com cbin_ok: binário compacto (auth*/cbin_* e o que não codifica → JSON)
+    if (this._cbinWs && this._cbinWs === this.ws && !this._cbinOff) {
+      try {
+        const c = _getCbin();
+        if (!c.__unavailable && !c.jsonOnly(data)) return c.encode(data);
+      } catch { /* surrogate solto etc. → JSON */ }
+    }
     if (this.cwpNegotiated) {
       try {
         const cwp = _getCwp();
@@ -2697,6 +2730,12 @@ class MailWebSocket {
         // socket stays JSON end-to-end — zero behavior change.
         if (_msgpackEnabled() && !this.binaryUpgraded && !(this.ws && this.ws.__native)) {
           try { this._send({ type: 'upgrade_msgpack' }); } catch {}
+        }
+        // [cbin 2026-10-24] pede o fio binário compacto (sem esperar: segue em JSON até o cbin_ok).
+        // Só WebSocket JS (o nativo pede sozinho), nunca junto com msgpack/CWP. Kill: __chatyy_cbin !== true.
+        if (globalThis.__chatyy_cbin === true && !this._cbinOff && this.ws && !this.ws.__native &&
+            !_msgpackEnabled() && !this.binaryUpgraded && !this.cwpNegotiated && !_getCbin().__unavailable) {
+          try { this._cbinHelloWs = this.ws; this._cbinWs = null; this.ws.send(JSON.stringify(_getCbin().helloFrame())); } catch {}
         }
         this._emit('connection', { status: 'authenticated', userId: this.userId, email: msg.email });
         this._onAuthenticated();

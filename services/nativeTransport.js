@@ -185,6 +185,9 @@ class NativeTransportSocket {
     if (opts.authFrame) {
       try { cfg.authFrame = JSON.stringify(opts.authFrame); } catch {}
     }
+    // [cbin 2026-10-24] fio binário compacto (cbin v1) no nativo (ChatyyCbin): pede cbin_hello após o auth;
+    // o servidor só aceita com HUB_CBIN=1 + conta na allowlist. Nativo antigo ignora. Padrão DESLIGADO.
+    if (globalThis.__chatyy_cbin === true) cfg.cbin = true;
     // [quic-proto 2026-10-23] fio QUIC+Noise (protótipo ESCURO; binário com o fio:
     // iOS quicVersion() ≥ 1, Android quicProtoInfo): só com cfg do servidor p/ a conta
     // (client-lb transport) — o nativo ainda exige a flag LOCAL do aparelho. Sem a

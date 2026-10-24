@@ -436,7 +436,9 @@ final class ChatTransport {
       outboxMax: Int(ChatTransport.num(config["outboxMax"], 500, 10, 2000)),
       account: ((config["account"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
       storeIngest: (config["storeIngest"] as? Bool) == true,
-      quic: TransportQuicConfig.parse(config["quic"])
+      quic: TransportQuicConfig.parse(config["quic"]),
+      // [cbin 2026-10-24] fio binário compacto (ChatyyCbin): só com a flag do JS (__chatyy_cbin) e só no WSS
+      cbin: (config["cbin"] as? Bool) == true
     )
     q.async {
       self.bgGraceOn = cfg.bgGrace
@@ -638,6 +640,8 @@ struct TransportConfig {
   let storeIngest: Bool
   /// [quic-proto] nil = QUIC nunca é tentado (padrão; JS antigo/conta fora da lista).
   let quic: TransportQuicConfig?
+  /// [cbin 2026-10-24] manda cbin_hello depois do auth_success (servidor decide: flag HUB_CBIN + allowlist).
+  let cbin: Bool
 }
 
 /// [2026-10-23 quic-proto] cfg.quic do JS — só vem quando o client-lb do servidor
@@ -767,6 +771,11 @@ final class TransportSession {
   // [2026-10-23 quic-proto] fio QUIC+Noise (protótipo escuro). No máximo UM fio
   // físico por vez: `task` (WSS) OU `quic`. Sem cfg.quic nada disto é usado.
   private var quic: ChatyyQuicWire?
+  // [cbin 2026-10-24] geração em que o cbin_hello foi mandado (aceita binário cbin) / em que veio o cbin_ok
+  // (manda binário). Troca de geração = volta a JSON. cbinOff = frame inválido nesta sessão → nunca mais.
+  private var cbinHelloGen = -1
+  private var cbinOkGen = -1
+  private var cbinOff = false
   private var hasWire: Bool { return task != nil || quic != nil }
   /// "wss" | "quic" — fio da geração atual.
   private var wire = "wss"
@@ -1017,9 +1026,21 @@ final class TransportSession {
           switch msg {
           case .string(let s):
             self.onText(g, s)
-          case .data:
-            self.lastInboundAt = self.now()
-            self.owner.bump("binaryDropped")
+          case .data(let d):
+            // [cbin 2026-10-24] sessão cbin: binário → JSON texto (o JS continua só vendo texto)
+            if g == self.cbinHelloGen, !self.cbinOff {
+              if let s = ChatyyCbin.decode(d) {
+                self.owner.bump("cbinFramesIn"); self.owner.bump("cbinBytesIn", Int64(d.count))
+                self.onText(g, s)
+              } else {
+                self.cbinOff = true
+                self.owner.bump("cbinDecodeErr")
+                self.forceReconnect("cbin_decode")
+              }
+            } else {
+              self.lastInboundAt = self.now()
+              self.owner.bump("binaryDropped")
+            }
           @unknown default:
             break
           }
@@ -1067,7 +1088,13 @@ final class TransportSession {
     guard let t = task else { return }
     let g = gen
     sendsInFlight += 1
-    t.send(.string(text)) { [weak self] err in
+    // [cbin 2026-10-24] depois do cbin_ok desta geração: frame vai em cbin (auth*/cbin_* e o que não codifica → texto)
+    var msg = URLSessionWebSocketTask.Message.string(text)
+    if g == cbinOkGen, !cbinOff, !ChatyyCbin.jsonOnly(text), let b = ChatyyCbin.encode(text) {
+      msg = .data(b)
+      owner.bump("cbinFramesOut"); owner.bump("cbinBytesOut", Int64(b.count)); owner.bump("cbinJsonBytesOut", Int64(text.utf8.count))
+    }
+    t.send(msg) { [weak self] err in
       guard let self = self else { return }
       self.owner.q.async {
         if g == self.gen { self.sendsInFlight = max(0, self.sendsInFlight - 1) }
@@ -1113,7 +1140,7 @@ final class TransportSession {
     owner.bump("framesIn")
     owner.bump("bytesIn", Int64(text.utf8.count))
     var type: String? = nil
-    if text.utf8.count < 8192 && (text.contains("\"pong\"") || text.contains("\"auth_success\"") || text.contains("\"auth_error\"")) {
+    if text.utf8.count < 8192 && (text.contains("\"pong\"") || text.contains("\"auth_success\"") || text.contains("\"auth_error\"") || text.contains("\"cbin_")) {
       type = ChatTransport.topType(text)
     }
     switch type {
@@ -1127,6 +1154,11 @@ final class TransportSession {
       noteAuthIdentity(text)
       enqueueFrame(text)
       onAuthSuccess()
+    case "cbin_ok"?:
+      // [cbin 2026-10-24] servidor aceitou: daqui em diante esta geração manda binário
+      if g == cbinHelloGen && !cbinOff { cbinOkGen = g; owner.bump("cbinOk") }
+    case "cbin_no"?:
+      owner.bump("cbinNo")
     case "auth_error"?:
       authRejected = true
       authWatchdogWork?.cancel(); authWatchdogWork = nil
@@ -1152,6 +1184,12 @@ final class TransportSession {
 
   private func onAuthSuccess() {
     authWatchdogWork?.cancel(); authWatchdogWork = nil
+    // [cbin 2026-10-24] pede o fio binário (sem esperar: segue em JSON até o cbin_ok; só WSS)
+    if cfg.cbin && !cbinOff && quic == nil && task != nil && cbinHelloGen != gen {
+      cbinHelloGen = gen
+      rawSend(ChatyyCbin.helloFrame())
+      owner.bump("cbinHello")
+    }
     phys = .authed
     httpRejects = 0
     authRejected = false
