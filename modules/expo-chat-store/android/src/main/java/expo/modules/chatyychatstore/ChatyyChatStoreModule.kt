@@ -26,6 +26,17 @@ class ChatyyChatStoreModule : Module() {
     //     (threadStaleSync), tabela outbox (fila de envio nativa).
     Function("apiVersion") { 3 }
 
+    // [rcpt-bg 2026-10-24] recibos que chegaram em 2º plano (FCM `chat_rcpt` / carona) desde a última leitura:
+    // JSON {conv:[d, r, ts]} ('' = nada); lê e limpa. services/rcptCatchup.js semeia o piso no boot.
+    Function("rcptBgSeedSync") { account: String ->
+      store()?.rcptBgSeedSync(account) ?: ""
+    }
+
+    AsyncFunction("rcptBgApplyAsync") { ah: String, compact: String, promise: Promise ->
+      val st = store()
+      if (st == null) promise.resolve(0) else st.rcptBgApply(ah, compact, "js") { n -> promise.resolve(n) }
+    }
+
     Function("setThreadProfile") { account: String, conv: String, json: String ->
       store()?.setThreadProfile(account, conv, json)
       Unit

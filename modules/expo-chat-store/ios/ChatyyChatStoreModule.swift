@@ -18,6 +18,17 @@ public class ChatyyChatStoreModule: Module {
       return 3
     }
 
+    // [rcpt-bg 2026-10-24] recibos que chegaram em 2º plano (push silencioso / carona da NSE) desde a última
+    // leitura: JSON {conv:[d, r, ts]} ('' = nada); lê e limpa. services/rcptCatchup.js semeia o piso no boot.
+    Function("rcptBgSeedSync") { (account: String) -> String in
+      return ChatyyStoreDB.shared.rcptBgSeedSync(account: account)
+    }
+
+    // [rcpt-bg 2026-10-24] aplica um compacto "cid,d,r;…" (teste/diagnóstico e catch-up do JS sem ator).
+    AsyncFunction("rcptBgApplyAsync") { (ah: String, compact: String, promise: Promise) in
+      ChatyyStoreDB.shared.rcptBgApply(ah: ah, compact: compact, src: "js") { n in promise.resolve(n) }
+    }
+
     Function("setThreadProfile") { (account: String, conv: String, json: String) in
       ChatyyStoreDB.shared.setThreadProfile(account: account, conv: conv, json: json)
     }

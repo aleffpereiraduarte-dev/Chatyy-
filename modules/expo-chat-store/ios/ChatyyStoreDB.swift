@@ -557,6 +557,7 @@ public final class ChatyyStoreDB {
   public func applyBatch(account: String, json: String, done: (([String: Any]) -> Void)? = nil) {
     if account.isEmpty { done?(["ok": 0, "why": "noacct"]); return }
     q.async { [self] in
+      noteAccount(account) // [rcpt-bg 2026-10-24]
       let out = applyBatchNow(account, json)
       done?(out)
     }
@@ -922,10 +923,128 @@ public final class ChatyyStoreDB {
   public func ingestFrames(account: String, frames: [String], done: (([String: Any]) -> Void)? = nil) {
     if account.isEmpty || frames.isEmpty { return }
     q.async { [self] in
+      noteAccount(account) // [rcpt-bg 2026-10-24]
       var out: [String: Any] = ["ok": 1, "messages": 0]
       if let b = ChatyyStoreIngest.translate(me: Self.normAccount(account), frames: frames) { out = applyBatchObj(account, b) }
       done?(out)
     }
+  }
+
+  // MARK: [rcpt-bg 2026-10-24] recibos ✓✓/azul em 2º plano (push silencioso `chat_rcpt` / carona `rcpt` da NSE)
+  // Servidor: /var/www/mail/api/rcpt-bg.php. Compacto "cid,d,r;…" (só DM ou grupo de 2; d = maior id entregue,
+  // r = maior lido). Vira os MESMOS frames chat_delivered/chat_read que o transporte grava (ator "~peer") → foto da
+  // conversa (stUpTo) + foto da HOME (patchHomeReceipt) já certas no próximo cold start, sem JS. Guarda também o piso
+  // p/ o JS semear no boot (rcptBgSeedSync → services/rcptCatchup.js). Conta = a última que o transporte usou;
+  // o push traz `ah` (hash da conta) e só aplica se bater (aparelho com 2 contas nunca grava na errada).
+
+  public static let lastAccountKey = "chatyy.store.last_account"
+  private var lastAccountMemo = "" // só na fila q
+
+  private func noteAccount(_ account: String) {
+    let n = Self.normAccount(account)
+    if n.isEmpty || n == lastAccountMemo { return }
+    lastAccountMemo = n
+    UserDefaults.standard.set(n, forKey: Self.lastAccountKey)
+  }
+
+  public static func lastAccount() -> String {
+    return UserDefaults.standard.string(forKey: lastAccountKey) ?? ""
+  }
+
+  /// `ah` = 12 bytes do SHA-256 (hex) da conta, como o servidor manda; aceita os 2 domínios da mesma conta.
+  public static func accountMatches(_ ah: String, _ account: String) -> Bool {
+    let n = normAccount(account)
+    let a = ah.trimmingCharacters(in: .whitespaces).lowercased()
+    if n.isEmpty || a.count < 16 { return false }
+    var cands = [n]
+    if n.hasSuffix("@onemundo.com.br") { cands.append(String(n.dropLast("@onemundo.com.br".count)) + "@chatyy.com.br") }
+    else if n.hasSuffix("@chatyy.com.br") { cands.append(String(n.dropLast("@chatyy.com.br".count)) + "@onemundo.com.br") }
+    return cands.contains { accountHash($0) == a }
+  }
+
+  /// "cid,d,r;…" → (frames do hub, piso por conversa [d, r]). Até 32 conversas.
+  public static func rcptFrames(_ compact: String) -> ([String], [String: [Int64]]) {
+    var frames: [String] = []
+    var seed: [String: [Int64]] = [:]
+    for part in compact.split(separator: ";").prefix(32) {
+      let f = part.split(separator: ",").map { Int64($0.trimmingCharacters(in: .whitespaces)) ?? 0 }
+      guard f.count >= 3, f[0] > 0 else { continue }
+      let conv = String(f[0]); let r = max(0, f[2]); let d = max(f[1], r)
+      if d <= 0 { continue }
+      seed[conv] = [d, r]
+      let dlv: [String: Any] = ["conversation_id": conv, "email": "~peer",
+                                "message_ids": [NSNumber(value: d)], "message_id": NSNumber(value: d)]
+      if let s = jsonString(["type": "chat_delivered", "data": dlv] as [String: Any]) { frames.append(s) }
+      if r > 0 {
+        let rd: [String: Any] = ["conversation_id": conv, "email": "~peer", "last_read_id": NSNumber(value: r)]
+        if let s = jsonString(["type": "chat_read", "data": rd] as [String: Any]) { frames.append(s) }
+      }
+    }
+    return (frames, seed)
+  }
+
+  /// Aplica um compacto (push silencioso / carona). `done(n conversas)` na fila do store.
+  public func rcptBgApply(ah: String, compact: String, src: String, done: ((Int) -> Void)? = nil) {
+    let acct = Self.lastAccount()
+    if acct.isEmpty || compact.isEmpty || compact.utf8.count > 4096 || !Self.accountMatches(ah, acct) { done?(0); return }
+    let (frames, seed) = Self.rcptFrames(compact)
+    if frames.isEmpty { done?(0); return }
+    q.async { [self] in
+      var n = 0
+      if var b = ChatyyStoreIngest.translate(me: Self.normAccount(acct), frames: frames) {
+        var ct: [String: Any] = [:]
+        for c in seed.keys { ct[c] = "direct" } // servidor só manda DM / grupo de 2 (o outro leu = todos leram)
+        b["conv_types"] = ct
+        let out = applyBatchObj(acct, b)
+        if Self.i64(out["ok"]) == 1 { n = seed.count }
+      }
+      if n > 0, let db = open(acct) {
+        var cur = (metaGet(db, "rbg:seed").flatMap { Self.jsonObject($0) as? [String: Any] }) ?? [:]
+        let now = nowMs()
+        for (c, v) in seed {
+          let old = (cur[c] as? [Any]) ?? []
+          let od = old.count > 0 ? Self.i64(old[0]) : 0, orr = old.count > 1 ? Self.i64(old[1]) : 0
+          cur[c] = [NSNumber(value: max(od, v[0])), NSNumber(value: max(orr, v[1])), NSNumber(value: now)] as [Any]
+        }
+        if cur.count > 64 {
+          let keep = cur.sorted { Self.i64(($0.value as? [Any])?.last) > Self.i64(($1.value as? [Any])?.last) }.prefix(64)
+          cur = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+        }
+        metaSet(db, "rbg:seed", Self.jsonString(cur))
+        metaSet(db, "rbg:last", "\(now)|\(src)|\(n)")
+      }
+      done?(n)
+    }
+  }
+
+  /// JSON {conv:[d, r, ts]} do que chegou em 2º plano desde a última leitura (e limpa). '' = nada. Síncrono.
+  public func rcptBgSeedSync(account: String) -> String {
+    if account.isEmpty { return "" }
+    return q.sync { [self] in
+      guard let db = open(account) else { return "" }
+      let s = metaGet(db, "rbg:seed") ?? ""
+      if !s.isEmpty { metaSet(db, "rbg:seed", nil) }
+      return s
+    }
+  }
+
+  /// Foto da HOME: a linha cuja última msg é MINHA (`lmid`, gravado pelo JS em nativeAdapter.buildRow) e está
+  /// coberta pelo recibo sobe p/ ✓✓ (2) / azul (3). Nunca rebaixa; pendente/falha (receipt 0) fica. Sem `lmid` = no-op.
+  private func patchHomeReceipt(_ db: OpaquePointer, _ conv: String, _ upTo: Int64, _ st: Int) {
+    var stt: OpaquePointer?
+    var hits: [(String, String)] = []
+    if sqlite3_prepare_v2(db, "SELECT scope, row FROM home_rows WHERE id = ?;", -1, &stt, nil) == SQLITE_OK {
+      bind(stt, 1, conv)
+      while sqlite3_step(stt) == SQLITE_ROW {
+        guard var d = Self.jsonObject(colText(stt, 1)) as? [String: Any] else { continue }
+        let lmid = Self.i64(d["lmid"]); let cur = Int(Self.i64(d["receipt"]))
+        if lmid <= 0 || lmid > upTo || cur < 1 || cur >= st { continue }
+        d["receipt"] = NSNumber(value: st)
+        if let s = Self.jsonString(d) { hits.append((colText(stt, 0), s)) }
+      }
+    }
+    sqlite3_finalize(stt)
+    for (scope, s) in hits { run(db, "UPDATE home_rows SET row = ? WHERE scope = ? AND id = ?;", [s, scope, conv]) }
   }
 
   /// Perfil de formato p/ o RowBuilder nativo de texto ("" = remove).
@@ -1035,6 +1154,7 @@ public final class ChatyyStoreDB {
       run(db, "UPDATE receipts SET read_at = MAX(COALESCE(read_at,0), ?), delivered_at = MAX(COALESCE(delivered_at,0), ?) WHERE conv = ? AND msg_id <= ? AND msg_id IN (SELECT id FROM messages WHERE conv = ? AND sender = ?);",
           [now, now, conv, upTo, conv, me])
       if applyThreadOps(db, conv, "", [["op": "stUpTo", "id": NSNumber(value: upTo), "st": 3]]) { dropCached(account, conv) }
+      patchHomeReceipt(db, conv, upTo, 3) // [rcpt-bg 2026-10-24]
       touched.insert(conv)
     }
     for r in (b["delivs"] as? [[String: Any]]) ?? [] {
@@ -1047,8 +1167,10 @@ public final class ChatyyStoreDB {
         run(db, "INSERT OR IGNORE INTO receipts (conv, msg_id, delivered_at, read_at) VALUES (?,?,0,0);", [conv, id])
         run(db, "UPDATE receipts SET delivered_at = MAX(COALESCE(delivered_at,0), ?) WHERE conv = ? AND msg_id = ?;", [at, conv, id])
       }
-      if mx > 0 && convType(db, conv, b) == "direct",
-         applyThreadOps(db, conv, "", [["op": "stUpTo", "id": NSNumber(value: mx), "st": 2]]) { dropCached(account, conv) }
+      if mx > 0 && convType(db, conv, b) == "direct" {
+        if applyThreadOps(db, conv, "", [["op": "stUpTo", "id": NSNumber(value: mx), "st": 2]]) { dropCached(account, conv) }
+        patchHomeReceipt(db, conv, mx, 2) // [rcpt-bg 2026-10-24]
+      }
       touched.insert(conv)
     }
     guard let touch = b["touch"] as? [[String: Any]] else { return (0, 0) }

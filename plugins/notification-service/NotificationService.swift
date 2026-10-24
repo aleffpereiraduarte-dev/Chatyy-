@@ -134,6 +134,7 @@ class NotificationService: UNNotificationServiceExtension {
         // [2026-10-22 dlv-device] Journal ANTES do ack: o ack diz se a mensagem
         // COMPLETA ficou gravada aqui (persisted=1) e leva o device_id do núcleo.
         let persisted = Self.journalMessage(p)
+        Self.stashRcpt(p) // [rcpt-bg 2026-10-24] carona dos recibos (o app aplica ao abrir, antes de pintar)
         Self.reportDelivered(p, persisted: persisted, group: ackGroup) { [weak self] t in self?.addTask(t) }
 
         let type = Self.str(p, "type") ?? ""
@@ -502,6 +503,20 @@ class NotificationService: UNNotificationServiceExtension {
     // MARK: - Payload helpers
 
     /// Top-level userInfo merged with the Expo "body" (dictionary or JSON string).
+    // [rcpt-bg 2026-10-24] Push de chat VISÍVEL pode trazer `rcpt` = recibos ✓✓/azul pendentes DESTE aparelho
+    // ("cid,d,r;…", só ids/estado; servidor rcpt-bg.php, flag por conta). A NSE não alcança o store do app →
+    // guarda no App Group; ChatyyRcptBgAppDelegateSubscriber (expo-chat-store) drena ao abrir / voltar ao 1º plano.
+    private static func stashRcpt(_ p: [String: Any]) {
+        guard let r = str(p, "rcpt"), !r.isEmpty, r.utf8.count <= 4096,
+              FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) != nil,
+              let ud = UserDefaults(suiteName: appGroupId) else { return }
+        if ud.bool(forKey: "chatyy.rcpt_bg_native_off") { return }
+        var arr = (ud.array(forKey: "chatyy.rcpt.pending") as? [[String: Any]]) ?? []
+        arr.append(["r": r, "ah": str(p, "rcpt_ah") ?? "", "t": Date().timeIntervalSince1970])
+        if arr.count > 8 { arr = Array(arr.suffix(8)) } // cumulativo: o mais novo já cobre os antigos
+        ud.set(arr, forKey: "chatyy.rcpt.pending")
+    }
+
     private static func payload(_ userInfo: [AnyHashable: Any]) -> [String: Any] {
         var out: [String: Any] = [:]
         for (k, v) in userInfo { if let ks = k as? String { out[ks] = v } }

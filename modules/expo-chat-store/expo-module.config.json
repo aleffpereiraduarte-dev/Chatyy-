@@ -1,7 +1,8 @@
 {
   "platforms": ["apple", "android"],
   "apple": {
-    "modules": ["ChatyyChatStoreModule"]
+    "modules": ["ChatyyChatStoreModule"],
+    "appDelegateSubscribers": ["ChatyyRcptBgAppDelegateSubscriber"]
   },
   "android": {
     "modules": ["expo.modules.chatyychatstore.ChatyyChatStoreModule"]

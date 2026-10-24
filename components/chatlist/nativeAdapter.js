@@ -189,6 +189,9 @@ export function presenceEmailOf(conv, me) {
   return presenceEmail || conv.other_email || conv.contact_email || null;
 }
 
+// [rcpt-bg 2026-10-24] catch-up de recibos ao abrir (services/rcptCatchup.js) — sobe junto com a lista.
+try { setTimeout(() => { try { require('../../services/rcptCatchup').ensureRcptCatchup(); } catch {} }, 0); } catch {}
+
 export function buildRow(conv, ctx) {
   const t = ctx.t;
   const me = ctx.me || '';
@@ -409,6 +412,12 @@ export function buildRow(conv, ctx) {
     const _tk = (!locked && !typingName && !draftText) ? lastMediaKind(lastMsg) : '';
     row.thumbUrl = _tk ? (lastMediaThumb(lastMsg) || '') : '';
     row.thumbKind = _tk || '';
+  }
+  // [rcpt-bg 2026-10-24] id da MINHA última msg (só DM com ✓/✓✓/azul): o store nativo sobe o tique da foto da
+  // home quando um recibo chega em 2º plano (push silencioso / carona da NSE). Binário atual ignora a chave.
+  if (receipt > 0 && !locked && !isGroup && !isChannel && !isSaved) {
+    const _lmid = Number(lastMsg && lastMsg.id);
+    if (_lmid > 0 && Number.isSafeInteger(_lmid)) row.lmid = _lmid;
   }
   const meta = { conv, title, avatarEmail, ringEmail, hasRing: !!ring };
   return { row, meta };

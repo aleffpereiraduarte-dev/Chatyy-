@@ -61,6 +61,21 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
+    /** [rcpt-bg 2026-10-24] expo.modules.chatyychatstore.RcptBg.handle por reflexão (sem dependência gradle). */
+    private fun rcptBgHandle(data: Map<String, String>): Boolean {
+        if (data["type"] != "chat_rcpt" && !data.containsKey("rcpt")) {
+            val b = data["body"] ?: return false
+            if (!b.contains("chat_rcpt") && !b.contains("\"rcpt\"")) return false
+        }
+        return try {
+            val m = Class.forName("expo.modules.chatyychatstore.RcptBg").getMethod("handle", Context::class.java, Map::class.java)
+            (m.invoke(null, applicationContext, data) as? Boolean) ?: false
+        } catch (t: Throwable) {
+            Log.w("ChatyyRcptBg", "bridge: ${t.javaClass.simpleName}")
+            data["type"] == "chat_rcpt"
+        }
+    }
+
     private fun handleMessage(message0: RemoteMessage, pt: ChatyyPushTiming.Mark) {
         var message = message0 // [push-minimo 2026-10-24] trocado pela mensagem real quando o push é mínimo
         // [2026-10-17 expo-call-unpack] Push de chamada roteado pelo Expo chega
@@ -84,6 +99,11 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
         }
         val type = data["type"] ?: ""
         pt.kind = "t:" + type.take(24)
+
+        // [rcpt-bg 2026-10-24] Recibos ✓✓/azul em 2º plano → store nativo, sem JS (expo-chat-store RcptBg).
+        // `chat_rcpt` (data, prioridade normal) = só recibos → consumido aqui (nada desenhado, nada p/ o JS).
+        // Push de chat com carona `rcpt` → grava e segue o caminho normal.
+        if (rcptBgHandle(data)) { pt.kind = "rcpt"; return }
 
         // [2026-10-17 android-wa] A token refresh that failed offline is retried
         // on the next push (cheap no-op when nothing is pending; 5 min throttle).

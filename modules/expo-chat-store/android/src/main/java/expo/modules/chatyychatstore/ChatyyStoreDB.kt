@@ -45,6 +45,36 @@ class ChatyyStoreDB private constructor(ctx: Context) {
 
     fun normAccount(s: String): String = s.trim().lowercase()
 
+    // [rcpt-bg 2026-10-24] conta da última gravação do transporte (o push silencioso não traz e-mail, só o hash)
+    const val RCPT_PREFS = "chatyy_rcpt_bg"
+
+    /** `ah` = 12 bytes do SHA-256 (hex) da conta; aceita os 2 domínios da mesma conta. */
+    fun accountMatches(ah: String, account: String): Boolean {
+      val n = normAccount(account); val a = ah.trim().lowercase()
+      if (n.isEmpty() || a.length < 16) return false
+      val cands = arrayListOf(n)
+      if (n.endsWith("@onemundo.com.br")) cands.add(n.removeSuffix("@onemundo.com.br") + "@chatyy.com.br")
+      else if (n.endsWith("@chatyy.com.br")) cands.add(n.removeSuffix("@chatyy.com.br") + "@onemundo.com.br")
+      return cands.any { accountHash(it) == a }
+    }
+
+    /** "cid,d,r;…" → (frames do hub, piso por conversa [d, r]). Até 32 conversas. */
+    fun rcptFrames(compact: String): Pair<List<String>, Map<String, LongArray>> {
+      val frames = ArrayList<String>(); val seed = LinkedHashMap<String, LongArray>()
+      for (part in compact.split(";").take(32)) {
+        val f = part.split(",").map { it.trim().toLongOrNull() ?: 0L }
+        if (f.size < 3 || f[0] <= 0) continue
+        val conv = f[0].toString(); val r = maxOf(0L, f[2]); val d = maxOf(f[1], r)
+        if (d <= 0) continue
+        seed[conv] = longArrayOf(d, r)
+        frames.add(JSONObject().put("type", "chat_delivered").put("data", JSONObject().put("conversation_id", conv).put("email", "~peer")
+          .put("message_ids", JSONArray().put(d)).put("message_id", d)).toString())
+        if (r > 0) frames.add(JSONObject().put("type", "chat_read").put("data", JSONObject().put("conversation_id", conv).put("email", "~peer")
+          .put("last_read_id", r)).toString())
+      }
+      return Pair(frames, seed)
+    }
+
     /**
      * [e2ee5 WP-08b] Mesma conta com os dois domínios (apitest@onemundo.com.br ≡ apitest@chatyy.com.br,
      * CONTRATO §1.1): forma canônica = @chatyy.com.br. Usada p/ escolher o arquivo e as chaves de cache.
@@ -441,6 +471,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
   fun applyBatch(account: String, json: String, done: ((Map<String, Any>) -> Unit)? = null) {
     if (account.isEmpty()) { done?.invoke(mapOf("ok" to 0, "why" to "noacct")); return }
     ex.execute {
+      noteAccount(account) // [rcpt-bg 2026-10-24]
       val out = try { applyBatchNow(account, json) } catch (_: SQLiteDatabaseCorruptException) { drop(account); mapOf<String, Any>("ok" to 0, "why" to "corrupt") } catch (t: Throwable) { mapOf<String, Any>("ok" to 0, "why" to (t.message ?: "err")) }
       try { done?.invoke(out) } catch (_: Throwable) {}
     }
@@ -740,6 +771,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
   fun ingestFrames(account: String, frames: List<String>, done: ((Map<String, Any>) -> Unit)? = null) {
     if (account.isEmpty() || frames.isEmpty()) return
     ex.execute {
+      noteAccount(account) // [rcpt-bg 2026-10-24]
       val out = try {
         val b = StoreIngest.translate(normAccount(account), frames)
         if (b == null) mapOf<String, Any>("ok" to 1, "messages" to 0) else applyBatchObj(account, b).also { e2eIngest(account, b) }
@@ -747,6 +779,88 @@ class ChatyyStoreDB private constructor(ctx: Context) {
       catch (t: Throwable) { mapOf<String, Any>("ok" to 0, "why" to (t.message ?: "err")) }
       try { done?.invoke(out) } catch (_: Throwable) {}
     }
+  }
+
+  // ─── [rcpt-bg 2026-10-24] recibos ✓✓/azul em 2º plano (FCM data `chat_rcpt` / carona `rcpt`), sem JS ───
+  // Espelho do Swift (ChatyyStoreDB.rcptBgApply). Servidor: /var/www/mail/api/rcpt-bg.php. Compacto
+  // "cid,d,r;…" (só DM / grupo de 2) → os MESMOS frames chat_delivered/chat_read do transporte (ator "~peer")
+  // → foto da conversa (stUpTo) + foto da HOME (patchHomeReceipt) + piso p/ o JS semear no boot.
+  private var lastAccountMemo = "" // só no executor
+
+  private fun noteAccount(account: String) {
+    val n = normAccount(account)
+    if (n.isEmpty() || n == lastAccountMemo) return
+    lastAccountMemo = n
+    try { appCtx.getSharedPreferences(RCPT_PREFS, Context.MODE_PRIVATE).edit().putString("last_account", n).apply() } catch (_: Throwable) {}
+  }
+
+  fun lastAccount(): String =
+    try { appCtx.getSharedPreferences(RCPT_PREFS, Context.MODE_PRIVATE).getString("last_account", "") ?: "" } catch (_: Throwable) { "" }
+
+  /** Aplica um compacto. `done(n conversas)` no executor do store. */
+  fun rcptBgApply(ah: String, compact: String, src: String, done: ((Int) -> Unit)? = null) {
+    val acct = lastAccount()
+    if (acct.isEmpty() || compact.isEmpty() || compact.length > 4096 || !accountMatches(ah, acct)) { done?.invoke(0); return }
+    val (frames, seed) = rcptFrames(compact)
+    if (frames.isEmpty()) { done?.invoke(0); return }
+    ex.execute {
+      var n = 0
+      try {
+        val b = StoreIngest.translate(normAccount(acct), frames)
+        if (b != null) {
+          val ct = JSONObject(); for (c in seed.keys) ct.put(c, "direct") // servidor só manda DM / grupo de 2
+          b.put("conv_types", ct)
+          val out = applyBatchObj(acct, b)
+          if (jLong(out["ok"]) == 1L) n = seed.size
+        }
+        if (n > 0) {
+          val db = open(acct)
+          if (db != null) {
+            val cur = try { JSONObject(metaGet(db, "rbg:seed") ?: "{}") } catch (_: Throwable) { JSONObject() }
+            val now = System.currentTimeMillis()
+            for ((c, v) in seed) {
+              val old = cur.optJSONArray(c)
+              val od = old?.optLong(0, 0L) ?: 0L; val orr = old?.optLong(1, 0L) ?: 0L
+              cur.put(c, JSONArray().put(maxOf(od, v[0])).put(maxOf(orr, v[1])).put(now))
+            }
+            if (cur.length() > 64) {
+              val ks = ArrayList<String>(); val it = cur.keys(); while (it.hasNext()) ks.add(it.next())
+              ks.sortByDescending { cur.optJSONArray(it)?.optLong(2, 0L) ?: 0L }
+              for (k in ks.drop(64)) cur.remove(k)
+            }
+            metaSet(db, "rbg:seed", cur.toString())
+            metaSet(db, "rbg:last", "$now|$src|$n")
+          }
+        }
+      } catch (_: SQLiteDatabaseCorruptException) { drop(acct) } catch (_: Throwable) {}
+      try { done?.invoke(n) } catch (_: Throwable) {}
+    }
+  }
+
+  /** JSON {conv:[d, r, ts]} do que chegou em 2º plano desde a última leitura (e limpa). '' = nada. Síncrono. */
+  fun rcptBgSeedSync(account: String): String {
+    if (account.isEmpty()) return ""
+    return onEx(1500L, "") {
+      val db = open(account) ?: return@onEx ""
+      val s = metaGet(db, "rbg:seed") ?: ""
+      if (s.isNotEmpty()) metaSet(db, "rbg:seed", null)
+      s
+    }
+  }
+
+  /** Foto da HOME: linha cuja última msg é MINHA (`lmid`, do JS) coberta pelo recibo → receipt 2/3. Nunca rebaixa. */
+  private fun patchHomeReceipt(db: SQLiteDatabase, conv: String, upTo: Long, st: Int) {
+    val hits = ArrayList<Pair<String, String>>()
+    db.rawQuery("SELECT scope, row FROM home_rows WHERE id = ?", arrayOf(conv)).use { c ->
+      while (c.moveToNext()) {
+        val d = try { JSONObject(c.getString(1) ?: "{}") } catch (_: Throwable) { continue }
+        val lmid = jLong(d.opt("lmid")); val cur = jLong(d.opt("receipt")).toInt()
+        if (lmid <= 0 || lmid > upTo || cur < 1 || cur >= st) continue
+        d.put("receipt", st)
+        hits.add(Pair(c.getString(0) ?: "", d.toString()))
+      }
+    }
+    for ((scope, s) in hits) db.execSQL("UPDATE home_rows SET row = ? WHERE scope = ? AND id = ?", arrayOf<Any?>(s, scope, conv))
   }
 
   /** Perfil de formato p/ o RowBuilder nativo de texto ("" = remove). */
@@ -823,6 +937,7 @@ class ChatyyStoreDB private constructor(ctx: Context) {
         db.execSQL("UPDATE receipts SET read_at = MAX(COALESCE(read_at,0), ?), delivered_at = MAX(COALESCE(delivered_at,0), ?) WHERE conv = ? AND msg_id <= ? AND msg_id IN (SELECT id FROM messages WHERE conv = ? AND sender = ?)",
           arrayOf<Any?>(now, now, conv, upTo, conv, me))
         if (applyThreadOps(db, conv, "", JSONArray().put(JSONObject().put("op", "stUpTo").put("id", upTo).put("st", 3)))) dropCached(account, conv)
+        patchHomeReceipt(db, conv, upTo, 3) // [rcpt-bg 2026-10-24]
         touched.add(conv)
       }
     }
@@ -838,8 +953,10 @@ class ChatyyStoreDB private constructor(ctx: Context) {
           db.execSQL("INSERT OR IGNORE INTO receipts (conv, msg_id, delivered_at, read_at) VALUES (?,?,0,0)", arrayOf<Any?>(conv, id))
           db.execSQL("UPDATE receipts SET delivered_at = MAX(COALESCE(delivered_at,0), ?) WHERE conv = ? AND msg_id = ?", arrayOf<Any?>(at, conv, id))
         }
-        if (mx > 0 && convType(db, conv, b) == "direct" &&
-          applyThreadOps(db, conv, "", JSONArray().put(JSONObject().put("op", "stUpTo").put("id", mx).put("st", 2)))) dropCached(account, conv)
+        if (mx > 0 && convType(db, conv, b) == "direct") {
+          if (applyThreadOps(db, conv, "", JSONArray().put(JSONObject().put("op", "stUpTo").put("id", mx).put("st", 2)))) dropCached(account, conv)
+          patchHomeReceipt(db, conv, mx, 2) // [rcpt-bg 2026-10-24]
+        }
         touched.add(conv)
       }
     }
