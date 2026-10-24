@@ -125,12 +125,14 @@ export function maybeRegisterNoiseKey(email, why = 'auto') {
   if (_regBusy) return _regBusy;
   _regBusy = (async () => {
     try {
-      if (!quicKind() || !isLocalOn()) { _lastReg = { state: 'skip', why: 'off' }; return _lastReg; }
+      // [quic-noise §9.3] flag local OU o servidor ligou a conta (auto)
+      let em0 = email; if (!em0) { try { em0 = require('./websocket').default?.email || ''; } catch {} }
+      if (!quicKind() || !(isLocalOn() || require('./clientLb').quicAutoFor(em0))) { _lastReg = { state: 'skip', why: 'off' }; return _lastReg; }
       const api = require('./api');
       let em = email;
       if (!em) { try { em = require('./websocket').default?.email || ''; } catch {} }
       const canon = _canon(em || '');
-      if (!canon || !require('./clientLb').quicAllowedFor(canon)) { _lastReg = { state: 'skip', why: 'not_allowed' }; return _lastReg; }
+      if (!canon || !require('./clientLb').quicTransportFor(canon)) { _lastReg = { state: 'skip', why: 'not_allowed' }; return _lastReg; }
       const pubB64 = devicePub();
       const C = require('./crypto');
       const pub = pubB64 && C._b64ToU8 ? C._b64ToU8(pubB64) : null;

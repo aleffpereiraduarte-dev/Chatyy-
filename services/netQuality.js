@@ -323,6 +323,8 @@ function _ctx() {
     if (w) {
       o.reg = String(w.effRegion || '').slice(0, 8);
       o.tr = String(w.transportKind || '').slice(0, 8);
+      // [quic-noise rollout 2026-10-24] fio físico do nativo: 'quic' separa a telemetria do QUIC da do WSS (gates do rollout)
+      if (o.tr === 'native') { try { if (require('./quicProto').currentWire() === 'quic') o.tr = 'quic'; } catch {} }
       const l = Number(w._latency);
       if (l > 0) o.rtt = Math.min(99999, Math.round(l));
     }

@@ -83,6 +83,9 @@ export function validateList(j) {
       q: r.id !== 'us' && (r.q === 1 || r.q === true),
       qp: (Number.isInteger(r.qp) && r.qp > 0 && r.qp < 65536) ? r.qp : 443,
       nk: typeof r.nk === 'string' && /^[a-z0-9]{1,16}$/.test(r.nk) ? r.nk : null,
+      // [quic-noise PRODUÇÃO 2026-10-24] PROTOCOLO §9: certificado da raiz (o NATIVO confere a assinatura) + % da região
+      nc: typeof r.nc === 'string' && r.nc.length <= 1024 && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(r.nc) ? r.nc : null,
+      qb: Number.isInteger(r.qb) && r.qb >= 0 && r.qb <= 10000 ? r.qb : null,
     });
   }
   const us = regions.find((r) => r.id === 'us');
@@ -125,7 +128,22 @@ function _validTransport(t) {
   if (!t || typeof t !== 'object') return null;
   const on = (v) => v === 1 || v === true;
   const acc = Array.isArray(t.acc) ? t.acc.filter((x) => typeof x === 'string' && /^[0-9a-f]{8}$/.test(x)).slice(0, 64) : null;
-  return { quic: on(t.quic), noise: on(t.noise), noise0rtt: on(t.noise0rtt), ntcp: on(t.ntcp), noise_test: on(t.noise_test), acc };
+  // [quic-noise PRODUÇÃO 2026-10-24] §9.3: bp (pontos-base), salt do balde, auto (liga sem o interruptor escondido)
+  const bp = Number.isInteger(t.bp) && t.bp >= 0 && t.bp <= 10000 ? t.bp : 0;
+  const salt = typeof t.salt === 'string' && /^[a-z0-9]{1,16}$/.test(t.salt) ? t.salt : 'q1';
+  return { quic: on(t.quic), noise: on(t.noise), noise0rtt: on(t.noise0rtt), ntcp: on(t.ntcp), noise_test: on(t.noise_test), acc, bp, salt, auto: on(t.auto) };
+}
+
+/** [quic-noise §9.3] e-mail canônico (trim, minúsculas, @onemundo.com.br → @chatyy.com.br). */
+export function quicCanon(email) {
+  return String(email || '').trim().toLowerCase().replace(/@onemundo\.com\.br$/, '@chatyy.com.br');
+}
+
+/** [quic-noise §9.3] balde estável 0..9999 (= Go qnwire.RolloutBucket / leaf). Não-ASCII → 10000 (nunca por %). */
+export function quicBucket(salt, canonEmail) {
+  const s = String(salt || 'q1') + '|' + String(canonEmail || '');
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) >= 0x80) return 10000;
+  return parseInt(fnv1a(s), 16) % 10000;
 }
 const HEX_RE = /^[0-9a-f]{8,16}$/;
 function _validNet(n) {
@@ -615,16 +633,25 @@ export function quicTransportFor(email) {
   if (!t || !t.quic || !t.noise) return null;
   const e = String(email || '').trim().toLowerCase();
   if (!e) return null;
-  if (t.acc) {
-    const canon = e.replace(/@onemundo\.com\.br$/, '@chatyy.com.br');
-    if (!t.acc.includes(fnv1a(e)) && !t.acc.includes(fnv1a(canon))) return null;
-  }
+  const canon = quicCanon(e);
+  // [quic-noise §9.3] conta na allowlist (acc) OU balde < % da região (qb) / global (bp)
+  const inAcc = Array.isArray(t.acc) && (t.acc.includes(fnv1a(e)) || t.acc.includes(fnv1a(canon)));
+  const bucket = quicBucket(t.salt, canon);
   const regions = {};
   for (const r of l.regions || []) {
-    if (r && r.q && r.nk && r.id !== 'us') regions[r.id] = { kid: r.nk, port: r.qp || 443 };
+    if (!r || !r.q || !r.nk || r.id === 'us') continue;
+    const pct = r.qb != null ? r.qb : (t.bp || 0);
+    if (!inAcc && !(bucket < pct)) continue;
+    if (r.nc) regions[r.id] = { kid: r.nk, port: r.qp || 443, nc: r.nc }; // produção: o nativo confere a raiz
+    else if (inAcc && t.noise_test && r.nk === 't1') regions[r.id] = { kid: r.nk, port: r.qp || 443 }; // TESTE só p/ allowlist
   }
   if (!Object.keys(regions).length) return null;
-  return { on: true, noise: true, noiseTest: !!t.noise_test, regions, hsMs: 1500, migrate: true };
+  return { on: true, noise: true, noiseTest: !!t.noise_test && inAcc, auto: !!t.auto, regions, hsMs: 1500, migrate: true };
+}
+
+/** [quic-noise §9.3] o servidor liga esta conta SEM o interruptor escondido (auto=1 e alguma região elegível). */
+export function quicAutoFor(email) {
+  try { const q = quicTransportFor(email); return !!(q && q.auto); } catch { return false; }
 }
 
 /**
@@ -637,7 +664,8 @@ export function quicAllowedFor(email) {
   if (!t || !t.quic || !Array.isArray(t.acc) || !t.acc.length) return false;
   const e = String(email || '').trim().toLowerCase();
   if (!e) return false;
-  const canon = e.replace(/@onemundo\.com\.br$/, '@chatyy.com.br');
+  if (quicAutoFor(e)) return false; // [§9.3] servidor já liga a conta: o interruptor escondido some
+  const canon = quicCanon(e);
   return t.acc.includes(fnv1a(e)) || t.acc.includes(fnv1a(canon));
 }
 
@@ -690,6 +718,6 @@ export function beacon(ev, data = {}) {
 export default {
   getList, refreshList, isClientLbOn, isUsable, usableRegions, regionById, pickCandidates, decide,
   rankRegions, loadState, saveState, isEconomy, beacon, tzGuess, deviceTz, validateList, regionsNear, distKm,
-  netSignature, netKeys, listNetStale, netMemGet, netMemPut, noteWsRtt, wsRttFor, blendScores, wsLeafFor, fnv1a, nearestTo, quicTransportFor, quicAllowedFor,
+  netSignature, netKeys, listNetStale, netMemGet, netMemPut, noteWsRtt, wsRttFor, blendScores, wsLeafFor, fnv1a, nearestTo, quicTransportFor, quicAllowedFor, quicAutoFor, quicBucket, quicCanon,
   physNearest, stickyOn, stickyHolds, beatsBig, stickyWouldSwitch, STICKY,
 };
