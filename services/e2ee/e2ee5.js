@@ -708,7 +708,52 @@ function _applyState(k, d, prev) {
     } catch (_) {}
   }
   if (!prev || prev.mode !== ns.mode || prev.blocked !== ns.blocked) _notifyConv(k, ns);
+  if (ns.mode === 0 && ns.canEnable && !ns.blocked) _maybeAutoOn(k);
   return ns;
+}
+
+// ───────────────────────────────────────────────────────────── ligar automático
+// [e2ee5 padrão 2026-10-24] E2EE POR PADRÃO: conversa elegível (todos os membros liberados e com aparelho E2EE,
+// can_enable) liga sozinha — conversa nova nasce cifrada; antiga migra com a mensagem de sistema "e2ee_on"
+// (aviso visível a todos). Servidor manda: E2EE5_FLAGS=auto_on → status.flags.e2ee5_auto_on. O pedido vai com
+// `auto: true`: o servidor NUNCA religa conversa que já foi ligada/desligada antes (e2ee_changed_at preenchido)
+// e responde auto_skipped. 1 tentativa por conversa a cada 10 min. Kill (OTA): globalThis.__chatyy_e2ee5_auto_on = false.
+// O 1º envio espera a ativação em andamento (≤ AUTO_WAIT_MS) para não sair em claro (sealForSend).
+const AUTO_RETRY_MS = 10 * 60 * 1000;
+const AUTO_WAIT_MS = 4000;
+const _autoAt = new Map();   // conv → última tentativa
+const _autoP = new Map();    // conv → promise da ativação em andamento
+function _autoOnFlag() {
+  try {
+    const g = _g().__chatyy_e2ee5_auto_on;
+    if (g === false) return false;
+    if (g === true) return true; // QA
+    const st = _sess && _sess.status;
+    return !!(st && st.flags && st.flags.e2ee5_auto_on === true);
+  } catch (_) { return false; }
+}
+function _maybeAutoOn(k) {
+  try {
+    if (!_sess || !_sess.signed || !_autoOnFlag() || _autoP.has(k)) return;
+    const t = Date.now();
+    if (t - (_autoAt.get(k) || 0) < AUTO_RETRY_MS) return;
+    _autoAt.set(k, t);
+    if (_autoAt.size > 500) { try { _autoAt.delete(_autoAt.keys().next().value); } catch (_) {} }
+    const p = (async () => {
+      const r = await _http('e2ee5_conversation_state', { conv_id: k, set: 1, auto: true });
+      if (r.ok && r.data) {
+        _applyState(k, r.data, _conv.get(k));
+        _log('auto_on', { conv: k, changed: !!r.data.changed, skip: r.data.auto_skipped || null });
+      } else _log('auto_on_fail', { conv: k, code: r.code || 'server' });
+    })().catch(() => {}).finally(() => { _autoP.delete(k); });
+    _autoP.set(k, p);
+  } catch (_) {}
+}
+/** Espera a ativação automática em andamento desta conversa (no máx. AUTO_WAIT_MS). Nunca lança. */
+export async function autoOnWait(cid) {
+  const p = _autoP.get(String(cid));
+  if (!p) return;
+  try { await Promise.race([p, new Promise((res) => setTimeout(res, AUTO_WAIT_MS))]); } catch (_) {}
 }
 
 /**
@@ -718,9 +763,10 @@ function _applyState(k, d, prev) {
 export async function prepareConversation(cid) {
   if (!isOn() || cid == null) return null;
   const sP = ensureSession();
-  const st = await convState(cid, { force: true });
+  let st = await convState(cid, { force: true });
   const s = await sP;
   if (!st) return null;
+  if (st.mode !== 1 && _autoP.has(String(cid))) { await autoOnWait(cid); st = _conv.get(String(cid)) || st; } // [e2ee5 padrão] liga antes do composer
   if (s && st.mode === 1 && st.members.length) { try { _C().trackUsers(st.members).catch(() => {}); } catch (_) {} }
   if (s && s.signed && st.mode === 1) _prewarm(String(cid), st.members); // [e2ee5 utd-wa] chave antes da 1ª mensagem
   return { ...st, ready: !!(s && s.signed), uid: s ? s.uid : null };
@@ -852,6 +898,7 @@ export async function sealForSend(convId, content, type, fileUrl, cmid, opts) {
   const k = String(convId);
   let mode = convModeSync(k);
   if (mode == null) { const st = await convState(k).catch(() => null); mode = st ? st.mode : 0; }
+  if (mode !== 1 && _autoP.has(k)) { await autoOnWait(k); mode = convModeSync(k); } // [e2ee5 padrão] conversa nasce cifrada
   if (mode !== 1) {
     if (isEnvelope(content)) {
       // Estado mudou para 0 depois de cifrar: o texto local permite reenviar em claro (§5.4).
@@ -2621,7 +2668,7 @@ export function relayScrub(conversationId, message) {
 const e2ee5 = {
   isOn, isEnvelope, envVersion, isV5Family, keyOf, stateText, ensureSession, onWsAuth, endSession, requestSync,
   wsAuthFields, convState, convModeSync, convStateSync, isConvE2eeSync, watchConversation, prepareConversation,
-  setConversationMode, sealText, sealEdit, sealForSend, sealMetaOf, peek, peekByMid, peekFailure, noteServerId,
+  setConversationMode, autoOnWait, sealText, sealEdit, sealForSend, sealMetaOf, peek, peekByMid, peekFailure, noteServerId,
   decryptRow, applyToRow, foldEdits, rowNeedsRefresh, sysKind, sysText, previewText, searchLocal, forwardClient,
   outboxScrub, relayScrub, afterSend, editViaSend, editOf, listLocal, willRetryRejected, sessionSync, deviceIdSync, myUidSync, isReadySync,
   sealPayload, reactionsView, reactViaE2ee, createPoll, votePoll, createMeetup, meetupRsvp, isE2eeMessage, // [e2ee5 WP-09/WP-11]

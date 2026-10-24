@@ -621,6 +621,7 @@ export async function uploadViaChatUpload(conv, file, o) {
   if (!e5.isOn() || conv == null) return null;
   let mode = e5.convModeSync(conv);
   if (mode == null) { const st = await e5.convState(conv).catch(() => null); mode = st ? st.mode : 0; }
+  if (mode !== 1 && e5.autoOnWait) { await e5.autoOnWait(conv); mode = e5.convModeSync(conv) ?? mode; } // [e2ee5 padrão] ativação automática em andamento
   if (mode !== 1) return null;
   if (o && o.viewOnce) return { success: false, code: 'e2ee5_unsupported_type', message: 'Visualização única ainda não está disponível em conversa protegida.' };
   const kind = kindOfAppType((o && o.msgType) || _guessType(file), file && file.name, file && file.type);
@@ -659,6 +660,7 @@ export async function queueStep(row, p, file, h) {
   const conv = p.conversation_id;
   let mode0 = e5.convModeSync(conv);
   if (mode0 == null && !p.e2e_draft && !p.e2e_env) { const s0 = await e5.convState(conv).catch(() => null); mode0 = s0 ? s0.mode : 0; }
+  if (!p.e2e_draft && !p.e2e_env && mode0 !== 1 && e5.autoOnWait) { await e5.autoOnWait(conv); mode0 = e5.convModeSync(conv) ?? mode0; } // [e2ee5 padrão]
   if (!p.e2e_draft && !p.e2e_env && mode0 !== 1) return false;
   if (p.e2e_env && p.cdn_url) {
     await h.markUploadReady(cmi, null);

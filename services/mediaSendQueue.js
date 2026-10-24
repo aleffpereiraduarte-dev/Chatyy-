@@ -1096,7 +1096,7 @@ export async function enqueueMedia(payload) {
   } catch { _srcCopy = null; }
   // [e2ee5 WP-11] estado da conversa conhecido ANTES de gravar (a linha de conversa E2EE guarda a legenda
   // só no rascunho cifrável e nunca vai à fila nativa/upload em claro).
-  try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn() && payload.conversation_id != null && _e5.convModeSync(payload.conversation_id) == null) await _e5.convState(payload.conversation_id); } catch {}
+  try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn() && payload.conversation_id != null && _e5.convModeSync(payload.conversation_id) == null) await _e5.convState(payload.conversation_id); if (_e5.isOn() && payload.conversation_id != null) await _e5.autoOnWait?.(payload.conversation_id); } catch {} // [e2ee5 padrão] ativação automática em andamento
   const r = await enqueue(payload, { lane: 'upload' });
   if (!r && _srcCopy) { try { await _deleteDurable({ durable_name: _srcCopy }); } catch {} }
   if (r) {
