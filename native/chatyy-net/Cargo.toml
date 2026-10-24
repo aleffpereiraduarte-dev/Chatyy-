@@ -27,6 +27,9 @@ ring = "0.17"
 
 [dev-dependencies]
 rcgen = "0.13"
+# tests/regcert.rs: lê os vetores do PROTOCOLO §9 (regcert_vectors.json).
+serde_json = "1"
+base64 = "0.22"
 
 [profile.release]
 opt-level = "z"

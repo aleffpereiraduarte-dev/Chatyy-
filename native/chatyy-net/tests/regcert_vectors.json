@@ -1,0 +1,124 @@
+{
+ "about": "PROTOCOLO §9 — certificado de região (CYRC v1). Raiz de TESTE dos vetores (NÃO é a de produção).",
+ "bucket": [
+  {
+   "bucket": 9153,
+   "email": "duarte@chatyy.com.br",
+   "salt": "q1"
+  },
+  {
+   "bucket": 2364,
+   "email": "qa2@chatyy.com.br",
+   "salt": "q1"
+  },
+  {
+   "bucket": 9634,
+   "email": "duarte@chatyy.com.br",
+   "salt": "q2"
+  }
+ ],
+ "cert_hex": "4359524301037672310373636c02703159d5100e73928202cad15e5d86beadb10e1eb0bfe0bb78e5f0faef3b3423b47d02e1a7fda9e6a454db61fcb0cd931fef7c3ab30136112261374834007d752526b6cb243a5ba247c042c13c4e347e68f39fffef3c72b9d7c2e326246005c8ad88de0000000068f6ba4000000000743aa380",
+ "expect_ok": {
+  "noise_pub": "WdUQDnOSggLK0V5dhr6tsQ4esL/gu3jl8PrvOzQjtH0=",
+  "not_after": 1950000000,
+  "not_before": 1761000000,
+  "pins": [
+   "4af9qeakVNth/LDNkx/vfDqzATYRImE3SDQAfXUlJrY=",
+   "yyQ6W6JHwELBPE40fmjzn//vPHK518LjJiRgBcitiN4="
+  ]
+ },
+ "roots": {
+  "vr1": "gsq4oYdlD8W4rC7IqCsHwmu7mDrVy/X0hCQty/XMYj0="
+ },
+ "signed_ctx": "chatyy-region-cert/1\\0",
+ "vectors": [
+  {
+   "name": "ok",
+   "nc": "Q1lSQwEDdnIxA3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA.xhGjej0ehNvkFSEk12FPiTRgL6kbo2Qx1u0OzwKEut7GHcRjaPsip9ZoCxrO1q1eWy2vaFaLX6kJ78aJ1n8QAw",
+   "region": "scl",
+   "kid": "p1",
+   "now": 1761350400,
+   "ok": true
+  },
+  {
+   "name": "regiao_errada",
+   "nc": "Q1lSQwEDdnIxA3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA.xhGjej0ehNvkFSEk12FPiTRgL6kbo2Qx1u0OzwKEut7GHcRjaPsip9ZoCxrO1q1eWy2vaFaLX6kJ78aJ1n8QAw",
+   "region": "mex",
+   "kid": "p1",
+   "now": 1761350400,
+   "ok": false
+  },
+  {
+   "name": "kid_errado",
+   "nc": "Q1lSQwEDdnIxA3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA.xhGjej0ehNvkFSEk12FPiTRgL6kbo2Qx1u0OzwKEut7GHcRjaPsip9ZoCxrO1q1eWy2vaFaLX6kJ78aJ1n8QAw",
+   "region": "scl",
+   "kid": "p2",
+   "now": 1761350400,
+   "ok": false
+  },
+  {
+   "name": "vencido",
+   "nc": "Q1lSQwEDdnIxA3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA.xhGjej0ehNvkFSEk12FPiTRgL6kbo2Qx1u0OzwKEut7GHcRjaPsip9ZoCxrO1q1eWy2vaFaLX6kJ78aJ1n8QAw",
+   "region": "scl",
+   "kid": "p1",
+   "now": 1950000001,
+   "ok": false
+  },
+  {
+   "name": "antes_do_nb_mais_de_1d",
+   "nc": "Q1lSQwEDdnIxA3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA.xhGjej0ehNvkFSEk12FPiTRgL6kbo2Qx1u0OzwKEut7GHcRjaPsip9ZoCxrO1q1eWy2vaFaLX6kJ78aJ1n8QAw",
+   "region": "scl",
+   "kid": "p1",
+   "now": 1760913599,
+   "ok": false
+  },
+  {
+   "name": "antes_do_nb_dentro_de_1d",
+   "nc": "Q1lSQwEDdnIxA3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA.xhGjej0ehNvkFSEk12FPiTRgL6kbo2Qx1u0OzwKEut7GHcRjaPsip9ZoCxrO1q1eWy2vaFaLX6kJ78aJ1n8QAw",
+   "region": "scl",
+   "kid": "p1",
+   "now": 1760996400,
+   "ok": true
+  },
+  {
+   "name": "assinatura_trocada",
+   "nc": "Q1lSQwEDdnIxA3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA.xxGjej0ehNvkFSEk12FPiTRgL6kbo2Qx1u0OzwKEut7GHcRjaPsip9ZoCxrO1q1eWy2vaFaLX6kJ78aJ1n8QAw",
+   "region": "scl",
+   "kid": "p1",
+   "now": 1761350400,
+   "ok": false
+  },
+  {
+   "name": "outra_raiz_mesmo_id",
+   "nc": "Q1lSQwEDdnIxA3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA.BjIvZJDPVyA1NsXVXO6yM0gRKAYLYkwhAyRo6TGWno6c2M1ReSsjtH3NqF0Ul6pcBTNKWIiX9PGWsuS36pZzCQ",
+   "region": "scl",
+   "kid": "p1",
+   "now": 1761350400,
+   "ok": false
+  },
+  {
+   "name": "byte_sobrando",
+   "nc": "Q1lSQwEDdnIxA3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOAAA.iMt9YGyl4ohnXq6f5lqoThF7M3S_MqeOAFasXCQ4AQE9SF3sXeIutw7FEdXip6s_EvpMZLu6eA1X43hHLlBLCw",
+   "region": "scl",
+   "kid": "p1",
+   "now": 1761350400,
+   "ok": false
+  },
+  {
+   "name": "raiz_desconhecida",
+   "nc": "Q1lSQwEDeno5A3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA.-yck78kuDmcYHHyfRs_BNQjMcBsi_giPO5T8Y8QQQhxw-Ojz-ikHdLQP-KiJI0XaLABRwnf08ksOUi4L2j05BQ",
+   "region": "scl",
+   "kid": "p1",
+   "now": 1761350400,
+   "ok": false
+  },
+  {
+   "name": "padding_base64",
+   "nc": "Q1lSQwEDdnIxA3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA=.xhGjej0ehNvkFSEk12FPiTRgL6kbo2Qx1u0OzwKEut7GHcRjaPsip9ZoCxrO1q1eWy2vaFaLX6kJ78aJ1n8QAw",
+   "region": "scl",
+   "kid": "p1",
+   "now": 1761350400,
+   "ok": false
+  }
+ ]
+}

@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Network
 import android.os.Build
 import android.os.SystemClock
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
 import okhttp3.Protocol
@@ -18,7 +20,12 @@ import java.io.IOException
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.URI
+import java.security.KeyStore
 import java.util.concurrent.atomic.AtomicInteger
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 /**
  * [2026-10-23 quic-proto F-Q2/F-N1] Fio QUIC + Noise IK do transporte nativo — protótipo ESCURO.
@@ -51,6 +58,15 @@ import java.util.concurrent.atomic.AtomicInteger
  * auth DENTRO da msg1 (flight do Finished) → o fio "abre" em ~1 RTT e o auth_success volta em ~2 RTT;
  * retomada 0-RTT 'E' com ticket. Falha de TLS/ALPN/pin no chatyy/2 → chatyy/1 na hora (1 h) → WSS.
  *
+ * PRODUÇÃO (PROTOCOLO §9, 24/10): cfg.quic = {on, noise, noiseTest, auto, regions:{<reg>:{kid, port, nc?}}, …}.
+ * Kill local (quicSetKill) vence tudo; depois QUIC só se (auto || flag local). Chave/pins da região:
+ *   - `nc` presente → certificado da região conferido NO NATIVO (Rust, Ed25519) com [QuicWire.ROOT_PUBS]
+ *     (região == host, kid == nk, validade). Falhou (ou lib antiga sem nativeVerifyRegionCert, ou sem
+ *     raízes) → SEM QUIC nessa região (contador quicCertBad) — NUNCA cai para a chave de TESTE t1.
+ *   - sem `nc` → só TESTE: noiseTest && kid == "t1" (pins de TESTE).
+ * Pins do chatyy/2 = os do certificado (produção) ou os de TESTE; o chatyy/1 de reserva usa o mesmo noisePub.
+ * Pin errado / assinatura TLS ruim no chatyy/2 → WSS (1 h nesta região), NUNCA chatyy/1 (WebPKI).
+ *
  * Migração: troca da rede padrão com o fio QUIC autenticado → Endpoint::rebind() com um socket
  * UDP amarrado à Network nova (android_setsocknetwork) + 1 ping de sonda; sem reconectar.
  */
@@ -65,6 +81,8 @@ internal object ChatyyNetJni {
     // (u32be len | utf-8, …; o 1º = auth), quantos do prefixo vão no early da retomada 'E', 0-RTT.
     version: Int, pins: ByteArray, frames: ByteArray, earlyCount: Int, allow0rtt: Boolean,
   ): Long
+  /** PROTOCOLO §9.2. roots = (u8 len | id | 32 B)…; volta 0x01|noisePub(32)|n|pins(32×n) ou 0x00|motivo. */
+  @JvmStatic external fun nativeVerifyRegionCert(nc: String, roots: ByteArray, region: String, kid: String, nowUnix: Long): ByteArray?
   @JvmStatic external fun nativeSend(h: Long, op: Int, data: ByteArray): Boolean
   @JvmStatic external fun nativePoll(h: Long, timeoutMs: Int): ByteArray?
   @JvmStatic external fun nativeMigrate(h: Long, netHandle: Long): Boolean
@@ -94,6 +112,8 @@ internal class QuicTarget(
   val authFrame: String = "",
   /** chatyy/2: retomada QUIC 0-RTT + IK 'E' quando houver ticket (cfg.quic.resume=false desliga). */
   val resume: Boolean = true,
+  /** true = chave/pins vieram do certificado de região (`nc`, raiz de produção); false = TESTE t1. */
+  val prod: Boolean = false,
 )
 
 internal object QuicWire {
@@ -102,7 +122,18 @@ internal object QuicWire {
   const val FALLBACK = "quic_fallback"
   private const val PREFS = "chatyy_quic_proto"
   private const val K_ON = "enabled"
-  private const val K_CK = "ck"
+  private const val K_CK = "ck"        // LEGADO (privada em claro) — migrado p/ K_CK2 e apagado
+  private const val K_CK2 = "ck2"      // iv(12) || AES-GCM(chave do AndroidKeyStore, priv||pub)
+  private const val K_KILL = "kill"
+  private const val KS_ALIAS = "chatyy_quic_ck_v1"
+
+  // PROTOCOLO §9.1 — chaves PÚBLICAS Ed25519 das raízes offline (r1 principal, r2 reserva), base64 de 32 B.
+  // Lista vazia = produção desligada (só o caminho de TESTE t1). O `raiz.sh app-pub` grava as linhas
+  // entre as marcas, no formato exato `    "r1" to "BASE64",` (uma por linha). Não editar à mão.
+  internal val ROOT_PUBS: List<Pair<String, String>> = listOf(
+    // QN-ROOTS-BEGIN
+    // QN-ROOTS-END
+  )
 
   // PROTOCOLO.md §1 — chave de região de TESTE (X25519). Mesma nas 11 regiões; vale SÓ com
   // transport.noise_test=1 do servidor (conta na allowlist). Produção = cert assinado pela raiz (F-N1).
@@ -151,21 +182,78 @@ internal object QuicWire {
     return v
   }
 
+  @Volatile private var killOn: Boolean? = null
+
+  /** Kill local (vence a flag local, o `auto` e o servidor). */
+  fun killed(ctx: Context): Boolean {
+    killOn?.let { return it }
+    val v = try { ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(K_KILL, false) } catch (_: Throwable) { false }
+    killOn = v
+    return v
+  }
+
+  fun setKill(ctx: Context, on: Boolean) {
+    try { ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(K_KILL, on).apply() } catch (_: Throwable) {}
+    killOn = on
+  }
+
   fun setLocalEnabled(ctx: Context, on: Boolean) {
     try { ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(K_ON, on).apply() } catch (_: Throwable) {}
     localOn = on
     if (!on) clearGate()
   }
 
-  /** Par X25519 do aparelho (privada 32 || pública 32), criado 1 vez. Não é a chave E2EE. */
+  /**
+   * Par X25519 do aparelho (privada 32 || pública 32), criado 1 vez. Não é a chave E2EE.
+   * Guarda: SharedPreferences só com o CIFRADO (AES-256-GCM, chave NÃO exportável no AndroidKeyStore).
+   * Backup/restauração em outro aparelho → não decifra → par novo (a chave Noise não migra junto).
+   * Keystore indisponível → par só em memória (vale até o processo morrer; nada em claro no disco).
+   */
+  @Volatile private var ckMem: ByteArray? = null
+
+  private fun ksKey(): SecretKey {
+    val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    (ks.getKey(KS_ALIAS, null) as? SecretKey)?.let { return it }
+    val kg = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+    kg.init(
+      KeyGenParameterSpec.Builder(KS_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+        .setKeySize(256)
+        .build()
+    )
+    return kg.generateKey()
+  }
+
+  private fun sealCk(kp: ByteArray): String? = try {
+    val c = Cipher.getInstance("AES/GCM/NoPadding")
+    c.init(Cipher.ENCRYPT_MODE, ksKey())
+    val iv = c.iv
+    if (iv == null || iv.size != 12) null else Base64.encodeToString(iv + c.doFinal(kp), Base64.NO_WRAP)
+  } catch (_: Throwable) { null }
+
+  private fun openCk(b64: String): ByteArray? = try {
+    val b = Base64.decode(b64, Base64.NO_WRAP)
+    if (b.size < 12 + 16) null else {
+      val c = Cipher.getInstance("AES/GCM/NoPadding")
+      c.init(Cipher.DECRYPT_MODE, ksKey(), GCMParameterSpec(128, b, 0, 12))
+      c.doFinal(b, 12, b.size - 12).takeIf { it.size == 64 }
+    }
+  } catch (_: Throwable) { null }
+
   private fun clientKey(ctx: Context): ByteArray? = synchronized(this) {
+    ckMem?.let { return it }
     try {
       val sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-      val cur = sp.getString(K_CK, null)?.let { Base64.decode(it, Base64.NO_WRAP) }
-      if (cur != null && cur.size == 64) return cur
-      val kp = ChatyyNetJni.nativeKeypair() ?: return null
-      if (kp.size != 64) return null
-      sp.edit().putString(K_CK, Base64.encodeToString(kp, Base64.NO_WRAP)).apply()
+      sp.getString(K_CK2, null)?.let { openCk(it) }?.let { ckMem = it; return it }
+      // Legado (build de teste 23/10 guardava em claro): migra p/ o cifrado e apaga o claro.
+      val legacy = sp.getString(K_CK, null)?.let { try { Base64.decode(it, Base64.NO_WRAP) } catch (_: Throwable) { null } }
+      val kp = legacy?.takeIf { it.size == 64 } ?: ChatyyNetJni.nativeKeypair()?.takeIf { it.size == 64 } ?: return null
+      val sealed = sealCk(kp)
+      val ed = sp.edit().remove(K_CK)
+      if (sealed != null) ed.putString(K_CK2, sealed) else ChatTransport.bump("quicKeyMemOnly")
+      ed.apply()
+      ckMem = kp
       kp
     } catch (_: Throwable) { null }
   }
@@ -199,6 +287,7 @@ internal object QuicWire {
     lastWhy = why
     when {
       why == "quic_timeout" -> { udpBlockedEpoch = epoch; udpBlockedUntil = now() + 24 * HOUR } // UDP bloqueado nesta rede
+      isPinFail(why) -> denyFor(t, why, HOUR) // pin/assinatura TLS do chatyy/2: WSS 1 h, nunca chatyy/1
       why.contains("0x101") || why.contains("go_ws") -> denyFor(t, why, HOUR)
       why.contains("0x102") || why.contains("noise_auth_failed") -> denyFor(t, why, HOUR) // sem laço; anti-downgrade = WSS, nunca modo P
       why.contains("0x104") -> denyFor(t, why, 5 * 60_000L)
@@ -219,6 +308,53 @@ internal object QuicWire {
   private val v2Down = HashMap<String, Long>()
   @Synchronized fun noteV2Down(t: QuicTarget, why: String) { v2Down[t.region] = now() + HOUR; lastWhy = "v2:$why" }
   @Synchronized private fun v2IsDown(region: String): Boolean = (v2Down[region] ?: 0L) > now()
+
+  /** Textos fixos do Rust (conn_err) p/ TLS recusado pelo PinCheck: pin, assinatura do handshake, cert ilegível. */
+  fun isPinFail(why: String): Boolean = why.contains("pin_mismatch") || why.contains("pin_tls_sig_bad") || why.contains("pin_bad_cert")
+
+  // ─── certificado de região (PROTOCOLO §9.2) ───────────────────────────────
+  private val certBad = AtomicInteger(0)
+  @Volatile private var lastCertWhy = ""
+  @Volatile private var lastAuto = false
+  @Volatile private var lastProd = false
+
+  /** ROOT_PUBS → bytes p/ o JNI (u8 len | id | 32 B). Entrada inválida é PULADA (nunca vira raiz). */
+  private val rootsBytes: ByteArray by lazy {
+    val out = java.io.ByteArrayOutputStream()
+    var n = 0
+    for ((id, b64) in ROOT_PUBS) {
+      if (n >= 8 || !Regex("^[a-z0-9]{1,16}$").matches(id)) continue
+      val k = try { Base64.decode(b64, Base64.NO_WRAP) } catch (_: Throwable) {
+        try { Base64.decode(b64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING) } catch (_: Throwable) { null }
+      }
+      if (k == null || k.size != 32) continue
+      out.write(id.length); out.write(id.toByteArray(Charsets.US_ASCII)); out.write(k)
+      n++
+    }
+    out.toByteArray()
+  }
+
+  /** (noisePub 32, pins n×32) ou null (= sem QUIC nessa região). Lib antiga sem o símbolo → null. */
+  private fun verifyNc(nc: String, region: String, kid: String): Pair<ByteArray, ByteArray>? {
+    val why: String
+    if (rootsBytes.isEmpty()) {
+      why = "no_roots"
+    } else {
+      val r = try { ChatyyNetJni.nativeVerifyRegionCert(nc, rootsBytes, region, kid, System.currentTimeMillis() / 1000L) }
+        catch (_: UnsatisfiedLinkError) { null } catch (_: Throwable) { null }
+      if (r != null && r.size >= 34 && r[0].toInt() == 1) {
+        val n = r[33].toInt() and 0xFF
+        if (n in 1..4 && r.size == 34 + 32 * n) return Pair(r.copyOfRange(1, 33), r.copyOfRange(34, r.size))
+        why = "bad_result"
+      } else {
+        why = if (r == null) "no_native" else if (r.isNotEmpty() && r[0].toInt() == 0) String(r, 1, r.size - 1, Charsets.UTF_8).take(60) else "bad_result"
+      }
+    }
+    certBad.incrementAndGet()
+    lastCertWhy = "$region:$why"
+    ChatTransport.bump("quicCertBad")
+    return null
+  }
 
   private fun testPins(): ByteArray? {
     return try {
@@ -258,52 +394,67 @@ internal object QuicWire {
 
   private fun truthy(v: Any?): Boolean = v == true || (v is Number && v.toInt() == 1) || v == "1"
 
-  private fun pinFor(kid: String, noiseTest: Boolean): ByteArray? {
-    if (kid == TEST_KID && noiseTest) return try { Base64.decode(TEST_PUB_B64, Base64.NO_WRAP).takeIf { it.size == 32 } } catch (_: Throwable) { null }
-    return null // chaves de produção (cert assinado pela raiz) = F-N1
-  }
+  private fun testPub(): ByteArray? =
+    try { Base64.decode(TEST_PUB_B64, Base64.NO_WRAP).takeIf { it.size == 32 } } catch (_: Throwable) { null }
 
   /** null = usar o WSS. Chamado na thread do transporte. */
   fun target(url: String, quic: Map<String, Any?>?, account: String, authFrame: String?): QuicTarget? {
     if (quic == null || account.isEmpty() || authFrame == null) return null
     val ctx = ChatTransport.appCtx ?: return null
-    if (!localEnabled(ctx)) return null
+    if (killed(ctx)) return null // kill local vence tudo
     val host = try { URI(url).host?.lowercase() } catch (_: Throwable) { null } ?: return null
     val region = REGION_RE.matchEntire(host)?.groupValues?.get(1) ?: return null
     val on: Boolean
     val noise: Boolean
     val noiseTest: Boolean
+    val auto: Boolean
     val kid: String
     val port: Int
+    val nc: String?
     val tr = quic["transport"] as? Map<*, *>
     if (tr == null) {
-      // Forma do iOS (ChatTransport.swift TransportQuicConfig — a mesma que o JS manda p/ os dois):
-      // {on:true, noise:true, noiseTest:bool, regions:{<reg>:{kid, port}}, hsMs?, migrate?, raceMs?}
-      on = truthy(quic["on"]); noise = truthy(quic["noise"]); noiseTest = truthy(quic["noiseTest"])
+      // Forma comum com o iOS (o JS manda só as regiões ELEGÍVEIS, PROTOCOLO §9.3):
+      // {on:true, noise:true, noiseTest:bool, auto:bool, regions:{<reg>:{kid, port, nc?}}, hsMs?, migrate?, raceMs?}
+      on = truthy(quic["on"]); noise = truthy(quic["noise"]); noiseTest = truthy(quic["noiseTest"]); auto = truthy(quic["auto"])
       val r = (quic["regions"] as? Map<*, *>)?.get(region) as? Map<*, *> ?: return null
       kid = r["kid"] as? String ?: return null
       port = (r["port"] as? Number)?.toInt() ?: 443
+      nc = r["nc"] as? String
     } else {
-      // Forma crua do client-lb (PROTOCOLO §1): transport{quic,noise,noise_test} + region{q,qp,nk}
+      // Forma crua do client-lb: transport{quic,noise,noise_test,auto} + region{q,qp,nk,nc}
       val rg = quic["region"] as? Map<*, *> ?: return null
-      on = truthy(tr["quic"]) && truthy(rg["q"]); noise = truthy(tr["noise"]); noiseTest = truthy(tr["noise_test"])
+      on = truthy(tr["quic"]) && truthy(rg["q"]); noise = truthy(tr["noise"]); noiseTest = truthy(tr["noise_test"]); auto = truthy(tr["auto"])
       kid = rg["nk"] as? String ?: return null
       port = (rg["qp"] as? Number)?.toInt() ?: 443
+      nc = rg["nc"] as? String
     }
-    if (!on || !noise || port !in 1..65535) return null
-    val pub = pinFor(kid, noiseTest) ?: return null
+    lastAuto = auto
+    if (!auto && !localEnabled(ctx)) return null // auto=0 → precisa da flag local (build de teste)
+    if (!on || !noise || port !in 1..65535 || kid.isEmpty()) return null
     if (denied(account, region) || udpBlocked(ChatTransport.netEpoch)) return null
     if (!libAvailable()) return null
+    val pub: ByteArray
+    val pins: ByteArray?
+    val prod: Boolean
+    if (!nc.isNullOrEmpty()) {
+      // Produção: o cert TEM de validar; falhou → sem QUIC aqui (nunca cair para t1).
+      val v = verifyNc(nc, region, kid) ?: return null
+      pub = v.first; pins = v.second; prod = true
+    } else if (noiseTest && kid == TEST_KID) {
+      pub = testPub() ?: return null; pins = testPins(); prod = false
+    } else {
+      return null
+    }
+    lastProd = prod
     val ck = clientKey(ctx) ?: return null
     val dev = try { JSONObject(authFrame).optString("e2ee5_device", "") } catch (_: Throwable) { "" }
     val ua = "Chatyy-Android/${Build.VERSION.RELEASE} ${libVersion ?: ""}".take(120)
     val tmo = ((quic["hsMs"] as? Number)?.toInt() ?: 3000).coerceIn(600, 10_000)
     val migrate = quic["migrate"] != false
-    // chatyy/2 (PROTOCOLO §0) primeiro, se: pins de teste (só com noiseTest), cfg não desligou, sem falha recente.
-    val pins = if (noiseTest) testPins() else null
-    val v2 = pins != null && quic["v2"] != false && !v2IsDown(region)
+    // chatyy/2 (PROTOCOLO §0) primeiro, se: há pins (cert ou TESTE), cfg não desligou, sem falha recente de ALPN.
+    val v2 = pins != null && pins.isNotEmpty() && quic["v2"] != false && !v2IsDown(region)
     return QuicTarget(host, region, port, kid, pub, ck.copyOfRange(0, 32), dev, ua, tmo, account, migrate,
-      v2 = v2, pins = pins ?: ByteArray(0), authFrame = authFrame, resume = quic["resume"] != false)
+      v2 = v2, pins = pins ?: ByteArray(0), authFrame = authFrame, resume = quic["resume"] != false, prod = prod)
   }
 
   fun maybeRace(req: Request, url: String, quic: Map<String, Any?>?, account: String, authFrame: String?, listener: WebSocketListener): QuicRaceSocket? = try {
@@ -329,7 +480,13 @@ internal object QuicWire {
     m["enabled"] = ctx?.let { localEnabled(it) } ?: false
     m["testKid"] = TEST_KID
     m["proto"] = "chatyy/2>chatyy/1>wss"
-    if (ctx != null && libState == 1 && localEnabled(ctx)) {
+    m["kill"] = ctx?.let { killed(it) } ?: false
+    m["auto"] = lastAuto
+    m["prod"] = lastProd
+    m["roots"] = ROOT_PUBS.map { it.first } // só os ids (as públicas estão no binário; nada secreto)
+    m["certBad"] = certBad.get()
+    m["lastCertWhy"] = lastCertWhy
+    if (ctx != null && libState == 1 && (localEnabled(ctx) || lastAuto)) {
       clientKey(ctx)?.let { m["clientPub"] = Base64.encodeToString(it.copyOfRange(32, 64), Base64.NO_WRAP) }
     }
     gateInfo(m)
@@ -434,7 +591,10 @@ internal class QuicRaceSocket(
       val fail = attempt(ip, ver) ?: return // abriu (a sessão seguiu até o fim) ou cancelado
       // pin/ALPN/TLS do chatyy/2 recusado (edge com LEAF_QUIC_PIN=0, pin rotacionado…) → chatyy/1 já.
       // go_ws/noise_fail/timeout de UDP NÃO: valem p/ qualquer versão → WSS.
-      val retry = ver == 2 && (fail == "bad_params" || (fail.startsWith("quic: ") && !fail.contains("qclose"))) &&
+      // Pin errado / assinatura TLS ruim: NUNCA chatyy/1 (WebPKI) — é exatamente o ataque que o pin barra.
+      if (ver == 2 && QuicWire.isPinFail(fail)) post("quicPinFail")
+      val retry = ver == 2 && !QuicWire.isPinFail(fail) &&
+        (fail == "bad_params" || (fail.startsWith("quic: ") && !fail.contains("qclose"))) &&
         synchronized(lock) { !cancelled && winner == NONE }
       if (retry) {
         QuicWire.noteV2Down(t, fail.take(60))
@@ -509,7 +669,8 @@ internal class QuicRaceSocket(
     val msg2 = if (ev.size > 11) String(ev, 11, ev.size - 11, Charsets.UTF_8) else ""
     // msg2 {"ok":true,...}: ok=false → servidor recusou (trata como falha de handshake).
     // chatyy/2 'I' abre ANTES da msg2 (vazia aqui; o Accept vem no evento 7).
-    val ok = try { msg2.isEmpty() || JSONObject(msg2).optBoolean("ok", true) } catch (_: Throwable) { true }
+    // Accept ilegível = recusa (fail-closed; o Noise já autenticou quem mandou).
+    val ok = try { msg2.isEmpty() || JSONObject(msg2).optBoolean("ok", false) } catch (_: Throwable) { false }
     if (!ok) {
       try { ChatyyNetJni.nativeClose(handle, 1000, "msg2_not_ok", true) } catch (_: Throwable) {}
       preOpenFail = "msg2_not_ok"
@@ -541,7 +702,7 @@ internal class QuicRaceSocket(
   /** chatyy/2 'I': msg2 (Accept) chegou junto do auth_success. ok=false → derruba (a Session volta p/ o WSS). */
   private fun onQuicAccept(handle: Long, ev: ByteArray) {
     val msg2 = if (ev.size > 5) String(ev, 5, ev.size - 5, Charsets.UTF_8) else ""
-    val ok = try { msg2.isEmpty() || JSONObject(msg2).optBoolean("ok", true) } catch (_: Throwable) { true }
+    val ok = try { msg2.isNotEmpty() && JSONObject(msg2).optBoolean("ok", false) } catch (_: Throwable) { false }
     if (!ok) try { ChatyyNetJni.nativeClose(handle, 1000, "msg2_not_ok", true) } catch (_: Throwable) {}
   }
 

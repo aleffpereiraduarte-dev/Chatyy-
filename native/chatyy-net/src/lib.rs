@@ -9,6 +9,7 @@
 
 pub mod conn;
 pub mod proto;
+pub mod regcert;
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -109,6 +110,27 @@ pub fn encode_event(p: Poll) -> Option<Vec<u8>> {
     Some(o)
 }
 
+/// Resultado do `nativeVerifyRegionCert`: `0x01 | noisePub(32) | u8 n | pins(32 × n)` ou `0x00 | motivo utf-8`.
+pub fn encode_verify(r: Result<regcert::Verified, &'static str>) -> Vec<u8> {
+    match r {
+        Ok((pk, pins)) => {
+            let mut o = Vec::with_capacity(34 + 32 * pins.len());
+            o.push(1);
+            o.extend_from_slice(&pk);
+            o.push(pins.len() as u8);
+            for p in &pins {
+                o.extend_from_slice(p);
+            }
+            o
+        }
+        Err(e) => {
+            let mut o = vec![0u8];
+            o.extend_from_slice(e.as_bytes());
+            o
+        }
+    }
+}
+
 /// Pins concatenados (n × 32 B).
 pub fn split_pins(b: &[u8]) -> Vec<[u8; 32]> {
     b.chunks_exact(32).take(8).filter_map(|c| c.try_into().ok()).collect()
@@ -186,6 +208,30 @@ mod jni_api {
                 out_bytes(&mut env, &b)
             }
             None => std::ptr::null_mut(),
+        })
+    }
+
+    /// PROTOCOLO §9.2: confere o `nc` da região com as raízes do binário (`u8 len | id | 32 B`, …).
+    /// Devolve [encode_verify]; null só em erro de JNI. Função pura (o relógio vem do Kotlin).
+    #[no_mangle]
+    pub extern "system" fn Java_expo_modules_chatyytransport_ChatyyNetJni_nativeVerifyRegionCert<'l>(
+        mut env: JNIEnv<'l>,
+        _c: JClass<'l>,
+        nc: JString<'l>,
+        roots: JByteArray<'l>,
+        region: JString<'l>,
+        kid: JString<'l>,
+        now_unix: jlong,
+    ) -> jbyteArray {
+        guard(std::ptr::null_mut(), || {
+            let r = match (jstr(&mut env, &nc), bytes(&mut env, &roots), jstr(&mut env, &region), jstr(&mut env, &kid)) {
+                (Some(nc), Some(rb), Some(region), Some(kid)) => match regcert::decode_roots(&rb) {
+                    Some(roots) => regcert::verify_region_cert(&nc, &roots, &region, &kid, now_unix),
+                    None => Err("roots: formato"),
+                },
+                _ => Err("jni: parâmetro"),
+            };
+            out_bytes(&mut env, &encode_verify(r))
         })
     }
 

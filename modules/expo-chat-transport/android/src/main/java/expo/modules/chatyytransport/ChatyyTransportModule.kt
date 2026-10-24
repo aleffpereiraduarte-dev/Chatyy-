@@ -83,7 +83,13 @@ class ChatyyTransportModule : Module() {
       QuicWire.setLocalEnabled(ctx, enabled)
       true
     }
-    /** {lib, libVersion, enabled, clientPub, lastWhy, denied, udpBlocked} — sem chave privada. */
+    /** Kill local do QUIC (vence a flag local, o `auto` do servidor e o cfg.quic). Vale na próxima conexão física. */
+    Function("quicSetKill") { on: Boolean ->
+      val ctx = appContext.reactContext?.applicationContext ?: return@Function false
+      QuicWire.setKill(ctx, on)
+      true
+    }
+    /** {lib, libVersion, enabled, kill, auto, prod, roots(ids), certBad, lastCertWhy, clientPub, lastWhy, denied, udpBlocked} — sem segredo. */
     Function("quicProtoInfo") { QuicWire.info(appContext.reactContext?.applicationContext) }
 
     /** Lança se a config for inválida (URL fora de *.chatyy.com.br etc.) → JS usa o WebSocket JS. */
