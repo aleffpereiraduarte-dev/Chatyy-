@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
+import { liveScaleHlsStart, liveScaleHlsStop } from '../services/liveScale'; // [live-10k 2026-10-24]
 import LiveChat from '../components/LiveChat'; // eslint-disable-line no-unused-vars -- kept for fallback
 import LiveChatOverlay from '../components/live/LiveChatOverlay';
 // [live-setup 2026-10-12] Tela pré-live redesenhada (prévia da câmera em tela cheia).
@@ -2071,6 +2072,9 @@ function LiveBroadcastScreen() {
               try { liveDiagAppend('error', 'host audio publish failed: ' + aMsg, { sessionId: sid }); } catch {}
             }
             console.log('[WAVE-110] LK host publish — connect=' + lkConnectOk + ' video=' + lkVideoOk + ' audio=' + lkAudioOk);
+            // [live-10k 2026-10-24] com câmera no ar, pede a escada HLS (CDN p/ até 10 mil espectadores).
+            // Servidor sem a flag / encoder cheio → {state:'unavailable'} e a live segue só WebRTC (hoje).
+            if (lkVideoOk && sid) { liveScaleHlsStart(sid).catch?.(() => {}); }
             try { liveDiagAppend('info', 'LK host publish summary', { sessionId: sid, room: lkRoom, connect: lkConnectOk, video: lkVideoOk, audio: lkAudioOk }); } catch {}
           } catch (e) {
             const msg = e?.message || String(e);
@@ -2430,6 +2434,8 @@ function LiveBroadcastScreen() {
       // LK sessions use live_end (no CF VOD), legacy sessions stay on live_end.
       // Memory-safe — fires after teardown.
       const endFn = lkModeRef.current ? api.liveEndLk : (cfModeRef.current ? api.liveEndCf : api.liveEnd);
+      // [live-10k 2026-10-24] para a escada HLS (replay fica em <base>/replay.m3u8); o cron do servidor cobre queda do app.
+      if (lkModeRef.current && sessionIdRef.current) { liveScaleHlsStop(sessionIdRef.current).catch?.(() => {}); }
       // [LIVE-VOD-TRACE] Wave 44 — show a tangible "Replay sendo processado"
       // toast the moment the host taps end-live. The previous UX let users
       // walk away thinking nothing was happening (the end-card just said

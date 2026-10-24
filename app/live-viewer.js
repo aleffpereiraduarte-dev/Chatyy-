@@ -12,6 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import * as api from '../services/api';
+import { liveScaleJoin, LiveRelay } from '../services/liveScale'; // [live-10k 2026-10-24]
 import { prettifyHandle } from '../services/displayName';
 import formatLiveChatContent from '../utils/formatLiveChatContent';
 import AvatarCircle from '../components/AvatarCircle';
@@ -508,6 +509,9 @@ export default function LiveViewerScreen() {
   // didn't dispatch `live_session_info` at all, so cf_hls viewers stalled on
   // `streamType='webrtc'` forever waiting for an offer that never came.
   const liveSessionInfoSeenRef = useRef(false);
+  // [live-10k 2026-10-24] espectador em HLS (CDN) em vez de participante LiveKit; relay regional p/ comentários.
+  const scaleHlsRef = useRef(false);
+  const relayRef = useRef(null);
   // [WAVE 110] LiveKit viewer room ref — non-null when connected via LK SFU.
   const lkViewerRoomRef = useRef(null);
   // [2026-10-10 lives-2] Tela desmontada (ex.: deslizou p/ outra live): o
@@ -1136,7 +1140,7 @@ export default function LiveViewerScreen() {
           setStreamType('cf_hls');
           setHlsWarmup(true);
         }
-        if (pipeline === 'livekit') {
+        if (pipeline === 'livekit' && !scaleHlsRef.current) {
           // [WAVE 110] LK session detected via REST fallback — synthesize the
           // live_session_info payload that the WS would have sent. The WS path
           // is preferred; REST only fires here when the WS didn't dispatch
@@ -1523,7 +1527,7 @@ export default function LiveViewerScreen() {
           // [WAVE 110] LiveKit SFU path: backend sends pipeline='livekit'.
           // We call live_join_lk to get a subscribe-only token and connect
           // directly to the LK room. No HLS poll, no WHIP, no CF ICE.
-          if (msg.stream_type === 'livekit' || msg.pipeline === 'livekit') {
+          if ((msg.stream_type === 'livekit' || msg.pipeline === 'livekit') && !scaleHlsRef.current) {
             setStreamType('livekit');
             setError('');
             const _lkSid = msg.session_id || paramSessionId;
@@ -2118,6 +2122,13 @@ export default function LiveViewerScreen() {
           if (msg.session_id && String(msg.session_id) !== String(paramSessionId)) break;
           stageWsRef.current?.onApproved?.(msg);
           (async () => {
+            // [live-10k 2026-10-24] estava no HLS (4–5 s atrás): convidado precisa do host em tempo real →
+            // troca automática p/ LiveKit (assinante) antes de publicar câmera/mic.
+            if (scaleHlsRef.current) {
+              scaleHlsRef.current = false;
+              setStreamType('livekit');
+              try { await connectLkViewer(); } catch (e) { console.warn('[live-10k] LK p/ convidado falhou:', e?.message); }
+            }
             try { await joinCohost(); } catch (e) { console.warn('[Live] joinCohost failed:', e?.message); }
           })();
           break;
@@ -2638,6 +2649,13 @@ export default function LiveViewerScreen() {
     });
     Animated.timing(entry, { toValue: 1, duration: 260, useNativeDriver: true }).start();
 
+    // [live-10k 2026-10-24] relay regional no ar → o comentário vai SÓ por ele (moderação no edge,
+    // persistência em lote no servidor). Sem hub US, sem 1 POST por comentário.
+    if (relayRef.current?.isOpen?.() && relayRef.current.sendComment(text)) {
+      relayMsgIdsRef.current.set(String(relayRef.current.cid), msgId);
+      return;
+    }
+
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'live_chat',
@@ -2795,6 +2813,54 @@ export default function LiveViewerScreen() {
     }
   }, [paramSessionId, spawnHeart, popHeartButton, t]);
 
+  // [live-10k 2026-10-24] modo escala: pergunta ao servidor como assistir (HLS do CDN x LiveKit) e liga o
+  // relay regional (comentários/corações/contagem em lote de 0,5 s). Sem a flag no servidor = no-op.
+  const relayMsgIdsRef = useRef(new Map());
+  useEffect(() => {
+    if (!paramSessionId) return undefined;
+    let dead = false;
+    (async () => {
+      const d = await liveScaleJoin(paramSessionId);
+      if (dead || !d) return;
+      if (d.mode === 'hls' && d.hls_url && d.role === 'viewer') {
+        scaleHlsRef.current = true;
+        liveSessionInfoSeenRef.current = true;
+        // já tinha entrado no LiveKit (corrida c/ live_session_info) → sai da sala, libera o SFU
+        try { lkViewerRoomRef.current?.disconnect?.(); } catch {}
+        lkViewerRoomRef.current = null;
+        try { setLkTracks([]); } catch {}
+        setStreamType('cf_hls');
+        setHlsUrl(String(d.hls_url));
+        setHlsError(false);
+        setHlsRetryKey((k) => k + 1);
+      }
+      if (d.relay?.ticket) {
+        relayRef.current = new LiveRelay(paramSessionId, d.relay, {
+          onComment: (c) => handleChatMsg({ type: 'live_chat', sender_email: '', sender_name: c.name, content: c.content }),
+          onHearts: (n) => {
+            const k = Math.min(n, 8);
+            for (let i = 0; i < k; i++) setTimeout(() => { try { spawnHeart({ color: HEART_COLORS[i % HEART_COLORS.length] }); } catch {} }, i * 60);
+          },
+          onViewers: (v) => { if (typeof v === 'number' && v >= 0) setViewerCount(v); },
+          onReject: (m) => {
+            const id = relayMsgIdsRef.current.get(String(m.cid));
+            if (id) { try { setChatMessages((prev) => prev.filter((x) => x.id !== id)); } catch {} }
+            const txt = m.why === 'lento' ? (t('live.slowModeWait') || '').replace('{n}', String(m.wait || 1))
+              : m.why === 'bloqueado' ? t('live.commentBanned')
+              : m.why === 'longo' ? t('live.commentTooLong') : t('live.commentTooFast');
+            try { showToastRef.current?.(txt); } catch {}
+          },
+          onEvent: (ev) => {
+            // escada HLS ficou pronta depois que entrei por WebRTC: fico onde estou (sem pulo de vídeo)
+            if (ev?.t === 'hls_ready') console.log('[live-10k] hls pronto');
+          },
+          onEnded: () => { liveEndedRef.current = true; setLiveEnded(true); },
+        }).start();
+      }
+    })();
+    return () => { dead = true; try { relayRef.current?.stop(); } catch {} relayRef.current = null; };
+  }, [paramSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleHeartTap = useCallback(() => {
     // Right-rail tap: spawn locally with a randomized brand color, then
     // throttle the WS broadcast to 300ms (Periscope-style tap-spam cap)
@@ -2803,6 +2869,8 @@ export default function LiveViewerScreen() {
     const color = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
     spawnHeart({ color });
     popHeartButton();
+    // [live-10k 2026-10-24] relay regional: corações somados em lote de 250 ms
+    if (relayRef.current?.isOpen?.()) { relayRef.current.heart(1); return; }
     // [lives-engage] curtida em lote (hub soma e devolve likes_total).
     likeEngage.queueLike({ x: (SCREEN_W - 56) / SCREEN_W, color });
     if (likeEngage) return;
