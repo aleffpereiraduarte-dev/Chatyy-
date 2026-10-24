@@ -34,6 +34,60 @@ enum ChatyyNSEGeneric {
   }
 }
 
+
+/// [push-minimo 2026-10-24] Push MÍNIMO (modelo WhatsApp): o APNs leva só o aviso (type, conversation_id,
+/// message_id, d_ack, pmin=1) + o genérico "Nova mensagem". A NSE busca a mensagem real em chat_push_fetch
+/// (Bearer da conta do d_ack, guardado pelo app em ChatyyPushMiniAuth; ≤ ChatyyNSEMini.timeout) e segue o
+/// caminho de sempre com o payload COMPLETO (journal → ✓✓ com persisted → E2EE decifra pelo e2e_c → banner).
+/// Falhou → fica o genérico + ✓✓ de recebimento. Sem o núcleo (stub) nunca busca (o app nem anuncia pmin1).
+/// Métricas: códigos pmin_* em chatyy.e2ee5.nse.counts (sobem como e2ee5_metrics nse_pmin_*), nunca conteúdo.
+enum ChatyyNSEMini {
+  static let timeout: TimeInterval = 3.0
+  struct Full {
+    let title: String
+    let body: String
+    let data: [String: Any]
+    let experienceId: String
+    let scopeKey: String
+  }
+
+  static func s(_ p: [String: Any], _ k: String) -> String {
+    if let v = p[k] as? String { return v }
+    if let n = p[k] as? NSNumber { return n.stringValue }
+    return ""
+  }
+
+  static func isMini(_ p: [String: Any]) -> Bool { return s(p, "pmin") == "1" }
+
+  /// Só tipos de property list (userInfo do UNNotificationContent não aceita NSNull).
+  static func plistSafe(_ v: Any) -> Any? {
+    switch v {
+    case let x as String: return x
+    case let x as NSNumber: return x
+    case let x as [String: Any]:
+      var o: [String: Any] = [:]
+      for (k, e) in x { if let y = plistSafe(e) { o[k] = y } }
+      return o
+    case let x as [Any]: return x.compactMap { plistSafe($0) }
+    default: return nil
+    }
+  }
+
+  private static let metricsLock = NSLock()
+  static func record(_ code: String) {
+    guard let d = UserDefaults(suiteName: "group.com.onemundo.mail") else { return }
+    metricsLock.lock(); defer { metricsLock.unlock() }
+    var counts = d.dictionary(forKey: "chatyy.e2ee5.nse.counts") as? [String: Int] ?? [:]
+    let key = String(code.prefix(40))
+    if counts[key] != nil || counts.count < 40 { counts[key] = (counts[key] ?? 0) + 1; d.set(counts, forKey: "chatyy.e2ee5.nse.counts") }
+  }
+
+  static func msBucket(_ ms: Int) -> String {
+    for e in [300, 700, 1500, 3000] where ms <= e { return "le\(e)" }
+    return "gt3000"
+  }
+}
+
 #if CHATYY_CRYPTO_CORE
 import Security
 
@@ -337,6 +391,72 @@ enum ChatyyNSEE2EE {
   }
 }
 
+
+extension ChatyyNSEMini {
+  private static let fetchURL = URL(string: "https://chatyy.com.br/api/email.php?action=chat_push_fetch")
+  private static let types: Set<String> = ["chat_message", "chat_mention", "chat_keyword"]
+
+  /// Conta do payload do d_ack (só p/ escolher o Bearer — a assinatura quem confere é o servidor).
+  private static func acctOfDack(_ tok: String) -> String {
+    guard var b = tok.split(separator: ".").first.map(String.init), !b.isEmpty else { return "" }
+    b = b.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+    while b.count % 4 != 0 { b += "=" }
+    guard let d = Data(base64Encoded: b), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+          let e = o["e"] as? String else { return "" }
+    return e
+  }
+
+  /// Busca a mensagem real deste aviso. `completion` roda 1 vez, em thread qualquer; nil = genérico.
+  static func fetch(_ p: [String: Any], completion: @escaping (Full?) -> Void) {
+    let t0 = Date()
+    var once = false
+    let onceLock = NSLock()
+    func done(_ f: Full?, _ code: String) {
+      onceLock.lock(); if once { onceLock.unlock(); return }; once = true; onceLock.unlock()
+      record(code)
+      record("pmin_ms_" + msBucket(Int(Date().timeIntervalSince(t0) * 1000)))
+      completion(f)
+    }
+    let dack = s(p, "d_ack"), conv = s(p, "conversation_id"), mid = s(p, "message_id")
+    guard types.contains(s(p, "type")), dack.contains("."), !conv.isEmpty, !mid.isEmpty, let url = fetchURL else {
+      done(nil, "pmin_bad"); return
+    }
+    guard let bearer = ChatyyPushMiniAuth.bearer(for: acctOfDack(dack)) else { done(nil, "pmin_no_bearer"); return }
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.timeoutIntervalForRequest = timeout
+    cfg.timeoutIntervalForResource = timeout + 0.5
+    cfg.httpCookieStorage = nil
+    cfg.httpShouldSetCookies = false
+    cfg.urlCache = nil
+    cfg.waitsForConnectivity = false
+    let session = URLSession(configuration: cfg)
+    var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.setValue("application/json", forHTTPHeaderField: "Accept")
+    req.setValue("Bearer " + bearer, forHTTPHeaderField: "Authorization")
+    req.httpBody = try? JSONSerialization.data(withJSONObject: ["d_ack": dack, "platform": "ios"])
+    let task = session.dataTask(with: req) { data, resp, err in
+      let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+      if err != nil || code == 0 { done(nil, (err as? URLError)?.code == .timedOut ? "pmin_timeout" : "pmin_net"); return }
+      guard (200..<300).contains(code), let data = data,
+            let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { done(nil, "pmin_http_\(code)"); return }
+      guard (j["success"] as? Bool) == true, let d = j["data"] as? [String: Any] else { done(nil, "pmin_not_success"); return }
+      guard s(d, "hit") == "1", let body = d["body"] as? [String: Any] else {
+        done(nil, "pmin_miss_" + String(s(d, "skipped").prefix(16))); return
+      }
+      // Mesmo aviso? (nunca mostra o conteúdo de outra mensagem/conversa)
+      guard s(body, "conversation_id") == conv, s(body, "message_id") == mid, types.contains(s(body, "type")),
+            let safe = plistSafe(body) as? [String: Any] else { done(nil, "pmin_mismatch"); return }
+      let alert = d["alert"] as? [String: Any] ?? [:]
+      done(Full(title: s(alert, "title"), body: s(alert, "body"), data: safe,
+                experienceId: s(d, "experienceId"), scopeKey: s(d, "scopeKey")), "pmin_ok")
+    }
+    task.resume()
+    session.finishTasksAndInvalidate()
+  }
+}
+
 #else
 
 /// Binário sem o núcleo (build normal): a NSE se comporta exatamente como antes.
@@ -354,6 +474,11 @@ enum ChatyyNSEE2EE {
   static func preview(_ p: [String: Any], uid: String, completion: @escaping (String?) -> Void) { completion(nil) }
   static func noteDeadline() {}
   static func deliveryDeviceId(account: String) -> String { return "" } // [dlv-device] sem núcleo → sem aparelho
+}
+
+extension ChatyyNSEMini {
+  /// [push-minimo 2026-10-24] sem o núcleo não há Bearer na NSE → nunca busca (o app nem anuncia pmin1).
+  static func fetch(_ p: [String: Any], completion: @escaping (Full?) -> Void) { record("pmin_no_core"); completion(nil) }
 }
 
 #endif

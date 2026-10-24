@@ -761,6 +761,8 @@ class ExpoCallKitModule : Module() {
     // app fechado (CallFirebaseMessagingService.onNewToken).
     // [2026-10-17 expo-call-unpack] binário que entende push de chamada via Expo (data["body"]).
     Function("supportsExpoCallUnpack") { true }
+    // [push-minimo 2026-10-24] binário que entende o push MÍNIMO (pmin=1: busca a mensagem no chat_push_fetch).
+    Function("supportsPushMini") { true }
 
     Function("setPushRegistrationInfo") { deviceId: String, appVersion: String ->
       try {

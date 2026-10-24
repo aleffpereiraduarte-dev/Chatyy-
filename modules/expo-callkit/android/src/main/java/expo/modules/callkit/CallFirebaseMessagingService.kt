@@ -61,7 +61,8 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
-    private fun handleMessage(message: RemoteMessage, pt: ChatyyPushTiming.Mark) {
+    private fun handleMessage(message0: RemoteMessage, pt: ChatyyPushTiming.Mark) {
+        var message = message0 // [push-minimo 2026-10-24] trocado pela mensagem real quando o push é mínimo
         // [2026-10-17 expo-call-unpack] Push de chamada roteado pelo Expo chega
         // como data-only com tudo em JSON dentro de data["body"] → achata p/ os
         // ramos de chamada (incoming_call/…/call_end) acharem o "type".
@@ -96,6 +97,16 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
         } catch (_: Throwable) {}
 
         Log.d(TAG, "FCM message received: type=$type, dataKeys=${data.keys}")
+
+        // [push-minimo 2026-10-24] Push MÍNIMO (pmin=1: só conversa+id+d_ack): busca a mensagem real
+        // (ChatPushMini → chat_push_fetch, Bearer da conta, ≤3 s) ANTES do journal/✓✓/MessagingStyle —
+        // daqui p/ baixo tudo vê o envelope completo, igual ao push de sempre. Falhou → segue com o aviso
+        // genérico ("Nova mensagem") e o ✓✓ de recebimento.
+        if (ChatPushMini.isMini(data)) {
+            val ex = try { ChatPushMini.expand(applicationContext, message, data) } catch (t: Throwable) { null }
+            if (ex != null) { message = ex.message; data = ex.data }
+            pt.kind = (if (ex != null) "pmin:" else "pmin_fail:") + type.take(20)
+        }
 
         // [2026-10-06] Delivered-on-receipt (WhatsApp ✓✓ gray parity): report
         // "this DEVICE got it" the instant any chat push lands — app killed or

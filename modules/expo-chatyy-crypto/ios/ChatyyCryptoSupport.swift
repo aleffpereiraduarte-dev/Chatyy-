@@ -391,3 +391,35 @@ public enum ChatyyCryptoPanic {
     return (n > 3 ? "n=\(n) | " : "") + first.joined(separator: " | ")
   }
 }
+
+// MARK: - [push-minimo 2026-10-24] Bearer por conta p/ a NSE buscar o push mínimo
+
+/// Item "pmin.auth" no Keychain (mesmo serviço/grupo compartilhado do e2ee5, AfterFirstUnlockThisDeviceOnly):
+/// {"a": conta ativa, "t": {conta: bearer}}. Escrito pelo app (ChatyyCrypto.setPushAuth), lido pela NSE.
+/// Contas normalizadas (minúsculas, @onemundo.com.br → @chatyy.com.br). Nunca loga bearer.
+public enum ChatyyPushMiniAuth {
+  private static let item = "pmin.auth"
+
+  public static func norm(_ e: String) -> String {
+    return e.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      .replacingOccurrences(of: "@onemundo.com.br", with: "@chatyy.com.br")
+  }
+
+  public static func save(active: String, tokens: [String: String]) {
+    var t: [String: String] = [:]
+    for (k, v) in tokens { let e = norm(k); if !e.isEmpty && !v.isEmpty && v.count < 600 { t[e] = v } }
+    if t.isEmpty { return }
+    ChatyyCryptoKeychain.saveJSON(item, ["a": norm(active), "t": t])
+  }
+
+  public static func clear() { ChatyyCryptoKeychain.delete(item) }
+
+  /// Bearer da conta do push; conta vazia → a ativa. nil = não temos (nunca usa o de outra conta).
+  public static func bearer(for account: String) -> String? {
+    guard let o = ChatyyCryptoKeychain.loadJSON(item), let t = o["t"] as? [String: String] else { return nil }
+    let a = norm(account)
+    if !a.isEmpty { return t[a].flatMap { $0.isEmpty ? nil : $0 } }
+    let act = norm(o["a"] as? String ?? "")
+    return act.isEmpty ? nil : t[act]
+  }
+}

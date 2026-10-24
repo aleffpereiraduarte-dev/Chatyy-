@@ -746,6 +746,12 @@ export function supportsExpoCallUnpack(): boolean {
   try { return !!(m && typeof m.supportsExpoCallUnpack === 'function' && m.supportsExpoCallUnpack()); } catch { return false; }
 }
 
+// [push-minimo 2026-10-24] binário Android que busca o push MÍNIMO (ChatPushMini.kt). false em iOS/web/binário velho.
+export function supportsPushMini(): boolean {
+  const m: any = getModule();
+  try { return !!(m && typeof m.supportsPushMini === 'function' && m.supportsPushMini()); } catch { return false; }
+}
+
 export function setPushRegistrationInfo(deviceId: string, appVersion: string): void {
   const m: any = getModule();
   if (!m || typeof m.setPushRegistrationInfo !== 'function') return;

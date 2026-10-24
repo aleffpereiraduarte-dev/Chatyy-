@@ -41,6 +41,26 @@ public class ChatyyCryptoModule: Module {
       return ChatyyCryptoPanic.take()
     }
 
+    // [push-minimo 2026-10-24] Push MÍNIMO (só aviso conversa+id+d_ack): a NSE busca a mensagem real em
+    // chat_push_fetch com o Bearer da conta (NotificationServiceE2EE.swift → ChatyyNSEMini). Só com o núcleo
+    // no binário (é o mesmo gate que compila o fetch na NSE) e o App Group. JS anuncia caps "pmin1".
+    Function("pushMini") { () -> Bool in
+      #if CHATYY_CRYPTO_CORE
+      return ChatyyCryptoStore.root() != nil
+      #else
+      return false
+      #endif
+    }
+
+    // Bearers por conta p/ o fetch da NSE (Keychain do grupo compartilhado; o JS manda em syncNativeChatAuth).
+    Function("setPushAuth") { (active: String, tokens: [String: String]) in
+      ChatyyPushMiniAuth.save(active: active, tokens: tokens)
+    }
+
+    Function("clearPushAuth") {
+      ChatyyPushMiniAuth.clear()
+    }
+
     AsyncFunction("invoke") { (op: String, args: String, promise: Promise) in
       #if CHATYY_CRYPTO_CORE
       Task {

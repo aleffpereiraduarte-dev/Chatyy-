@@ -22,6 +22,8 @@ import CryptoKit
 ///   5. [2026-10-11] App-icon badge kept right with the app killed (server
 ///      aps.badge + App Group counter — see applyBadge) and the message is
 ///      journaled into the App Group (journalMessage) for instant open.
+///   0. [push-minimo 2026-10-24] Push MÍNIMO (pmin=1): só o aviso chega pela Apple; a mensagem real vem
+///      do chat_push_fetch (ChatyyNSEMini em NotificationServiceE2EE.swift) antes de tudo abaixo.
 ///   6. [e2ee5 WP-10 2026-10-21] E2EE push (e2e=5): decrypted on-device with the
 ///      chatyy-crypto core (role Push) → real sender + preview, ≤ ChatyyNSEE2EE.deadline,
 ///      else the server's generic "Nova mensagem". Code: NotificationServiceE2EE.swift
@@ -66,6 +68,7 @@ class NotificationService: UNNotificationServiceExtension {
     private var ptTextFirst = false
     private var ptE2E = false
     private var ptExpired = false
+    private var ptMini = 0 // [push-minimo 2026-10-24] 0 = push de sempre, 1 = mínimo buscado, 2 = mínimo sem busca (genérico)
 
     override func didReceive(_ request: UNNotificationRequest,
                              withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
@@ -78,7 +81,36 @@ class NotificationService: UNNotificationServiceExtension {
         let t0 = DispatchTime.now()
         self.startedAt = t0
 
-        let p = Self.payload(request.content.userInfo)
+        let p0 = Self.payload(request.content.userInfo)
+        // [push-minimo 2026-10-24] Push MÍNIMO (pmin=1: o APNs trouxe só conversa+id+d_ack e o genérico):
+        // busca a mensagem real (ChatyyNSEMini, ≤3 s) e só então segue o caminho de sempre com o payload
+        // COMPLETO — journal → ✓✓ (persisted) → E2EE pelo e2e_c → Communication Notification. O userInfo
+        // entregue ao app ganha o "body" completo (toque abre a conversa certa). Falhou → genérico.
+        if ChatyyNSEMini.isMini(p0) {
+            lock.lock(); ptMini = 2; lock.unlock()
+            ChatyyNSEMini.fetch(p0) { [weak self] full in
+                guard let self = self else { return }
+                var p = p0
+                if let f = full {
+                    for (k, v) in f.data { p[k] = v }
+                    p["pmin"] = nil
+                    if !f.title.isEmpty { best.title = f.title }
+                    if !f.body.isEmpty { best.body = f.body }
+                    var ui = best.userInfo
+                    ui["body"] = f.data
+                    if !f.experienceId.isEmpty { ui["experienceId"] = f.experienceId }
+                    if !f.scopeKey.isEmpty { ui["scopeKey"] = f.scopeKey }
+                    best.userInfo = ui
+                    self.lock.lock(); self.ptMini = 1; self.lock.unlock()
+                }
+                self.proceed(best, p: p, t0: t0)
+            }
+            return
+        }
+        proceed(best, p: p0, t0: t0)
+    }
+
+    private func proceed(_ best: UNMutableNotificationContent, p: [String: Any], t0: DispatchTime) {
         let fastUD = UserDefaults(suiteName: Self.appGroupId)
         let textFirst = (fastUD?.string(forKey: "chatyy.nse.text_first") ?? "1") != "0"
         let budgetRaw = fastUD?.integer(forKey: "chatyy.nse.media_budget_ms") ?? 0
@@ -316,8 +348,10 @@ class NotificationService: UNNotificationServiceExtension {
         if ptSkipAvatar { codes.append("pt_skip_avatar") }
         if ptSkipMedia { codes.append("pt_skip_media") }
         if ptExpired { codes.append("pt_expire") }
+        if ptMini == 1 { codes.append("pt_pmin_ok" + Self.ptBucket(ms, [300, 700, 1500, 3000])) }
+        if ptMini == 2 { codes.append("pt_pmin_generic") }
         let line = "[ChatyyPushT] banner_ms=\(ms) text_first=\(ptTextFirst ? 1 : 0) e2e=\(ptE2E ? 1 : 0)"
-            + " skip_avatar=\(ptSkipAvatar ? 1 : 0) skip_media=\(ptSkipMedia ? 1 : 0) expire=\(ptExpired ? 1 : 0)"
+            + " skip_avatar=\(ptSkipAvatar ? 1 : 0) skip_media=\(ptSkipMedia ? 1 : 0) expire=\(ptExpired ? 1 : 0) pmin=\(ptMini)"
         lock.unlock()
         handler?(content)
         // Depois do contentHandler: nada disso atrasa o banner. Só tempos/códigos, nunca conteúdo.

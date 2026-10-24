@@ -179,7 +179,7 @@ object PushTokenRegistrar {
                     .put("platform", "android")
                     .put("token_type", "fcm_device")
                     .put("source", "native_on_new_token")
-                    .put("caps", "fcm_native_v1,fcm_native_call")
+                    .put("caps", "fcm_native_v1,fcm_native_call," + ChatPushMini.CAP) // [push-minimo 2026-10-24] binário que busca o push mínimo
                     .put("device_accounts", all)
                 if (deviceId.isNotBlank()) body.put("device_id", deviceId)
                 if (appVer.isNotBlank()) body.put("app_version", appVer)

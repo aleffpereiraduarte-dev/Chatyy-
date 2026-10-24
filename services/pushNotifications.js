@@ -108,6 +108,17 @@ export function clearNativeChatAuth() {
   _lastNativeAuthSig = '';
   try { const nc = _nativeChat(); nc?.clearChatNotificationAuth?.(); } catch {}
   try { const m = _iosNotifActions(); m?.clearAuth?.(); } catch {}
+  try { const c = _iosPushMiniAuthMod(); c?.clearPushAuth?.(); } catch {} // [push-minimo 2026-10-24]
+}
+// [push-minimo 2026-10-24] iOS: bearers por conta no Keychain compartilhado p/ a NSE buscar o push mínimo
+// (ChatyyCrypto.setPushAuth). null em Android/web/binário sem a função.
+function _iosPushMiniAuthMod() {
+  if (Platform.OS !== 'ios') return null;
+  try {
+    const { requireOptionalNativeModule } = require('expo-modules-core');
+    const m = requireOptionalNativeModule('ChatyyCrypto');
+    return (m && typeof m.setPushAuth === 'function') ? m : null;
+  } catch { return null; }
 }
 
 let _lastNativeAuthSig = '';
@@ -117,7 +128,8 @@ export async function syncNativeChatAuth(force = false) {
     const nc = _nativeChat();
     const ios = _iosNotifActions();
     const hasAndroid = !!(nc && typeof nc.setChatNotificationAuth === 'function');
-    if (!hasAndroid && !(ios && typeof ios.setAuth === 'function')) return;
+    const pmin = _iosPushMiniAuthMod(); // [push-minimo 2026-10-24]
+    if (!hasAndroid && !(ios && typeof ios.setAuth === 'function') && !pmin) return;
     const api = require('./api');
     const tok = (typeof api.getAuthToken === 'function' ? api.getAuthToken() : '') || '';
     const email = (typeof api.getActiveAccountEmail === 'function' ? api.getActiveAccountEmail() : '') || '';
@@ -141,6 +153,7 @@ export async function syncNativeChatAuth(force = false) {
     _lastNativeAuthAt = now;
     if (hasAndroid) await nc.setChatNotificationAuth(email, tok, tokens);
     if (ios && typeof ios.setAuth === 'function') { try { ios.setAuth(email, tok, tokens); } catch {} }
+    if (pmin) { try { const t = { ...tokens }; if (email && tok) t[String(email)] = tok; pmin.setPushAuth(String(email || ''), t); } catch {} }
   } catch {}
 }
 
@@ -433,10 +446,35 @@ function _pushDeviceAccounts(activeEmail) {
 // iOS: ambiente APNs (TestFlight/App Store = production; Debug = development)
 // + bundle id — o servidor escolhe o host da Apple certo na 1ª tentativa.
 let _iosPushMetaCache = null;
+// [push-minimo 2026-10-24] caps "pmin1" = este BINÁRIO busca o push mínimo (só aviso conversa+id+d_ack):
+// Android → ExpoCallKit.supportsPushMini (ChatPushMini.kt); iOS → ChatyyCrypto.pushMini (NSE com o núcleo
+// e o fetch em NotificationServiceE2EE.swift). Só o nativo diz — um OTA em binário velho nunca anuncia.
+// O servidor só manda o formato mínimo p/ a allowlist (/var/mail/.chatyy-push-mini) E com esta cap.
+function _pushMiniSupported() {
+  try {
+    if (Platform.OS === 'android') {
+      const ck = _nativeChat();
+      return !!(ck && typeof ck.supportsPushMini === 'function' && ck.supportsPushMini());
+    }
+    if (Platform.OS === 'ios') {
+      const { requireOptionalNativeModule } = require('expo-modules-core');
+      const m = requireOptionalNativeModule('ChatyyCrypto');
+      return !!(m && typeof m.pushMini === 'function' && m.pushMini() === true);
+    }
+  } catch {}
+  return false;
+}
+function _withPushMiniCap(caps) {
+  const c = String(caps || '');
+  if (!_pushMiniSupported() || /(^|,)pmin1(,|$)/.test(c)) return c;
+  return c ? c + ',pmin1' : 'pmin1';
+}
+
 async function _iosPushMeta() {
   if (Platform.OS !== 'ios') return {};
   if (_iosPushMetaCache) return _iosPushMetaCache;
   const meta = {};
+  try { if (_pushMiniSupported()) meta.caps = 'pmin1'; } catch {}
   try {
     const App = require('expo-application');
     if (App?.applicationId) meta.bundle_id = String(App.applicationId).slice(0, 100);
@@ -2422,7 +2460,7 @@ async function _sendTokenToBackendInner(pushToken) {
       try {
         const ck = _nativeChat();
         if (ck && typeof ck.supportsNativePushRegistrar === 'function' && ck.supportsNativePushRegistrar()) {
-          _meta.caps = (typeof ck.supportsExpoCallUnpack === 'function' && ck.supportsExpoCallUnpack()) ? 'fcm_native_v1,fcm_native_call' : 'fcm_native_v1';
+          _meta.caps = _withPushMiniCap((typeof ck.supportsExpoCallUnpack === 'function' && ck.supportsExpoCallUnpack()) ? 'fcm_native_v1,fcm_native_call' : 'fcm_native_v1');
           ck.setPushRegistrationInfo(_devId, _ver);
         }
       } catch {}
@@ -2598,7 +2636,7 @@ export async function flushPendingTokens() {
           try {
             const ck = _nativeChat();
             if (ck && typeof ck.supportsNativePushRegistrar === 'function' && ck.supportsNativePushRegistrar()) {
-              _caps = (typeof ck.supportsExpoCallUnpack === 'function' && ck.supportsExpoCallUnpack()) ? 'fcm_native_v1,fcm_native_call' : 'fcm_native_v1';
+              _caps = _withPushMiniCap((typeof ck.supportsExpoCallUnpack === 'function' && ck.supportsExpoCallUnpack()) ? 'fcm_native_v1,fcm_native_call' : 'fcm_native_v1');
             }
           } catch {}
         }
