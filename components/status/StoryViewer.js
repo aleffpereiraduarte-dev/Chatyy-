@@ -18,7 +18,7 @@
 import { androidBottomInset } from '../../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import FastImage from '../FastImage'; // [2026-10-09 expo-image]
-import { statusDisplayMedia, prefetchStatusItem } from '../../services/statusMedia'; // [status-rapido 2026-10-23]
+import { statusDisplayMedia, prefetchStatusItem, statusZoomOn, statusZoomHiresUrl, STATUS_ZOOM_MAX, STATUS_ZOOM_HIRES_AT } from '../../services/statusMedia'; // [status-rapido 2026-10-23] [status-zoom 2026-10-23]
 import {
   View, Text, TouchableOpacity, TextInput, Pressable, Image,
   Platform, Modal, Alert, Animated, Keyboard, FlatList, ActivityIndicator,
@@ -526,7 +526,7 @@ const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
 // error/retry/mute flags, or the imageFade ref). Behavior + visuals are a
 // verbatim move of the former inline `renderMedia()` — no logic change.
 const StoryMedia = React.memo(function StoryMedia({
-  cur, isText, isVideo, isImage, mediaUrl,
+  cur, isText, isVideo, isImage, mediaUrl, hiresUrl,
   t, paused, videoMuted, videoError, imageError, imageRetry, imageFade,
   advance, advanceNatural, scheduleBoomerangAdvance, onVideoError, onVideoReady, onVideoProgress, setVideoError, setImageError, setImageRetry,
   boomerangRef, boomerangStateRef,
@@ -785,6 +785,19 @@ const StoryMedia = React.memo(function StoryMedia({
                 imageFade.setValue(1);
               }}
             />
+            {/* [status-zoom 2026-10-23] original em alta por cima da variante (zoom > 1.5x):
+                transparente até carregar, erro = continua a variante. */}
+            {hiresUrl ? (
+              <_ExpoImage
+                key={`hires::${hiresUrl}`}
+                source={{ uri: hiresUrl }}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                contentFit="contain"
+                cachePolicy="memory-disk"
+                priority="high"
+                transition={160}
+              />
+            ) : null}
           </Animated.View>
         </View>
       );
@@ -805,6 +818,15 @@ const StoryMedia = React.memo(function StoryMedia({
               setImageError(true);
             }}
           />
+          {hiresUrl ? (
+            <img
+              key={`hires::${hiresUrl}`}
+              src={hiresUrl}
+              alt=""
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }}
+              onError={(e) => { try { e.currentTarget.style.display = 'none'; } catch {} }}
+            />
+          ) : null}
         </div>
       )
       : (
@@ -961,7 +983,11 @@ function StoryViewerJS({
   const stories = Array.isArray(storiesProp) ? storiesProp : [];
   const insets = useSafeAreaInsets();
   const [idx, setIdx] = useState(startIdx || 0);
-  const [paused, setPaused] = useState(false);
+  // [status-zoom 2026-10-23] ampliado (ou pinça em curso) também pausa: `paused`
+  // efetivo = pausa normal OU zoom. setPaused continua mexendo só na pausa normal.
+  const [_pausedRaw, setPaused] = useState(false);
+  const [zoomHold, setZoomHold] = useState(false);
+  const paused = _pausedRaw || zoomHold;
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
   const [replySent, setReplySent] = useState(false);
@@ -1303,8 +1329,159 @@ function StoryViewerJS({
   // group. Mirror them into a ref the handlers read at gesture time.
   const groupNavRef = useRef({});
   groupNavRef.current = { groupIndex, groupCount, onNextGroup, onPrevGroup };
+  // ─── [status-zoom 2026-10-23] Pinça até 4x / duplo toque / arrastar ampliado ───
+  // Nível Instagram: pinça amplia em volta dos dedos e acompanha o arrasto; ao
+  // soltar volta ao tamanho com mola e retoma. Duplo toque (centro) amplia 2.5x
+  // no ponto e FICA (arrasta com 1 dedo); novo duplo toque volta. Enquanto
+  // ampliado: timer parado, toques não trocam de status, arrastar não fecha.
+  // Foto passa de 1.5x → original em alta por cima da variante 1080.
+  // Kill switch: globalThis.__chatyy_status_zoom = false.
+  const [zoomHires, setZoomHires] = useState(false);
+  const zoomScale = useRef(new Animated.Value(1)).current;
+  const zoomTx = useRef(new Animated.Value(0)).current;
+  const zoomTy = useRef(new Animated.Value(0)).current;
+  const zoomRef = useRef({ s: 1, tx: 0, ty: 0, sticky: false, active: false, n: 0, f0x: 0, f0y: 0, d0: 0, s0: 1, tx0: 0, ty0: 0, hires: false, lastTap: 0 });
+  const zoomEligRef = useRef(false); // item atual aceita zoom (atualizado a cada render)
+  const zoomFnRef = useRef(null);
+  {
+    const Z = zoomRef;
+    const _dims = () => { try { const d = Dimensions.get('window'); return { W: d.width || 360, H: d.height || 640 }; } catch { return { W: 360, H: 640 }; } };
+    const _clamp = (sc, tx, ty) => {
+      const { W, H } = _dims();
+      const mx = Math.max(0, (sc - 1) * W / 2);
+      const my = Math.max(0, (sc - 1) * H / 2);
+      return { tx: Math.min(mx, Math.max(-mx, tx)), ty: Math.min(my, Math.max(-my, ty)) };
+    };
+    const _markHires = (sc) => {
+      if (sc > STATUS_ZOOM_HIRES_AT && !Z.current.hires) { Z.current.hires = true; setZoomHires(true); }
+    };
+    const _apply = (sc, tx, ty) => {
+      const z = Z.current; z.s = sc; z.tx = tx; z.ty = ty;
+      zoomScale.setValue(sc); zoomTx.setValue(tx); zoomTy.setValue(ty);
+      _markHires(sc);
+    };
+    const _animTo = (sc, tx, ty, done) => {
+      const z = Z.current; z.s = sc; z.tx = tx; z.ty = ty;
+      _markHires(sc);
+      const cfg = { useNativeDriver: true, friction: 8, tension: 70 };
+      Animated.parallel([
+        Animated.spring(zoomScale, { ...cfg, toValue: sc }),
+        Animated.spring(zoomTx, { ...cfg, toValue: tx }),
+        Animated.spring(zoomTy, { ...cfg, toValue: ty }),
+      ]).start(() => { try { done?.(); } catch {} });
+    };
+    const reset = (animated = true) => {
+      const z = Z.current; z.sticky = false; z.active = false; z.n = 0;
+      if (animated && (Math.abs(z.s - 1) > 0.001 || Math.abs(z.tx) > 0.5 || Math.abs(z.ty) > 0.5)) {
+        // Só retoma quando a mola assenta — e se ninguém voltou a ampliar no meio.
+        _animTo(1, 0, 0, () => { const zz = Z.current; if (!zz.active && !zz.sticky) setZoomHold(false); });
+      } else {
+        _apply(1, 0, 0);
+        setZoomHold(false);
+      }
+    };
+    const touches = (evt) => {
+      const t = evt?.nativeEvent?.touches;
+      if (!t) return [];
+      try { return Array.isArray(t) ? t : Array.from(t); } catch { return []; }
+    };
+    const base = (ts) => {
+      const z = Z.current;
+      const n = Math.min(2, ts.length);
+      z.n = n;
+      if (!n) return;
+      const a = ts[0]; const b = ts[1] || a;
+      z.f0x = (a.pageX + b.pageX) / 2; z.f0y = (a.pageY + b.pageY) / 2;
+      z.d0 = n >= 2 ? Math.hypot(a.pageX - b.pageX, a.pageY - b.pageY) : 0;
+      z.s0 = z.s; z.tx0 = z.tx; z.ty0 = z.ty;
+    };
+    const start = (evt) => {
+      const z = Z.current;
+      z.active = true;
+      setZoomHold(true);
+      base(touches(evt));
+    };
+    const move = (evt) => {
+      const z = Z.current;
+      const ts = touches(evt);
+      const n = Math.min(2, ts.length);
+      if (!n) return;
+      if (n !== z.n) { base(ts); return; } // dedo entrou/saiu → nova base, sem salto
+      const a = ts[0]; const b = ts[1] || a;
+      if (!Number.isFinite(a.pageX) || !Number.isFinite(b.pageX)) return;
+      const fx = (a.pageX + b.pageX) / 2; const fy = (a.pageY + b.pageY) / 2;
+      let sc = z.s0;
+      if (n >= 2 && z.d0 > 8) sc = z.s0 * (Math.hypot(a.pageX - b.pageX, a.pageY - b.pageY) / z.d0);
+      // borracha abaixo de 1x e acima do máximo
+      if (sc < 1) sc = Math.max(0.7, 1 - (1 - sc) * 0.4);
+      if (sc > STATUS_ZOOM_MAX) sc = Math.min(STATUS_ZOOM_MAX * 1.15, STATUS_ZOOM_MAX + (sc - STATUS_ZOOM_MAX) * 0.25);
+      const { W, H } = _dims();
+      const cx = W / 2; const cy = H / 2;
+      // ponto do conteúdo sob o foco inicial continua sob os dedos
+      const qx = (z.f0x - cx - z.tx0) / (z.s0 || 1);
+      const qy = (z.f0y - cy - z.ty0) / (z.s0 || 1);
+      _apply(sc, fx - cx - sc * qx, fy - cy - sc * qy);
+    };
+    const end = () => {
+      const z = Z.current;
+      z.active = false; z.n = 0;
+      if (z.sticky && z.s >= 1.05) {
+        const sc = Math.min(STATUS_ZOOM_MAX, z.s);
+        const c = _clamp(sc, z.tx, z.ty);
+        _animTo(sc, c.tx, c.ty);
+        return;
+      }
+      reset(true);
+    };
+    const doubleTap = (x, y) => {
+      const z = Z.current;
+      if (z.sticky || z.s > 1.01) { reset(true); return; }
+      const { W, H } = _dims();
+      const sc = 2.5;
+      const px = Number.isFinite(x) ? x : W / 2;
+      const py = Number.isFinite(y) ? y : H / 2;
+      const c = _clamp(sc, (1 - sc) * (px - W / 2), (1 - sc) * (py - H / 2));
+      z.sticky = true;
+      setZoomHold(true);
+      _animTo(sc, c.tx, c.ty);
+    };
+    // Toque simples/duplo com a foto ampliada: nunca navega; duplo toque volta.
+    const tapWhileZoomed = () => {
+      const z = Z.current;
+      if (!(z.sticky || z.s > 1.01 || z.active)) return false;
+      const now = Date.now();
+      if (now - (z.lastTap || 0) < 280) { z.lastTap = 0; reset(true); } else z.lastTap = now;
+      return true;
+    };
+    const isZoomed = () => { const z = Z.current; return z.sticky || z.active || z.s > 1.01; };
+    zoomFnRef.current = { reset, start, move, end, doubleTap, tapWhileZoomed, isZoomed, touches };
+  }
+  // Troca de item / pessoa / resposta aberta → volta a 1x na hora (sem mola).
+  const _zoomItemKey = `${idx}:${String(stories?.[idx]?.id ?? '')}:${groupIndex ?? ''}`;
+  useEffect(() => {
+    try { zoomFnRef.current?.reset(false); } catch {}
+    zoomRef.current.hires = false;
+    setZoomHires(false);
+  }, [_zoomItemKey]);
+  useEffect(() => { if (replyFocused) { try { zoomFnRef.current?.reset(false); } catch {} } }, [replyFocused]);
+
   const panResponder = useRef(
     PanResponder.create({
+      // [status-zoom 2026-10-23] 2 dedos (ou arrasto com a foto ampliada pelo
+      // duplo toque) → o zoom toma o gesto ANTES das zonas de toque/arrasto.
+      onStartShouldSetPanResponderCapture: (evt) => {
+        if (!zoomEligRef.current) return false;
+        if ((zoomFnRef.current?.touches(evt) || []).length >= 2) { gestureAxisRef.current = 'z'; return true; }
+        return false;
+      },
+      onMoveShouldSetPanResponderCapture: (evt, gs) => {
+        if (!zoomEligRef.current) return false;
+        const zf = zoomFnRef.current;
+        if ((zf?.touches(evt) || []).length >= 2) { gestureAxisRef.current = 'z'; return true; }
+        if (zoomRef.current.sticky && (Math.abs(gs.dx) > 4 || Math.abs(gs.dy) > 4)) { gestureAxisRef.current = 'z'; return true; }
+        return false;
+      },
+      onPanResponderTerminationRequest: () => gestureAxisRef.current !== 'z',
       onMoveShouldSetPanResponder: (evt, gs) => {
         // Horizontal swipe between user groups — only claim when there's
         // actually a target on that side (onNextGroup/onPrevGroup wired
@@ -1334,8 +1511,23 @@ function StoryViewerJS({
         }
         return false;
       },
-      onPanResponderGrant: () => { setPaused(true); },
+      onPanResponderGrant: (evt) => {
+        if (gestureAxisRef.current === 'z') { zoomFnRef.current?.start(evt); return; } // [status-zoom]
+        setPaused(true);
+      },
       onPanResponderMove: (_evt, gs) => {
+        // [status-zoom 2026-10-23] arrasto de 1 dedo virou pinça (2º dedo) → zoom,
+        // desfaz o arrasto de fechar/trocar de pessoa.
+        if (gestureAxisRef.current !== 'z' && zoomEligRef.current && (zoomFnRef.current?.touches(_evt) || []).length >= 2) {
+          Animated.spring(dragY, { toValue: 0, useNativeDriver: true, friction: 7 }).start();
+          Animated.spring(dragX, { toValue: 0, useNativeDriver: true, friction: 7 }).start();
+          swipeUpFromBottomRef.current = false;
+          gestureAxisRef.current = 'z';
+          setPaused(false);
+          zoomFnRef.current?.start(_evt);
+          return;
+        }
+        if (gestureAxisRef.current === 'z') { zoomFnRef.current?.move(_evt); return; }
         if (gestureAxisRef.current === 'h') {
           // Horizontal parallax — only honor in the direction with a target.
           const gn = groupNavRef.current;
@@ -1349,6 +1541,7 @@ function StoryViewerJS({
         if (gs.dy >= 0) dragY.setValue(gs.dy);
       },
       onPanResponderRelease: (_evt, gs) => {
+        if (gestureAxisRef.current === 'z') { gestureAxisRef.current = null; zoomFnRef.current?.end(); return; } // [status-zoom]
         if (gestureAxisRef.current === 'h') {
           // Horizontal commit — > 60px OR fling-fast → fire group nav.
           const gn = groupNavRef.current;
@@ -1422,6 +1615,7 @@ function StoryViewerJS({
         }
       },
       onPanResponderTerminate: () => {
+        if (gestureAxisRef.current === 'z') { try { zoomFnRef.current?.end(); } catch {} } // [status-zoom]
         Animated.spring(dragY, { toValue: 0, useNativeDriver: true }).start();
         Animated.spring(dragX, { toValue: 0, useNativeDriver: true }).start();
         gestureAxisRef.current = null;
@@ -2044,6 +2238,9 @@ function StoryViewerJS({
   // se a variante falhar (retry da foto / erro do vídeo).
   const _dispUrl = (isImage || isVideo) ? (statusDisplayMedia(cur).uri || '') : '';
   const mediaUrl = (_dispUrl && _dispUrl !== _origMediaUrl && !(imageRetry > 0) && !videoError) ? _dispUrl : _origMediaUrl;
+  // [status-zoom 2026-10-23] foto/vídeo com mídia na tela aceitam pinça/duplo toque.
+  zoomEligRef.current = statusZoomOn() && (isImage || isVideo) && !!mediaUrl && !imageError && !videoError && !replyFocused && !cur?._placeholder;
+  const _zoomHiresUrl = (zoomHires && isImage) ? statusZoomHiresUrl(cur, mediaUrl) : '';
 
   // Voice status — an audio-only story. Detected by an explicit type OR by a
   // media_url that points at an audio file on a non-image/non-video status
@@ -2062,6 +2259,7 @@ function StoryViewerJS({
       isVideo={isVideo}
       isImage={isImage}
       mediaUrl={mediaUrl}
+      hiresUrl={_zoomHiresUrl}
       t={t}
       paused={paused || replyFocused}
       videoMuted={videoMuted}
@@ -2397,7 +2595,7 @@ function StoryViewerJS({
         </Animated.View>
 
         {/* Media — wrapped in Animated.View for crossfade between items */}
-        <Animated.View style={{ flex: 1, opacity: itemOpacity }}>
+        <Animated.View style={{ flex: 1, opacity: itemOpacity, transform: [{ translateX: zoomTx }, { translateY: zoomTy }, { scale: zoomScale }] /* [status-zoom] */ }}>
           {renderMedia()}
         </Animated.View>
 
@@ -2813,6 +3011,7 @@ function StoryViewerJS({
             // jumps to the wrong user the instant the modal mounts.
             if (isFreshMount()) return;
             if (replyFocused) { try { Keyboard.dismiss(); } catch {} return; }
+            if (zoomFnRef.current?.tapWhileZoomed()) return; // [status-zoom] ampliado não navega
             _haptic('light'); goPrev();
           }}
           // [2026-10-20 wa2] Segurar perto da borda também pausa (WhatsApp); antes só o
@@ -2831,6 +3030,7 @@ function StoryViewerJS({
             // hora" since the user never had time to see the story.
             if (isFreshMount()) return;
             if (replyFocused) { try { Keyboard.dismiss(); } catch {} return; }
+            if (zoomFnRef.current?.tapWhileZoomed()) return; // [status-zoom] ampliado não navega
             _haptic('light'); advance();
           }}
           // [2026-10-20 wa2] Segurar perto da borda também pausa (WhatsApp); antes só o
@@ -2864,6 +3064,7 @@ function StoryViewerJS({
           }}
           onPress={(e) => {
             if (isFreshMount() || replyFocused) return;
+            if (zoomFnRef.current?.tapWhileZoomed()) { lastTapRef.current = 0; return; } // [status-zoom]
             // Double-tap → fire a "❤️" reaction + a single flying heart
             // burst. Mirrors Instagram/TikTok double-tap-like UX without
             // disrupting the existing tap-hold-to-pause + tap-to-advance
@@ -2875,6 +3076,13 @@ function StoryViewerJS({
             lastTapRef.current = now;
             if (now - last > 250) return;
             lastTapRef.current = 0; // consume — next pair starts fresh
+            // [status-zoom 2026-10-23] foto/vídeo: duplo toque amplia no ponto (curtir
+            // segue no coração). Texto/voz continuam curtindo no duplo toque.
+            if (zoomEligRef.current) {
+              _haptic('light');
+              zoomFnRef.current?.doubleTap(e?.nativeEvent?.pageX, e?.nativeEvent?.pageY);
+              return;
+            }
             try {
               const x = e?.nativeEvent?.pageX;
               const y = e?.nativeEvent?.pageY;

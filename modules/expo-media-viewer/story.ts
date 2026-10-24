@@ -52,6 +52,9 @@ export type StoryItem = {
   overlays?: StoryOverlay[];
   /** Desenho livre: points = [x0,y0,x1,y1,…]. */
   paths?: { color: string; width?: number; points: number[] }[];
+  // ── apiVersion >= 5 ──
+  /** [status-zoom 2026-10-23] Foto: original em alta, trocado quando o zoom passa de 1.5x. */
+  hires?: string;
 };
 
 export type StoryOverlay = {
@@ -104,6 +107,8 @@ export type StoryOpenOptions = {
   reactions?: StoryReaction[];
   /** apiVersion >= 4: segurar o coração abre a bolha de reações (deslizar + soltar). */
   reactionHold?: boolean;
+  /** [status-zoom 2026-10-23] apiVersion >= 5: pinça até 4x + duplo toque (foto/vídeo); false = desliga. */
+  zoom?: boolean;
   /** apiVersion >= 4: "+" na fileira/bolha abre esta grade (busca por palavras). */
   reactionPicker?: StoryEmojiPicker;
   transition?: 'cube' | 'slide';
@@ -190,7 +195,8 @@ export function isAvailable(): boolean {
 }
 
 /** 1 = build 2026-10-15 (foto/vídeo/texto); 2 = blocos/voz/enquete/boomerang/duplo toque/menu por item;
- *  3 = originRect; 4 = reações livres (bolha ao segurar o coração, "+" com grade de emojis, emoji real na lista). */
+ *  3 = originRect; 4 = reações livres (bolha ao segurar o coração, "+" com grade de emojis, emoji real na lista);
+ *  5 = zoom (pinça/duplo toque, pausa enquanto ampliado, `hires` acima de 1.5x). */
 export function apiVersion(): number {
   const m = mod();
   if (!m || typeof m.apiVersion !== 'function') return 0;

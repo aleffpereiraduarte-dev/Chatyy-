@@ -26,7 +26,7 @@ import { storyReactionDefs, storyReactionKind, storyReactionsEnabled, isStoryRea
 import { nativeEmojiPayload } from '../chat/nativeEmojiData';
 import { getCachedStatusViewers, fetchStatusViewers } from '../../services/statusViewersCache'; // [viewers 2026-10-20]
 import { blurhashToDataUri } from '../../utils/blurhashDataUri'; // [viewers 2026-10-20]
-import { statusDisplayMedia, statusLocalUri, statusLocalThumb } from '../../services/statusMedia'; // [status-rapido 2026-10-23]
+import { statusDisplayMedia, statusLocalUri, statusLocalThumb, statusZoomOn, statusZoomHiresUrl } from '../../services/statusMedia'; // [status-rapido 2026-10-23] [status-zoom 2026-10-23]
 
 let _NS; // undefined = não resolvido; null = indisponível
 function _mod() {
@@ -373,6 +373,12 @@ function _toNativeItem(it, t, isSelf) {
       } : null),
     link,
   };
+  // [status-zoom 2026-10-23] apiVersion >= 5: original em alta p/ trocar acima de 1.5x
+  // (binário antigo ignora a chave). Vídeo não troca de fonte.
+  if (type === 'image' && statusZoomOn()) {
+    const hires = statusZoomHiresUrl(it, uri);
+    if (hires) out.hires = hires;
+  }
   if (!v2) return out;
   if (type === 'text' && !poll) {
     const anim = String(it.text_animation || it.meta?.text_animation || 'none');
@@ -600,8 +606,16 @@ export function closeNativeStories() {
  *   onMentionPress({ email, username }) } — os 4 últimos abrem UI do JS: o
  *   nativo fecha antes (closeThen).
  */
+/** [status-zoom 2026-10-23] binário com pinça/duplo toque no visualizador nativo (apiVersion >= 5). */
+export function nativeStoryZoomSupported() { return !!_mod() && _api() >= 5; }
+
 export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, hasMoreNext = false, hasMorePrev = false, callbacks = {} }) {
   if (!nativeStoriesAvailable()) return false;
+  // [status-zoom 2026-10-23] Opt-in (padrão OFF): binário sem zoom nativo → abre o
+  // viewer JS (que tem pinça) só se globalThis.__chatyy_status_zoom_js === true.
+  try {
+    if (globalThis.__chatyy_status_zoom_js === true && statusZoomOn() && _api() < 5) return false;
+  } catch {}
   const list = Array.isArray(groups) ? groups.filter(g => g && Array.isArray(g.items) && g.items.length > 0) : [];
   if (!list.length) return false;
   if (!list.every(g => isNativeStoryGroup(g.items))) return false;
@@ -621,6 +635,8 @@ export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, has
       hasMorePrev: !!hasMorePrev,
     };
     if (typeof startItem === 'number' && startItem >= 0) payload.startItem = startItem;
+    // [status-zoom 2026-10-23] apiVersion >= 5: pinça/duplo toque (kill switch __chatyy_status_zoom)
+    payload.zoom = statusZoomOn();
     // [2026-10-17 status-reacoes] apiVersion >= 4: "+" com a grade completa de
     // emojis do app + segurar o coração abre a bolha de reações.
     if (_api() >= 4 && storyReactionsEnabled()) {

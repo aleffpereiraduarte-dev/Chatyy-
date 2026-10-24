@@ -141,3 +141,26 @@ export function prefetchStatusOpen(items, startIndex = 0) {
     prefetchStatusItem(items[s + k], { force: true });
   }
 }
+
+// ─── [status-zoom 2026-10-23] Pinça/duplo toque no visualizador de status ──
+// Kill switch OTA/console: globalThis.__chatyy_status_zoom = false.
+export const STATUS_ZOOM_MAX = 4;
+export const STATUS_ZOOM_HIRES_AT = 1.5;
+
+export function statusZoomOn() {
+  try { if (globalThis.__chatyy_status_zoom === false) return false; } catch {}
+  return true;
+}
+
+/**
+ * Original em alta (CDN) para trocar quando o zoom passa de 1.5x — só FOTO e
+ * só quando é diferente do que já está na tela (variante 1080). '' = não troca.
+ * Vídeo nunca troca de fonte.
+ */
+export function statusZoomHiresUrl(it, shownUri) {
+  if (!it || it.type !== 'image') return '';
+  const original = statusOriginalUrl(it);
+  if (!original || /^data:/i.test(original)) return '';
+  if (shownUri && String(shownUri) === original) return '';
+  return original;
+}
