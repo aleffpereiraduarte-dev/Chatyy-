@@ -96,6 +96,8 @@ internal object ChatTransport {
   //     sessão SSL (reuseSession é aceito e ignorado aqui). Chaves do cfg: bgGrace
   //     (kill switch JS __chatyy_ws_bg_grace=false), dnsPrewarm, fastFirst.
   const val VERSION = 6
+  /** [ka-adapt 2026-10-24] teto do intervalo de ping de app (JS: kaCaps().maxMs; binário antigo = 120 s). */
+  const val KA_MAX_MS = 300000L
 
   private val exec = ScheduledThreadPoolExecutor(1) { r ->
     Thread(r, "chatyy-transport").apply { isDaemon = true }
@@ -313,7 +315,8 @@ internal object ChatTransport {
     val c = SessionConfig(
       urls = urls.take(2),
       authFrame = cfg["authFrame"] as? String,
-      pingIntervalMs = num(cfg["pingIntervalMs"], 20000L, 2000L, 120000L),
+      // [ka-adapt 2026-10-24] teto 120 s → 300 s (keepalive adaptivo; JS lê kaCaps()).
+      pingIntervalMs = num(cfg["pingIntervalMs"], 20000L, 2000L, ChatTransport.KA_MAX_MS),
       pongDeadlineMs = num(cfg["pongDeadlineMs"], 10000L, 1500L, 60000L),
       authWatchdogMs = num(cfg["authWatchdogMs"], 6000L, 2000L, 30000L),
       connectTimeoutMs = num(cfg["connectTimeoutMs"], 10000L, 3000L, 30000L),
@@ -531,6 +534,11 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
 
   private var lastInboundAt = 0L
   private var lastPingSentAt = 0L
+  // [ka-adapt 2026-10-24] último frame ENVIADO e ociosidade do enlace quando o ping saiu
+  // (vai no pong p/ o JS como "idle" e no evento 'ka' {ev:"dead"}).
+  private var lastOutboundAt = 0L
+  private var kaIdleAtPing = -1L
+  private fun kaMarkPing() { val a = max(lastInboundAt, lastOutboundAt); kaIdleAtPing = if (a > 0) now() - a else -1L }
   private var lastGraceAt = 0L
   private var connectStartedAt = 0L
   private var lostAt = 0L
@@ -624,6 +632,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
 
   fun sendNativeFrame(account: String, text: String): Boolean {
     if (!nativeSendReady(account)) return false
+    lastOutboundAt = now()
     val ok = ws?.send(text) ?: false
     if (ok) ChatTransport.bump("outboxWsFrames")
     return ok
@@ -716,6 +725,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     val a = authFrame ?: return
     val w = ws ?: return
     if (phys != Phys.OPEN || authSentGen == gen) return
+    lastOutboundAt = now()
     if (w.send(a)) {
       authSentGen = gen
       armAuthWatchdog()
@@ -754,7 +764,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
         lastRttMs = rtt
         if (rtt > 0) ChatTransport.lastGoodRttMs = rtt
         ChatTransport.bump("pongs")
-        enqueueFrame("{\"type\":\"pong\",\"native\":1,\"rtt\":$rtt}")
+        enqueueFrame("{\"type\":\"pong\",\"native\":1,\"rtt\":$rtt,\"idle\":$kaIdleAtPing,\"iv\":$pingIntervalMs}")
       }
       "auth_success" -> {
         noteAuthIdentity(text)
@@ -978,7 +988,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   // ─── keepalive / zumbi ───────────────────────────────────────────────────
 
   fun setHeartbeat(intervalMs: Long, deadlineMs: Long) {
-    val i = min(120000L, max(2000L, intervalMs))
+    val i = min(ChatTransport.KA_MAX_MS, max(2000L, intervalMs))
     val d = min(60000L, max(1500L, deadlineMs))
     if (i == pingIntervalMs && d == pongDeadlineMs) return
     pingIntervalMs = i
@@ -1001,7 +1011,9 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
   private fun sendPing(): Long {
     val w = ws ?: return 0L
     val t = now()
+    kaMarkPing()
     lastPingSentAt = t
+    lastOutboundAt = t
     ChatTransport.bump("pings")
     w.send("{\"type\":\"ping\",\"ts\":" + System.currentTimeMillis() + "}")
     return t
@@ -1027,6 +1039,8 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
         return@schedule
       }
       ChatTransport.bump("zombies")
+      // [ka-adapt] ping que saiu após `idle` ms de enlace mudo e não voltou = candidato a NAT vencido.
+      emitState("ka", mapOf("ev" to "dead", "idleMs" to kaIdleAtPing, "ivMs" to pingIntervalMs))
       forceReconnect("pong_deadline")
     }
     task?.let { deadlineTasks.add(it) }
@@ -1271,7 +1285,9 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
       }
       "ping" -> {
         if (phys == Phys.AUTHED || phys == Phys.OPEN) {
+          kaMarkPing()
           lastPingSentAt = now()
+          lastOutboundAt = lastPingSentAt
           ws?.send(text)
         }
         return
@@ -1279,6 +1295,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     }
     if (phys == Phys.AUTHED) {
       val w = ws
+      if (w != null) lastOutboundAt = now()
       if (w != null && w.send(text)) {
         ChatTransport.bump("framesOut")
         return
@@ -1316,6 +1333,7 @@ internal class Session(val sid: String, private val cfg: SessionConfig) {
     while (outbox.isNotEmpty() && phys == Phys.AUTHED) {
       val o = outbox.peekFirst() ?: break
       if (t - o.at > o.ttl) { outbox.pollFirst(); ChatTransport.bump("outboxExpired"); continue }
+      lastOutboundAt = now()
       if (!w.send(o.text)) break
       outbox.pollFirst()
       n++

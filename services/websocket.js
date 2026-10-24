@@ -263,6 +263,9 @@ let _regionalWsFailPending = false;
 // fica fora p/ WS e HTTP — api.lbReportWsFailure — e o app segue na próxima região, não no US).
 const _regionalWsBlockedBy = {};
 let _wsApiMod = null;
+// [ka-adapt 2026-10-24] keepalive adaptativo por rede (services/keepaliveAdaptive.js). Lazy + nunca lança.
+let _kaMod;
+function _ka() { if (_kaMod === undefined) { try { _kaMod = require('./keepaliveAdaptive'); } catch { _kaMod = null; } } return _kaMod; }
 function _wsApi() { if (!_wsApiMod) { try { _wsApiMod = require('./api'); } catch {} } return _wsApiMod; }
 function _wsLbOn() { try { return !!_wsApi()?.isClientLbActive?.(); } catch { return false; } }
 function _regionOfWsUrl(url) {
@@ -573,6 +576,9 @@ class MailWebSocket {
     this._authRejectBackoff = 0;      // exponential backoff between auth retries (ms)
 
 
+    // [ka-adapt 2026-10-24] keepalive adaptativo: mudanças do intervalo aprendido → _onKaChange.
+    try { const ka = _ka(); if (ka) { this._kaUnsub = ka.kaOnChange((why) => this._onKaChange(why)); ka.kaStartTelemetry(); } } catch {}
+
     // Pause/resume on visibility change (web only)
     this._visibilityHandler = null;
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -606,6 +612,7 @@ class MailWebSocket {
       const { onNetworkChange } = require('./networkInfo');
       this._netUnsub = onNetworkChange?.((state) => {
         if (!state) return;
+        try { _ka()?.kaNoteNetChange(); } catch {} // [ka-adapt] rede nova → intervalo dela (+ sonda se mudou a chave)
         // [2026-10-06 rock-solid] Rede caiu: só anota. Não queima tentativas
         // de reconexão contra uma interface morta (_scheduleReconnect passa a
         // usar o teto enquanto offline) e marca o instante pra saber, na volta,
@@ -655,6 +662,7 @@ class MailWebSocket {
         if (nextState === 'inactive') return;
         if (nextState === 'active') {
           this._hidden = false;
+          try { _ka()?.kaNoteForeground(true); } catch {} // [ka-adapt]
           // [2026-10-09 tf653] volta do background: RTT antigo não vale mais.
           this._rttEpoch = Date.now();
           try { require('./networkInfo').resetRtt?.(); } catch {}
@@ -686,6 +694,7 @@ class MailWebSocket {
           this._emitForeground();
         } else if (nextState === 'background') {
           this._hidden = true;
+          try { _ka()?.kaNoteForeground(false); } catch {} // [ka-adapt]
           this._hsStartAt = 0; // [2026-10-19 http-fallback] não mede handshake através do 2º plano
           this._stopPing();
           clearTimeout(this.reconnectTimer);
@@ -710,6 +719,23 @@ class MailWebSocket {
         }
       });
     }
+  }
+
+  // [ka-adapt 2026-10-24] intervalo aprendido mudou (ack do servidor / subiu / recuou / rede nova).
+  //   'ack'  → reaplica o perfil (o nativo recebe setHeartbeat);
+  //   'up'   → pede ao servidor o valor novo (ka_set) — só passa a valer no ack (o servidor precisa
+  //            afrouxar o ping de reserva/PongWait antes, senão a prova seguinte seria falsa);
+  //   'down' → aplica JÁ (mais curto é sempre seguro) + avisa o servidor;
+  //   'net'  → idem e 1 sonda (troca de rede com o mesmo tipo pode ter deixado o socket preso).
+  _onKaChange(why) {
+    try {
+      if (why !== 'ack' && this.authenticated && !this._hidden) {
+        const ka = _ka();
+        if (ka && ka.kaEnabled(this.email)) this._send(ka.kaSetFrame(!!(this.ws && this.ws.__native)));
+      }
+      if (this.pingTimer && !this._hidden) this._startPing();
+      if (why === 'net' && this.authenticated && !this._hidden) this.ensureConnected('ka_net', { probe: true, probeMs: 2500 });
+    } catch {}
   }
 
   // Notify listeners that we just became foreground so the chat screen
@@ -758,6 +784,13 @@ class MailWebSocket {
   _onNativeState(ns, ev) {
     if (!ev || this.ws !== ns) return;
     const st = ev.state;
+    // [ka-adapt 2026-10-24] nativo v7: ping que morreu depois de `idleMs` de enlace mudo (antes do
+    // 'reconnecting'). Qualquer troca física → sem ack até o próximo auth (prova inválida).
+    if (st === 'ka') {
+      try { if (ev.ev === 'dead') _ka()?.kaOnDead(Number(ev.idleMs) || -1, true); } catch {}
+      return;
+    }
+    if (st === 'reconnecting' || st === 'offline' || st === 'paused' || st === 'open') { try { _ka()?.kaOnConnLost(); } catch {} }
     this._logGhost?.('native_' + st, { code: ev.code, attempt: ev.attempt, reason: ev.reason });
     // [2026-10-18 ws-400] Fio nativo reconectando SEM token vivo (logout /
     // bearer purgado sem disconnect) → derruba e não reabre até haver login.
@@ -1947,6 +1980,8 @@ class MailWebSocket {
     } catch {}
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(this._encodeOutbound(data));
+      this._kaLastOut = Date.now(); // [ka-adapt] último frame enviado (ociosidade do enlace no WebSocket JS)
+      if (data && data.type !== 'ping' && data.type !== 'ka_set') { try { _ka()?.kaNoteReal(); } catch {} }
       // [2026-10-18 battery] "send-ack timeout": com o ping da thread a 25 s, um
       // envio do usuário num socket sem tráfego recente arma UMA sonda (coalescida)
       // → socket half-open é derrubado em ~6 s em vez de esperar o próximo ping.
@@ -2002,6 +2037,15 @@ class MailWebSocket {
   _heartbeatProfile() {
     if (this._callActive) return { interval: PING_CALL_MS, deadline: PONG_DEADLINE_CALL_MS };
     if (this._chatActive) return { interval: PING_CHAT_MS, deadline: PONG_DEADLINE_CHAT_MS };
+    // [ka-adapt 2026-10-24] idle: intervalo aprendido p/ esta rede — só com ka_ack do servidor
+    // nesta conexão física (sem ack = 20 s de sempre). Kill: __chatyy_ka_adapt = false.
+    try {
+      const ka = _ka();
+      if (ka && ka.kaEnabled(this.email)) {
+        const iv = ka.kaIdleInterval(!!(this.ws && this.ws.__native));
+        if (iv && iv > 0) return { interval: iv, deadline: PONG_DEADLINE_IDLE_MS, ka: true };
+      }
+    } catch {}
     return { interval: PING_IDLE_MS, deadline: PONG_DEADLINE_IDLE_MS };
   }
 
@@ -2045,6 +2089,10 @@ class MailWebSocket {
       }
       const sentAt = t;
       this._pingTs = sentAt;
+      // [ka-adapt] ociosidade do enlace quando o ping sai (o pong/deadline vira prova p/ o aprendizado)
+      const _kaAct = Math.max(this.lastInboundAt || 0, this._kaLastOut || 0);
+      this._kaPingIdle = _kaAct > 0 ? sentAt - _kaAct : 0;
+      const _kaIdleNow = this._kaPingIdle;
       try { this._send({ type: 'ping', ts: sentAt }); } catch {}
       // Um deadline POR ping (thread: interval 5s < deadline 6s → até 2
       // simultâneos), senão a morte logo após um pong só seria julgada um
@@ -2075,6 +2123,7 @@ class MailWebSocket {
           if (this._probeTimer) return;
         }
         try { console.warn('[WS] sem frame ' + deadline + 'ms após ping — half-open, reconectando'); } catch {}
+        try { _ka()?.kaOnDead(_kaIdleNow, false); } catch {} // [ka-adapt]
         this._logGhost?.('pong_deadline', { interval, deadline });
         this._droppedCount++;
         this.ensureConnected('pong_deadline', { force: true });
@@ -2551,6 +2600,7 @@ class MailWebSocket {
   }
 
   _handleMessage(msg) {
+    if (msg && msg.type !== 'pong' && msg.type !== 'ka_ack') { try { _ka()?.kaNoteReal(); } catch {} } // [ka-adapt]
     // [sgu F2 2026-10-23] mensagem com corpo fora do PG (esqueleto): envelope local ou pedido ao roteador (rtStore)
     if (msg && msg.type && msg.type.charCodeAt(0) === 99 /* c */) { try { require('./rtStore').hydrateWsFrameSync(msg); } catch {} }
     // ACK: If server sent an ack_id, immediately acknowledge receipt
@@ -2955,8 +3005,21 @@ class MailWebSocket {
         this._emit('folder_updated', msg.data);
         break;
 
+      case 'ka_ack':
+        // [ka-adapt 2026-10-24] servidor aceitou (ms = teto efetivo) ou recusou (ms 0 / off).
+        try { _ka()?.kaOnAck(msg); } catch {}
+        break;
+
       case 'pong':
         this.lastPongTime = Date.now();
+        // [ka-adapt] prova de ociosidade: nativo v7 manda `idle`; WebSocket JS mede no tick.
+        try {
+          const ka = _ka();
+          if (ka) {
+            if (msg.native) { if (typeof msg.idle === 'number') ka.kaOnPong(msg.idle, true); }
+            else if (this._kaPingIdle > 0) { ka.kaOnPong(this._kaPingIdle, false); this._kaPingIdle = 0; }
+          }
+        } catch {}
         // [native-transport] RTT medido no nativo (sem o atraso da thread JS).
         if (msg.native && typeof msg.rtt === 'number') {
           if (msg.rtt >= 0) {
@@ -3783,6 +3846,16 @@ class MailWebSocket {
   // Replay queued messages and re-subscribe to tracked channels after reconnect
   _onAuthenticated() {
     try { this._lbFollowArm(); } catch {} // [2026-10-22 ws-follow-lb]
+    // [ka-adapt 2026-10-24] pede ao hub/leaf o intervalo desta rede (allowlist + flag do servidor).
+    // Servidor antigo ignora o tipo; sem ka_ack o app segue no perfil de sempre.
+    try {
+      const ka = _ka();
+      if (ka) {
+        ka.kaOnConnLost();
+        ka.kaSetAccount(this.email);
+        if (ka.kaEnabled(this.email)) this._send(ka.kaSetFrame(!!(this.ws && this.ws.__native)));
+      }
+    } catch {}
     // [2026-10-19 http-fallback] duração do handshake (WebSocket JS; o nativo
     // reporta no estado 'authed', ver _onNativeState).
     if (!(this.ws && this.ws.__native) && this._hsStartAt) {

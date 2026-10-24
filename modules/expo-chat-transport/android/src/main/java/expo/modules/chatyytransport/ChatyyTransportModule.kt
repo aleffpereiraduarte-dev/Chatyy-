@@ -74,6 +74,8 @@ class ChatyyTransportModule : Module() {
       Unit
     }
 
+    // [ka-adapt 2026-10-24] teto do keepalive adaptivo (binário sem isto = 120 s).
+    Function("kaCaps") { mapOf("v" to 1, "maxMs" to ChatTransport.KA_MAX_MS, "idle" to true) }
     Function("version") { ChatTransport.VERSION }
 
     // ─── [2026-10-23 quic-proto] fio QUIC+Noise (protótipo ESCURO, ver QuicWire.kt) ─────

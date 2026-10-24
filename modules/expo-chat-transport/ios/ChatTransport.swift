@@ -43,6 +43,8 @@ final class ChatTransport {
   //     bgGrace (kill switch JS __chatyy_ws_bg_grace=false), dnsPrewarm,
   //     reuseSession, fastFirst.
   static let version = 6
+  /// [ka-adapt 2026-10-24] teto do intervalo de ping de app (JS: kaCaps().maxMs; binário antigo = 120 s).
+  static let kaMaxMs: Double = 300000
 
   let q = DispatchQueue(label: "chatyy.transport", qos: .userInitiated)
   private lazy var opQueue: OperationQueue = {
@@ -416,7 +418,9 @@ final class ChatTransport {
     let cfg = TransportConfig(
       urls: urls,
       authFrame: config["authFrame"] as? String,
-      pingIntervalMs: ChatTransport.num(config["pingIntervalMs"], 20000, 2000, 120000),
+      // [ka-adapt 2026-10-24] teto 120 s → 300 s (keepalive adaptivo por rede; o JS só passa de 25 s
+      // com ka_ack do servidor — services/keepaliveAdaptive.js). JS sabe o teto via kaCaps().
+      pingIntervalMs: ChatTransport.num(config["pingIntervalMs"], 20000, 2000, ChatTransport.kaMaxMs),
       pongDeadlineMs: ChatTransport.num(config["pongDeadlineMs"], 10000, 1500, 60000),
       authWatchdogMs: ChatTransport.num(config["authWatchdogMs"], 6000, 2000, 30000),
       connectTimeoutMs: ChatTransport.num(config["connectTimeoutMs"], 10000, 3000, 30000),
@@ -800,6 +804,11 @@ final class TransportSession {
 
   private var lastInboundAt: Double = 0
   private var lastPingSentAt: Double = 0
+  // [ka-adapt 2026-10-24] último frame ENVIADO (qualquer) e ociosidade do enlace quando o ping
+  // saiu (= quanto tempo o NAT ficou sem pacote nosso nem do servidor). Vai no pong p/ o JS
+  // (campo "idle") e no evento 'ka' {ev:"dead"} quando o ping morre.
+  private var lastOutboundAt: Double = 0
+  private var kaIdleAtPing: Double = -1
   private var lastGraceAt: Double = 0
   private var connectStartedAt: Double = 0
   private var lostAt: Double = 0
@@ -1041,6 +1050,7 @@ final class TransportSession {
   }
 
   private func rawSend(_ text: String) {
+    lastOutboundAt = now()
     if let w = quic {
       let g = gen
       sendsInFlight += 1
@@ -1112,7 +1122,7 @@ final class TransportSession {
       lastRttMs = Double(rtt)
       if rtt > 0 { owner.lastGoodRttMs = Double(rtt) }
       owner.bump("pongs")
-      enqueueFrame("{\"type\":\"pong\",\"native\":1,\"rtt\":\(rtt)}")
+      enqueueFrame("{\"type\":\"pong\",\"native\":1,\"rtt\":\(rtt),\"idle\":\(Int(kaIdleAtPing)),\"iv\":\(Int(pingIntervalMs))}")
     case "auth_success"?:
       noteAuthIdentity(text)
       enqueueFrame(text)
@@ -1307,7 +1317,7 @@ final class TransportSession {
   // MARK: keepalive / zumbi
 
   func setHeartbeat(_ intervalMs: Double, _ deadlineMs: Double) {
-    let i = min(120000, max(2000, intervalMs.isFinite ? intervalMs : 20000))
+    let i = min(ChatTransport.kaMaxMs, max(2000, intervalMs.isFinite ? intervalMs : 20000))
     let d = min(60000, max(1500, deadlineMs.isFinite ? deadlineMs : 10000))
     if i == pingIntervalMs && d == pongDeadlineMs { return }
     pingIntervalMs = i
@@ -1336,6 +1346,8 @@ final class TransportSession {
   private func sendPing() -> Double {
     guard hasWire else { return 0 }
     let t = now()
+    let act = max(lastInboundAt, lastOutboundAt)
+    kaIdleAtPing = act > 0 ? t - act : -1
     lastPingSentAt = t
     owner.bump("pings")
     rawSend("{\"type\":\"ping\",\"ts\":\(Int64(Date().timeIntervalSince1970 * 1000))}")
@@ -1361,6 +1373,8 @@ final class TransportSession {
         return
       }
       self.owner.bump("zombies")
+      // [ka-adapt] ping que saiu após `idle` ms de enlace mudo e não voltou = candidato a NAT vencido.
+      self.emitState("ka", ["ev": "dead", "idleMs": Int(self.kaIdleAtPing), "ivMs": Int(self.pingIntervalMs), "quic": self.quic != nil])
       self.forceReconnect("pong_deadline")
     }
     if let it = item { deadlineWorks.append(it) }
@@ -1597,6 +1611,8 @@ final class TransportSession {
       return
     case "ping":
       if phys == .authed || phys == .open {
+        let act = max(lastInboundAt, lastOutboundAt)
+        kaIdleAtPing = act > 0 ? now() - act : -1 // [ka-adapt]
         lastPingSentAt = now()
         rawSend(text)
       }

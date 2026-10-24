@@ -75,6 +75,8 @@ public class ChatyyTransportModule: Module {
     /// Logout: apaga credenciais (a tabela some com o wipe do store).
     Function("outboxForget") { () in ChatOutbox.shared.forgetAll() }
 
+    // [ka-adapt 2026-10-24] teto do keepalive adaptivo (binário sem isto = 120 s).
+    Function("kaCaps") { () -> [String: Any] in return ["v": 1, "maxMs": ChatTransport.kaMaxMs, "idle": true] }
     Function("version") { () -> Int in
       return ChatTransport.version
     }
