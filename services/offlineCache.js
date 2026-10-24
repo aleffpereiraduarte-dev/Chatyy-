@@ -1554,6 +1554,7 @@ export async function replayOfflineQueue(api) {
             const r = await api.feedComment(p.post_id, p.content || '', p.reply_to_id, {
               mediaUrl: p.media_url || p.attachment_url,
               mediaType: p.media_type,
+              mentions: p.mentions, // [2026-10-24 coment-mencao]
             });
             if (r && r.success === false) {
               const msg = String(r.message || r.error || '');

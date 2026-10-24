@@ -331,6 +331,7 @@ function _normComment(c) {
     pending: !!c.pending,
     failed: !!c.failed,
     client_id: c.client_id || null,
+    mentions: Array.isArray(c.mentions) ? c.mentions : undefined, // [2026-10-24 coment-mencao] [{u,email}]
   };
 }
 function _cmSet(k, s) {
@@ -461,7 +462,7 @@ function _bumpCount(k, delta) {
  * Comentar (otimista). `replyTo` = comentário que estou respondendo (raiz ou
  * resposta: o servidor normaliza para a raiz). Resolve { ok, error }.
  */
-export async function addComment(postId, text, { replyTo = null, me = {} } = {}) {
+export async function addComment(postId, text, { replyTo = null, me = {}, mentions = null } = {}) {
   const k = Number(postId);
   const content = String(text || '').trim().slice(0, 1000);
   if (!k || !content) return { ok: false };
@@ -472,6 +473,7 @@ export async function addComment(postId, text, { replyTo = null, me = {} } = {})
     id: `tmp_${clientId}`, post_id: k, author: { email: me.email || '', name: me.name || '', avatar_url: me.avatar || '' },
     text: content, created_at: new Date().toISOString(), parent_id: rootId, pending: true, client_id: clientId,
     is_mine: true, can_delete: true,
+    mentions: Array.isArray(mentions) && mentions.length ? mentions.slice(0, 20) : undefined, // [2026-10-24 coment-mencao]
   });
   const s = _cm.get(k);
   if (rootId) {
@@ -487,7 +489,8 @@ async function _sendComment(k, tmp) {
   const rootId = tmp.parent_id;
   const params = { id: k, text: tmp.content, client_id: tmp.client_id };
   if (rootId) params.parent_id = rootId;
-  const r = await _call('post_comment_create', params, 'feed_comment', { post_id: k, content: tmp.content, reply_to_id: rootId || null });
+  if (Array.isArray(tmp.mentions) && tmp.mentions.length) params.mentions = tmp.mentions; // [2026-10-24 coment-mencao]
+  const r = await _call('post_comment_create', params, 'feed_comment', { post_id: k, content: tmp.content, reply_to_id: rootId || null, ...(params.mentions ? { mentions: params.mentions } : {}) });
   if (!r || r.success === false) {
     const err = _errMsg(r);
     _mapComments(k, (c) => (c.id === tmp.id ? { ...c, pending: false, failed: true, error: err } : undefined));
@@ -498,7 +501,7 @@ async function _sendComment(k, tmp) {
   const real = _normComment({ ...(d.comment || d), parent_id: (d.comment && d.comment.parent_id) || rootId });
   _mapComments(k, (c) => {
     if (c.id !== tmp.id) return undefined;
-    return { ...c, ...real, id: real.id || c.id, content: real.content || c.content, name: real.name || c.name, email: real.email || c.email, avatar: real.avatar || c.avatar, replies: c.replies, pending: false, failed: false, is_mine: true, can_delete: real.can_delete !== false };
+    return { ...c, ...real, mentions: real.mentions || c.mentions, id: real.id || c.id, content: real.content || c.content, name: real.name || c.name, email: real.email || c.email, avatar: real.avatar || c.avatar, replies: c.replies, pending: false, failed: false, is_mine: true, can_delete: real.can_delete !== false };
   });
   if (d.comment_count != null) { const p = _posts.get(k); if (p) patchPost(k, { comments: Number(d.comment_count) }); }
   return { ok: true, comment: real };

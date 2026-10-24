@@ -12142,6 +12142,8 @@ export async function feedComment(postId, content, replyToId, opts = {}) {
   }
   // [anon-comment 2026-10-14] anônimo p/ os outros; o servidor guarda o autor real.
   if (opts.anonymous) body.anonymous = 1;
+  // [2026-10-24 coment-mencao] quem foi escolhido na lista "@" ([{u,email}]); o servidor confere pelo texto.
+  if (!opts.anonymous && Array.isArray(opts.mentions) && opts.mentions.length) body.mentions = opts.mentions.slice(0, 20);
   return apiCall('feed_comment', body, 'POST');
 }
 

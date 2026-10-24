@@ -117,7 +117,7 @@ const BUCKET_LABELS = {
 function iconForType(type) {
   switch (type) {
     case 'email':   return <IconMail        size={12} color="#fff" />;
-    case 'mention': return <IconAtSign      size={12} color="#fff" />;
+    case 'mention': case 'feed_mention': return <IconAtSign      size={12} color="#fff" />; // [2026-10-24 coment-mencao]
     case 'follow':  return <IconUserPlus    size={12} color="#fff" />;
     case 'like':    return <IconHeart       size={12} color="#fff" />;
     case 'comment': return <IconMessageSquare size={12} color="#fff" />;

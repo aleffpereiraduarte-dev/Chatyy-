@@ -17,6 +17,7 @@ import * as store from '../../services/muralStore';
 import { registerCommentsHost } from '../../services/muralNav';
 import useKeyboardSpacer from './useKeyboardSpacer';
 import useDragToDismiss, { DragSheetRoot, DragPanel } from '../ui/useDragToDismiss';
+import { useMentionCloser } from '../comments/mentions'; // [2026-10-24 coment-mencao]
 
 // [kb-fix v2 20/10] Padrão = painel JS em tela cheia (RN Modal sobre a ROTA — nunca
 // Modal sobre Modal): fundo do painel = fundo da tela, então o espaço do teclado é
@@ -38,6 +39,7 @@ function SheetBody({ postId, onClose, native, focus, kbPad = 0 }) {
   const barRef = useRef(null);
   const scrollRef = useRef(null);
   const { report, reportNode } = useReport({ native: !!native });
+  useMentionCloser(true, onClose); // [2026-10-24 coment-mencao] tocar @ fecha a folha e abre o perfil
   const me = user?.email || '';
   const isOwner = !!(post && (post.is_mine || (me && String(post.author_email).toLowerCase() === me.toLowerCase())));
   useEffect(() => {

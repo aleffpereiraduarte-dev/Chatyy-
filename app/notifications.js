@@ -39,7 +39,7 @@ import { a11yLabel } from '../utils/a11yLabel'; // [2026-10-20 a11y] rótulos do
 // Tipo → glifo (selo no avatar / círculo quando não há autor).
 const NOTIF_GLYPH = {
   chat: 'message', mention: 'at', like: 'heart', feed_like: 'heart',
-  comment: 'message', feed_comment: 'message', follow: 'user',
+  comment: 'message', feed_comment: 'message', follow: 'user', feed_mention: 'at', // [2026-10-24 coment-mencao]
   contact_joined: 'userPlus', live: 'live',
 };
 
@@ -98,9 +98,9 @@ const TABS = [
   // [2026-10-14 notif-no-email] só chat/social — e-mail saiu da central
   // (filterSocialNotifications); feed_like/feed_comment são os tipos reais
   // gravados pelo servidor p/ curtidas/comentários em posts.
-  { key: 'foryou',    labelKey: 'notifications.tabForYou',    label: 'Pra você',  types: ['like', 'comment', 'feed_like', 'feed_comment', 'mention', 'follow', 'contact_joined'] },
+  { key: 'foryou',    labelKey: 'notifications.tabForYou',    label: 'Pra você',  types: ['like', 'comment', 'feed_like', 'feed_comment', 'mention', 'feed_mention', 'follow', 'contact_joined'] },
   { key: 'following', labelKey: 'notifications.tabFollowing', label: 'Seguindo',  types: ['chat', 'live'] },
-  { key: 'you',       labelKey: 'notifications.tabYou',       label: 'Você',      types: ['mention', 'comment', 'like', 'feed_like', 'feed_comment'] },
+  { key: 'you',       labelKey: 'notifications.tabYou',       label: 'Você',      types: ['mention', 'feed_mention', 'comment', 'like', 'feed_like', 'feed_comment'] },
 ];
 
 // ─── Per-type icon & colour ───────────────────────────────────────────────────
@@ -110,6 +110,7 @@ const TYPE_ICONS = {
   chat:    IconMessageSquare,
   // [2026-10-11 polish-secondary] P&B: tipos diferenciados pelo ÍCONE, não pela cor.
   mention: IconAtSign,
+  feed_mention: IconAtSign, // [2026-10-24 coment-mencao] "mencionou você em um comentário"
   like:    IconHeart,
   feed_like: IconHeart,
   comment: IconMessageSquare,
@@ -239,7 +240,7 @@ function notifDisplay(item, t) {
 
   // Right-side thumbnail (post preview) for likes/comments referencing a post
   const thumbUri = item.thumbnail_url || item.post_thumbnail || null;
-  const showThumb = !!thumbUri && ['like', 'comment', 'feed_like', 'feed_comment', 'mention'].includes(item.type);
+  const showThumb = !!thumbUri && ['like', 'comment', 'feed_like', 'feed_comment', 'mention', 'feed_mention'].includes(item.type);
 
   // Inline action pills — only for follow notifications
   const showActions = item.type === 'follow' && !item.action_taken;
@@ -718,10 +719,11 @@ function NotificationsScreenInner() {
       case 'feed_like':
       case 'feed_comment':
       case 'feed_tagged':
+      case 'feed_mention': // [2026-10-24 coment-mencao]
       case 'feed_post_new':
         // [2026-10-17 notif-audit] comentário → abre já com os comentários; post
         // apagado → a tela /feed/:id mostra "Este post foi removido" (com voltar).
-        if (data.post_id) router.push(`/feed/${data.post_id}${(notif.type === 'comment' || notif.type === 'feed_comment') ? '?comments=1' : ''}`);
+        if (data.post_id) router.push(`/feed/${data.post_id}${(notif.type === 'comment' || notif.type === 'feed_comment' || notif.type === 'feed_mention') ? '?comments=1' : ''}`);
         else router.push('/chat');
         break;
       case 'follow':

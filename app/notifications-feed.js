@@ -20,7 +20,7 @@ import NativeResultList, { useNativeResults } from '../components/native/NativeR
 import { contactTile } from '../components/native/resultListAdapter';
 import { setCache } from '../services/cache';
 
-const FEED_GLYPH = { feed_like: 'heart', like: 'heart', feed_comment: 'message', comment: 'message', follow: 'user', mention: 'at', one_alert: 'bell', contact_joined: 'userPlus', follow_request: 'userPlus', follow_accept: 'user' }; // [privado 2026-10-22] +follow_request/follow_accept
+const FEED_GLYPH = { feed_like: 'heart', like: 'heart', feed_comment: 'message', comment: 'message', follow: 'user', mention: 'at', feed_mention: 'at', one_alert: 'bell', contact_joined: 'userPlus', follow_request: 'userPlus', follow_accept: 'user' }; // [privado 2026-10-22] +follow_request/follow_accept
 import { useFollowRequestState } from '../services/followRequests'; // [privado 2026-10-22]
 
 // [2026-10-17 cj-feed] "Fulano entrou no Chatyy!" · "Dizer oi". Antes esta tela
@@ -88,7 +88,7 @@ function _writeLive(items) {
   } catch {}
 }
 import {
-  IconArrowLeft, IconHeart, IconMessageCircle, IconUser,
+  IconArrowLeft, IconHeart, IconMessageCircle, IconUser, IconAtSign,
   IconSparkles, IconBell, IconCheck,
 } from '../components/Icons';
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
@@ -110,6 +110,7 @@ function NotificationIcon({ type, colors }) {
   // [2026-10-11 polish-secondary] P&B: tipo pelo ícone (era vermelho/âmbar).
   if (type === 'feed_like') return <IconHeart size={22} color={colors.text} />;
   if (type === 'feed_comment') return <IconMessageCircle size={22} color={colors.text} />;
+  if (type === 'feed_mention') return <IconAtSign size={22} color={colors.text} />; // [2026-10-24 coment-mencao]
   if (type === 'follow' || type === 'follow_request' || type === 'follow_accept') return <IconUser size={22} color={colors.text} />; // [privado 2026-10-22]
   if (type === 'one_alert') return <BiaIcon size={20} color={colors.text} />;
   if (type === 'contact_joined') return <IconUser size={22} color={colors.text} />;
@@ -321,11 +322,11 @@ export default function NotificationsFeedScreen() {
       openFollowRequests();
     } else if ((item.type === 'follow' || item.type === 'follow_accept') && item.author_email) {
       router.push(`/u/${encodeURIComponent(item.author_email)}`);
-    } else if ((item.type === 'feed_like' || item.type === 'feed_comment') && data.post_id) {
+    } else if ((item.type === 'feed_like' || item.type === 'feed_comment' || item.type === 'feed_mention') && data.post_id) { // [2026-10-24 coment-mencao] +feed_mention
       // /feed-comments is not a registered route — open the public post page
       // instead, which renders the full post with likes + inline comments
       // and works for both logged-in and logged-out viewers.
-      router.push(`/feed/${data.post_id}${item.type === 'feed_comment' ? '?comments=1' : ''}`); // [notif-audit 2026-10-17]
+      router.push(`/feed/${data.post_id}${(item.type === 'feed_comment' || item.type === 'feed_mention') ? '?comments=1' : ''}`); // [notif-audit 2026-10-17]
     } else if (item.type === 'one_alert') {
       // One flagged an urgent email — open inbox
       router.push('/inbox');

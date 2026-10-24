@@ -10,6 +10,7 @@ import { LIKE } from './muralTheme';
 import { Avatar, AnimatedHeart, shortAgo, count } from './parts';
 import * as store from '../../services/muralStore';
 import { CommentSkeleton } from '../SkeletonLoader';
+import { useCommentMentions, MentionSuggestList, MentionText } from '../comments/mentions'; // [2026-10-24 coment-mencao]
 
 function _menu(opts) {
   try { require('../../services/profilePostComposer').showActionMenu(opts); } catch {}
@@ -43,7 +44,7 @@ export function CommentRow({ c, reply, postId, isPostOwner, me, th, onReply, onR
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={{ color: th.text, fontSize: 14.5, lineHeight: 20 }}>
           <Text style={{ fontWeight: '700', fontSize: 14 }}>{name}</Text>
-          {'  '}{c.content}
+          {'  '}<MentionText text={c.content} mentions={c.mentions} mentionStyle={{ color: th.isDark ? '#e0f1ff' : '#00376b' }} />
         </Text>
         <View style={{ flexDirection: 'row', gap: 14, marginTop: 4, alignItems: 'center' }}>
           {c.failed ? (
@@ -143,6 +144,7 @@ export const CommentBar = forwardRef(function CommentBar({ postId, th, quick, pl
   const [replyTo, setReplyTo] = useState(null);
   const inputRef = useRef(null);
   const me = useMemo(() => ({ email: user?.email || '', name: user?.name || user?.display_name || '', avatar: user?.avatar_url || '' }), [user?.email, user?.name, user?.display_name, user?.avatar_url]);
+  const mention = useCommentMentions({ postId, text, setText: (v) => setText(String(v).slice(0, 1000)), enabled: !disabled }); // [2026-10-24 coment-mencao]
   useImperativeHandle(ref, () => ({
     focus: () => { try { inputRef.current?.focus(); } catch {} },
     replyTo: (c) => {
@@ -157,11 +159,13 @@ export const CommentBar = forwardRef(function CommentBar({ postId, th, quick, pl
   const send = useCallback((override) => {
     const v = String(override != null ? override : text).trim();
     if (!v || disabled) return;
-    store.addComment(postId, v, { replyTo, me }).then((r) => { if (r && r.ok === false && r.error && /comments_disabled/i.test(r.error)) { try { require('../ui/Toast').showToast({ message: t('mural.commentsOff', 'Comentários desativados neste post'), kind: 'error' }); } catch {} } });
+    const mentions = override != null ? [] : mention.mentionsFor(v); // [2026-10-24 coment-mencao]
+    store.addComment(postId, v, { replyTo, me, mentions }).then((r) => { if (r && r.ok === false && r.error && /comments_disabled/i.test(r.error)) { try { require('../ui/Toast').showToast({ message: t('mural.commentsOff', 'Comentários desativados neste post'), kind: 'error' }); } catch {} } });
     setText('');
+    mention.reset();
     setReplyTo(null);
     onSent?.();
-  }, [text, disabled, postId, replyTo, me, onSent, t]);
+  }, [text, disabled, postId, replyTo, me, onSent, t, mention]);
   const dark = variant === 'dark';
   const fieldBg = dark ? 'transparent' : th.bg;
   const fieldBorder = dark ? '#3a3a3c' : th.line;
@@ -188,18 +192,20 @@ export const CommentBar = forwardRef(function CommentBar({ postId, th, quick, pl
         </View>
       ) : null}
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10 + bottomPad }}>
+        <MentionSuggestList state={mention} isDark={dark || !!th.isDark} colors={{ text: fg, textTertiary: muted, surface: dark ? '#1c1c1e' : th.card }} t={t} />
         <Avatar email={me.email} name={me.name || me.email} uri={me.avatar} size={32} />
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: fieldBorder, backgroundColor: fieldBg, borderRadius: 20, paddingLeft: 14, paddingRight: 4, minHeight: 38 }}>
           <TextInput
             ref={inputRef}
             value={text}
             onChangeText={(v) => setText(v.slice(0, 1000))}
+            onSelectionChange={mention.onSelectionChange}
             placeholder={disabled ? t('mural.commentsOff', 'Comentários desativados neste post') : (placeholder || (firstName ? t('mural.commentAs', { name: firstName, defaultValue: `Comentar como ${firstName}...` }) : t('mural.addComment', 'Adicione um comentário...')))}
             placeholderTextColor={muted}
             editable={!disabled}
             multiline
             style={{ flex: 1, color: fg, fontSize: 14.5, paddingVertical: Platform.OS === 'ios' ? 9 : 6, maxHeight: 110 }}
-            onSubmitEditing={Platform.OS === 'web' ? () => send() : undefined}
+            onSubmitEditing={Platform.OS === 'web' ? () => { if (mention.open && mention.users.length) { mention.pick(mention.users[0]); return; } send(); } : undefined}
             blurOnSubmit={false}
             accessibilityLabel={t('mural.addComment', 'Adicione um comentário...')}
           />

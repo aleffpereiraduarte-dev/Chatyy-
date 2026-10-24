@@ -16174,4 +16174,10 @@ export default {
   "delacc.errProtected": "This account cannot be deleted from the app. Write to privacy@chatyy.com.br.",
   "delacc.errGeneric": "We could not finish right now. Please try again.",
   // [excluir-conta-real 2026-10-23] fim
+  // [coment-mencao 2026-10-24] lista "@" nos comentários
+  'comments.mentionRelAuthor': 'Author',
+  'comments.mentionRelCommenter': 'Commented',
+  'comments.mentionRelFollowing': 'Following',
+  'comments.mentionRelFollower': 'Follows you',
+  'comments.mentionListA11y': 'People suggestions to mention',
 };

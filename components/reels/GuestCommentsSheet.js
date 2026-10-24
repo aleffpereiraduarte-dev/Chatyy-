@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
 import { guestReelComments } from '../../services/guestReels';
+import { MentionText } from '../comments/mentions'; // [2026-10-24 coment-mencao] visitante: só destaque
 
 const isWeb = Platform.OS === 'web';
 
@@ -81,7 +82,7 @@ export default function GuestCommentsSheet({ visible, reel, t, onClose, onRequir
             {who}{item.handle && !item.anon ? <Text style={styles.handle}>{'  @' + item.handle}</Text> : null}
             <Text style={styles.time}>{'  ' + _ago(item.created_at, t)}</Text>
           </Text>
-          {item.text ? <Text style={styles.text}>{item.text}</Text> : null}
+          {item.text ? <Text style={styles.text}><MentionText text={item.text} linkable={false} mentionStyle={{ color: '#e0f1ff' }} /></Text> : null}
           {!item.text && item.has_media ? <Text style={styles.media}>{tr('guestReels.commentMedia', 'Comentário com mídia — abra no app')}</Text> : null}
           {item.reply_count > 0 ? (
             <Pressable onPress={() => onRequireAuth?.('comment')} hitSlop={6}>
