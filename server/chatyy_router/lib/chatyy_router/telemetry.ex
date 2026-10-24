@@ -169,6 +169,8 @@ defmodule ChatyyRouter.Metrics do
       "chatyy_router_beam_processes #{:erlang.system_info(:process_count)}\n",
       "chatyy_router_dist_connections #{length(Node.list())}\n",
       safe.(fn -> ChatyyRouter.DlvCompare.prom_lines() end) || [],
+      # [sgu F3 2026-10-23]
+      safe.(fn -> ChatyyRouter.PurgeGc.prom_lines() end) || [],
       safe.(fn -> ChatyyRouter.BodyStore.prom_lines() end) || [],
       safe.(fn -> ChatyyRouter.BodyCompare.prom_lines() end) || [],
       "chatyy_router_up 1\n"

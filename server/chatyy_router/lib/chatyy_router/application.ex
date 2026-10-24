@@ -57,6 +57,8 @@ defmodule ChatyyRouter.Application do
         ChatyyRouter.Delivery.child_specs() ++
         ChatyyRouter.Fanout.child_specs() ++
         if(ChatyyRouter.Config.pg_enabled?(), do: [ChatyyRouter.AckSource, ChatyyRouter.DlvCompare, ChatyyRouter.BodyCompare], else: []) ++
+        # [sgu F3 2026-10-23] GC da F3 (sgu_f3_flags) + compactação do Seglog; RT_PURGE=0 desliga
+        if(ChatyyRouter.Config.pg_enabled?(), do: [ChatyyRouter.PurgeGc], else: []) ++
         [
           ChatyyRouter.AckOutbox,
           ChatyyRouter.Net.Cluster,

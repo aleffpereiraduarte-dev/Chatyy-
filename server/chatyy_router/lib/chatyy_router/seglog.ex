@@ -141,6 +141,9 @@ defmodule ChatyyRouter.Seglog do
 
   def stats(t), do: GenServer.call(wname(t), :stats, 10_000)
 
+  # [sgu F3 2026-10-23] compactação no escritor (ChatyyRouter.SeglogCompact)
+  def compact(t, opts \\ []), do: GenServer.call(wname(t), {:compact, opts}, 600_000)
+
   def clear(t), do: GenServer.call(wname(t), :clear, 60_000)
 
   # ------------------------------------------------------------ registro
@@ -234,6 +237,12 @@ defmodule ChatyyRouter.Seglog do
        oldest_seg: segs |> List.first() |> then(&(&1 && elem(&1, 0))),
        active_seg: s.seg
      }, s}
+  end
+
+  # [sgu F3 2026-10-23]
+  def handle_call({:compact, opts}, _f, s) do
+    {r, s} = ChatyyRouter.SeglogCompact.run(s, opts)
+    {:reply, r, s}
   end
 
   def handle_call(:clear, _f, s) do
