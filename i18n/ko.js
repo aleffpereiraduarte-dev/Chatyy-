@@ -12233,4 +12233,18 @@ export default {
   "emailGlobal.ok": "확인",
   "emailGlobal.copy": "새 이메일 복사",
   "emailGlobal.copied": "복사됨",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "사진, 동영상, 음성 메시지로 빠르게 채팅하세요. 모든 기기에서.",
+  "nob.intro.t2": "통화",
+  "nob.intro.b2": "무료 음성·영상 통화, 1:1 또는 그룹으로.",
+  "nob.intro.t3": "이메일",
+  "nob.intro.b3": "채팅 바로 옆에 무료 @chatyy.app 이메일 주소.",
+  "nob.intro.t4": "클라우드",
+  "nob.intro.b4": "사진과 파일을 안전하게 보관하고 어디서나 바로 사용하세요.",
+  "nob.intro.t5": "개인정보 보호",
+  "nob.intro.b5": "채팅과 사진은 암호화로 보호됩니다.",
+  "nob.intro.b5e2ee": "종단간 암호화: 내 채팅과 사진은 나와 받는 사람만 볼 수 있어요.",
+  "nob.intro.page": "{total}페이지 중 {n}페이지",
 };

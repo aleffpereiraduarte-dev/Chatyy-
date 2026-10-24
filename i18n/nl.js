@@ -13011,4 +13011,18 @@ export default {
   "emailGlobal.ok": "Begrepen",
   "emailGlobal.copy": "Nieuwe e-mail kopiëren",
   "emailGlobal.copied": "Gekopieerd",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Snelle chats met foto's, video's en spraakberichten, op al je apparaten.",
+  "nob.intro.t2": "Bellen",
+  "nob.intro.b2": "Gratis spraak- en videogesprekken, met z'n tweeën of in een groep.",
+  "nob.intro.t3": "E-mail",
+  "nob.intro.b3": "Een gratis @chatyy.app-adres, direct naast je chats.",
+  "nob.intro.t4": "Cloud",
+  "nob.intro.b4": "Foto's en bestanden veilig bewaard, overal bij de hand.",
+  "nob.intro.t5": "Privacy",
+  "nob.intro.b5": "Je chats en foto's beschermd met versleuteling.",
+  "nob.intro.b5e2ee": "End-to-end-versleuteling: alleen jij en de ontvangers kunnen je chats lezen en je foto's zien.",
+  "nob.intro.page": "Pagina {n} van {total}",
 };

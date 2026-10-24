@@ -2073,4 +2073,18 @@ export default {
   "emailGlobal.ok": "سمجھ گیا",
   "emailGlobal.copy": "نیا ای میل کاپی کریں",
   "emailGlobal.copied": "کاپی ہو گیا",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "تصاویر، ویڈیوز اور صوتی پیغامات کے ساتھ تیز چیٹس، آپ کے تمام آلات پر۔",
+  "nob.intro.t2": "کالز",
+  "nob.intro.b2": "مفت آواز اور ویڈیو کالز، دو افراد میں یا گروپ میں۔",
+  "nob.intro.t3": "ای میل",
+  "nob.intro.b3": "مفت ‎@chatyy.app‎ ای میل پتہ، آپ کی چیٹس کے بالکل ساتھ۔",
+  "nob.intro.t4": "کلاؤڈ",
+  "nob.intro.b4": "تصاویر اور فائلیں محفوظ طریقے سے رکھی جاتی ہیں، ہر جگہ دستیاب۔",
+  "nob.intro.t5": "رازداری",
+  "nob.intro.b5": "آپ کی چیٹس اور تصاویر انکرپشن سے محفوظ ہیں۔",
+  "nob.intro.b5e2ee": "اینڈ ٹو اینڈ انکرپشن: آپ کی چیٹس اور تصاویر صرف آپ اور وصول کنندگان ہی دیکھ سکتے ہیں۔",
+  "nob.intro.page": "صفحہ {n} از {total}",
 };

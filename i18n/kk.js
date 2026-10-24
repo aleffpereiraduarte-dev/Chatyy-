@@ -9447,4 +9447,18 @@ export default {
   "emailGlobal.ok": "Түсінікті",
   "emailGlobal.copy": "Жаңа поштаны көшіру",
   "emailGlobal.copied": "Көшірілді",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Фото, бейне және дауыстық хабарлары бар жылдам чаттар – барлық құрылғыларыңда.",
+  "nob.intro.t2": "Қоңыраулар",
+  "nob.intro.b2": "Тегін дауыстық және бейне қоңыраулар – екеуара немесе топта.",
+  "nob.intro.t3": "Пошта",
+  "nob.intro.b3": "Чаттарыңның жанында тегін @chatyy.app мекенжайы.",
+  "nob.intro.t4": "Бұлт",
+  "nob.intro.b4": "Фотолар мен файлдар қауіпсіз сақталады, кез келген жерде дайын.",
+  "nob.intro.t5": "Құпиялылық",
+  "nob.intro.b5": "Чаттарың мен фотоларың шифрлаумен қорғалған.",
+  "nob.intro.b5e2ee": "Өтпелі шифрлау: чаттарың мен фотоларыңды тек сен және алушылар ғана көре алады.",
+  "nob.intro.page": "{n}/{total} бет",
 };

@@ -9447,4 +9447,18 @@ export default {
   "emailGlobal.ok": "နားလည်ပါပြီ",
   "emailGlobal.copy": "အီးမေးလ်အသစ်ကို ကူးယူရန်",
   "emailGlobal.copied": "ကူးယူပြီး",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "ဓာတ်ပုံ၊ ဗီဒီယိုနှင့် အသံမက်ဆေ့ချ်များဖြင့် မြန်ဆန်သော ချက်တင်များ — သင့်စက်အားလုံးပေါ်တွင်။",
+  "nob.intro.t2": "ခေါ်ဆိုမှုများ",
+  "nob.intro.b2": "အခမဲ့ အသံနှင့် ဗီဒီယိုခေါ်ဆိုမှု၊ နှစ်ဦးချင်း သို့မဟုတ် အဖွဲ့လိုက်။",
+  "nob.intro.t3": "အီးမေးလ်",
+  "nob.intro.b3": "သင့်ချက်တင်များဘေးတွင် အခမဲ့ @chatyy.app လိပ်စာ။",
+  "nob.intro.t4": "Cloud",
+  "nob.intro.b4": "ဓာတ်ပုံနှင့် ဖိုင်များကို လုံခြုံစွာ သိမ်းဆည်းထားပြီး မည်သည့်နေရာတွင်မဆို အသင့်။",
+  "nob.intro.t5": "ကိုယ်ရေးလုံခြုံမှု",
+  "nob.intro.b5": "သင့်ချက်တင်နှင့် ဓာတ်ပုံများကို ကုဒ်ဝှက်ခြင်းဖြင့် ကာကွယ်ထားသည်။",
+  "nob.intro.b5e2ee": "အစမှအဆုံး ကုဒ်ဝှက်ခြင်း - သင့်ချက်တင်နှင့် ဓာတ်ပုံများကို သင်နှင့် လက်ခံသူများသာ ကြည့်နိုင်သည်။",
+  "nob.intro.page": "စာမျက်နှာ {n} / {total}",
 };

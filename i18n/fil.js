@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Sige",
   "emailGlobal.copy": "Kopyahin ang bagong email",
   "emailGlobal.copied": "Nakopya",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Mabilis na chat na may larawan, video at voice message, sa lahat ng iyong device.",
+  "nob.intro.t2": "Mga tawag",
+  "nob.intro.b2": "Libreng voice at video call, isahan o grupo.",
+  "nob.intro.t3": "Email",
+  "nob.intro.b3": "Libreng @chatyy.app na email address, katabi mismo ng iyong mga chat.",
+  "nob.intro.t4": "Cloud",
+  "nob.intro.b4": "Ligtas na nakatago ang mga larawan at file, handa saanman.",
+  "nob.intro.t5": "Privacy",
+  "nob.intro.b5": "Protektado ng encryption ang iyong mga chat at larawan.",
+  "nob.intro.b5e2ee": "End-to-end encryption: ikaw at ang mga tatanggap lang ang makakabasa ng iyong mga chat at makakakita ng iyong mga larawan.",
+  "nob.intro.page": "Pahina {n} ng {total}",
 };

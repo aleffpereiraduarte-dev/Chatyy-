@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Razumem",
   "emailGlobal.copy": "Kopiraj novi imejl",
   "emailGlobal.copied": "Kopirano",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Брзи разговори са фотографијама, видео-снимцима и гласовним порукама, на свим твојим уређајима.",
+  "nob.intro.t2": "Позиви",
+  "nob.intro.b2": "Бесплатни гласовни и видео-позиви, удвоје или у групи.",
+  "nob.intro.t3": "Имејл",
+  "nob.intro.b3": "Бесплатна имејл адреса @chatyy.app, одмах уз твоје разговоре.",
+  "nob.intro.t4": "Облак",
+  "nob.intro.b4": "Фотографије и фајлови безбедно сачувани, доступни било где.",
+  "nob.intro.t5": "Приватност",
+  "nob.intro.b5": "Твоји разговори и фотографије заштићени шифровањем.",
+  "nob.intro.b5e2ee": "Шифровање с краја на крај: твоје разговоре и фотографије видите само ти и примаоци.",
+  "nob.intro.page": "Страница {n} од {total}",
 };

@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Κατάλαβα",
   "emailGlobal.copy": "Αντιγραφή νέου email",
   "emailGlobal.copied": "Αντιγράφηκε",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Γρήγορες συνομιλίες με φωτογραφίες, βίντεο και φωνητικά μηνύματα, σε όλες τις συσκευές σου.",
+  "nob.intro.t2": "Κλήσεις",
+  "nob.intro.b2": "Δωρεάν φωνητικές κλήσεις και βιντεοκλήσεις, ένας προς έναν ή σε ομάδα.",
+  "nob.intro.t3": "Email",
+  "nob.intro.b3": "Δωρεάν διεύθυνση email @chatyy.app, δίπλα στις συνομιλίες σου.",
+  "nob.intro.t4": "Cloud",
+  "nob.intro.b4": "Φωτογραφίες και αρχεία αποθηκευμένα με ασφάλεια, διαθέσιμα παντού.",
+  "nob.intro.t5": "Απόρρητο",
+  "nob.intro.b5": "Οι συνομιλίες και οι φωτογραφίες σου προστατεύονται με κρυπτογράφηση.",
+  "nob.intro.b5e2ee": "Κρυπτογράφηση από άκρο σε άκρο: μόνο εσύ και οι παραλήπτες μπορείτε να διαβάσετε τις συνομιλίες και να δείτε τις φωτογραφίες σου.",
+  "nob.intro.page": "Σελίδα {n} από {total}",
 };

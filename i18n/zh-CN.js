@@ -12233,4 +12233,18 @@ export default {
   "emailGlobal.ok": "知道了",
   "emailGlobal.copy": "复制新邮箱",
   "emailGlobal.copied": "已复制",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "用照片、视频和语音消息快速聊天，所有设备都能用。",
+  "nob.intro.t2": "通话",
+  "nob.intro.b2": "免费语音和视频通话，一对一或群聊皆可。",
+  "nob.intro.t3": "邮箱",
+  "nob.intro.b3": "免费的 @chatyy.app 邮箱，就在聊天旁边。",
+  "nob.intro.t4": "云端",
+  "nob.intro.b4": "照片和文件安全存储，随时随地可用。",
+  "nob.intro.t5": "隐私",
+  "nob.intro.b5": "你的聊天和照片受加密保护。",
+  "nob.intro.b5e2ee": "端到端加密：只有你和接收方能看到你的聊天和照片。",
+  "nob.intro.page": "第 {n} 页，共 {total} 页",
 };

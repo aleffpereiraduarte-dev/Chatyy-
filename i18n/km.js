@@ -9447,4 +9447,18 @@ export default {
   "emailGlobal.ok": "យល់ហើយ",
   "emailGlobal.copy": "ចម្លងអ៊ីមែលថ្មី",
   "emailGlobal.copied": "បានចម្លង",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "ការជជែករហ័សជាមួយរូបថត វីដេអូ និងសារជាសំឡេង នៅលើឧបករណ៍ទាំងអស់របស់អ្នក។",
+  "nob.intro.t2": "ការហៅ",
+  "nob.intro.b2": "ការហៅជាសំឡេង និងវីដេអូឥតគិតថ្លៃ ពីរនាក់ ឬជាក្រុម។",
+  "nob.intro.t3": "អ៊ីមែល",
+  "nob.intro.b3": "អាសយដ្ឋាន @chatyy.app ឥតគិតថ្លៃ នៅក្បែរការជជែករបស់អ្នក។",
+  "nob.intro.t4": "ពពក",
+  "nob.intro.b4": "រូបថត និងឯកសារត្រូវបានរក្សាទុកដោយសុវត្ថិភាព រួចរាល់នៅគ្រប់ទីកន្លែង។",
+  "nob.intro.t5": "ឯកជនភាព",
+  "nob.intro.b5": "ការជជែក និងរូបថតរបស់អ្នកត្រូវបានការពារដោយការអ៊ិនគ្រីប។",
+  "nob.intro.b5e2ee": "ការអ៊ិនគ្រីបពីចុងម្ខាងទៅចុងម្ខាង៖ មានតែអ្នក និងអ្នកទទួលប៉ុណ្ណោះដែលអាចអានការជជែក និងមើលរូបថតរបស់អ្នក។",
+  "nob.intro.page": "ទំព័រ {n} នៃ {total}",
 };

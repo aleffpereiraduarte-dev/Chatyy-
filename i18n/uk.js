@@ -12233,4 +12233,18 @@ export default {
   "emailGlobal.ok": "Зрозуміло",
   "emailGlobal.copy": "Скопіювати нову адресу",
   "emailGlobal.copied": "Скопійовано",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Швидкі чати з фото, відео та голосовими повідомленнями — на всіх ваших пристроях.",
+  "nob.intro.t2": "Дзвінки",
+  "nob.intro.b2": "Безкоштовні голосові та відеодзвінки — удвох або в групі.",
+  "nob.intro.t3": "Пошта",
+  "nob.intro.b3": "Безкоштовна адреса @chatyy.app поруч із вашими чатами.",
+  "nob.intro.t4": "Хмара",
+  "nob.intro.b4": "Фото й файли надійно збережені та доступні будь-де.",
+  "nob.intro.t5": "Конфіденційність",
+  "nob.intro.b5": "Ваші чати й фото захищені шифруванням.",
+  "nob.intro.b5e2ee": "Наскрізне шифрування: читати ваші чати й бачити фото можете лише ви та одержувачі.",
+  "nob.intro.page": "Сторінка {n} з {total}",
 };

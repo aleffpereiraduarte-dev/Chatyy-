@@ -9447,4 +9447,18 @@ export default {
   "emailGlobal.ok": "Հասկացա",
   "emailGlobal.copy": "Պատճենել նոր էլ. փոստը",
   "emailGlobal.copied": "Պատճենվեց",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Արագ զրույցներ լուսանկարներով, տեսանյութերով և ձայնային հաղորդագրություններով՝ քո բոլոր սարքերում։",
+  "nob.intro.t2": "Զանգեր",
+  "nob.intro.b2": "Անվճար ձայնային և տեսազանգեր՝ երկուսով կամ խմբով։",
+  "nob.intro.t3": "Էլ. փոստ",
+  "nob.intro.b3": "Անվճար @chatyy.app հասցե՝ հենց քո զրույցների կողքին։",
+  "nob.intro.t4": "Ամպ",
+  "nob.intro.b4": "Լուսանկարներն ու ֆայլերը ապահով պահված են և հասանելի են ամենուր։",
+  "nob.intro.t5": "Գաղտնիություն",
+  "nob.intro.b5": "Քո զրույցներն ու լուսանկարները պաշտպանված են գաղտնագրությամբ։",
+  "nob.intro.b5e2ee": "Ծայրից ծայր գաղտնագրում. քո զրույցներն ու լուսանկարները տեսնում եք միայն դու և ստացողները։",
+  "nob.intro.page": "Էջ {n}/{total}",
 };

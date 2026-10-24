@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Faham",
   "emailGlobal.copy": "Salin e-mel baharu",
   "emailGlobal.copied": "Disalin",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Sembang pantas dengan foto, video dan mesej suara, pada semua peranti anda.",
+  "nob.intro.t2": "Panggilan",
+  "nob.intro.b2": "Panggilan suara dan video percuma, berdua atau berkumpulan.",
+  "nob.intro.t3": "E-mel",
+  "nob.intro.b3": "Alamat e-mel @chatyy.app percuma, betul-betul di sebelah sembang anda.",
+  "nob.intro.t4": "Awan",
+  "nob.intro.b4": "Foto dan fail disimpan dengan selamat, sedia di mana-mana.",
+  "nob.intro.t5": "Privasi",
+  "nob.intro.b5": "Sembang dan foto anda dilindungi dengan penyulitan.",
+  "nob.intro.b5e2ee": "Penyulitan hujung ke hujung: hanya anda dan penerima boleh membaca sembang dan melihat foto anda.",
+  "nob.intro.page": "Halaman {n} daripada {total}",
 };

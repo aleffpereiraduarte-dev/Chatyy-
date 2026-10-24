@@ -9447,4 +9447,18 @@ export default {
   "emailGlobal.ok": "Ойлголоо",
   "emailGlobal.copy": "Шинэ имэйлийг хуулах",
   "emailGlobal.copied": "Хуулсан",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Зураг, видео, дуут мессежтэй хурдан чат — бүх төхөөрөмж дээрээ.",
+  "nob.intro.t2": "Дуудлага",
+  "nob.intro.b2": "Үнэгүй дуут болон видео дуудлага, хоёулаа эсвэл бүлгээр.",
+  "nob.intro.t3": "Имэйл",
+  "nob.intro.b3": "Чатынхаа хажууд үнэгүй @chatyy.app хаяг.",
+  "nob.intro.t4": "Үүлэн сан",
+  "nob.intro.b4": "Зураг, файлууд аюулгүй хадгалагдаж, хаана ч бэлэн.",
+  "nob.intro.t5": "Нууцлал",
+  "nob.intro.b5": "Таны чат болон зургууд шифрлэлтээр хамгаалагдсан.",
+  "nob.intro.b5e2ee": "Төгсгөлөөс төгсгөл хүртэлх шифрлэлт: таны чат, зургийг зөвхөн та болон хүлээн авагч л харна.",
+  "nob.intro.page": "{total}-с {n}-р хуудас",
 };

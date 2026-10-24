@@ -12267,4 +12267,18 @@ export default {
   "emailGlobal.ok": "OK",
   "emailGlobal.copy": "新しいアドレスをコピー",
   "emailGlobal.copied": "コピーしました",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "写真・動画・ボイスメッセージで、すばやくチャット。すべてのデバイスで。",
+  "nob.intro.t2": "通話",
+  "nob.intro.b2": "音声通話もビデオ通話も無料。1対1でもグループでも。",
+  "nob.intro.t3": "メール",
+  "nob.intro.b3": "チャットのすぐそばに、無料の @chatyy.app アドレス。",
+  "nob.intro.t4": "クラウド",
+  "nob.intro.b4": "写真やファイルを安全に保存。どこからでもすぐ使えます。",
+  "nob.intro.t5": "プライバシー",
+  "nob.intro.b5": "チャットと写真は暗号化で保護されています。",
+  "nob.intro.b5e2ee": "エンドツーエンド暗号化：チャットや写真を見られるのは、あなたと相手だけです。",
+  "nob.intro.page": "{total}ページ中{n}ページ目",
 };

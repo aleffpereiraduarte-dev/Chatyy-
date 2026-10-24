@@ -10229,4 +10229,18 @@ export default {
   "emailGlobal.ok": "Skjønner",
   "emailGlobal.copy": "Kopier ny e-post",
   "emailGlobal.copied": "Kopiert",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Raske chatter med bilder, videoer og talemeldinger – på alle enhetene dine.",
+  "nob.intro.t2": "Samtaler",
+  "nob.intro.b2": "Gratis tale- og videosamtaler, på tomannshånd eller i gruppe.",
+  "nob.intro.t3": "E-post",
+  "nob.intro.b3": "En gratis e-postadresse @chatyy.app, rett ved siden av chattene dine.",
+  "nob.intro.t4": "Sky",
+  "nob.intro.b4": "Bilder og filer lagret trygt, klare uansett hvor du er.",
+  "nob.intro.t5": "Personvern",
+  "nob.intro.b5": "Chattene og bildene dine beskyttet med kryptering.",
+  "nob.intro.b5e2ee": "Ende-til-ende-kryptering: bare du og mottakerne kan lese chattene og se bildene dine.",
+  "nob.intro.page": "Side {n} av {total}",
 };

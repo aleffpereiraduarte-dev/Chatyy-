@@ -813,7 +813,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     body = (
       // [2026-10-18 onb-telegram] marca animada + 4 cartões deslizáveis (Telegram).
       <View style={st.welcome}>
-        <WelcomeIntro fg={fg} bg={colors.background} sub={sub} reduced={reduced} T={T} />
+        <WelcomeIntro fg={fg} bg={colors.background} sub={sub} reduced={reduced} T={T} language={language} />
       </View>
     );
     footer = (

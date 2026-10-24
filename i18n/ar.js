@@ -13046,4 +13046,18 @@ export default {
   "emailGlobal.ok": "حسنًا",
   "emailGlobal.copy": "نسخ البريد الجديد",
   "emailGlobal.copied": "تم النسخ",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "محادثات سريعة بالصور والفيديو والرسائل الصوتية، على كل أجهزتك.",
+  "nob.intro.t2": "المكالمات",
+  "nob.intro.b2": "مكالمات صوتية ومرئية مجانية، فردية أو جماعية.",
+  "nob.intro.t3": "البريد",
+  "nob.intro.b3": "عنوان بريد ‎@chatyy.app‎ مجاني، بجوار محادثاتك.",
+  "nob.intro.t4": "السحابة",
+  "nob.intro.b4": "صورك وملفاتك محفوظة بأمان، جاهزة أينما كنت.",
+  "nob.intro.t5": "الخصوصية",
+  "nob.intro.b5": "محادثاتك وصورك محمية بالتشفير.",
+  "nob.intro.b5e2ee": "تشفير تام بين الطرفين: لا يستطيع قراءة محادثاتك ورؤية صورك إلا أنت ومن تراسلهم.",
+  "nob.intro.page": "صفحة {n} من {total}",
 };

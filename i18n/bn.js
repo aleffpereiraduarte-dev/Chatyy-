@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "বুঝেছি",
   "emailGlobal.copy": "নতুন ইমেইল কপি করুন",
   "emailGlobal.copied": "কপি হয়েছে",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "ছবি, ভিডিও ও ভয়েস মেসেজ সহ দ্রুত চ্যাট — আপনার সব ডিভাইসে।",
+  "nob.intro.t2": "কল",
+  "nob.intro.b2": "বিনামূল্যে ভয়েস ও ভিডিও কল, একান্তে বা গ্রুপে।",
+  "nob.intro.t3": "ইমেইল",
+  "nob.intro.b3": "আপনার চ্যাটের ঠিক পাশেই বিনামূল্যে একটি @chatyy.app ঠিকানা।",
+  "nob.intro.t4": "ক্লাউড",
+  "nob.intro.b4": "ছবি ও ফাইল নিরাপদে সংরক্ষিত, যেকোনো জায়গায় প্রস্তুত।",
+  "nob.intro.t5": "গোপনীয়তা",
+  "nob.intro.b5": "আপনার চ্যাট ও ছবি এনক্রিপশন দিয়ে সুরক্ষিত।",
+  "nob.intro.b5e2ee": "এন্ড-টু-এন্ড এনক্রিপশন: আপনার চ্যাট ও ছবি শুধু আপনি আর প্রাপকরাই দেখতে পারেন।",
+  "nob.intro.page": "পৃষ্ঠা {n} / {total}",
 };

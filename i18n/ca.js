@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Entesos",
   "emailGlobal.copy": "Copia el correu nou",
   "emailGlobal.copied": "Copiat",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Xats ràpids amb fotos, vídeos i àudios, a tots els teus dispositius.",
+  "nob.intro.t2": "Trucades",
+  "nob.intro.b2": "Trucades de veu i vídeo gratuïtes, individuals o en grup.",
+  "nob.intro.t3": "Correu",
+  "nob.intro.b3": "Un correu @chatyy.app gratuït, al costat dels teus xats.",
+  "nob.intro.t4": "Núvol",
+  "nob.intro.b4": "Fotos i fitxers desats amb seguretat, a punt a qualsevol lloc.",
+  "nob.intro.t5": "Privadesa",
+  "nob.intro.b5": "Els teus xats i fotos, protegits amb xifratge.",
+  "nob.intro.b5e2ee": "Xifratge d'extrem a extrem: només tu i qui ho rep podeu llegir els teus xats i veure les teves fotos.",
+  "nob.intro.page": "Pàgina {n} de {total}",
 };

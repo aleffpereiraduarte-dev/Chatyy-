@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Am înțeles",
   "emailGlobal.copy": "Copiază noul e-mail",
   "emailGlobal.copied": "Copiat",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Conversații rapide cu poze, videoclipuri și mesaje vocale, pe toate dispozitivele tale.",
+  "nob.intro.t2": "Apeluri",
+  "nob.intro.b2": "Apeluri vocale și video gratuite, în doi sau în grup.",
+  "nob.intro.t3": "E-mail",
+  "nob.intro.b3": "O adresă de e-mail @chatyy.app gratuită, chiar lângă conversațiile tale.",
+  "nob.intro.t4": "Cloud",
+  "nob.intro.b4": "Poze și fișiere păstrate în siguranță, gata oriunde ai fi.",
+  "nob.intro.t5": "Confidențialitate",
+  "nob.intro.b5": "Conversațiile și pozele tale, protejate prin criptare.",
+  "nob.intro.b5e2ee": "Criptare end-to-end: doar tu și destinatarii puteți citi conversațiile și vedea pozele tale.",
+  "nob.intro.page": "Pagina {n} din {total}",
 };

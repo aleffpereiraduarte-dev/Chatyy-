@@ -9447,4 +9447,18 @@ export default {
   "emailGlobal.ok": "Tushunarli",
   "emailGlobal.copy": "Yangi pochtani nusxalash",
   "emailGlobal.copied": "Nusxalandi",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Rasm, video va ovozli xabarlar bilan tezkor chatlar – barcha qurilmalaringizda.",
+  "nob.intro.t2": "Qo'ng'iroqlar",
+  "nob.intro.b2": "Bepul ovozli va video qo'ng'iroqlar, yakkama-yakka yoki guruhda.",
+  "nob.intro.t3": "Pochta",
+  "nob.intro.b3": "Chatlaringiz yonida bepul @chatyy.app manzili.",
+  "nob.intro.t4": "Bulut",
+  "nob.intro.b4": "Rasm va fayllar xavfsiz saqlanadi, istalgan joyda tayyor.",
+  "nob.intro.t5": "Maxfiylik",
+  "nob.intro.b5": "Chatlaringiz va rasmlaringiz shifrlash bilan himoyalangan.",
+  "nob.intro.b5e2ee": "Uchdan-uchgacha shifrlash: chatlaringiz va rasmlaringizni faqat siz va qabul qiluvchilar ko'ra oladi.",
+  "nob.intro.page": "{n}/{total}-sahifa",
 };

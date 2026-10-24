@@ -14176,19 +14176,19 @@ export default {
   "me.broadcast": "Mensajes de difusión",
   // [2026-10-18 onb-telegram] boas-vindas com cartões
   "nob.start": "Comenzar",
-  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): Chatyy · Privacidade · Chamadas · E-mail · Nuvem.
-  // b2e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
   "nob.intro.t1": "Chatyy",
   "nob.intro.b1": "Chats rápidos con fotos, vídeos y audios, en todos tus dispositivos.",
-  "nob.intro.t2": "Privacidad",
-  "nob.intro.b2": "Tus chats y fotos, protegidos con cifrado.",
-  "nob.intro.b2e2ee": "Cifrado de extremo a extremo: solo tú y quien recibe pueden leer tus chats y ver tus fotos.",
-  "nob.intro.t3": "Llamadas",
-  "nob.intro.b3": "Llamadas de voz y vídeo gratis, individuales o en grupo.",
-  "nob.intro.t4": "Correo",
-  "nob.intro.b4": "Un correo @chatyy.app gratis, junto a tus chats.",
-  "nob.intro.t5": "Nube",
-  "nob.intro.b5": "Fotos y archivos guardados de forma segura, listos en cualquier lugar.",
+  "nob.intro.t2": "Llamadas",
+  "nob.intro.b2": "Llamadas de voz y vídeo gratis, individuales o en grupo.",
+  "nob.intro.t3": "Correo",
+  "nob.intro.b3": "Un correo @chatyy.app gratis, junto a tus chats.",
+  "nob.intro.t4": "Nube",
+  "nob.intro.b4": "Fotos y archivos guardados de forma segura, listos en cualquier lugar.",
+  "nob.intro.t5": "Privacidad",
+  "nob.intro.b5": "Tus chats y fotos, protegidos con cifrado.",
+  "nob.intro.b5e2ee": "Cifrado de extremo a extremo: solo tú y quien recibe pueden leer tus chats y ver tus fotos.",
   "nob.intro.page": "Página {n} de {total}",
   // [recovery 2026-10-18] recuperação de conta + opções de recuperação
   "rec.title.identify": "Recuperar cuenta",

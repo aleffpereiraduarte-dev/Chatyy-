@@ -2060,4 +2060,18 @@ export default {
   "emailGlobal.ok": "තේරුණා",
   "emailGlobal.copy": "නව ඊමේල් පිටපත් කරන්න",
   "emailGlobal.copied": "පිටපත් කළා",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "ඡායාරූප, වීඩියෝ සහ හඬ පණිවිඩ සමඟ වේගවත් කතාබස් — ඔබගේ සියලු උපාංගවල.",
+  "nob.intro.t2": "ඇමතුම්",
+  "nob.intro.b2": "නොමිලේ හඬ සහ වීඩියෝ ඇමතුම්, දෙදෙනෙකු අතර හෝ කණ්ඩායමක.",
+  "nob.intro.t3": "ඊමේල්",
+  "nob.intro.b3": "ඔබගේ කතාබස් අසලම නොමිලේ @chatyy.app ලිපිනයක්.",
+  "nob.intro.t4": "වලාකුළ",
+  "nob.intro.b4": "ඡායාරූප සහ ගොනු ආරක්ෂිතව සුරැකේ, ඕනෑම තැනක සූදානම්.",
+  "nob.intro.t5": "පෞද්ගලිකත්වය",
+  "nob.intro.b5": "ඔබගේ කතාබස් සහ ඡායාරූප සංකේතනයෙන් ආරක්ෂිතයි.",
+  "nob.intro.b5e2ee": "අන්තයේ සිට අන්තය දක්වා සංකේතනය: ඔබගේ කතාබස් සහ ඡායාරූප බැලිය හැක්කේ ඔබට සහ ලබන්නන්ට පමණි.",
+  "nob.intro.page": "පිටුව {n} / {total}",
 };

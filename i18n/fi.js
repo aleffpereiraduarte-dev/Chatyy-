@@ -10229,4 +10229,18 @@ export default {
   "emailGlobal.ok": "Selvä",
   "emailGlobal.copy": "Kopioi uusi sähköposti",
   "emailGlobal.copied": "Kopioitu",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Nopeat keskustelut kuvilla, videoilla ja ääniviesteillä – kaikilla laitteillasi.",
+  "nob.intro.t2": "Puhelut",
+  "nob.intro.b2": "Ilmaiset ääni- ja videopuhelut kahden kesken tai ryhmässä.",
+  "nob.intro.t3": "Sähköposti",
+  "nob.intro.b3": "Ilmainen @chatyy.app-sähköpostiosoite keskustelujesi vieressä.",
+  "nob.intro.t4": "Pilvi",
+  "nob.intro.b4": "Kuvat ja tiedostot tallessa turvallisesti, käytettävissä missä vain.",
+  "nob.intro.t5": "Yksityisyys",
+  "nob.intro.b5": "Keskustelusi ja kuvasi on suojattu salauksella.",
+  "nob.intro.b5e2ee": "Päästä päähän -salaus: vain sinä ja vastaanottajat voitte lukea keskustelusi ja nähdä kuvasi.",
+  "nob.intro.page": "Sivu {n}/{total}",
 };

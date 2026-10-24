@@ -10229,4 +10229,18 @@ export default {
   "emailGlobal.ok": "Jag förstår",
   "emailGlobal.copy": "Kopiera ny e-post",
   "emailGlobal.copied": "Kopierad",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Snabba chattar med foton, videor och röstmeddelanden – på alla dina enheter.",
+  "nob.intro.t2": "Samtal",
+  "nob.intro.b2": "Gratis röst- och videosamtal, på tu man hand eller i grupp.",
+  "nob.intro.t3": "E-post",
+  "nob.intro.b3": "En gratis e-postadress @chatyy.app, direkt bredvid dina chattar.",
+  "nob.intro.t4": "Moln",
+  "nob.intro.b4": "Foton och filer lagrade säkert, redo var du än är.",
+  "nob.intro.t5": "Integritet",
+  "nob.intro.b5": "Dina chattar och foton skyddade med kryptering.",
+  "nob.intro.b5e2ee": "End-to-end-kryptering: bara du och mottagarna kan läsa dina chattar och se dina foton.",
+  "nob.intro.page": "Sida {n} av {total}",
 };

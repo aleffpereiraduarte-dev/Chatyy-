@@ -9447,4 +9447,18 @@ export default {
   "emailGlobal.ok": "అర్థమైంది",
   "emailGlobal.copy": "కొత్త ఈమెయిల్ కాపీ చేయండి",
   "emailGlobal.copied": "కాపీ అయింది",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "ఫోటోలు, వీడియోలు, వాయిస్ మెసేజ్‌లతో వేగవంతమైన చాట్‌లు — మీ అన్ని పరికరాల్లో.",
+  "nob.intro.t2": "కాల్స్",
+  "nob.intro.b2": "ఉచిత వాయిస్, వీడియో కాల్స్ — ఇద్దరి మధ్య లేదా గ్రూప్‌లో.",
+  "nob.intro.t3": "ఈమెయిల్",
+  "nob.intro.b3": "మీ చాట్‌ల పక్కనే ఉచిత @chatyy.app చిరునామా.",
+  "nob.intro.t4": "క్లౌడ్",
+  "nob.intro.b4": "ఫోటోలు, ఫైల్‌లు సురక్షితంగా భద్రం, ఎక్కడైనా సిద్ధం.",
+  "nob.intro.t5": "గోప్యత",
+  "nob.intro.b5": "మీ చాట్‌లు, ఫోటోలు ఎన్‌క్రిప్షన్‌తో సురక్షితం.",
+  "nob.intro.b5e2ee": "ఎండ్-టు-ఎండ్ ఎన్‌క్రిప్షన్: మీ చాట్‌లు, ఫోటోలను మీరు మరియు స్వీకర్తలు మాత్రమే చూడగలరు.",
+  "nob.intro.page": "పేజీ {n} / {total}",
 };

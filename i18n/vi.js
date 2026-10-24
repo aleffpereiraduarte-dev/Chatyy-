@@ -12233,4 +12233,18 @@ export default {
   "emailGlobal.ok": "Đã hiểu",
   "emailGlobal.copy": "Sao chép email mới",
   "emailGlobal.copied": "Đã sao chép",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Trò chuyện nhanh với ảnh, video và tin nhắn thoại, trên mọi thiết bị của bạn.",
+  "nob.intro.t2": "Cuộc gọi",
+  "nob.intro.b2": "Gọi thoại và video miễn phí, một-một hoặc theo nhóm.",
+  "nob.intro.t3": "Email",
+  "nob.intro.b3": "Địa chỉ email @chatyy.app miễn phí, ngay cạnh các cuộc trò chuyện.",
+  "nob.intro.t4": "Đám mây",
+  "nob.intro.b4": "Ảnh và tệp được lưu trữ an toàn, sẵn sàng ở mọi nơi.",
+  "nob.intro.t5": "Quyền riêng tư",
+  "nob.intro.b5": "Cuộc trò chuyện và ảnh của bạn được bảo vệ bằng mã hóa.",
+  "nob.intro.b5e2ee": "Mã hóa đầu cuối: chỉ bạn và người nhận mới đọc được tin nhắn và xem được ảnh của bạn.",
+  "nob.intro.page": "Trang {n}/{total}",
 };

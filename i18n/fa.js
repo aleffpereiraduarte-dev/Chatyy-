@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "متوجه شدم",
   "emailGlobal.copy": "کپی ایمیل جدید",
   "emailGlobal.copied": "کپی شد",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "گفتگوهای سریع با عکس، ویدیو و پیام صوتی، در همه دستگاه‌هایتان.",
+  "nob.intro.t2": "تماس‌ها",
+  "nob.intro.b2": "تماس صوتی و تصویری رایگان، دونفره یا گروهی.",
+  "nob.intro.t3": "ایمیل",
+  "nob.intro.b3": "یک نشانی رایگان ‎@chatyy.app‎، درست کنار گفتگوهایتان.",
+  "nob.intro.t4": "فضای ابری",
+  "nob.intro.b4": "عکس‌ها و فایل‌ها با امنیت ذخیره می‌شوند و همه‌جا در دسترس‌اند.",
+  "nob.intro.t5": "حریم خصوصی",
+  "nob.intro.b5": "گفتگوها و عکس‌هایتان با رمزگذاری محافظت می‌شوند.",
+  "nob.intro.b5e2ee": "رمزگذاری سرتاسری: فقط شما و گیرندگان می‌توانید گفتگوها و عکس‌هایتان را ببینید.",
+  "nob.intro.page": "صفحه {n} از {total}",
 };

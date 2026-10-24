@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Skaidrs",
   "emailGlobal.copy": "Kopēt jauno e-pastu",
   "emailGlobal.copied": "Nokopēts",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Ātras sarunas ar fotoattēliem, video un balss ziņām – visās tavās ierīcēs.",
+  "nob.intro.t2": "Zvani",
+  "nob.intro.b2": "Bezmaksas balss un video zvani – divatā vai grupā.",
+  "nob.intro.t3": "E-pasts",
+  "nob.intro.b3": "Bezmaksas e-pasta adrese @chatyy.app tieši blakus tavām sarunām.",
+  "nob.intro.t4": "Mākonis",
+  "nob.intro.b4": "Fotoattēli un faili droši saglabāti, pieejami jebkur.",
+  "nob.intro.t5": "Privātums",
+  "nob.intro.b5": "Tavas sarunas un fotoattēli aizsargāti ar šifrēšanu.",
+  "nob.intro.b5e2ee": "Pilnīga šifrēšana: tavas sarunas un fotoattēlus redzat tikai tu un saņēmēji.",
+  "nob.intro.page": "{n}. lapa no {total}",
 };

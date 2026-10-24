@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Értem",
   "emailGlobal.copy": "Új e-mail-cím másolása",
   "emailGlobal.copied": "Másolva",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Gyors csevegés fotókkal, videókkal és hangüzenetekkel, minden eszközödön.",
+  "nob.intro.t2": "Hívások",
+  "nob.intro.b2": "Ingyenes hang- és videohívások, kettesben vagy csoportban.",
+  "nob.intro.t3": "E-mail",
+  "nob.intro.b3": "Ingyenes @chatyy.app e-mail-cím, közvetlenül a csevegéseid mellett.",
+  "nob.intro.t4": "Felhő",
+  "nob.intro.b4": "Fotók és fájlok biztonságban tárolva, bárhol elérhetően.",
+  "nob.intro.t5": "Adatvédelem",
+  "nob.intro.b5": "Csevegéseid és fotóid titkosítással védve.",
+  "nob.intro.b5e2ee": "Végpontok közötti titkosítás: csevegéseidet és fotóidat csak te és a címzettek láthatjátok.",
+  "nob.intro.page": "{n}. oldal / {total}",
 };

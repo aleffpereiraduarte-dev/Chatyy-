@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Nimeelewa",
   "emailGlobal.copy": "Nakili barua pepe mpya",
   "emailGlobal.copied": "Imenakiliwa",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Gumzo za haraka zenye picha, video na ujumbe wa sauti, kwenye vifaa vyako vyote.",
+  "nob.intro.t2": "Simu",
+  "nob.intro.b2": "Simu za sauti na video bila malipo, wawili au kwa kikundi.",
+  "nob.intro.t3": "Barua pepe",
+  "nob.intro.b3": "Anwani ya barua pepe @chatyy.app bila malipo, karibu na gumzo zako.",
+  "nob.intro.t4": "Wingu",
+  "nob.intro.b4": "Picha na faili zimehifadhiwa kwa usalama, tayari popote ulipo.",
+  "nob.intro.t5": "Faragha",
+  "nob.intro.b5": "Gumzo na picha zako zinalindwa kwa usimbaji fiche.",
+  "nob.intro.b5e2ee": "Usimbaji fiche wa mwanzo hadi mwisho: ni wewe na wapokeaji tu mnaoweza kusoma gumzo zako na kuona picha zako.",
+  "nob.intro.page": "Ukurasa {n} kati ya {total}",
 };

@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Rozumiem",
   "emailGlobal.copy": "Kopírovať nový e-mail",
   "emailGlobal.copied": "Skopírované",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Rýchle chaty s fotkami, videami a hlasovými správami na všetkých tvojich zariadeniach.",
+  "nob.intro.t2": "Hovory",
+  "nob.intro.b2": "Hlasové a video hovory zadarmo, vo dvojici aj v skupine.",
+  "nob.intro.t3": "E-mail",
+  "nob.intro.b3": "E-mailová adresa @chatyy.app zadarmo, hneď vedľa tvojich chatov.",
+  "nob.intro.t4": "Cloud",
+  "nob.intro.b4": "Fotky a súbory bezpečne uložené, pripravené kdekoľvek.",
+  "nob.intro.t5": "Súkromie",
+  "nob.intro.b5": "Tvoje chaty a fotky chránené šifrovaním.",
+  "nob.intro.b5e2ee": "Koncové šifrovanie: tvoje chaty a fotky vidíte len ty a príjemcovia.",
+  "nob.intro.page": "Strana {n} z {total}",
 };

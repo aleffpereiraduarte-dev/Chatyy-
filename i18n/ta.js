@@ -5205,4 +5205,18 @@ export default {
   "emailGlobal.ok": "புரிந்தது",
   "emailGlobal.copy": "புதிய மின்னஞ்சலை நகலெடு",
   "emailGlobal.copied": "நகலெடுக்கப்பட்டது",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "படங்கள், வீடியோக்கள், குரல் செய்திகளுடன் வேகமான அரட்டைகள் — உங்கள் எல்லா சாதனங்களிலும்.",
+  "nob.intro.t2": "அழைப்புகள்",
+  "nob.intro.b2": "இலவச குரல் மற்றும் வீடியோ அழைப்புகள், இருவருக்குள் அல்லது குழுவாக.",
+  "nob.intro.t3": "மின்னஞ்சல்",
+  "nob.intro.b3": "உங்கள் அரட்டைகளுக்கு அருகிலேயே இலவச @chatyy.app முகவரி.",
+  "nob.intro.t4": "கிளவுட்",
+  "nob.intro.b4": "படங்களும் கோப்புகளும் பாதுகாப்பாகச் சேமிக்கப்பட்டு, எங்கும் தயார்.",
+  "nob.intro.t5": "தனியுரிமை",
+  "nob.intro.b5": "உங்கள் அரட்டைகளும் படங்களும் மறையாக்கத்தால் பாதுகாக்கப்படுகின்றன.",
+  "nob.intro.b5e2ee": "முழுமையான மறையாக்கம் (end-to-end): உங்கள் அரட்டைகளையும் படங்களையும் நீங்களும் பெறுநர்களும் மட்டுமே பார்க்க முடியும்.",
+  "nob.intro.page": "பக்கம் {n} / {total}",
 };

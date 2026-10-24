@@ -12233,4 +12233,18 @@ export default {
   "emailGlobal.ok": "เข้าใจแล้ว",
   "emailGlobal.copy": "คัดลอกอีเมลใหม่",
   "emailGlobal.copied": "คัดลอกแล้ว",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "แชตรวดเร็วพร้อมรูปภาพ วิดีโอ และข้อความเสียง บนทุกอุปกรณ์ของคุณ",
+  "nob.intro.t2": "การโทร",
+  "nob.intro.b2": "โทรด้วยเสียงและวิดีโอฟรี ทั้งแบบตัวต่อตัวและแบบกลุ่ม",
+  "nob.intro.t3": "อีเมล",
+  "nob.intro.b3": "ที่อยู่อีเมล @chatyy.app ฟรี อยู่ข้างแชตของคุณ",
+  "nob.intro.t4": "คลาวด์",
+  "nob.intro.b4": "รูปภาพและไฟล์ถูกเก็บไว้อย่างปลอดภัย พร้อมใช้ทุกที่",
+  "nob.intro.t5": "ความเป็นส่วนตัว",
+  "nob.intro.b5": "แชตและรูปภาพของคุณได้รับการปกป้องด้วยการเข้ารหัส",
+  "nob.intro.b5e2ee": "การเข้ารหัสตั้งแต่ต้นทางถึงปลายทาง: มีเพียงคุณและผู้รับเท่านั้นที่อ่านแชตและดูรูปภาพของคุณได้",
+  "nob.intro.page": "หน้า {n} จาก {total}",
 };

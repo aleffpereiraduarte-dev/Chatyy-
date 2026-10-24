@@ -13047,4 +13047,18 @@ export default {
   "emailGlobal.ok": "Ho capito",
   "emailGlobal.copy": "Copia la nuova email",
   "emailGlobal.copied": "Copiato",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Chat veloci con foto, video e messaggi vocali, su tutti i tuoi dispositivi.",
+  "nob.intro.t2": "Chiamate",
+  "nob.intro.b2": "Chiamate vocali e video gratuite, a due o di gruppo.",
+  "nob.intro.t3": "Email",
+  "nob.intro.b3": "Un indirizzo email @chatyy.app gratuito, accanto alle tue chat.",
+  "nob.intro.t4": "Cloud",
+  "nob.intro.b4": "Foto e file al sicuro, pronti ovunque tu sia.",
+  "nob.intro.t5": "Privacy",
+  "nob.intro.b5": "Le tue chat e le tue foto protette dalla crittografia.",
+  "nob.intro.b5e2ee": "Crittografia end-to-end: solo tu e chi riceve potete leggere le tue chat e vedere le tue foto.",
+  "nob.intro.page": "Pagina {n} di {total}",
 };

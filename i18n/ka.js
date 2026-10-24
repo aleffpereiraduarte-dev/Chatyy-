@@ -9447,4 +9447,18 @@ export default {
   "emailGlobal.ok": "გასაგებია",
   "emailGlobal.copy": "ახალი ელფოსტის კოპირება",
   "emailGlobal.copied": "დაკოპირდა",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "სწრაფი ჩატები ფოტოებით, ვიდეოებითა და ხმოვანი შეტყობინებებით — ყველა შენს მოწყობილობაზე.",
+  "nob.intro.t2": "ზარები",
+  "nob.intro.b2": "უფასო ხმოვანი და ვიდეოზარები — ორნი ან ჯგუფში.",
+  "nob.intro.t3": "ელფოსტა",
+  "nob.intro.b3": "უფასო @chatyy.app მისამართი, პირდაპირ შენი ჩატების გვერდით.",
+  "nob.intro.t4": "ღრუბელი",
+  "nob.intro.b4": "ფოტოები და ფაილები უსაფრთხოდ ინახება და ხელმისაწვდომია ყველგან.",
+  "nob.intro.t5": "კონფიდენციალურობა",
+  "nob.intro.b5": "შენი ჩატები და ფოტოები დაცულია დაშიფვრით.",
+  "nob.intro.b5e2ee": "ბოლოდან ბოლომდე დაშიფვრა: შენს ჩატებსა და ფოტოებს მხოლოდ შენ და მიმღებები ხედავთ.",
+  "nob.intro.page": "გვერდი {n} / {total}",
 };

@@ -12267,4 +12267,18 @@ export default {
   "emailGlobal.ok": "Mengerti",
   "emailGlobal.copy": "Salin email baru",
   "emailGlobal.copied": "Disalin",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Chat cepat dengan foto, video, dan pesan suara, di semua perangkatmu.",
+  "nob.intro.t2": "Panggilan",
+  "nob.intro.b2": "Panggilan suara dan video gratis, berdua atau grup.",
+  "nob.intro.t3": "Email",
+  "nob.intro.b3": "Alamat email @chatyy.app gratis, tepat di samping chatmu.",
+  "nob.intro.t4": "Cloud",
+  "nob.intro.b4": "Foto dan file tersimpan aman, siap di mana saja.",
+  "nob.intro.t5": "Privasi",
+  "nob.intro.b5": "Chat dan fotomu dilindungi dengan enkripsi.",
+  "nob.intro.b5e2ee": "Enkripsi end-to-end: hanya kamu dan penerima yang bisa membaca chat dan melihat fotomu.",
+  "nob.intro.page": "Halaman {n} dari {total}",
 };

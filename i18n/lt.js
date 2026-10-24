@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Supratau",
   "emailGlobal.copy": "Kopijuoti naują el. paštą",
   "emailGlobal.copied": "Nukopijuota",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Greiti pokalbiai su nuotraukomis, vaizdo įrašais ir balso žinutėmis – visuose tavo įrenginiuose.",
+  "nob.intro.t2": "Skambučiai",
+  "nob.intro.b2": "Nemokami balso ir vaizdo skambučiai – dviese ar grupėje.",
+  "nob.intro.t3": "El. paštas",
+  "nob.intro.b3": "Nemokamas el. pašto adresas @chatyy.app šalia tavo pokalbių.",
+  "nob.intro.t4": "Debesis",
+  "nob.intro.b4": "Nuotraukos ir failai saugiai laikomi, pasiekiami bet kur.",
+  "nob.intro.t5": "Privatumas",
+  "nob.intro.b5": "Tavo pokalbiai ir nuotraukos apsaugoti šifravimu.",
+  "nob.intro.b5e2ee": "Ištisinis šifravimas: tavo pokalbius ir nuotraukas matote tik tu ir gavėjai.",
+  "nob.intro.page": "{n} puslapis iš {total}",
 };

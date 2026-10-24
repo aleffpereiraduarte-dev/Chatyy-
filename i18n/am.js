@@ -9447,4 +9447,18 @@ export default {
   "emailGlobal.ok": "ገባኝ",
   "emailGlobal.copy": "አዲሱን ኢሜይል ቅዳ",
   "emailGlobal.copied": "ተቀድቷል",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "ፈጣን ውይይቶች ከፎቶ፣ ቪዲዮ እና የድምፅ መልዕክት ጋር — በሁሉም መሣሪያዎችዎ ላይ።",
+  "nob.intro.t2": "ጥሪዎች",
+  "nob.intro.b2": "ነፃ የድምፅ እና የቪዲዮ ጥሪዎች፣ ለሁለት ወይም በቡድን።",
+  "nob.intro.t3": "ኢሜይል",
+  "nob.intro.b3": "ከውይይቶችዎ አጠገብ ነፃ የ@chatyy.app አድራሻ።",
+  "nob.intro.t4": "ደመና",
+  "nob.intro.b4": "ፎቶዎች እና ፋይሎች በደህንነት ተቀምጠዋል፣ በየትም ቦታ ዝግጁ።",
+  "nob.intro.t5": "ግላዊነት",
+  "nob.intro.b5": "ውይይቶችዎ እና ፎቶዎችዎ በምስጠራ የተጠበቁ ናቸው።",
+  "nob.intro.b5e2ee": "ከጫፍ እስከ ጫፍ ምስጠራ፦ ውይይቶችዎን እና ፎቶዎችዎን ማየት የሚችሉት እርስዎ እና ተቀባዮች ብቻ ናቸው።",
+  "nob.intro.page": "ገጽ {n} ከ{total}",
 };

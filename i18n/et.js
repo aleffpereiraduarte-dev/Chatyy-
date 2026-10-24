@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "Selge",
   "emailGlobal.copy": "Kopeeri uus e-post",
   "emailGlobal.copied": "Kopeeritud",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Kiired vestlused fotode, videote ja häälsõnumitega – kõigis sinu seadmetes.",
+  "nob.intro.t2": "Kõned",
+  "nob.intro.b2": "Tasuta hääl- ja videokõned, kahekesi või grupis.",
+  "nob.intro.t3": "E-post",
+  "nob.intro.b3": "Tasuta e-posti aadress @chatyy.app otse sinu vestluste kõrval.",
+  "nob.intro.t4": "Pilv",
+  "nob.intro.b4": "Fotod ja failid turvaliselt hoitud, käepärast kõikjal.",
+  "nob.intro.t5": "Privaatsus",
+  "nob.intro.b5": "Sinu vestlused ja fotod on kaitstud krüpteerimisega.",
+  "nob.intro.b5e2ee": "Otspunktkrüpteerimine: sinu vestlusi ja fotosid näete ainult sina ja saajad.",
+  "nob.intro.page": "Leht {n}/{total}",
 };

@@ -9447,4 +9447,18 @@ export default {
   "emailGlobal.ok": "Başa düşdüm",
   "emailGlobal.copy": "Yeni e-poçtu kopyala",
   "emailGlobal.copied": "Kopyalandı",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "Foto, video və səsli mesajlarla sürətli söhbətlər – bütün cihazlarında.",
+  "nob.intro.t2": "Zənglər",
+  "nob.intro.b2": "Pulsuz səsli və görüntülü zənglər, təkbətək və ya qrupda.",
+  "nob.intro.t3": "E-poçt",
+  "nob.intro.b3": "Söhbətlərinin yanında pulsuz @chatyy.app ünvanı.",
+  "nob.intro.t4": "Bulud",
+  "nob.intro.b4": "Foto və fayllar təhlükəsiz saxlanılır, hər yerdə hazırdır.",
+  "nob.intro.t5": "Məxfilik",
+  "nob.intro.b5": "Söhbətlərin və fotoların şifrələmə ilə qorunur.",
+  "nob.intro.b5e2ee": "Uçdan-uca şifrələmə: söhbətlərini və fotolarını yalnız sən və alıcılar görə bilər.",
+  "nob.intro.page": "Səhifə {n}/{total}",
 };

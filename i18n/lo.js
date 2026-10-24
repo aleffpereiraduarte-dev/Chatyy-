@@ -9447,4 +9447,18 @@ export default {
   "emailGlobal.ok": "ເຂົ້າໃຈແລ້ວ",
   "emailGlobal.copy": "ສຳເນົາອີເມວໃໝ່",
   "emailGlobal.copied": "ສຳເນົາແລ້ວ",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "ແຊັດໄວພ້ອມຮູບ, ວິດີໂອ ແລະ ຂໍ້ຄວາມສຽງ ໃນທຸກອຸປະກອນຂອງທ່ານ.",
+  "nob.intro.t2": "ການໂທ",
+  "nob.intro.b2": "ໂທສຽງ ແລະ ວິດີໂອຟຣີ, ແບບສອງຄົນ ຫຼື ເປັນກຸ່ມ.",
+  "nob.intro.t3": "ອີເມວ",
+  "nob.intro.b3": "ທີ່ຢູ່ອີເມວ @chatyy.app ຟຣີ, ຢູ່ຂ້າງແຊັດຂອງທ່ານ.",
+  "nob.intro.t4": "ຄລາວ",
+  "nob.intro.b4": "ຮູບ ແລະ ໄຟລ໌ຖືກເກັບໄວ້ຢ່າງປອດໄພ, ພ້ອມໃຊ້ທຸກບ່ອນ.",
+  "nob.intro.t5": "ຄວາມເປັນສ່ວນຕົວ",
+  "nob.intro.b5": "ແຊັດ ແລະ ຮູບຂອງທ່ານຖືກປົກປ້ອງດ້ວຍການເຂົ້າລະຫັດ.",
+  "nob.intro.b5e2ee": "ການເຂົ້າລະຫັດຕົ້ນທາງຫາປາຍທາງ: ມີແຕ່ທ່ານ ແລະ ຜູ້ຮັບເທົ່ານັ້ນທີ່ອ່ານແຊັດ ແລະ ເບິ່ງຮູບຂອງທ່ານໄດ້.",
+  "nob.intro.page": "ໜ້າ {n} ຈາກ {total}",
 };

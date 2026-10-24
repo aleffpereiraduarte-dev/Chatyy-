@@ -9451,4 +9451,18 @@ export default {
   "emailGlobal.ok": "הבנתי",
   "emailGlobal.copy": "העתקת האימייל החדש",
   "emailGlobal.copied": "הועתק",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "צ'אטים מהירים עם תמונות, סרטונים והודעות קוליות, בכל המכשירים שלך.",
+  "nob.intro.t2": "שיחות",
+  "nob.intro.b2": "שיחות קול ווידאו בחינם, אחד על אחד או בקבוצה.",
+  "nob.intro.t3": "אימייל",
+  "nob.intro.b3": "כתובת ‎@chatyy.app‎ בחינם, ממש ליד הצ'אטים שלך.",
+  "nob.intro.t4": "ענן",
+  "nob.intro.b4": "תמונות וקבצים שמורים בבטחה, זמינים בכל מקום.",
+  "nob.intro.t5": "פרטיות",
+  "nob.intro.b5": "הצ'אטים והתמונות שלך מוגנים בהצפנה.",
+  "nob.intro.b5e2ee": "הצפנה מקצה לקצה: רק לך ולמי שמקבל יש גישה לצ'אטים ולתמונות שלך.",
+  "nob.intro.page": "עמוד {n} מתוך {total}",
 };

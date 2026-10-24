@@ -2859,4 +2859,18 @@ export default {
   "emailGlobal.ok": "ಅರ್ಥವಾಯಿತು",
   "emailGlobal.copy": "ಹೊಸ ಇಮೇಲ್ ನಕಲಿಸಿ",
   "emailGlobal.copied": "ನಕಲಿಸಲಾಗಿದೆ",
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  "nob.intro.t1": "Chatyy",
+  "nob.intro.b1": "ಫೋಟೋ, ವೀಡಿಯೊ ಮತ್ತು ಧ್ವನಿ ಸಂದೇಶಗಳೊಂದಿಗೆ ವೇಗದ ಚಾಟ್‌ಗಳು — ನಿಮ್ಮ ಎಲ್ಲಾ ಸಾಧನಗಳಲ್ಲಿ.",
+  "nob.intro.t2": "ಕರೆಗಳು",
+  "nob.intro.b2": "ಉಚಿತ ಧ್ವನಿ ಮತ್ತು ವೀಡಿಯೊ ಕರೆಗಳು, ಇಬ್ಬರ ನಡುವೆ ಅಥವಾ ಗುಂಪಿನಲ್ಲಿ.",
+  "nob.intro.t3": "ಇಮೇಲ್",
+  "nob.intro.b3": "ನಿಮ್ಮ ಚಾಟ್‌ಗಳ ಪಕ್ಕದಲ್ಲೇ ಉಚಿತ @chatyy.app ವಿಳಾಸ.",
+  "nob.intro.t4": "ಕ್ಲೌಡ್",
+  "nob.intro.b4": "ಫೋಟೋಗಳು ಮತ್ತು ಫೈಲ್‌ಗಳು ಸುರಕ್ಷಿತವಾಗಿ ಉಳಿಸಲಾಗಿದೆ, ಎಲ್ಲಿಯಾದರೂ ಸಿದ್ಧ.",
+  "nob.intro.t5": "ಗೌಪ್ಯತೆ",
+  "nob.intro.b5": "ನಿಮ್ಮ ಚಾಟ್‌ಗಳು ಮತ್ತು ಫೋಟೋಗಳು ಎನ್‌ಕ್ರಿಪ್ಶನ್‌ನಿಂದ ಸುರಕ್ಷಿತ.",
+  "nob.intro.b5e2ee": "ಎಂಡ್-ಟು-ಎಂಡ್ ಎನ್‌ಕ್ರಿಪ್ಶನ್: ನಿಮ್ಮ ಚಾಟ್‌ಗಳು ಮತ್ತು ಫೋಟೋಗಳನ್ನು ನೀವು ಮತ್ತು ಸ್ವೀಕರಿಸುವವರು ಮಾತ್ರ ನೋಡಬಹುದು.",
+  "nob.intro.page": "ಪುಟ {n} / {total}",
 };

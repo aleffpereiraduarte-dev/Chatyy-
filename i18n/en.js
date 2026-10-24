@@ -14183,19 +14183,19 @@ export default {
   "me.broadcast": "Broadcast messages",
   // [2026-10-18 onb-telegram] boas-vindas com cartões
   "nob.start": "Get started",
-  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): Chatyy · Privacidade · Chamadas · E-mail · Nuvem.
-  // b2e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
+  // [2026-10-24 intro-v2] carrossel de boas-vindas (WelcomeIntro): t1 Chatyy · t5 Privacidade · t2 Chamadas · t3 E-mail · t4 Nuvem.
+  // b5e2ee só aparece com globalThis.__chatyy_intro_e2ee_claim === true (E2EE por padrão p/ todos).
   "nob.intro.t1": "Chatyy",
   "nob.intro.b1": "Fast chats with photos, videos and voice messages, on all your devices.",
-  "nob.intro.t2": "Privacy",
-  "nob.intro.b2": "Your chats and photos protected with encryption.",
-  "nob.intro.b2e2ee": "End-to-end encryption: only you and the people you message can read your chats and see your photos.",
-  "nob.intro.t3": "Calls",
-  "nob.intro.b3": "Free voice and video calls, one-on-one or in groups.",
-  "nob.intro.t4": "Email",
-  "nob.intro.b4": "A free @chatyy.app email address, right next to your chats.",
-  "nob.intro.t5": "Cloud",
-  "nob.intro.b5": "Photos and files stored securely, ready wherever you are.",
+  "nob.intro.t2": "Calls",
+  "nob.intro.b2": "Free voice and video calls, one-on-one or in groups.",
+  "nob.intro.t3": "Email",
+  "nob.intro.b3": "A free @chatyy.app email address, right next to your chats.",
+  "nob.intro.t4": "Cloud",
+  "nob.intro.b4": "Photos and files stored securely, ready wherever you are.",
+  "nob.intro.t5": "Privacy",
+  "nob.intro.b5": "Your chats and photos protected with encryption.",
+  "nob.intro.b5e2ee": "End-to-end encryption: only you and the people you message can read your chats and see your photos.",
   "nob.intro.page": "Page {n} of {total}",
   // [recovery 2026-10-18] recuperação de conta + opções de recuperação
   "rec.title.identify": "Account recovery",
