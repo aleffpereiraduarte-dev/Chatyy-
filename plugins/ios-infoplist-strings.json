@@ -1,5 +1,5 @@
 {
-  "_comment": "Localized iOS permission prompts (InfoPlist.strings) written by plugins/with-ios-localizations.js. English stays in app.json / Info.plist (base). NSLocation* keys are deliberately NOT here: background-location copy is being rewritten in a parallel change; add them here once that text is final. No double quotes or backslashes in values.",
+  "_comment": "Localized iOS permission prompts (InfoPlist.strings) written by plugins/with-ios-localizations.js. English stays in app.json / Info.plist (base). NSLocation* keys added 2026-10-24 from the final app.json copy (727b5bf4, 13/10); keep in sync if that copy changes. No double quotes or backslashes in values.",
   "pt-BR": {
     "NSCameraUsageDescription": "O Chatyy usa a câmera para você tirar fotos e gravar vídeos e enviá-los nas conversas, aparecer em chamadas de vídeo, gravar stories de 15 segundos e ler QR codes para conectar um novo aparelho ou adicionar um contato.",
     "NSMicrophoneUsageDescription": "O Chatyy usa o microfone para gravar mensagens de voz (segure o botão do microfone na conversa), fazer chamadas de voz e vídeo e transmitir áudio quando você toca em Ao vivo.",
@@ -11,7 +11,10 @@
     "NSPhotoLibraryUsageDescription": "O Chatyy acessa sua galeria para você escolher fotos e vídeos e enviá-los nas conversas, definir sua foto de perfil, publicar no feed e criar stories. Se você ativar o backup em Ajustes > Armazenamento > Backup, suas fotos também são enviadas para a sua nuvem privada do Chatyy.",
     "NSPhotoLibraryAddUsageDescription": "O Chatyy salva na sua galeria as fotos e vídeos que você recebe nas conversas ou tira no app quando você toca em Salvar.",
     "NSFaceIDUsageDescription": "O Chatyy usa o Face ID para desbloquear o app depois que você ativa o bloqueio por biometria nos Ajustes, mantendo suas conversas, e-mails e fotos privados.",
-    "NSSpeechRecognitionUsageDescription": "O Chatyy usa o reconhecimento de fala para transformar sua voz em texto quando você usa o ditado ou a transcrição."
+    "NSSpeechRecognitionUsageDescription": "O Chatyy usa o reconhecimento de fala para transformar sua voz em texto quando você usa o ditado ou a transcrição.",
+    "NSLocationWhenInUseUsageDescription": "O Chatyy usa sua localização quando você envia uma localização na conversa, compartilha a localização em tempo real ou usa o Mapa de amigos. Exemplo: na conversa, toque no anexo, escolha Localização e envie o ponto para seu amigo achar o restaurante onde você está.",
+    "NSLocationAlwaysAndWhenInUseUsageDescription": "O Chatyy usa sua localização em segundo plano SOMENTE para quem você escolheu: uma localização em tempo real que você iniciou numa conversa ou um amigo que você aceitou no Mapa de amigos. Em segundo plano usa só mudanças significativas de baixo consumo (e uma posição rápida quando o amigo toca em Atualizar). Nada é compartilhado com mais ninguém e nunca é usado para anúncios ou análises. Pare quando quiser: Mapa de amigos > Parar de compartilhar, Modo fantasma ou Ajustes do iOS > Privacidade > Localização.",
+    "NSLocationAlwaysUsageDescription": "O Chatyy usa sua localização em segundo plano SOMENTE para quem você escolheu (localização em tempo real na conversa ou Mapa de amigos), com mudanças significativas de baixo consumo. Nunca para anúncios ou análises. Pare quando quiser no Mapa de amigos ou nos Ajustes do iOS."
   },
   "pt-PT": {
     "NSCameraUsageDescription": "O Chatyy usa a câmara para tirar fotografias e gravar vídeos e enviá-los nas conversas, aparecer em chamadas de vídeo, gravar histórias de 15 segundos e ler códigos QR para ligar um novo dispositivo ou adicionar um contacto.",
@@ -24,7 +27,10 @@
     "NSPhotoLibraryUsageDescription": "O Chatyy acede à sua galeria para escolher fotografias e vídeos e enviá-los nas conversas, definir a sua foto de perfil, publicar no feed e criar histórias. Se ativar a cópia de segurança em Definições > Armazenamento > Cópia de segurança, as fotografias também são enviadas para a sua nuvem privada do Chatyy.",
     "NSPhotoLibraryAddUsageDescription": "O Chatyy guarda na sua galeria as fotografias e vídeos que recebe nas conversas ou tira na app quando toca em Guardar.",
     "NSFaceIDUsageDescription": "O Chatyy usa o Face ID para desbloquear a app depois de ativar o bloqueio biométrico nas Definições, mantendo as suas conversas, e-mails e fotografias privados.",
-    "NSSpeechRecognitionUsageDescription": "O Chatyy usa o reconhecimento de voz para transformar a sua voz em texto quando usa o ditado ou a transcrição."
+    "NSSpeechRecognitionUsageDescription": "O Chatyy usa o reconhecimento de voz para transformar a sua voz em texto quando usa o ditado ou a transcrição.",
+    "NSLocationWhenInUseUsageDescription": "O Chatyy usa a sua localização quando envia uma localização numa conversa, partilha a localização em tempo real ou usa o Mapa de amigos. Exemplo: na conversa, toque no anexo, escolha Localização e envie o ponto para o seu amigo encontrar o restaurante onde está.",
+    "NSLocationAlwaysAndWhenInUseUsageDescription": "O Chatyy usa a sua localização em segundo plano APENAS para quem escolheu: uma localização em tempo real que iniciou numa conversa ou um amigo que aceitou no Mapa de amigos. Em segundo plano usa só alterações significativas de baixo consumo (e uma posição rápida quando o amigo toca em Atualizar). Nada é partilhado com mais ninguém e nunca é usado para publicidade ou análises. Pare quando quiser: Mapa de amigos > Parar de partilhar, Modo fantasma ou Definições do iOS > Privacidade > Localização.",
+    "NSLocationAlwaysUsageDescription": "O Chatyy usa a sua localização em segundo plano APENAS para quem escolheu (localização em tempo real na conversa ou Mapa de amigos), com alterações significativas de baixo consumo. Nunca para publicidade ou análises. Pare quando quiser no Mapa de amigos ou nas Definições do iOS."
   },
   "es": {
     "NSCameraUsageDescription": "Chatyy usa la cámara para que tomes fotos y grabes videos y los envíes en los chats, aparezcas en videollamadas, grabes historias de 15 segundos y escanees códigos QR para vincular un nuevo dispositivo o agregar un contacto.",
@@ -37,7 +43,10 @@
     "NSPhotoLibraryUsageDescription": "Chatyy accede a tu galería para que elijas fotos y videos y los envíes en los chats, pongas tu foto de perfil, publiques en el feed y crees historias. Si activas la copia de seguridad en Ajustes > Almacenamiento > Copia de seguridad, tus fotos también se suben a tu nube privada de Chatyy.",
     "NSPhotoLibraryAddUsageDescription": "Chatyy guarda en tu galería las fotos y videos que recibes en los chats o tomas en la app cuando tocas Guardar.",
     "NSFaceIDUsageDescription": "Chatyy usa Face ID para desbloquear la app después de que activas el bloqueo biométrico en Ajustes, manteniendo privados tus chats, correos y fotos.",
-    "NSSpeechRecognitionUsageDescription": "Chatyy usa el reconocimiento de voz para convertir tu voz en texto cuando usas el dictado o la transcripción."
+    "NSSpeechRecognitionUsageDescription": "Chatyy usa el reconocimiento de voz para convertir tu voz en texto cuando usas el dictado o la transcripción.",
+    "NSLocationWhenInUseUsageDescription": "Chatyy usa tu ubicación cuando envías una ubicación en un chat, compartes tu ubicación en tiempo real o usas el Mapa de amigos. Ejemplo: en el chat, toca adjuntar, elige Ubicación y envía el punto para que tu amigo encuentre el restaurante donde estás.",
+    "NSLocationAlwaysAndWhenInUseUsageDescription": "Chatyy usa tu ubicación en segundo plano SOLO para quienes tú elegiste: una ubicación en tiempo real que iniciaste en un chat o un amigo que aceptaste en el Mapa de amigos. En segundo plano solo usa cambios significativos de bajo consumo (y una posición rápida cuando tu amigo toca Actualizar). No se comparte con nadie más y nunca se usa para anuncios ni análisis. Detenlo cuando quieras: Mapa de amigos > Dejar de compartir, Modo fantasma o Ajustes de iOS > Privacidad > Localización.",
+    "NSLocationAlwaysUsageDescription": "Chatyy usa tu ubicación en segundo plano SOLO para quienes tú elegiste (ubicación en tiempo real en un chat o Mapa de amigos), con cambios significativos de bajo consumo. Nunca para anuncios ni análisis. Detenlo cuando quieras en el Mapa de amigos o en Ajustes de iOS."
   },
   "fr": {
     "NSCameraUsageDescription": "Chatyy utilise l'appareil photo pour prendre des photos et filmer des vidéos à envoyer dans les discussions, apparaître en appel vidéo, enregistrer des stories de 15 secondes et scanner des codes QR pour associer un nouvel appareil ou ajouter un contact.",
@@ -50,7 +59,10 @@
     "NSPhotoLibraryUsageDescription": "Chatyy accède à votre photothèque pour que vous choisissiez des photos et vidéos à envoyer dans les discussions, définir votre photo de profil, publier dans le fil et créer des stories. Si vous activez la sauvegarde dans Réglages > Stockage > Sauvegarde, vos photos sont aussi envoyées vers votre cloud privé Chatyy.",
     "NSPhotoLibraryAddUsageDescription": "Chatyy enregistre dans votre photothèque les photos et vidéos reçues dans les discussions ou prises dans l'app lorsque vous touchez Enregistrer.",
     "NSFaceIDUsageDescription": "Chatyy utilise Face ID pour déverrouiller l'app une fois le verrouillage biométrique activé dans les Réglages, afin de garder vos discussions, e-mails et photos privés.",
-    "NSSpeechRecognitionUsageDescription": "Chatyy utilise la reconnaissance vocale pour transformer votre voix en texte lorsque vous utilisez la dictée ou la transcription."
+    "NSSpeechRecognitionUsageDescription": "Chatyy utilise la reconnaissance vocale pour transformer votre voix en texte lorsque vous utilisez la dictée ou la transcription.",
+    "NSLocationWhenInUseUsageDescription": "Chatyy utilise votre position lorsque vous envoyez une position dans une discussion, partagez votre position en direct ou utilisez la Carte des amis. Exemple : dans la discussion, touchez Joindre, choisissez Position et envoyez le point pour que votre ami trouve le restaurant où vous êtes.",
+    "NSLocationAlwaysAndWhenInUseUsageDescription": "Chatyy utilise votre position en arrière-plan UNIQUEMENT pour les personnes que vous avez choisies : une position en direct lancée dans une discussion ou un ami accepté sur la Carte des amis. En arrière-plan, seuls les changements significatifs à faible consommation sont utilisés (et une position rapide quand un ami touche Actualiser). Rien n’est partagé avec d’autres et rien n’est utilisé pour la publicité ou l’analyse. Arrêtez à tout moment : Carte des amis > Arrêter le partage, Mode fantôme ou Réglages iOS > Confidentialité > Service de localisation.",
+    "NSLocationAlwaysUsageDescription": "Chatyy utilise votre position en arrière-plan UNIQUEMENT pour les personnes que vous avez choisies (position en direct ou Carte des amis), avec des changements significatifs à faible consommation. Jamais pour la publicité ou l’analyse. Arrêtez à tout moment depuis la Carte des amis ou les Réglages iOS."
   },
   "de": {
     "NSCameraUsageDescription": "Chatyy nutzt die Kamera, damit du Fotos und Videos aufnehmen und in Chats senden, in Videoanrufen erscheinen, 15-Sekunden-Storys aufnehmen und QR-Codes scannen kannst, um ein neues Gerät zu koppeln oder einen Kontakt hinzuzufügen.",
@@ -63,7 +75,10 @@
     "NSPhotoLibraryUsageDescription": "Chatyy greift auf deine Mediathek zu, damit du Fotos und Videos auswählen und in Chats senden, dein Profilbild festlegen, im Feed posten und Storys erstellen kannst. Wenn du das Backup unter Einstellungen > Speicher > Backup aktivierst, werden deine Fotos außerdem in deine private Chatyy-Cloud hochgeladen.",
     "NSPhotoLibraryAddUsageDescription": "Chatyy speichert Fotos und Videos, die du in Chats erhältst oder in der App aufnimmst, in deiner Mediathek, wenn du auf Speichern tippst.",
     "NSFaceIDUsageDescription": "Chatyy nutzt Face ID, um die App zu entsperren, nachdem du die biometrische Sperre in den Einstellungen aktiviert hast, damit deine Chats, E-Mails und Fotos privat bleiben.",
-    "NSSpeechRecognitionUsageDescription": "Chatyy nutzt die Spracherkennung, um deine Sprache in Text umzuwandeln, wenn du Diktat oder Transkription verwendest."
+    "NSSpeechRecognitionUsageDescription": "Chatyy nutzt die Spracherkennung, um deine Sprache in Text umzuwandeln, wenn du Diktat oder Transkription verwendest.",
+    "NSLocationWhenInUseUsageDescription": "Chatyy verwendet deinen Standort, wenn du einen Standort im Chat sendest, deinen Live-Standort teilst oder die Freundeskarte nutzt. Beispiel: Tippe im Chat auf Anhang, wähle Standort und sende den Punkt, damit dein Freund das Restaurant findet, in dem du wartest.",
+    "NSLocationAlwaysAndWhenInUseUsageDescription": "Chatyy verwendet deinen Standort im Hintergrund NUR für Personen, die du ausgewählt hast: einen Live-Standort, den du in einem Chat gestartet hast, oder einen Freund, den du auf der Freundeskarte angenommen hast. Im Hintergrund werden nur stromsparende signifikante Standortänderungen genutzt (und eine kurze Position, wenn ein Freund auf Aktualisieren tippt). Nichts wird mit anderen geteilt und nie für Werbung oder Analysen verwendet. Jederzeit beenden: Freundeskarte > Teilen beenden, Geistmodus oder iOS-Einstellungen > Datenschutz > Ortungsdienste.",
+    "NSLocationAlwaysUsageDescription": "Chatyy verwendet deinen Standort im Hintergrund NUR für Personen, die du ausgewählt hast (Live-Standort im Chat oder Freundeskarte), mit stromsparenden signifikanten Standortänderungen. Nie für Werbung oder Analysen. Jederzeit auf der Freundeskarte oder in den iOS-Einstellungen beenden."
   },
   "it": {
     "NSCameraUsageDescription": "Chatyy usa la fotocamera per scattare foto e registrare video da inviare nelle chat, comparire nelle videochiamate, registrare storie di 15 secondi e scansionare codici QR per collegare un nuovo dispositivo o aggiungere un contatto.",
@@ -76,7 +91,10 @@
     "NSPhotoLibraryUsageDescription": "Chatyy accede alla tua libreria foto per permetterti di scegliere foto e video da inviare nelle chat, impostare la foto del profilo, pubblicare nel feed e creare storie. Se attivi il backup in Impostazioni > Spazio > Backup, le tue foto vengono caricate anche nel tuo cloud privato Chatyy.",
     "NSPhotoLibraryAddUsageDescription": "Chatyy salva nella tua libreria le foto e i video ricevuti nelle chat o scattati nell'app quando tocchi Salva.",
     "NSFaceIDUsageDescription": "Chatyy usa Face ID per sbloccare l'app dopo che hai attivato il blocco biometrico nelle Impostazioni, mantenendo private chat, email e foto.",
-    "NSSpeechRecognitionUsageDescription": "Chatyy usa il riconoscimento vocale per trasformare la tua voce in testo quando usi la dettatura o la trascrizione."
+    "NSSpeechRecognitionUsageDescription": "Chatyy usa il riconoscimento vocale per trasformare la tua voce in testo quando usi la dettatura o la trascrizione.",
+    "NSLocationWhenInUseUsageDescription": "Chatyy usa la tua posizione quando invii una posizione in chat, condividi la posizione in tempo reale o usi la Mappa degli amici. Esempio: nella chat tocca Allega, scegli Posizione e invia il punto così il tuo amico trova il ristorante dove aspetti.",
+    "NSLocationAlwaysAndWhenInUseUsageDescription": "Chatyy usa la tua posizione in background SOLO per le persone che hai scelto: una posizione in tempo reale avviata in una chat o un amico accettato nella Mappa degli amici. In background usa solo cambi di posizione significativi a basso consumo (e una posizione rapida quando un amico tocca Aggiorna). Niente viene condiviso con altri e non viene mai usato per pubblicità o analisi. Interrompi quando vuoi: Mappa degli amici > Interrompi condivisione, Modalità fantasma o Impostazioni iOS > Privacy > Localizzazione.",
+    "NSLocationAlwaysUsageDescription": "Chatyy usa la tua posizione in background SOLO per le persone che hai scelto (posizione in tempo reale in chat o Mappa degli amici), con cambi di posizione significativi a basso consumo. Mai per pubblicità o analisi. Interrompi quando vuoi dalla Mappa degli amici o dalle Impostazioni iOS."
   },
   "ja": {
     "NSCameraUsageDescription": "Chatyyはカメラを使用して、チャットで送る写真や動画の撮影、ビデオ通話での映像、15秒のストーリーの撮影、新しいデバイスの連携や連絡先追加のためのQRコード読み取りを行います。",
@@ -89,7 +107,10 @@
     "NSPhotoLibraryUsageDescription": "Chatyyは写真ライブラリにアクセスして、チャットで送る写真や動画の選択、プロフィール写真の設定、フィードへの投稿、ストーリーの作成を行います。設定 > ストレージ > バックアップでバックアップをオンにすると、写真はあなた専用のChatyyクラウドにもアップロードされます。",
     "NSPhotoLibraryAddUsageDescription": "Chatyyは、チャットで受け取った写真や動画、アプリで撮影したものを、保存をタップしたときに写真ライブラリへ保存します。",
     "NSFaceIDUsageDescription": "Chatyyは、設定で生体認証ロックをオンにした後、Face IDでアプリのロックを解除し、チャット・メール・写真をプライベートに保ちます。",
-    "NSSpeechRecognitionUsageDescription": "Chatyyは音声認識を使用して、音声入力や文字起こしの際にあなたの声をテキストに変換します。"
+    "NSSpeechRecognitionUsageDescription": "Chatyyは音声認識を使用して、音声入力や文字起こしの際にあなたの声をテキストに変換します。",
+    "NSLocationWhenInUseUsageDescription": "Chatyyは、チャットで位置情報を送信したとき、ライブ位置情報を共有したとき、または友だちマップを使うときに位置情報を使用します。例：チャットで添付をタップし、位置情報を選んで送ると、友だちがあなたのいるレストランを見つけられます。",
+    "NSLocationAlwaysAndWhenInUseUsageDescription": "Chatyyは、あなたが選んだ相手のためだけにバックグラウンドで位置情報を使用します（チャットで開始したライブ位置情報、または友だちマップで承認した友だち）。バックグラウンドでは低電力の大幅な位置変更のみを使用します（友だちが更新をタップしたときは1回だけ現在地を取得）。他の誰とも共有せず、広告や分析には使用しません。友だちマップ > 共有を停止、ゴーストモード、またはiOSの設定 > プライバシー > 位置情報サービスでいつでも停止できます。",
+    "NSLocationAlwaysUsageDescription": "Chatyyは、あなたが選んだ相手のためだけに、低電力の大幅な位置変更でバックグラウンドの位置情報を使用します（ライブ位置情報または友だちマップ）。広告や分析には使用しません。友だちマップまたはiOSの設定でいつでも停止できます。"
   },
   "hi": {
     "NSCameraUsageDescription": "Chatyy कैमरे का उपयोग चैट में भेजने के लिए फ़ोटो और वीडियो लेने, वीडियो कॉल में दिखने, 15 सेकंड की स्टोरी रिकॉर्ड करने और नया डिवाइस जोड़ने या कॉन्टैक्ट जोड़ने के लिए QR कोड स्कैन करने में करता है।",
@@ -102,7 +123,10 @@
     "NSPhotoLibraryUsageDescription": "Chatyy आपकी फ़ोटो लाइब्रेरी का उपयोग करता है ताकि आप चैट में भेजने, प्रोफ़ाइल फ़ोटो लगाने, फ़ीड में पोस्ट करने और स्टोरी बनाने के लिए फ़ोटो और वीडियो चुन सकें। अगर आप सेटिंग्स > स्टोरेज > बैकअप में बैकअप चालू करते हैं, तो आपकी फ़ोटो आपके निजी Chatyy क्लाउड पर भी अपलोड होती हैं।",
     "NSPhotoLibraryAddUsageDescription": "Chatyy चैट में मिली या ऐप में ली गई फ़ोटो और वीडियो को सहेजें पर टैप करने पर आपकी फ़ोटो लाइब्रेरी में सहेजता है।",
     "NSFaceIDUsageDescription": "सेटिंग्स में बायोमेट्रिक लॉक चालू करने के बाद Chatyy ऐप अनलॉक करने के लिए Face ID का उपयोग करता है, ताकि आपकी चैट, ईमेल और फ़ोटो निजी रहें।",
-    "NSSpeechRecognitionUsageDescription": "डिक्टेशन या ट्रांसक्रिप्शन इस्तेमाल करते समय Chatyy आपकी आवाज़ को टेक्स्ट में बदलने के लिए स्पीच रिकग्निशन का उपयोग करता है।"
+    "NSSpeechRecognitionUsageDescription": "डिक्टेशन या ट्रांसक्रिप्शन इस्तेमाल करते समय Chatyy आपकी आवाज़ को टेक्स्ट में बदलने के लिए स्पीच रिकग्निशन का उपयोग करता है।",
+    "NSLocationWhenInUseUsageDescription": "जब आप चैट में लोकेशन भेजते हैं, लाइव लोकेशन शेयर करते हैं या फ्रेंड्स मैप इस्तेमाल करते हैं, तब Chatyy आपकी लोकेशन का उपयोग करता है। उदाहरण: चैट में अटैच पर टैप करें, लोकेशन चुनें और पिन भेजें ताकि आपका दोस्त वह रेस्तरां ढूंढ सके जहां आप इंतज़ार कर रहे हैं।",
+    "NSLocationAlwaysAndWhenInUseUsageDescription": "Chatyy बैकग्राउंड में आपकी लोकेशन केवल उन्हीं लोगों के लिए इस्तेमाल करता है जिन्हें आपने चुना है: चैट में शुरू की गई लाइव लोकेशन या फ्रेंड्स मैप पर स्वीकार किया गया दोस्त। बैकग्राउंड में केवल कम बैटरी वाले बड़े लोकेशन बदलाव इस्तेमाल होते हैं (और दोस्त के रीफ्रेश टैप करने पर एक बार तुरंत लोकेशन)। किसी और के साथ कुछ शेयर नहीं होता और विज्ञापन या एनालिटिक्स के लिए कभी इस्तेमाल नहीं होता। कभी भी रोकें: फ्रेंड्स मैप > शेयर करना बंद करें, घोस्ट मोड या iOS सेटिंग्स > गोपनीयता > लोकेशन सेवाएं।",
+    "NSLocationAlwaysUsageDescription": "Chatyy बैकग्राउंड में आपकी लोकेशन केवल आपके चुने लोगों के लिए (चैट में लाइव लोकेशन या फ्रेंड्स मैप) कम बैटरी वाले बड़े लोकेशन बदलावों से इस्तेमाल करता है। विज्ञापन या एनालिटिक्स के लिए कभी नहीं। फ्रेंड्स मैप या iOS सेटिंग्स में कभी भी रोकें।"
   },
   "id": {
     "NSCameraUsageDescription": "Chatyy menggunakan kamera agar Anda dapat mengambil foto dan merekam video untuk dikirim di obrolan, tampil dalam panggilan video, merekam cerita 15 detik, dan memindai kode QR untuk menautkan perangkat baru atau menambahkan kontak.",
@@ -115,7 +139,10 @@
     "NSPhotoLibraryUsageDescription": "Chatyy mengakses galeri foto Anda agar Anda dapat memilih foto dan video untuk dikirim di obrolan, mengatur foto profil, memposting di feed, dan membuat cerita. Jika Anda mengaktifkan cadangan di Pengaturan > Penyimpanan > Cadangan, foto Anda juga diunggah ke cloud pribadi Chatyy Anda.",
     "NSPhotoLibraryAddUsageDescription": "Chatyy menyimpan foto dan video yang Anda terima di obrolan atau ambil di aplikasi ke galeri saat Anda mengetuk Simpan.",
     "NSFaceIDUsageDescription": "Chatyy menggunakan Face ID untuk membuka kunci aplikasi setelah Anda mengaktifkan kunci biometrik di Pengaturan, menjaga obrolan, email, dan foto Anda tetap pribadi.",
-    "NSSpeechRecognitionUsageDescription": "Chatyy menggunakan pengenalan ucapan untuk mengubah suara Anda menjadi teks saat Anda memakai dikte atau transkripsi."
+    "NSSpeechRecognitionUsageDescription": "Chatyy menggunakan pengenalan ucapan untuk mengubah suara Anda menjadi teks saat Anda memakai dikte atau transkripsi.",
+    "NSLocationWhenInUseUsageDescription": "Chatyy menggunakan lokasi Anda saat Anda mengirim lokasi di chat, membagikan lokasi langsung, atau memakai Peta Teman. Contoh: di chat, ketuk Lampiran, pilih Lokasi, lalu kirim titiknya agar teman Anda menemukan restoran tempat Anda menunggu.",
+    "NSLocationAlwaysAndWhenInUseUsageDescription": "Chatyy menggunakan lokasi Anda di latar belakang HANYA untuk orang yang Anda pilih: lokasi langsung yang Anda mulai di chat atau teman yang Anda terima di Peta Teman. Di latar belakang hanya memakai perubahan lokasi signifikan berdaya rendah (dan satu posisi cepat saat teman mengetuk Segarkan). Tidak dibagikan ke orang lain dan tidak pernah dipakai untuk iklan atau analitik. Hentikan kapan saja: Peta Teman > Berhenti berbagi, Mode Hantu, atau Pengaturan iOS > Privasi > Layanan Lokasi.",
+    "NSLocationAlwaysUsageDescription": "Chatyy menggunakan lokasi Anda di latar belakang HANYA untuk orang yang Anda pilih (lokasi langsung di chat atau Peta Teman), dengan perubahan lokasi signifikan berdaya rendah. Tidak pernah untuk iklan atau analitik. Hentikan kapan saja di Peta Teman atau Pengaturan iOS."
   },
   "ar": {
     "NSCameraUsageDescription": "يستخدم Chatyy الكاميرا لالتقاط الصور وتسجيل الفيديوهات وإرسالها في الدردشات، والظهور في مكالمات الفيديو، وتسجيل قصص مدتها 15 ثانية، ومسح رموز QR لربط جهاز جديد أو إضافة جهة اتصال.",
@@ -128,6 +155,9 @@
     "NSPhotoLibraryUsageDescription": "يصل Chatyy إلى مكتبة الصور لتختار صورًا وفيديوهات لإرسالها في الدردشات، وتعيين صورة ملفك الشخصي، والنشر في الموجز، وإنشاء القصص. إذا فعّلت النسخ الاحتياطي من الإعدادات > التخزين > النسخ الاحتياطي، تُرفع صورك أيضًا إلى سحابة Chatyy الخاصة بك.",
     "NSPhotoLibraryAddUsageDescription": "يحفظ Chatyy الصور والفيديوهات التي تتلقاها في الدردشات أو تلتقطها في التطبيق في مكتبة الصور عندما تضغط على حفظ.",
     "NSFaceIDUsageDescription": "يستخدم Chatyy بصمة الوجه Face ID لفتح التطبيق بعد تفعيل القفل البيومتري في الإعدادات، للحفاظ على خصوصية دردشاتك وبريدك وصورك.",
-    "NSSpeechRecognitionUsageDescription": "يستخدم Chatyy التعرّف على الكلام لتحويل صوتك إلى نص عند استخدام الإملاء أو النسخ."
+    "NSSpeechRecognitionUsageDescription": "يستخدم Chatyy التعرّف على الكلام لتحويل صوتك إلى نص عند استخدام الإملاء أو النسخ.",
+    "NSLocationWhenInUseUsageDescription": "يستخدم Chatyy موقعك عندما ترسل موقعًا في محادثة أو تشارك موقعك المباشر أو تستخدم خريطة الأصدقاء. مثال: في المحادثة اضغط على المرفقات واختر الموقع وأرسل النقطة ليجد صديقك المطعم الذي تنتظر فيه.",
+    "NSLocationAlwaysAndWhenInUseUsageDescription": "يستخدم Chatyy موقعك في الخلفية فقط لمن اخترتهم: موقع مباشر بدأته في محادثة أو صديق قبلته في خريطة الأصدقاء. في الخلفية يستخدم فقط تغييرات الموقع الكبيرة منخفضة الاستهلاك (وموقعًا سريعًا واحدًا عندما يضغط صديقك على تحديث). لا تتم مشاركة أي شيء مع أي شخص آخر ولا يُستخدم أبدًا للإعلانات أو التحليلات. أوقفه في أي وقت: خريطة الأصدقاء > إيقاف المشاركة أو وضع الشبح أو إعدادات iOS > الخصوصية > خدمات الموقع.",
+    "NSLocationAlwaysUsageDescription": "يستخدم Chatyy موقعك في الخلفية فقط لمن اخترتهم (موقع مباشر في محادثة أو خريطة الأصدقاء) عبر تغييرات الموقع الكبيرة منخفضة الاستهلاك. لا يُستخدم أبدًا للإعلانات أو التحليلات. أوقفه في أي وقت من خريطة الأصدقاء أو إعدادات iOS."
   }
 }
