@@ -90,7 +90,8 @@ function _b64(s) {
 }
 // Aceita o item do PHP (envelope) ou o registro cru do roteador F1 (/pull: env_b64, from, kind, sha).
 function _row(it) {
-  if (it && it.kind && it.kind !== 'msg') return null; // reação (S4) ainda não vem para cá
+  if (it && it.kind && it.kind !== 'msg') return null; // reação/recibo/apagar: rtF4.applyItems
+  if (it && (it.tomb || (typeof it.envelope === 'string' && it.envelope.startsWith('{"e2e_del":1')))) return null; // [sgu F4] lápide = evento de apagar
   const env = it && (it.envelope || it.e || it.content || (it.env_b64 ? _b64(it.env_b64) : ''));
   if (it && !it.from_uid && !it.from_email && it.from) { if (String(it.from).includes('@')) it.from_email = it.from; else it.from_uid = it.from; }
   const mid = Number(it && (it.mid || it.id));
@@ -181,6 +182,12 @@ async function _ingest(items, opts) {
     } catch {}
   }
   return out;
+}
+
+/** [sgu F4] itens de mensagem vindos de outra fonte (chat_f4_sync): mesmo caminho do pull (grava → persisted). */
+export async function ingestItems(items) {
+  if (_killed() || (isWeb && !_webStoreOn())) return new Map();
+  return _ingest(items);
 }
 
 // ─── pedido ao servidor ─────────────────────────────────────────────────────

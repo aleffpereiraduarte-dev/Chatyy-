@@ -185,6 +185,10 @@ export async function hydrateResponse(action, params, resp) {
     _walk(resp, 0, acc);
     for (const [cid, bs] of acc.convs) noteConvBodyStore(cid, bs);
     if (acc.rows.length || hasRtConvs()) { try { require('./rtInbox').ensureStarted(); } catch {} }
+    // [sgu F4 2026-10-23] body_store 3: fila de eventos por pts + não lidas do aparelho quando o roteador não respondeu
+    if (acc.convs.some(([, bs]) => Number(bs) >= 3) || (hasRtConvs() && rtConvIds().some((c) => convBodyStore(c) >= 3))) {
+      try { const f4 = require('./rtF4'); f4.ensureStarted(); if (action === 'chat_list') f4.applyListCounts(resp); } catch {}
+    }
     if (!acc.rows.length) return resp;
     for (const m of acc.rows) { const cid = m.conversation_id != null ? m.conversation_id : params?.conversation_id; if (cid != null && !convBodyStore(cid)) noteConvBodyStore(cid, 2); }
     if (!hydrateOn()) return resp;
