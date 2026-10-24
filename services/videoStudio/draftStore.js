@@ -19,7 +19,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { duration as edlDuration, newEdl, cloneEdl } from './edl';
-import { rebaseDocUri } from '../durablePath';
+import { rebaseDocUri, docDir } from '../durablePath';
 
 let FS = null;
 if (Platform.OS !== 'web') {
@@ -28,7 +28,11 @@ if (Platform.OS !== 'web') {
 
 const INDEX_KEY = 'vstudio:drafts:v1';
 const BODY_KEY = (id) => `vstudio:draft:${id}`;
-const MAX_DRAFTS = 30;
+// [2026-10-24 reels-marcar] Sem teto por QUANTIDADE (antes: 30 → o 31º apagava o mais antigo calado).
+// Limite por ESPAÇO: draftSpace() mede; a UI (draftSpace.js → confirmDraftSpace) avisa e PEDE
+// confirmação antes de apagar o mais antigo. Nada é apagado sem o usuário tocar em "Apagar".
+const DEFAULT_SPACE_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB de rascunhos (override: __chatyy_vstudio_draft_bytes)
+const LOW_DISK_BYTES = 400 * 1024 * 1024;            // aparelho com < 400 MB livres também avisa
 
 const mem = new Map();          // id → draft
 const subs = new Map();         // id → Set<fn>
@@ -87,7 +91,17 @@ const MARK = 'video-studio/';
 export function rebaseEdl(edl) {
   if (!edl || typeof edl !== 'object') return edl;
   let changed = false;
-  const rb = (u) => { const n = rebaseDocUri(u, MARK); if (n !== u) changed = true; return n; };
+  // [2026-10-24] 1º a pasta do estúdio; senão QUALQUER arquivo em Documents/ (figurinha local, clipe do
+  // compositor antigo reels-drafts/…) — o UUID do container muda igual p/ todos.
+  const rb = (u) => {
+    let n = rebaseDocUri(u, MARK);
+    if (n === u && typeof u === 'string' && /^file:/i.test(u) && u.includes('/Documents/')) {
+      const dd = docDir();
+      if (dd && !u.startsWith(dd)) n = dd + u.slice(u.indexOf('/Documents/') + '/Documents/'.length);
+    }
+    if (n !== u) changed = true;
+    return n;
+  };
   const clips = (edl.clips || []).map((c) => (c && (c.uri || c.thumb) ? { ...c, uri: rb(c.uri), ...(c.thumb ? { thumb: rb(c.thumb) } : null) } : c));
   const audio = edl.audio && edl.audio.voiceover && edl.audio.voiceover.uri
     ? { ...edl.audio, voiceover: { ...edl.audio.voiceover, uri: rb(edl.audio.voiceover.uri) } } : edl.audio;
@@ -151,11 +165,8 @@ async function persist(id) {
       thumb: firstClip?.thumb || (firstClip?.kind === 'image' ? firstClip.uri : null),
       status: d.status || 'draft',
     };
-    const next = [entry, ...idx.filter((x) => x && x.id !== id)].slice(0, MAX_DRAFTS);
+    const next = [entry, ...idx.filter((x) => x && x.id !== id)];
     await AsyncStorage.setItem(INDEX_KEY, JSON.stringify(next));
-    // Rascunhos que caíram do índice (cap) são apagados de verdade.
-    const dropped = [entry, ...idx.filter((x) => x && x.id !== id)].slice(MAX_DRAFTS);
-    dropped.forEach((x) => { deleteDraft(x.id).catch(() => {}); });
     return true;
   } catch { return false; }
 }
@@ -186,6 +197,49 @@ export async function deleteDraft(id) {
   } catch {}
   const dir = draftDir(id);
   if (dir) { try { await FS.deleteAsync(dir, { idempotent: true }); } catch {} }
+}
+
+/** Bytes da pasta do rascunho (arquivos diretos; a pasta é plana). Web/erro → 0. */
+async function dirBytes(id) {
+  const dir = draftDir(id);
+  if (!dir) return 0;
+  try {
+    const names = await FS.readDirectoryAsync(dir);
+    let sum = 0;
+    for (const n of names || []) {
+      // eslint-disable-next-line no-await-in-loop
+      try { const i = await FS.getInfoAsync(dir + n); if (i?.exists && !i.isDirectory) sum += Number(i.size) || 0; } catch {}
+    }
+    return sum;
+  } catch { return 0; }
+}
+
+export function draftSpaceLimit() {
+  const o = Number(globalThis.__chatyy_vstudio_draft_bytes);
+  return o > 0 ? o : DEFAULT_SPACE_BYTES;
+}
+
+/**
+ * Espaço dos rascunhos → { used, limit, free, over, lowDisk, items:[{…index, bytes}] (mais antigo primeiro) }.
+ * over = passou do limite OU o aparelho está quase sem espaço (e há rascunhos ocupando algo).
+ */
+export async function draftSpace() {
+  const idx = await listDrafts();
+  const items = [];
+  let used = 0;
+  for (const x of idx) {
+    if (!x || !x.id) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const bytes = await dirBytes(x.id);
+    used += bytes;
+    items.push({ ...x, bytes });
+  }
+  items.sort((a, b) => (a.updatedAt || 0) - (b.updatedAt || 0));
+  let free = null;
+  if (FS && typeof FS.getFreeDiskStorageAsync === 'function') { try { free = Number(await FS.getFreeDiskStorageAsync()) || null; } catch {} }
+  const limit = draftSpaceLimit();
+  const lowDisk = free != null && free < LOW_DISK_BYTES && used > 0;
+  return { used, limit, free, lowDisk, over: used > limit || lowDisk, items };
 }
 
 /**
@@ -225,6 +279,6 @@ export function peekPendingMusic() { return pendingMusic; }
 export function takePendingMusic() { const m = pendingMusic; pendingMusic = null; return m; }
 
 export default {
-  createDraft, getDraft, loadDraft, updateDraft, saveDraftNow, listDrafts, deleteDraft,
+  createDraft, getDraft, loadDraft, updateDraft, saveDraftNow, listDrafts, deleteDraft, draftSpace, draftSpaceLimit,
   subscribe, draftDir, adoptFile, removeDraftFile, setPendingMusic, peekPendingMusic, takePendingMusic,
 };

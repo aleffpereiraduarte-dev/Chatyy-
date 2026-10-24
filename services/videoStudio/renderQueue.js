@@ -396,6 +396,7 @@ async function _legacyPublish(job, remote) {
   if (p.visibility === 'friends') fd.append('audience', 'followers');
   fd.append('allow_comments', p.allow_comments === false ? '0' : '1');
   if (p.cover_t != null) fd.append('cover_ms', String(Math.round((p.cover_t || 0) * 1000)));
+  if (Array.isArray(p.tagged) && p.tagged.length) fd.append('tagged', JSON.stringify(p.tagged.slice(0, 20))); // [2026-10-24 reels-marcar]
   const urls = remote.clips.map((c) => c.uri);
   if (remote.clips.length === 1) {
     const c = remote.clips[0];
@@ -417,7 +418,7 @@ async function _finish(job, st) {
   job.post = {
     media_type: 'video',
     likes: 0, likes_count: 0, comments: 0, comments_count: 0, views: 0,
-    user_liked: false, user_bookmarked: false, tagged_users: [],
+    user_liked: false, user_bookmarked: false, tagged_users: Array.isArray(p.tagged) ? p.tagged.slice(0, 20) : [],
     created_at: now.toISOString(),
     id: st.postId,
     media_url: st.url,

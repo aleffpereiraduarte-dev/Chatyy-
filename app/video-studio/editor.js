@@ -327,6 +327,13 @@ export default function VideoStudioEditor() {
     setSheet(null);
     const url = typeof item === 'string' ? item : (item?.url || item?.media_url || item?.uri || '');
     if (!url) return;
+    // [2026-10-24 rascunho-durável] figurinha de arquivo LOCAL vai p/ a pasta do rascunho (o cache do SO
+    // pode ser limpo e o caminho absoluto do iOS muda na atualização) antes de entrar na EDL.
+    if (Platform.OS !== 'web' && /^file:/i.test(url) && draftRef.current && !(item && item._durable)) {
+      const fin = (u) => onStickerPicked({ url: u || url, _durable: true }, isGif);
+      adoptFile(draftRef.current, url, {}).then(fin, () => fin(url));
+      return;
+    }
     let next;
     if (/^(https?:|file:|content:|data:)/i.test(url)) {
       next = addOverlay(edlRef.current, { type: 'sticker', sticker_url: url, kind: isGif ? 'gif' : undefined }, clock.t);

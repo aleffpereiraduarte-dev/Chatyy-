@@ -4,7 +4,7 @@
 //   ?music_id=&music_url=&music_start=&music_title=   som pré-selecionado (ou draftStore.setPendingMusic)
 //   ?sound_id=&sound_url=&sound_title=  compat c/ o deep link "Usar este som" de /reels-sound
 // "Próximo" → router.push('/video-studio/editor?draft=<id>') com a EDL v1 já salva no draftStore.
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { Platform, View, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useLanguage } from '../../context/LanguageContext';
@@ -35,6 +35,12 @@ export default function VideoStudioCameraScreen() {
       };
     }
     return takePendingMusic();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // [2026-10-24] rascunhos passaram do limite de espaço → pergunta (sem apagar sozinho) ao abrir a câmera.
+  useEffect(() => {
+    const tm = setTimeout(() => { try { require('../../services/videoStudio/draftSpace').confirmDraftSpace({ t, excludeId: draftId }); } catch {} }, 1500);
+    return () => clearTimeout(tm);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onNext = useCallback((id) => {

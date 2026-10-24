@@ -4,7 +4,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, Dimensions,
   Animated, Platform, Share, TextInput, Modal, KeyboardAvoidingView,
   ActivityIndicator, Pressable, ScrollView, Image, Easing, PanResponder,
-  AppState, ToastAndroid, Linking,
+  AppState, ToastAndroid, Linking, Alert,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AvatarCircle from './AvatarCircle';
@@ -23,8 +23,9 @@ import {
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
   IconX, IconSend, IconChevronDown, IconCamera, IconPlus, IconVolume2, IconVolumeX, IconEye,
   IconRepeat, IconWifiOff, IconLink, IconCopy, IconMoreHorizontal, IconDiamond, IconSliders, IconGiftBox,
-  IconCheck, IconInfo, IconFlag, IconZap,
+  IconCheck, IconInfo, IconFlag, IconZap, IconUser,
 } from './Icons';
+import { taggedPeople, tagRemove } from '../services/videoStudio/studioApi'; // [2026-10-24 reels-marcar]
 // Reels P1 monetization shares the same diamond catalog + wallet ledger
 // as Live gifts. The gift panel is components/gifts/GiftSheet (context 'post' →
 // diamond_gift_send), the same panel used in lives and the 1:1 chat.
@@ -1455,7 +1456,7 @@ const BoostToast = memo(function BoostToast({ visible }) {
 });
 
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDark, t, user, containerHeight, containerWidth, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, onLikeChange, showLiveRing, overlayOpen, router, preload, screenFocused = true, muted = false, onToggleMute }) {
+const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDark, t, user, containerHeight, containerWidth, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, onLikeChange, showLiveRing, overlayOpen, router, preload, screenFocused = true, muted = false, onToggleMute, onUntag }) {
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
   const _drag2516 = useDragToDismiss({ onDismiss: () => { const f = () => setMoreSheetOpen(false); f(); } });
   // Safe-area insets so the bottom info block (username/caption/music row)
@@ -2472,6 +2473,26 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
           </Text>
         ) : null}
 
+        {/* [2026-10-24 reels-marcar] Pessoas marcadas — "com @fulano, @ciclano +2" (toque = perfil) */}
+        {(() => {
+          const ppl = taggedPeople(reel);
+          if (!ppl.length) return null;
+          return (
+            <View style={styles.taggedRow}>
+              <IconUser size={12} color="#fff" />
+              <Text style={styles.taggedTxt} numberOfLines={1}>
+                {`${t?.('feed.with') || 'com'} `}
+                {ppl.slice(0, 2).map((p, i) => (
+                  <Text key={p.email} onPress={() => onOpenProfile && onOpenProfile(p.email, null)} style={styles.taggedName} accessibilityRole="link">
+                    {`${i ? ', ' : ''}@${p.handle}`}
+                  </Text>
+                ))}
+                {ppl.length > 2 ? ` ${(t?.('reels.tag.more') || '+{n}').replace('{n}', String(ppl.length - 2))}` : ''}
+              </Text>
+            </View>
+          );
+        })()}
+
         {/* Caption */}
         {reel.caption ? (
           <TouchableOpacity
@@ -2650,6 +2671,21 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
               </TouchableOpacity>
             )}
 
+            {/* [2026-10-24 reels-marcar] Quem foi marcado pode se tirar do Reel. */}
+            {!!user?.email && taggedPeople(reel).some((p) => p.email === String(user.email).toLowerCase()) && (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
+                onPress={() => { setMoreSheetOpen(false); onUntag && onUntag(reel); }}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+              >
+                <IconUser size={22} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                  {t?.('reels.tag.removeMe') || 'Remover minha marcação'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
             {/* Not interested — soft-hide. */}
             <TouchableOpacity
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
@@ -2759,12 +2795,14 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   if ((a.sound_saved || false) !== (b.sound_saved || false)) return false;
   if ((a.caption || '') !== (b.caption || '')) return false;
   if ((a.media_urls || '') !== (b.media_urls || '')) return false;
+  if ((a.tagged_users || []).length !== (b.tagged_users || []).length || (a.tagged || []).length !== (b.tagged || []).length) return false; // [reels-marcar]
+  if (prev.onUntag !== next.onUntag) return false;
   return true;
 });
 
 // [2026-10-15 native-reels] Menu "…" do feed nativo — mesmas opções do ReelItem
 // (por que estou vendo, não tenho interesse, salvar som, visualizações, velocidade, denunciar).
-function NativeReelMoreSheet({ reel, t, speed, onClose, onHide, onReport, onSpeed, onToggleSound, onUseSound }) {
+function NativeReelMoreSheet({ reel, t, speed, onClose, onHide, onReport, onSpeed, onToggleSound, onUseSound, me, onUntag }) {
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
   const _drag2729 = useDragToDismiss({ onDismiss: () => { const f = onClose; if (typeof f === 'function') f(); } });
   const [whyOpen, setWhyOpen] = useState(false);
@@ -2799,6 +2837,12 @@ function NativeReelMoreSheet({ reel, t, speed, onClose, onHide, onReport, onSpee
               {whyOpen ? (
                 <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, lineHeight: 20, marginTop: 8, marginLeft: 36 }}>{reelWhyText(reel, t)}</Text>
               ) : null}
+            </TouchableOpacity>
+          )}
+          {!!me && !!onUntag && taggedPeople(reel).some((p) => p.email === String(me).toLowerCase()) && (
+            <TouchableOpacity style={rowStyle} onPress={() => onUntag(reel)} activeOpacity={0.7} accessibilityRole="button">
+              <IconUser size={22} color="#fff" />
+              <Text style={txt}>{t?.('reels.tag.removeMe') || 'Remover minha marcação'}</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity style={rowStyle} onPress={() => onHide(reel)} activeOpacity={0.7} accessibilityRole="button">
@@ -3615,6 +3659,34 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     if (hideToastTimerRef.current) clearTimeout(hideToastTimerRef.current);
     hideToastTimerRef.current = setTimeout(() => setHideToast(''), 2200);
   }, [t, isGuest, guestGateFn]);
+  // [2026-10-24 reels-marcar] "Remover minha marcação": confirma, tira no servidor e some o "com @você" na hora.
+  const handleUntag = useCallback((reel) => {
+    const me = String(user?.email || '').toLowerCase();
+    if (!reel?.id || !me) return;
+    const go = async () => {
+      const r = await tagRemove(reel.id).catch(() => null);
+      const ok = !!(r && r.ok);
+      if (ok) {
+        const k = String(reel.id);
+        const patch = (p) => (String(p.id) !== k ? p : {
+          ...p,
+          tagged: Array.isArray(p.tagged) ? p.tagged.filter((x) => String(x?.email || '').toLowerCase() !== me) : p.tagged,
+          tagged_users: Array.isArray(p.tagged_users) ? p.tagged_users.filter((e) => String(e || '').toLowerCase() !== me) : p.tagged_users,
+        });
+        setReels((rs) => rs.map(patch));
+        setFollowingReels((rs) => rs.map(patch));
+      }
+      const msg = ok ? (t?.('reels.tag.removed') || 'Marcação removida.') : (t?.('reels.tag.removeFailed') || 'Não foi possível remover agora.');
+      if (Platform.OS === 'android' && ToastAndroid?.show) { try { ToastAndroid.show(msg, ToastAndroid.SHORT); return; } catch {} }
+      setHideToast(msg);
+      if (hideToastTimerRef.current) clearTimeout(hideToastTimerRef.current);
+      hideToastTimerRef.current = setTimeout(() => setHideToast(''), 2200);
+    };
+    Alert.alert(t?.('reels.tag.removeMe') || 'Remover minha marcação', t?.('reels.tag.removeBody') || 'Você deixa de aparecer como marcado neste Reel.', [
+      { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+      { text: t?.('reels.tag.removeConfirm') || 'Remover', style: 'destructive', onPress: () => { go(); } },
+    ]);
+  }, [user?.email, t]);
   // [2026-10-21 reels-audit] mesmo aviso p/ "Link copiado" (iOS/web) + timer limpo ao sair.
   useEffect(() => {
     const show = (msg) => {
@@ -3703,9 +3775,10 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         muted={mutedEff}
         onToggleMute={handleToggleMute}
         onCreate={onCreate}
+        onUntag={handleUntag}
       />
     );
-  }, [currentIndex, colors, isDark, t, user, router, containerHeight, containerWidth, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate, mutedEff, handleToggleMute, onCreate]);
+  }, [currentIndex, colors, isDark, t, user, router, containerHeight, containerWidth, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate, mutedEff, handleToggleMute, onCreate, handleUntag]);
 
   // ── [2026-10-15 native-reels] Feed NATIVO: itens, eventos e sheets ─────────
   // O nativo só emite eventos; a lógica (API, fila offline, sinais de
@@ -3760,7 +3833,13 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         thumb: r.thumbnail_url ? resolveMediaUrl(r.thumbnail_url) : '',
         avatar,
         author: r.is_catalog ? authorDisplay : `@${authorDisplay}`,
-        caption: r.caption || '',
+        // [2026-10-24 reels-marcar] binário nativo não tem campo de marcados → vai numa linha da legenda
+        caption: (() => {
+          const ppl = taggedPeople(r);
+          if (!ppl.length) return r.caption || '';
+          const w = `${t('feed.with') || 'com'} ${ppl.slice(0, 2).map((p) => `@${p.handle}`).join(', ')}${ppl.length > 2 ? ` ${(t('reels.tag.more') || '+{n}').replace('{n}', String(ppl.length - 2))}` : ''}`;
+          return r.caption ? `${r.caption}\n${w}` : w;
+        })(),
         music: r.audio_name || `${t('feed.originalAudio') || 'Áudio original'} · ${authorDisplay}`,
         credit,
         likes: Number(r.like_count) || 0,
@@ -4372,6 +4451,8 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
             onSpeed={() => { setNMoreReel(null); setNSpeedOpen(true); }}
             onToggleSound={(r) => { setNMoreReel(null); nToggleSoundSave(r); }}
             onUseSound={(r) => { setNMoreReel(null); handleUseSound(r); }}
+            me={user?.email || ''}
+            onUntag={(r) => { setNMoreReel(null); handleUntag(r); }}
           />
           <SpeedPickerSheet
             visible={nSpeedOpen}
@@ -4666,6 +4747,9 @@ const styles = StyleSheet.create({
     zIndex: 10,
     gap: 8,
   },
+  taggedRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 6, maxWidth: '92%' },
+  taggedTxt: { color: '#fff', fontSize: 13, fontWeight: '500', textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 3, flexShrink: 1 },
+  taggedName: { fontWeight: '800' },
   username: {
     color: '#fff',
     fontSize: 16,

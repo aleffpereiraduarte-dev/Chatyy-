@@ -3,21 +3,27 @@
 // "Publicar" entrega a EDL à fila services/videoStudio/renderQueue (upload
 // retomável → reels_render_submit → acompanha em 2º plano) e fecha o estúdio;
 // o progresso aparece no banner do Reels/Feed e o vídeo entra no perfil/Reels.
+// [2026-10-24 reels-marcar] + "Marcar pessoas" (até 20, TagPeopleSheet → publish.tagged) e prévia
+// final TOCANDO (EdlPreview do editor, mudo por padrão; tocar = som; "Capa" volta p/ o editor).
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView, Platform, Alert, ActivityIndicator, Switch } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, ScrollView, Platform, Alert, ActivityIndicator, Switch, Pressable } from 'react-native';
 import KeyboardSafeView from '../../components/ui/KeyboardSafeView'; // [2026-10-22 kb-uniforme]
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Image } from 'expo-image';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import { haptic } from '../../constants/theme';
-import { IconArrowLeft, IconGlobe, IconUsers, IconLock, IconHash, IconAtSign, IconMessageCircle, IconRepeat, IconDownload } from '../../components/Icons';
+import { IconArrowLeft, IconGlobe, IconUsers, IconLock, IconHash, IconAtSign, IconMessageCircle, IconRepeat, IconDownload, IconUserPlus, IconChevronRight, IconVolume2, IconVolumeX, IconImage } from '../../components/Icons';
 import * as api from '../../services/api';
 import { C, PrimaryButton } from '../../components/videoStudio/ui';
 import { useSourceInfo, thumbAt } from '../../components/videoStudio/thumbs';
 import { FilterLayer } from '../../components/videoStudio/filters';
+import EdlPreview, { createClock } from '../../components/videoStudio/EdlPreview';
+import OverlayLayer, { CaptionsLayer } from '../../components/videoStudio/OverlayLayer';
+import TagPeopleSheet from '../../components/videoStudio/TagPeopleSheet';
+import { TAG_MAX } from '../../services/videoStudio/studioApi';
 import { loadDraft, updateDraft, saveDraftNow } from '../../services/videoStudio/draftStore';
 import { validate } from '../../services/videoStudio/edl';
 import { locate, totalDuration, fmtTime } from '../../services/videoStudio/edlOps';
@@ -63,6 +69,46 @@ function CoverThumb({ edl }) {
   );
 }
 
+// Prévia final tocando (mesmo player do editor). Mudo por padrão; tocar alterna o som.
+// Pausa ao sair da tela / com folha aberta. Web/sem vídeo → cai na capa (CoverThumb).
+const PV_W = 120;
+const PV_H = Math.round((PV_W * 16) / 9);
+function LivePreview({ edl, paused, t }) {
+  const ref = useRef(null);
+  const clock = useRef(null);
+  if (!clock.current) clock.current = createClock();
+  const [muted, setMuted] = useState(true);
+  const [focused, setFocused] = useState(true);
+  useFocusEffect(useCallback(() => { setFocused(true); return () => setFocused(false); }, []));
+  const run = focused && !paused;
+  useEffect(() => {
+    const p = ref.current;
+    if (!p) return undefined;
+    if (!run) { try { p.pause(); } catch {} return undefined; }
+    const tm = setTimeout(() => { try { if (!p.isPlaying()) p.play(); } catch {} }, 250);
+    return () => clearTimeout(tm);
+  }, [run, edl]);
+  useEffect(() => () => { try { ref.current?.pause(); } catch {} }, []);
+  if (!edl?.clips?.length) return <CoverThumb edl={edl} />;
+  return (
+    <View style={styles.cover}>
+      <EdlPreview ref={ref} edl={edl} clock={clock.current} width={PV_W} height={PV_H} loop muteOriginal={muted} muteMusic={muted} muteVoice={muted}>
+        <CaptionsLayer edl={edl} clock={clock.current} W={PV_W} H={PV_H} />
+        <OverlayLayer edl={edl} clock={clock.current} W={PV_W} H={PV_H} editable={false} />
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={() => { setMuted((m) => !m); try { haptic.select(); } catch {} try { if (!ref.current?.isPlaying()) ref.current?.play(); } catch {} }}
+          accessibilityRole="button"
+          accessibilityLabel={muted ? t('studio.publish.previewUnmute') : t('studio.publish.previewMute')}
+        />
+        <View pointerEvents="none" style={styles.muteBadge}>
+          {muted ? <IconVolumeX size={13} color="#fff" /> : <IconVolume2 size={13} color="#fff" />}
+        </View>
+      </EdlPreview>
+    </View>
+  );
+}
+
 function Row({ Icon, label, value, onValueChange, sub, last }) {
   return (
     <View style={[styles.row, last && { borderBottomWidth: 0 }]}>
@@ -98,6 +144,8 @@ export default function VideoStudioPublish() {
   const [allowComments, setAllowComments] = useState(true);
   const [allowDuet, setAllowDuet] = useState(true);
   const [saveToDevice, setSaveToDevice] = useState(false);
+  const [tagged, setTagged] = useState([]); // [{email,name,username}]
+  const [tagOpen, setTagOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sugg, setSugg] = useState({ kind: null, items: [] });
   const tagsRef = useRef(null);
@@ -116,6 +164,8 @@ export default function VideoStudioPublish() {
         if (p.visibility) setVisibility(p.visibility);
         if (p.allow_comments === false) setAllowComments(false);
         if (p.allow_duet === false) setAllowDuet(false);
+        const tg = Array.isArray(p.tagged_people) ? p.tagged_people : [];
+        setTagged(tg.filter((x) => x && x.email).slice(0, TAG_MAX));
       }
     }).catch(() => { if (alive) setDraft(false); }); // [2026-10-21 media-audit] erro de leitura = tela de "não encontrado" (antes: spinner eterno)
     return () => { alive = false; };
@@ -183,15 +233,24 @@ export default function VideoStudioPublish() {
     refreshSugg(next, pos + sep.length + 1);
   };
 
-  const publishObj = useCallback(() => ({
-    caption: caption.trim(),
-    hashtags: extractHashtags(caption),
-    mentions: extractMentions(caption),
-    visibility,
-    allow_comments: !!allowComments,
-    allow_duet: !!allowDuet,
-    cover_t: draft?.edl?.cover?.t || 0,
-  }), [caption, visibility, allowComments, allowDuet, draft]);
+  // tagged = "Marcar pessoas" (e-mails; servidor novo). mentions leva legenda ∪ marcados p/ o servidor
+  // antigo (que só conhece mentions) não perder as marcações; o novo separa e não avisa 2x.
+  // tagged_people (objetos) só p/ restaurar o rascunho com nomes.
+  const publishObj = useCallback(() => {
+    const tg = tagged.map((p) => p.email).filter(Boolean).slice(0, TAG_MAX);
+    const mn = extractMentions(caption);
+    return {
+      caption: caption.trim(),
+      hashtags: extractHashtags(caption),
+      mentions: [...mn, ...tg.filter((e) => !mn.includes(e))].slice(0, 30),
+      tagged: tg,
+      tagged_people: tagged.slice(0, TAG_MAX).map((p) => ({ email: p.email, name: p.name || '', username: p.username || null })),
+      visibility,
+      allow_comments: !!allowComments,
+      allow_duet: !!allowDuet,
+      cover_t: draft?.edl?.cover?.t || 0,
+    };
+  }, [caption, tagged, visibility, allowComments, allowDuet, draft]);
 
   const closeStudio = useCallback(() => {
     try {
@@ -211,6 +270,8 @@ export default function VideoStudioPublish() {
       return;
     }
     try { haptic.success(); } catch {}
+    // [2026-10-24] sem teto de quantidade: passou do limite de espaço → pergunta antes de apagar o mais antigo.
+    try { await require('../../services/videoStudio/draftSpace').confirmDraftSpace({ t, excludeId: draftId, force: true }); } catch {}
     Alert.alert(t('studio.drafts.title'), t('studio.publish.draftSaved'));
     closeStudio();
   }, [draft, draftId, publishObj, t, closeStudio]);
@@ -282,10 +343,13 @@ export default function VideoStudioPublish() {
               <Text style={styles.count}>{`${caption.length}/${CAPTION_MAX}`}</Text>
             </View>
           </View>
-          <TouchableOpacity onPress={() => router.back()} accessibilityRole="button" accessibilityLabel={t('studio.publish.editCover')}>
-            <CoverThumb edl={draft.edl} />
-            <Text style={styles.coverLbl}>{`${t('studio.tool.cover')} · ${fmtTime(dur)}`}</Text>
-          </TouchableOpacity>
+          <View>
+            {Platform.OS === 'web' ? <CoverThumb edl={draft.edl} /> : <LivePreview edl={draft.edl} paused={tagOpen} t={t} />}
+            <TouchableOpacity onPress={() => router.back()} style={styles.coverBtn} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }} accessibilityRole="button" accessibilityLabel={t('studio.publish.editCover')}>
+              <IconImage size={12} color={C.fg2} />
+              <Text style={styles.coverLbl}>{`${t('studio.tool.cover')} · ${fmtTime(dur)}`}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {sugg.items.length > 0 && (
@@ -298,6 +362,20 @@ export default function VideoStudioPublish() {
             ))}
           </View>
         )}
+
+        <TouchableOpacity onPress={() => { setTagOpen(true); try { haptic.select(); } catch {} }} style={styles.tagRow} accessibilityRole="button" accessibilityLabel={t('studio.tag.title')}>
+          <IconUserPlus size={20} color="#fff" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.rowTxt}>{t('studio.tag.title')}</Text>
+            {tagged.length > 0 && (
+              <Text style={styles.rowSub} numberOfLines={1}>
+                {tagged.slice(0, 3).map((p) => (p.username ? `@${p.username}` : p.name || p.email.split('@')[0])).join(', ') + (tagged.length > 3 ? ` +${tagged.length - 3}` : '')}
+              </Text>
+            )}
+          </View>
+          {tagged.length > 0 && <Text style={styles.tagCount}>{String(tagged.length)}</Text>}
+          <IconChevronRight size={18} color={C.fg2} />
+        </TouchableOpacity>
 
         <Text style={styles.section}>{t('studio.publish.whoCanSee')}</Text>
         <View style={styles.segment}>
@@ -321,6 +399,7 @@ export default function VideoStudioPublish() {
         </View>
         <Text style={styles.note}>{t('studio.publish.backgroundNote')}</Text>
       </ScrollView>
+      <TagPeopleSheet visible={tagOpen} onClose={() => setTagOpen(false)} tagged={tagged} onChange={setTagged} t={t} />
       <View style={[styles.footer, { paddingBottom: Math.max(12, insets.bottom) }]}>
         <PrimaryButton label={t('studio.publish.saveDraft')} onPress={saveDraft} dark style={{ flex: 1 }} />
         <PrimaryButton label={busy ? t('studio.publish.sending') : t('studio.publish.publish')} onPress={publish} disabled={busy} style={{ flex: 1.4 }} />
@@ -342,10 +421,14 @@ const styles = StyleSheet.create({
   quickBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, height: 30, paddingHorizontal: 10, borderRadius: 15, backgroundColor: C.card },
   quickTxt: { color: '#fff', fontSize: 12, fontWeight: '700' },
   count: { marginLeft: 'auto', color: C.fg3, fontSize: 11 },
-  cover: { width: 96, height: 170, borderRadius: 10, overflow: 'hidden', backgroundColor: '#1a1a1a' },
+  cover: { width: PV_W, height: PV_H, borderRadius: 10, overflow: 'hidden', backgroundColor: '#1a1a1a' },
   coverTextWrap: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', padding: 6 },
   coverText: { color: '#fff', fontSize: 13, fontWeight: '900', textAlign: 'center', textShadowColor: 'rgba(0,0,0,0.7)', textShadowRadius: 4 },
-  coverLbl: { color: C.fg2, fontSize: 11, textAlign: 'center', marginTop: 4 },
+  coverLbl: { color: C.fg2, fontSize: 11, textAlign: 'center' },
+  coverBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 6 },
+  muteBadge: { position: 'absolute', right: 6, bottom: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
+  tagRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 16, marginTop: 18, paddingHorizontal: 12, paddingVertical: 12, borderRadius: 14, backgroundColor: C.card },
+  tagCount: { color: '#000', backgroundColor: '#fff', fontSize: 12, fontWeight: '800', minWidth: 22, height: 22, borderRadius: 11, textAlign: 'center', lineHeight: 22, overflow: 'hidden', paddingHorizontal: 6 },
   sugg: { marginHorizontal: 16, marginTop: 8, borderRadius: 12, backgroundColor: C.card, overflow: 'hidden' },
   suggRow: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.line },
   suggTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },

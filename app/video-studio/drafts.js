@@ -1,5 +1,6 @@
 // [2026-10-13 video-studio] RASCUNHOS do Video Studio (draftStore persistente).
 // Toque = continuar editando · toque longo = apagar · "Novo" = câmera.
+// [2026-10-24] Sem teto de 30: limite por espaço (mostra o uso; passou → pergunta antes de apagar o mais antigo).
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert, useWindowDimensions, ActivityIndicator } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -11,7 +12,8 @@ import { haptic } from '../../constants/theme';
 import { IconArrowLeft, IconCamera, IconFilm } from '../../components/Icons';
 import { C } from '../../components/videoStudio/ui';
 import { useSourceInfo, thumbAt } from '../../components/videoStudio/thumbs';
-import { listDrafts, loadDraft, deleteDraft } from '../../services/videoStudio/draftStore';
+import { listDrafts, loadDraft, deleteDraft, draftSpace } from '../../services/videoStudio/draftStore';
+import { confirmDraftSpace, fmtBytes } from '../../services/videoStudio/draftSpace';
 import { isDraftPublishing, subscribeStudioJobs, resumeStudioRenders } from '../../services/videoStudio/renderQueue';
 import { fmtTime } from '../../services/videoStudio/edlOps';
 
@@ -39,8 +41,15 @@ export default function VideoStudioDrafts() {
   const [items, setItems] = useState(null);
   const [tick, setTick] = useState(0); // [2026-10-16] tick vai p/ a FlatList (React Compiler memoizava o selo 'Publicando')
 
-  const reload = useCallback(() => { listDrafts().then((l) => setItems(l || [])).catch(() => setItems([])); }, []);
-  useFocusEffect(useCallback(() => { reload(); }, [reload]));
+  const [space, setSpace] = useState(null);
+  const reload = useCallback(() => {
+    listDrafts().then((l) => setItems(l || [])).catch(() => setItems([]));
+    draftSpace().then(setSpace).catch(() => {});
+  }, []);
+  useFocusEffect(useCallback(() => {
+    reload();
+    confirmDraftSpace({ t }).then((r) => { if (r.deleted) reload(); }).catch(() => {});
+  }, [reload, t]));
   useEffect(() => {
     const un = subscribeStudioJobs(() => setTick((x) => x + 1));
     resumeStudioRenders().catch(() => {}); // carrega jobs persistidos (badge "Publicando")
@@ -71,7 +80,14 @@ export default function VideoStudioDrafts() {
         <TouchableOpacity onPress={() => (router.canGoBack() ? router.back() : router.replace('/chat'))} hitSlop={10} style={styles.topBtn} accessibilityRole="button" accessibilityLabel={t('common.back')}>
           <IconArrowLeft size={22} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.title}>{t('studio.drafts.title')}</Text>
+        <View style={{ flex: 1, marginLeft: 4 }}>
+          <Text style={[styles.title, { marginLeft: 0 }]}>{t('studio.drafts.title')}</Text>
+          {!!space && space.used > 0 && (
+            <Text style={[styles.usage, space.over && { color: '#FF6B6B' }]} numberOfLines={1}>
+              {t('studio.drafts.spaceUsage').replace('{used}', fmtBytes(space.used)).replace('{limit}', fmtBytes(space.limit))}
+            </Text>
+          )}
+        </View>
         <TouchableOpacity onPress={() => router.push('/video-studio/camera')} style={styles.newBtn} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }} accessibilityRole="button">
           <IconCamera size={16} color="#000" />
           <Text style={styles.newTxt}>{t('studio.drafts.new')}</Text>
@@ -118,6 +134,7 @@ const styles = StyleSheet.create({
   top: { height: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 },
   topBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   title: { flex: 1, color: '#fff', fontSize: 17, fontWeight: '800', marginLeft: 4 },
+  usage: { color: C.fg3, fontSize: 11, marginTop: 1 },
   newBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 34, paddingHorizontal: 14, borderRadius: 17, backgroundColor: '#fff' },
   newTxt: { color: '#000', fontWeight: '800', fontSize: 13 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, paddingHorizontal: 32 },
