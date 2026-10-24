@@ -155,6 +155,9 @@ defmodule ChatyyRouter.F4Test do
     assert Enum.map(r.messages, & &1.mid) == [2, 4]
     assert [%{kind: :receipt}] = r.events
     assert on(c, "e", BodyStore, :pull, ["d2", [cid: 440, since_pts: 99]]).messages == []
+    # limite corta pelo menor pts (cursor seguro): 2 primeiros depois de 0 = mids 1 e 3 (o 2 foi editado → pts novo)
+    lim = on(c, "e", BodyStore, :pull, ["d2", [cid: 440, since_pts: 0, limit: 2]])
+    assert Enum.map(lim.messages, & &1.mid) == [1, 3]
     # pts original da mensagem editada não muda; o da chave sim
     assert on(c, "a", F4, :mid_pts, [440, 2]) == 2
     assert on(c, "a", F4, :sub_pts, [440, 2]) > p3

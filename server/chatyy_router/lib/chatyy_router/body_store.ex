@@ -778,6 +778,8 @@ defmodule ChatyyRouter.BodyStore do
       Store.get(:rt_body, {cid, sub})
     end
     |> Enum.reject(&is_nil/1)
+    # [sgu F4] com since_pts o corte por limite é pelo MENOR pts (o cursor do aparelho = maior pts recebido não pula nada)
+    |> then(fn l -> if spts != nil, do: Enum.sort_by(l, &(ChatyyRouter.F4.sub_pts(&1.cid, &1.mid) || 0)), else: l end)
     |> Enum.take(limit)
   end
 
