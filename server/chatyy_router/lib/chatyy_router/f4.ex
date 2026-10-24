@@ -189,6 +189,45 @@ defmodule ChatyyRouter.F4 do
     end
   end
 
+  # ------------------------------------------------------------ réplicas do log (failover) [E2E 24/10]
+
+  @doc "Réplicas do log da conversa: a casa + as `body_copies` primeiras da cadeia (quem recebe toda cópia com todos vivos)."
+  def reps(cid) do
+    home = BodyHome.home(cid)
+    [home | Enum.take(BodyHome.chain(home), Config.body_copies())]
+  end
+
+  @doc "A casa em exercício é uma réplica do log? (senão ela só tem cópias parciais: não dá pts, não conta, não serve since_pts)"
+  def replica_acting?(cid), do: BodyHome.acting(cid) in reps(cid)
+
+  @doc """
+  Antes de dar pts FORA da casa (irmã em exercício): alinha a marca d'água com as réplicas vivas. Uma irmã que voltou
+  de uma queda pode estar sem as últimas entradas; sem isso ela repetiria pts já usados (a chave do log é {cid, pts}:
+  repetir = sobrescrever a entrada de outra mensagem). Nó que não é réplica (casa + 2 irmãs fora) recusa:
+  {:error, :f4_no_replica} → o PHP responde 503 e o app reenvia com o mesmo cmid. Na casa: :ok sem custo.
+  """
+  def ready(cid) do
+    me = ChatyyRouter.Net.me()
+    reps = reps(cid)
+
+    cond do
+      not on?(cid) -> :ok
+      hd(reps) == me -> :ok
+      me not in reps -> Metrics.inc(:rt_f4_no_replica) && {:error, :f4_no_replica}
+      true ->
+        (reps -- [me])
+        |> Enum.filter(&ChatyyRouter.Net.alive?/1)
+        |> Task.async_stream(fn r -> ChatyyRouter.Net.call(r, ChatyyRouter.BodyStore, {:f4_hw, cid}, ChatyyRouter.Net.tmo(r, 1_500)) end,
+          timeout: 5_000, on_timeout: :kill_task)
+        |> Enum.each(fn
+          {:ok, p} when is_integer(p) -> bump_hw(cid, p)
+          _ -> :ok
+        end)
+
+        :ok
+    end
+  end
+
   @doc "Carimba o pts no registro que vai ser gravado (só na casa em exercício e com a F4 ligada)."
   def stamp(rec) do
     if on?(rec.cid) do
@@ -238,7 +277,12 @@ defmodule ChatyyRouter.F4 do
       type: rec[:type],
       rtype: rec[:rtype],
       upto: rec[:upto],
-      deleted: Map.get(rec, :tomb) == true
+      deleted: Map.get(rec, :tomb) == true,
+      # [sgu F4 E2E 2026-10-24] edição E2EE = mensagem nova com edit_of (não conta como não lida nem vira a última);
+      # menções (P-4): uids citados + @todos, para o contador unread_mentions da lista
+      edit_of: rec[:edit_of],
+      mu: rec[:mention_uids] || [],
+      ma: rec[:mention_all] == true
     }
   end
 
@@ -306,7 +350,7 @@ defmodule ChatyyRouter.F4 do
         case e.kind do
           :msg ->
             own = if e.from_uid == uid, do: max(own, e.pts), else: own
-            {own, rr, e, peers}
+            {own, rr, if(edit?(e), do: last, else: e), peers}
 
           :receipt when e.from_uid == uid ->
             {own, if(e.rtype in ["r", "p"], do: max(rr, e.upto || 0), else: rr), last, peers}
@@ -324,12 +368,15 @@ defmodule ChatyyRouter.F4 do
       end)
 
     read_pts = max(own, rcpt_r)
-    unread = Enum.count(es, &(&1.kind == :msg and &1.pts > read_pts and &1.from_uid != uid and &1.deleted != true))
+    unread_l = Enum.filter(es, &(&1.kind == :msg and &1.pts > read_pts and &1.from_uid != uid and &1.deleted != true and not edit?(&1)))
+    unread = length(unread_l)
+    mentions = Enum.count(unread_l, &(Map.get(&1, :ma) == true or uid in (Map.get(&1, :mu) || [])))
 
     %{
       cid: cid,
       pts: hw(cid),
       unread: unread,
+      unread_mentions: mentions,
       read_pts: read_pts,
       last: last && Map.take(last, [:mid, :pts, :ts, :from_uid, :type, :deleted]),
       peers: peers,
@@ -339,7 +386,8 @@ defmodule ChatyyRouter.F4 do
 
   @doc "Resumos de várias conversas (na casa em exercício de cada uma; as outras casas pela dist)."
   def summaries(uid, cids) do
-    cids = Enum.filter(cids, &conv?/1)
+    # casa + 2 irmãs fora: quem sobra tem só cópias parciais → sem resumo (o PHP manda f4_counts "device")
+    cids = Enum.filter(cids, &(conv?(&1) and replica_acting?(&1)))
 
     cids
     |> Enum.group_by(&BodyHome.acting/1)
@@ -359,6 +407,9 @@ defmodule ChatyyRouter.F4 do
 
   def summaries_local(uid, cids), do: for(c <- cids, do: summary(c, uid))
 
+  # entrada de uma edição E2EE (mensagem nova que substitui outra): fora das não lidas e da prévia
+  defp edit?(e), do: is_integer(Map.get(e, :edit_of)) and Map.get(e, :edit_of) > 0
+
   @doc """
   Em qual das conversas F4 `cids` a mensagem `mid` está (o PG não tem a linha para dizer): pergunta à casa em
   exercício de cada uma. → %{cid, pts, from_uid, deleted} | nil
@@ -376,7 +427,8 @@ defmodule ChatyyRouter.F4 do
   end
 
   def locate_local(cids, mid) do
-    for c <- cids, e = target_entry(c, mid), e != nil, do: %{cid: c, pts: e.pts, from_uid: e.from_uid, deleted: e.deleted, type: e.type}
+    for c <- cids, e = target_entry(c, mid), e != nil,
+        do: %{cid: c, pts: e.pts, from_uid: e.from_uid, deleted: e.deleted, type: e.type, ts: e.ts, edit_of: Map.get(e, :edit_of)}
   end
 
   def status do

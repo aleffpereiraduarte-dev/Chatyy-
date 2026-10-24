@@ -119,6 +119,22 @@ defmodule ChatyyRouter.F4Test do
     assert Enum.any?(ev, &(&1.kind == :receipt and &1.rtype == "r" and &1.upto == 3))
   end
 
+  test "edição E2EE (edit_of) fora das não lidas e da prévia; menções não lidas (P-4); locate traz ts/edit_of", %{c: c} do
+    conv(c, 425, "b")
+    {:ok, _} = msg(c, "a", 425, 60)
+    {:ok, _} = msg(c, "a", 425, 61, "u1", %{mention_uids: ["u2"]})
+    {:ok, _} = msg(c, "a", 425, 62, "u1", %{mention_all: true})
+    {:ok, _} = msg(c, "a", 425, 63, "u1", %{edit_of: 60})
+    s = sum(c, "e", 425, "u2")
+    assert s.unread == 3 and s.unread_mentions == 2 and s.last.mid == 62
+    assert sum(c, "e", 425, "u1").unread_mentions == 0
+    {:ok, _} = rc(c, "a", 425, "u2", "r", 61)
+    assert %{unread: 1, unread_mentions: 1} = sum(c, "e", 425, "u2")
+    assert %{cid: 425, edit_of: 60, ts: ts} = on(c, "d", F4, :locate, [[425], 63])
+    assert is_integer(ts)
+    assert %{edit_of: nil} = on(c, "d", F4, :locate, [[425], 60])
+  end
+
   test "apagar para todos: só o autor; lápide no corpo (casa+irmãs); fora das não lidas; evento na fila", %{c: c} do
     conv(c, 430, "c")
     {:ok, _} = msg(c, "a", 430, 50)
@@ -190,6 +206,30 @@ defmodule ChatyyRouter.F4Test do
     assert on(c, "a", F4, :hw, [450]) == 0
     :ok = on(c, "a", F4, :rebuild, [])
     assert on(c, "a", F4, :hw, [450]) == 7 and on(c, "a", F4, :mid_pts, [450, 3]) == 3
+  end
+
+  test "failover: irmã que voltou atrasada alinha o pts com a outra réplica; casa + 2 irmãs fora = recusa", %{c: c} do
+    conv(c, 455, "a")
+    for m <- 1..3, do: {:ok, _} = msg(c, "e", 455, m)
+    # b (1ª irmã) cai e perde as mensagens 4..6 (as cópias vão para c e d)
+    partition(c, ["b"], @regions -- ["b"])
+    eventually(fn -> not on(c, "e", ChatyyRouter.Net, :alive?, ["b"]) end)
+    for m <- 4..6, do: {:ok, _} = msg(c, "e", 455, m)
+    assert on(c, "b", F4, :hw, [455]) == 3
+    heal(c, ["b"], @regions -- ["b"])
+    wait_full_mesh(c)
+    # a casa cai ANTES do reparo: b assume com hw velho (3) — tem que seguir de 7 (c tem 6), não repetir 4
+    partition(c, ["a"], @regions -- ["a"])
+    eventually(fn -> not on(c, "e", ChatyyRouter.Net, :alive?, ["a"]) end)
+    assert on(c, "e", BodyHome, :acting, [455]) == "b"
+    assert {:ok, %{pts: 7, acting: "b"}} = msg(c, "e", 455, 7)
+    # casa e as 2 irmãs (b, c) fora: quem sobra não é réplica do log → recusa, sem resumo, sem since_pts
+    partition(c, ["b", "c"], ["d", "e"])
+    eventually(fn -> not on(c, "e", ChatyyRouter.Net, :alive?, ["b"]) and not on(c, "e", ChatyyRouter.Net, :alive?, ["c"]) end)
+    assert on(c, "e", BodyHome, :acting, [455]) == "d"
+    assert {:error, :f4_no_replica} = msg(c, "e", 455, 8)
+    assert on(c, "e", F4, :summaries, ["u2", [455]]) == []
+    refute on(c, "e", F4, :replica_acting?, [455])
   end
 
   test "F3 apaga o corpo e os contadores ficam (o log não depende do corpo)", %{c: c} do

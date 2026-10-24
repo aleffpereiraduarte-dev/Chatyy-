@@ -209,7 +209,7 @@ defmodule ChatyyRouter.Control do
       from_device: p["device"] || p["from_device"], ts: p["ts"], type: p["type"], devices: p["devices"],
       meta: p["meta"], src: :store, rev: p["rev"], edited_at: p["edited_at"], rx_type: p["rx_type"],
       cmi: p["cmi"], from_uid: p["from_uid"], reply_to_id: p["reply_to_id"], edit_of: p["edit_of"],
-      mentions: p["mentions"],
+      mentions: p["mentions"], mention_uids: p["mention_uids"], mention_all: p["mention_all"],
       rtype: p["rtype"], upto_mid: p["upto_mid"], upto_pts: p["upto_pts"],
       env: env && Base.decode64!(env)
     }
@@ -227,8 +227,14 @@ defmodule ChatyyRouter.Control do
       l -> l |> String.split(",", trim: true) |> Enum.flat_map(&(case Integer.parse(String.trim(&1)) do {i, ""} -> [i]; _ -> [] end))
     end
 
-    r = ChatyyRouter.BodyStore.pull(d, cid: int.("cid"), since: int.("since"), limit: int.("limit") || 500, mids: mids, all: q["all"] == "1",
+    r =
+      try do
+        ChatyyRouter.BodyStore.pull(d, cid: int.("cid"), since: int.("since"), limit: int.("limit") || 500, mids: mids, all: q["all"] == "1",
           since_pts: int.("since_pts"))
+      catch
+        :f4_no_replica -> :f4_no_replica
+      end
+
 
     j = fn m ->
       %{cid: m.cid, mid: sub_json(m.mid), kind: m.kind, ref: m.ref, ts: m.ts, from: m.from, type: m.type, sha: m.sha,
@@ -240,7 +246,9 @@ defmodule ChatyyRouter.Control do
         pts0: (if is_integer(m.mid), do: ChatyyRouter.F4.mid_pts(m.cid, m.mid)),
         rtype: m[:rtype], upto: m[:upto], upto_mid: m[:upto_mid], tomb: Map.get(m, :tomb) == true}
     end
-    ok(%{messages: Enum.map(r.messages, j), reactions: Enum.map(r.reactions, j), events: Enum.map(r[:events] || [], j)})
+    if r == :f4_no_replica,
+      do: {503, "application/json", json(%{ok: false, error: "f4_no_replica"})},
+      else: ok(%{messages: Enum.map(r.messages, j), reactions: Enum.map(r.reactions, j), events: Enum.map(r[:events] || [], j)})
   end
 
   defp route(:POST, "/ack_store", _, b) do

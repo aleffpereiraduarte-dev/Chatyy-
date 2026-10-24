@@ -468,7 +468,10 @@ defmodule ChatyyRouter.BodyStore do
       from_uid: str(req[:from_uid]),
       reply_to_id: to_int(req[:reply_to_id]),
       edit_of: to_int(req[:edit_of]),
-      mentions: req[:mentions]
+      mentions: req[:mentions],
+      # [sgu F4 P-4] uids citados (o PHP resolve os e-mails) + @todos → contador de menções não lidas
+      mention_uids: (case req[:mention_uids] do l when is_list(l) -> l |> Enum.map(&to_string/1) |> Enum.take(256); _ -> nil end),
+      mention_all: req[:mention_all] in [true, 1, "1"]
     }
   end
 
@@ -643,6 +646,11 @@ defmodule ChatyyRouter.BodyStore do
       end
 
     rec = req |> Map.put(:devices, devices) |> Map.put(:stored_ms, Clock.now_ms()) |> Map.put(:src, req.src)
+    # [sgu F4] fora da casa: alinha a marca d'água com as réplicas vivas; nó que não é réplica recusa (E2E 24/10)
+    with :ok <- ChatyyRouter.F4.ready(rec.cid), do: write_rec(req, rec)
+  end
+
+  defp write_rec(req, rec) do
     # [sgu F4] conv_pts dado pela casa em exercício (inerte sem RT_F4=1 + body_store >= 3)
     rec = ChatyyRouter.F4.stamp(rec)
     targets = BodyHome.copy_targets(req.home, Net.me())
@@ -735,13 +743,19 @@ defmodule ChatyyRouter.BodyStore do
           end)
 
         cid ->
-          case ask(BodyHome.acting(cid), {:pull_q, device, [cid], q}) do
-            l when is_list(l) -> l
-            _ -> []
+          # [sgu F4] since_pts só de uma réplica do log: um nó com cópias parciais faria o cursor do aparelho pular pts
+          if q.since_pts != nil and ChatyyRouter.F4.conv?(cid) and not ChatyyRouter.F4.replica_acting?(cid) do
+            :unavailable
+          else
+            case ask(BodyHome.acting(cid), {:pull_q, device, [cid], q}) do
+              l when is_list(l) -> l
+              _ -> []
+            end
           end
       end
 
     Metrics.inc(:rt_pull)
+    if parts == :unavailable, do: throw(:f4_no_replica)
     {rx, msgs} = Enum.split_with(parts, &(&1.kind == :reaction))
     {ev, msgs} = Enum.split_with(msgs, &(&1.kind in [:receipt, :delete]))
     # [sgu F4] recibos e apagar para todos em `events` (ordem de pts); mensagens/reações como antes
@@ -1042,6 +1056,7 @@ defmodule ChatyyRouter.BodyStore do
   end
 
   def handle_call(:inherit_all, from, s), do: async_reply(from, fn -> inherits() end, s)
+  def handle_call({:f4_hw, cid}, from, s), do: async_reply(from, fn -> ChatyyRouter.F4.hw(cid) end, s)
   def handle_call({:f4_locate, cids, mid}, from, s), do: async_reply(from, fn -> ChatyyRouter.F4.locate_local(cids, mid) end, s)
   def handle_call({:f4_sum, uid, cids}, from, s), do: async_reply(from, fn -> ChatyyRouter.F4.summaries_local(uid, cids) end, s)
 
