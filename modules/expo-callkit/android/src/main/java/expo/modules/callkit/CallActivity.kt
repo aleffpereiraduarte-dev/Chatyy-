@@ -7174,8 +7174,8 @@ private fun enumerateAudioOutputs(ctx: android.content.Context): List<AudioOutpu
         it.type == android.media.AudioDeviceInfo.TYPE_USB_HEADSET
     }
   } catch (_: Throwable) { false }
-  if (!wiredPlugged) out.add(AudioOutputEntry("earpiece", "Fone do aparelho", Icons.Filled.PhoneInTalk))
-  out.add(AudioOutputEntry("speaker", "Alto-falante", Icons.Filled.SpeakerPhone))
+  if (!wiredPlugged) out.add(AudioOutputEntry("earpiece", CallStrings.s("outEarpiece"), Icons.Filled.PhoneInTalk))
+  out.add(AudioOutputEntry("speaker", CallStrings.s("speaker"), Icons.Filled.SpeakerPhone))
 
   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
     val devices = try {
@@ -7186,8 +7186,15 @@ private fun enumerateAudioOutputs(ctx: android.content.Context): List<AudioOutpu
     var usbSeen = false
     for (d in devices) {
       when (d.type) {
+        // [2026-10-24 bt-le] Fones LE Audio (Android 13+: TYPE_BLE_HEADSET 26 /
+        // TYPE_BLE_SPEAKER 27) e aparelho auditivo (23) também entram — o
+        // AudioRouter.preferBluetooth já sabe rotear p/ eles (isBtCommType),
+        // mas a folha só listava SCO/A2DP e o fone novo não aparecia.
         android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> {
+        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+        android.media.AudioDeviceInfo.TYPE_HEARING_AID,
+        26 /* TYPE_BLE_HEADSET */,
+        27 /* TYPE_BLE_SPEAKER */ -> {
           if (!btSeen) {
             val name = try { d.productName?.toString().orEmpty() } catch (_: Throwable) { "" }
             val label = if (name.isNotBlank()) name else "Bluetooth"
@@ -7198,7 +7205,7 @@ private fun enumerateAudioOutputs(ctx: android.content.Context): List<AudioOutpu
         android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET,
         android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> {
           if (!wiredSeen) {
-            out.add(AudioOutputEntry("wired", "Fone com fio", Icons.Filled.Headphones))
+            out.add(AudioOutputEntry("wired", CallStrings.s("outWired"), Icons.Filled.Headphones))
             wiredSeen = true
           }
         }

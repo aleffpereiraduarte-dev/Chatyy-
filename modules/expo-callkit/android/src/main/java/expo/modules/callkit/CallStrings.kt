@@ -66,6 +66,14 @@ object CallStrings {
   )
 
   /** [2026-10-16 P&B] Banners de reconectar / login (eram pt-BR fixo no CallActivity). */
+  // [2026-10-24 audio-out i18n] Rótulos da folha de saída de áudio (antes fixos em pt).
+  private val AUDIO_OUT: Map<String, Map<String, String>> = mapOf(
+    "pt-BR" to mapOf("outEarpiece" to "Fone do aparelho", "outWired" to "Fone com fio"),
+    "pt-PT" to mapOf("outEarpiece" to "Auscultador", "outWired" to "Auscultadores com fio"),
+    "en" to mapOf("outEarpiece" to "Phone", "outWired" to "Wired headphones"),
+    "es" to mapOf("outEarpiece" to "Teléfono", "outWired" to "Auriculares con cable"),
+  )
+
   private val BANNERS: Map<String, Map<String, String>> = mapOf(
     "pt-BR" to mapOf("tryReconnect" to "Tente reconectar", "needsLogin" to "Faça login novamente para receber chamadas"),
     "pt-PT" to mapOf("tryReconnect" to "Tente restabelecer a ligação", "needsLogin" to "Inicie sessão novamente para receber chamadas"),
@@ -87,7 +95,8 @@ object CallStrings {
       ?: (if (key == "camDenied") CAM_DENIED[l] ?: CAM_DENIED["en"] else null)
       ?: (if (key == "peerDnd") PEER_DND[l] ?: PEER_DND["en"] else null)
       ?: VIDEO_REQ[l]?.get(key) ?: VIDEO_REQ["en"]?.get(key)
-      ?: BANNERS[l]?.get(key) ?: BANNERS["en"]?.get(key) ?: key
+      ?: BANNERS[l]?.get(key) ?: BANNERS["en"]?.get(key)
+      ?: AUDIO_OUT[l]?.get(key) ?: AUDIO_OUT["en"]?.get(key) ?: key
     for ((k, v) in args) out = out.replace("{" + k + "}", v)
     return out
   }
