@@ -38,6 +38,8 @@ defmodule ChatyyRouter.BodyCompare do
   alias ChatyyRouter.{BodyHome, BodyStore, Clock, Config, Metrics, Net}
   alias ChatyyRouter.PG.Conn
 
+  # sha do PG para linha-esqueleto da F2 (ddl 006 de /root/sem-gravar-no-us-2026-10-22/todos)
+  @skel "rt"
   @criterio [:faltando_casa, :hash_diferente, :faltando_irma, :hash_diferente_irma, :inbox_faltando, :reacao_faltando, :reacao_hash_diferente]
   @info [:inbox_sobrando, :so_no_roteador, :apagada_no_pg, :aparelhos_desconhecidos]
   @pt {__MODULE__, :state}
@@ -90,12 +92,18 @@ defmodule ChatyyRouter.BodyCompare do
           true ->
             l = Map.get(local, sub)
             sha_l = l && elem(l, 1)
+            # [sgu TODOS 2026-10-24] esqueleto da F2 (body_loc='rt': o PG não tem o envelope, sgu_f1_msgs devolve sha "rt"):
+            # compara só a EXISTÊNCIA na casa e nas cópias, e a cópia tem que bater com o sha da casa. Antes isto contava
+            # hash_diferente para toda mensagem F2 (959: 2 em 24/10) e o critério da F1 nunca zerava com a F2 ligada.
+            skel = r.sha == @skel
+            ref = if skel, do: sha_l, else: r.sha
 
             acc =
               cond do
+                skel and r.deleted -> acc
                 r.deleted and sha_l != r.sha -> add.(acc, :apagada_no_pg, sub)
                 l == nil -> add.(acc, :faltando_casa, sub)
-                sha_l != r.sha -> add.(acc, :hash_diferente, sub)
+                not skel and sha_l != r.sha -> add.(acc, :hash_diferente, sub)
                 true -> acc
               end
 
@@ -103,9 +111,9 @@ defmodule ChatyyRouter.BodyCompare do
 
             # cópias fora da casa (só faz sentido se o PG e a casa concordam)
             acc =
-              if l != nil and sha_l == r.sha do
-                same = Enum.count(peers, fn {_r, m} -> Map.get(m, sub) == r.sha end)
-                diff = Enum.any?(peers, fn {_r, m} -> Map.has_key?(m, sub) and Map.get(m, sub) != r.sha end)
+              if l != nil and sha_l == ref do
+                same = Enum.count(peers, fn {_r, m} -> Map.get(m, sub) == ref end)
+                diff = Enum.any?(peers, fn {_r, m} -> Map.has_key?(m, sub) and Map.get(m, sub) != ref end)
                 acc = if same < wanted, do: add.(acc, :faltando_irma, sub), else: acc
                 if diff, do: add.(acc, :hash_diferente_irma, sub), else: acc
               else

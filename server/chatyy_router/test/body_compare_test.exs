@@ -114,4 +114,20 @@ defmodule ChatyyRouter.BodyCompareTest do
       for {k, v} <- old, do: Application.put_env(:chatyy_router, k, v)
     end
   end
+  test "[sgu TODOS] esqueleto F2 (sha \"rt\"): só existência na casa e nas cópias; cópia ≠ casa acusa" do
+    [m1, m2, m3, m4] = for i <- 1..4, do: mid(600_000, 10 + i)
+    pg = for m <- [m1, m2, m3, m4], do: %{mid: m, sha: "rt", type: "text", deleted: false}
+    local = %{m1 => {0, sha("E1"), ["d1"], :msg}, m3 => {0, sha("E3"), ["d1"], :msg}, m4 => {0, sha("E4"), ["d1"], :msg}}
+    peers = %{"b" => %{m1 => sha("E1"), m3 => sha("E3"), m4 => sha("E4")}, "c" => %{m1 => sha("E1"), m3 => sha("X"), m4 => sha("E4")}}
+    dlv = %{m1 => MapSet.new(["d1"]), m3 => MapSet.new(["d1"]), m4 => MapSet.new(["d1"])}
+    r = run(pg, local, peers, dlv)
+    assert r.gauges[:hash_diferente] == 0
+    assert r.samples[:faltando_casa] == [m2]
+    assert r.samples[:hash_diferente_irma] == [m3]
+    assert r.samples[:faltando_irma] == [m3]
+    assert r.compared == 4
+    # esqueleto apagado para todos (lápide): não é apagada_no_pg
+    r2 = run([%{mid: m1, sha: "rt", type: "text", deleted: true}], local, peers, dlv)
+    assert r2.gauges[:apagada_no_pg] == 0
+  end
 end
