@@ -437,10 +437,10 @@ defmodule ChatyyRouter.BodyStore do
     end
   end
 
-  @doc "[sgu F4] tipo do recibo: \"d\" (entregue) ou \"r\" (lida)."
+  @doc "[sgu F4] tipo do recibo: \"d\" (entregue), \"r\" (lida) ou \"p\" (lida PRIVADA: conta para mim, os outros veem só entregue)."
   def rc_type(req) do
     case to_string(req[:rtype] || req[:rc_type] || "") do
-      x when x in ["d", "r"] -> x
+      x when x in ["d", "r", "p"] -> x
       _ -> nil
     end
   end

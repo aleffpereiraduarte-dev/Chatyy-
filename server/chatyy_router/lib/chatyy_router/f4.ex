@@ -309,9 +309,10 @@ defmodule ChatyyRouter.F4 do
             {own, rr, e, peers}
 
           :receipt when e.from_uid == uid ->
-            {own, if(e.rtype == "r", do: max(rr, e.upto || 0), else: rr), last, peers}
+            {own, if(e.rtype in ["r", "p"], do: max(rr, e.upto || 0), else: rr), last, peers}
 
           :receipt ->
+            # "p" = confirmação de leitura desligada (privacidade, como no WA): os outros veem só ✓✓ entregue
             p = Map.get(peers, e.from_uid, %{d: 0, r: 0})
             u = e.upto || 0
             p = if e.rtype == "r", do: %{p | r: max(p.r, u), d: max(p.d, u)}, else: %{p | d: max(p.d, u)}

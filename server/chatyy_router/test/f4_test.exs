@@ -107,6 +107,13 @@ defmodule ChatyyRouter.F4Test do
     assert sum(c, "e", 420, "u1").unread == 1
     assert {:error, :receipt_unresolved} = rc(c, "a", 420, "u2", "r", 1)
 
+    # leitura privada (confirmação desligada): zera as MINHAS não lidas, o outro vê só entregue
+    {:ok, _} = msg(c, "a", 420, 14)
+    {:ok, _} = rc(c, "a", 420, "u2", "p", 14)
+    assert sum(c, "e", 420, "u2").unread == 0
+    %{"u2" => %{d: d2, r: r2}} = sum(c, "e", 420, "u1").peers
+    assert d2 == 8 and r2 == 3
+
     # o recibo vai à fila dos aparelhos (events), inclusive os do próprio usuário
     ev = on(c, "a", BodyStore, :pull, ["d1a", [cid: 420]]).events
     assert Enum.any?(ev, &(&1.kind == :receipt and &1.rtype == "r" and &1.upto == 3))
