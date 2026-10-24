@@ -110,6 +110,10 @@ final class ChatTransport {
   private var quicAuthedDrops: [Double] = []
   /// [chatyy/2] hosts com conexão chatyy/2 autenticada neste processo (ticket TLS p/ retomada 'E').
   var quicV2OkHosts: Set<String> = []
+  /// [§9] regiões com `nc` válido neste processo (não voltam para a chave de TESTE) e as que já
+  /// emitiram o evento cert_bad (1 evento por região; o contador quicCertBad conta todas).
+  var quicProdRegions: Set<String> = []
+  var quicCertBadSeen: Set<String> = []
   /// Versão do protótipo QUIC (JS: quicVersion()).
   static let quicVersion = 1
 
@@ -171,6 +175,11 @@ final class ChatTransport {
         bl[r] = ["why": b.why, "ms": b.until - t, "net": b.epoch >= 0]
       }
       out["blocked"] = bl
+      // [§9] sem segredo: auto do cfg, quantos `nc` falharam, ids das raízes do binário, regiões em produção.
+      out["auto"] = self.session?.quicAutoOn ?? false
+      out["certBad"] = Double(self.stats["quicCertBad"] ?? 0)
+      out["roots"] = Array(ChatyyQuicProto.productionRoots.keys).sorted()
+      out["prodRegions"] = Array(self.quicProdRegions).sorted()
       out["devicePub"] = ChatyyNoiseDeviceKey.publicB64() ?? ""
       var st: [String: Any] = [:]
       for (k, v) in self.stats where k.hasPrefix("quic") { st[k] = Double(v) }
@@ -629,13 +638,20 @@ struct TransportConfig {
 
 /// [2026-10-23 quic-proto] cfg.quic do JS — só vem quando o client-lb do servidor
 /// liberou a CONTA (transport.quic/noise) e o kill JS (__chatyy_quic) não está ativo.
-/// { on:true, noise:true, noiseTest:bool, regions:{ <reg>: {kid, port} }, hsMs? }
+/// { on:true, noise:true, noiseTest:bool, auto:bool, regions:{ <reg>: {kid, port, nc?} }, hsMs? }
+/// [§9 produção 24/10] `auto` = liga sem a flag local; `nc` = certificado de região assinado pela
+/// raiz offline (o NATIVO confere com as raízes do binário — o JS não consegue injetar chave).
 struct TransportQuicConfig {
   struct Region {
     let kid: String
     let port: UInt16
+    /// nil = sem certificado (só o caminho de TESTE t1). Presente = TEM de validar (falhou → sem QUIC).
+    /// Valor não-texto vira "" (presente e inválido: nunca é tratado como ausente).
+    let nc: String?
   }
   let noiseTest: Bool
+  /// transport.auto=1: build novo liga o QUIC sem o interruptor local (kill local continua vencendo).
+  let auto: Bool
   let regions: [String: Region]
   /// prazo do QUIC+Noise até a msg2 antes de cair para o WSS.
   let hsMs: Double
@@ -651,11 +667,14 @@ struct TransportQuicConfig {
     for (k, rv) in rs.prefix(24) {
       guard let r = rv as? [String: Any], let kid = r["kid"] as? String, !kid.isEmpty, kid.count <= 16 else { continue }
       let port = Int(ChatTransport.num(r["port"], 443, 1, 65535))
-      regions[k] = Region(kid: kid, port: UInt16(port))
+      var nc: String? = nil
+      if let raw = r["nc"], !(raw is NSNull) { nc = (raw as? String) ?? "" }
+      regions[k] = Region(kid: kid, port: UInt16(port), nc: nc)
     }
     if regions.isEmpty { return nil }
     return TransportQuicConfig(
       noiseTest: (o["noiseTest"] as? Bool) == true,
+      auto: (o["auto"] as? Bool) == true,
       regions: regions,
       hsMs: ChatTransport.num(o["hsMs"], 1500, 600, 3000),
       migrate: (o["migrate"] as? Bool) != false,
@@ -1718,11 +1737,18 @@ final class TransportSession {
     let region: String
     let kid: String
     let pub: Data
+    /// chatyy/2: pins SPKI (base64 do SHA-256) — do certificado de região (produção) ou os de TESTE.
+    let pins: [String]
+    /// true = chave/pins vieram de um `nc` válido (produção).
+    let prod: Bool
     let key: Curve25519.KeyAgreement.PrivateKey
     /// 2 = chatyy/2 (pinado), 1 = chatyy/1. Ordem de queda: 2 → 1 → WSS.
     let proto: Int
     let resume: Bool
   }
+
+  /// [§9.3] transport.auto do cfg atual (só leitura, p/ quicStatus — sem segredo).
+  var quicAutoOn: Bool { return cfg.quic?.auto == true }
 
   /// Chave de bloqueio: "<reg>" vale p/ as 2 versões; "<reg>/2" ou "<reg>/1" só p/ uma.
   private func quicBlockedAny(_ region: String, _ proto: Int) -> Bool {
@@ -1740,17 +1766,48 @@ final class TransportSession {
     guard !region.isEmpty, region.count <= 8, region != "us",
           region.unicodeScalars.allSatisfy({ CharacterSet.lowercaseLetters.contains($0) || CharacterSet.decimalDigits.contains($0) }),
           let r = qc.regions[region] else { return nil }
-    guard ChatyyQuicGate.localOn(), !ChatyyQuicGate.killOn() else { return nil }
+    // Kill local vence tudo; depois: transport.auto (§9.3) OU a flag local do build de teste.
+    if ChatyyQuicGate.killOn() { return nil }
+    guard qc.auto || ChatyyQuicGate.localOn() else { return nil }
+    // Chave Noise + pins da região (§9.2): `nc` presente TEM de validar (falhou → sem QUIC aqui,
+    // NUNCA cai para a chave de TESTE); sem `nc` → só TESTE t1 com noise_test (§1).
+    let pub: Data
+    let pins: [String]
+    let prod: Bool
+    if let nc = r.nc {
+      do {
+        let c = try ChatyyRegionCert.verify(nc: nc, region: region, kid: r.kid, now: Date().timeIntervalSince1970)
+        pub = c.noisePub
+        pins = c.pinsB64
+        prod = true
+        owner.quicProdRegions.insert(region)
+      } catch {
+        owner.bump("quicCertBad")
+        if !owner.quicCertBadSeen.contains(region) {
+          owner.quicCertBadSeen.insert(region)
+          emitState("quic", ["ev": "cert_bad", "region": region, "why": String(describing: error)])
+        }
+        return nil
+      }
+    } else {
+      // Região que já mostrou certificado válido neste processo não volta para a chave de TESTE
+      // só porque o `nc` sumiu do cfg (anti-downgrade pelo JS/client-lb).
+      if owner.quicProdRegions.contains(region) { owner.bump("quicTestRefused"); return nil }
+      guard let tp = ChatyyQuicProto.pinnedKey(kid: r.kid, testAllowed: qc.noiseTest) else { owner.bump("quicNoPin"); return nil }
+      pub = tp
+      pins = ChatyyQuicProto.testPins
+      prod = false
+    }
     // chatyy/2 primeiro (cfg.v2 != false e sem kill local), depois chatyy/1.
     var proto = 0
     if qc.v2 && !ChatyyQuicGate.v2Off() && !quicBlockedAny(region, 2) { proto = 2 }
     else if !quicBlockedAny(region, 1) { proto = 1 }
     if proto == 0 { owner.bump("quicSkippedBlocked"); return nil }
-    guard let pub = ChatyyQuicProto.pinnedKey(kid: r.kid, testAllowed: qc.noiseTest) else { owner.bump("quicNoPin"); return nil }
     guard let key = ChatyyNoiseDeviceKey.loadOrCreate() else { owner.bump("quicNoDeviceKey"); return nil }
     // Retomada 'E' (0-RTT): só chatyy/2, com flag local, depois de um chatyy/2 bom neste host.
     let resume = proto == 2 && ChatyyQuicGate.zeroRttOn() && owner.quicV2OkHosts.contains(host)
-    return QuicTarget(host: host, port: r.port, region: region, kid: r.kid, pub: pub, key: key, proto: proto, resume: resume)
+    return QuicTarget(host: host, port: r.port, region: region, kid: r.kid, pub: pub, pins: pins, prod: prod, key: key,
+                      proto: proto, resume: resume)
   }
 
   /// e2ee5_device do frame de auth (vai no "dev" da msg1; vazio se não houver).
@@ -1779,13 +1836,14 @@ final class TransportSession {
     quicHost = t.host
     quicResume = t.resume
     owner.bump("quicAttemptsV" + String(t.proto))
+    if t.prod { owner.bump("quicAttemptsProd") }
     // chatyy/2: o auth vai DENTRO da msg1 (modo I: frames; retomada E: early) → auth_success já
     // chega atrás da msg2. Sem auth (JS ainda não mandou) = vazio; vai pelo canal depois.
     let first: [String] = (t.proto == 2 && authFrame != nil) ? [authFrame!] : []
     let w = ChatyyQuicWire(params: ChatyyQuicWire.Params(
       host: t.host, port: t.port, region: t.region, kid: t.kid, regionPub: t.pub, deviceKey: t.key,
       dev: authDev(), ua: ChatyyQuicWire.userAgent(), handover: ChatyyQuicGate.handoverOn(),
-      proto: t.proto, pins: t.proto == 2 ? ChatyyQuicProto.testPins : [],
+      proto: t.proto, pins: t.proto == 2 ? t.pins : [],
       frames: t.resume ? [] : first, resume: t.resume, early: t.resume ? first : [],
       fastOpen: t.resume), queue: owner.q)
     w.onReady = { [weak self, weak w] bound, earlyN in
@@ -1860,7 +1918,8 @@ final class TransportSession {
         quicFallback(why: "go_ws", ms: 3_600_000, networkScoped: false)
       case 0x102: // noise_fail: chave/região/prólogo — evento, sem laço; nunca cai p/ modo P
         emitState("quic", ["ev": "noise_fail", "region": region, "text": String(text.prefix(40))])
-        quicFallback(why: "noise_fail", ms: 86_400_000, networkScoped: false, thisVersion: true)
+        // [seg Q-S4] a mesma chave/região vale p/ o chatyy/1: tentar de novo só repetiria a falha → WSS.
+        quicFallback(why: "noise_fail", ms: 86_400_000, networkScoped: false, thisVersion: false)
       case 0x103: // replay: 1 nova tentativa (msg1 nova), depois WSS
         if !quicReplayRetried && phys != .authed {
           quicReplayRetried = true
@@ -1894,8 +1953,15 @@ final class TransportSession {
         // chatyy/2 que falhou no TLS (pin/ALPN) ou sem exporter → só o chatyy/2 sai; tenta o chatyy/1.
         owner.bump("quicFailBeforeAuth")
         let pinBad = quic?.pinRejected == true
-        if pinBad { owner.bump("quicPinRejected") }
-        quicFallback(why: pinBad ? "pin" : "fail", ms: 86_400_000, networkScoped: !pinBad, thisVersion: quicProto == 2)
+        if pinBad {
+          // [seg Q-S1] §0.4: pin SPKI não conferiu = "chatyy/2 indisponível nesta região" → WSS
+          // (não desce para o chatyy/1/WebPKI, que um proxy com CA instalada aceitaria) + evento.
+          owner.bump("quicPinRejected")
+          emitState("quic", ["ev": "pin_rejected", "region": region, "proto": quicProto])
+          quicFallback(why: "pin", ms: 86_400_000, networkScoped: true, thisVersion: false)
+        } else {
+          quicFallback(why: "fail", ms: 86_400_000, networkScoped: true, thisVersion: quicProto == 2)
+        }
       }
     }
   }

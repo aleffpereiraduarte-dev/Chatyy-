@@ -9,7 +9,8 @@ import CryptoKit
 // + Noise IK (ChatyyQuicChannel) e os MESMOS frames de texto do WS.
 //
 // Quem usa: TransportSession (ChatTransport.swift), só quando ChatyyQuicGate deixa
-// (servidor mandou transport.quic para a conta + flag local ligada + sem kill).
+// (servidor mandou transport.quic para a conta + (transport.auto OU flag local) + sem kill;
+// chave/pins da região = certificado `nc` assinado pela raiz do binário, ou TESTE t1, §9).
 // Tudo roda na fila serial do transporte (`queue` = ChatTransport.q): estado,
 // callbacks do NWConnection (start(queue:)) e o canal Noise. Sem locks.
 //
@@ -179,7 +180,13 @@ final class ChatyyQuicWire {
         if !ok { self?.pinRejected = true }
         complete(ok)
       }, queue)
-      if p.resume { sec_protocol_options_set_tls_resumption_enabled(sec, true) }
+      // Ticket só nasce/é usado em conexão chatyy/2 (pinada): a retomada não passa pelo verify block.
+      sec_protocol_options_set_tls_resumption_enabled(sec, true)
+    } else {
+      // [seg Q-S2] chatyy/1 (WebPKI) NÃO guarda/usa ticket: um ticket de conexão sem pin poderia
+      // ser retomado depois por um chatyy/2 ao mesmo host e pular o pin SPKI (o verify block
+      // não roda na retomada PSK).
+      sec_protocol_options_set_tls_resumption_enabled(qo.securityProtocolOptions, false)
     }
     // chatyy/1: validação PADRÃO do sistema (WebPKI) com SNI = host.
     let params = NWParameters(quic: qo)
@@ -306,7 +313,9 @@ final class ChatyyQuicWire {
     if v2 && md == ChatyyQuicProto.modeI {
       payload = ChatyyQuicChannel.helloPayload(dev: p.dev, ua: p.ua, nowMs: now, version: 2, frames: p.frames)
     } else {
-      payload = ChatyyQuicChannel.helloPayload(dev: p.dev, ua: p.ua, nowMs: now, version: 1, early: p.resume ? p.early : [])
+      // [seg Q-S3] early (0-RTT) só com o prefixo idempotente do §5, filtrado aqui também.
+      payload = ChatyyQuicChannel.helloPayload(dev: p.dev, ua: p.ua, nowMs: now, version: 1,
+                                               early: p.resume ? ChatyyQuicProto.earlySafePrefix(p.early) : [])
     }
     do {
       let channel = try ChatyyQuicChannel(hash: .blake2s, region: p.region, kid: p.kid, regionPub: p.regionPub,

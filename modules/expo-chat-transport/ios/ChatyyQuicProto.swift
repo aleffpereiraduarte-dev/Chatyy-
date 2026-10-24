@@ -47,8 +47,8 @@ enum ChatyyQuicProto {
   static let testKid = "t1"
   static let testRegionPubB64 = "inKsxZ/WSbIq8+QcY/3DDTrbxDdiRQ3t6lHsyYinlh8="
 
-  /// Pinning: kid → chave pública de 32 bytes. Hoje SÓ a de teste existe; produção
-  /// (certificado assinado pela raiz Ed25519, F-N1) entra aqui com outro kid.
+  /// Caminho de TESTE (§1): kid t1 → chave de 32 bytes, só com noise_test. Produção NÃO passa
+  /// por aqui: vem do certificado de região `nc` (ChatyyRegionCert.verify, §9.2).
   static func pinnedKey(kid: String, testAllowed: Bool) -> Data? {
     if kid == testKid && testAllowed {
       guard let d = Data(base64Encoded: testRegionPubB64), d.count == 32 else { return nil }
@@ -137,6 +137,32 @@ enum ChatyyQuicProto {
     "QhTxrbi7wfzD+EEgmN7jpO2JOGa09wxQYBGullgQQP4=",
   ]
 
+  // MARK: produção — raízes Ed25519 offline (PROTOCOLO §9.1)
+
+  /// Chaves PÚBLICAS das raízes (rootId → base64 padrão de 32 bytes). O `raiz.sh app-pub`
+  /// grava UMA entrada por linha entre as marcas, no formato `    "r1": "BASE64",`.
+  /// Vazio = produção desligada (só o caminho de TESTE `t1`). A entrada "_" é só para o
+  /// literal nunca ficar vazio (Swift não aceita `[]` como dicionário) e é descartada.
+  static let rootPubs: [String: String] = ([
+    "_": "",
+    // QN-ROOTS-BEGIN
+    // QN-ROOTS-END
+  ] as [String: String]).filter { $0.key != "_" }
+
+  /// Raízes decodificadas (entradas inválidas são ignoradas: nunca valem como raiz).
+  static func decodeRoots(_ src: [String: String]) -> [String: Curve25519.Signing.PublicKey] {
+    var out: [String: Curve25519.Signing.PublicKey] = [:]
+    for (id, b64) in src {
+      guard ChatyyRegionCert.isId(Array(id.utf8)), let raw = Data(base64Encoded: b64), raw.count == 32,
+            let k = try? Curve25519.Signing.PublicKey(rawRepresentation: raw) else { continue }
+      out[id] = k
+    }
+    return out
+  }
+
+  /// Raízes de PRODUÇÃO (só as do binário; o JS/servidor não consegue acrescentar).
+  static let productionRoots: [String: Curve25519.Signing.PublicKey] = decodeRoots(rootPubs)
+
   /// Cabeçalho DER do SubjectPublicKeyInfo de uma chave EC P-256 (id-ecPublicKey + prime256v1,
   /// BIT STRING de 66 bytes). SecKeyCopyExternalRepresentation dá só o ponto 04||X||Y (65 B).
   static let spkiP256Header: [UInt8] = [
@@ -151,6 +177,30 @@ enum ChatyyQuicProto {
     var der = Data(spkiP256Header)
     der.append(pt)
     return Data(SHA256.hash(data: der)).base64EncodedString()
+  }
+
+  /// §5: prefixo de frames que pode ir em 0-RTT / `early` (modo E). Para no 1º não permitido
+  /// (o servidor faz o mesmo, `early_why:"op"`): auth (só como 1º), subscribe/unsubscribe, ping JSON,
+  /// chat_send COM client_message_id. Frame que não é JSON objeto = para. Máx. 64.
+  static func earlySafePrefix(_ frames: [String]) -> [String] {
+    var out: [String] = []
+    for (i, f) in frames.prefix(64).enumerated() {
+      guard let d = f.data(using: .utf8),
+            let o = (try? JSONSerialization.jsonObject(with: d, options: [])) as? [String: Any],
+            let t = o["type"] as? String else { break }
+      var ok = false
+      switch t {
+      case "auth": ok = i == 0
+      case "subscribe", "unsubscribe", "ping": ok = true
+      case "chat_send":
+        if let c = o["client_message_id"] as? String { ok = !c.isEmpty }
+        else if let n = o["client_message_id"] as? NSNumber { ok = n.stringValue != "0" }
+      default: ok = false
+      }
+      if !ok { break }
+      out.append(f)
+    }
+    return out
   }
 
   static func u16(_ n: Int) -> Data {
@@ -354,12 +404,217 @@ final class ChatyyQuicChannel {
   }
 }
 
+// MARK: - certificado de região (PROTOCOLO §9.2) — espelho de qnwire.VerifyNC (Go)
+
+/// certBytes = "CYRC" | 0x01 | u8+rootId | u8+region | u8+kid | noisePub(32) | u8 nPins (1..4) | pins(32×n) |
+///             u64 notBefore | u64 notAfter   (big endian, ids [a-z0-9]{1,16}, nada sobrando)
+/// sig = Ed25519(raiz, "chatyy-region-cert/1" 0x00 || certBytes)
+/// nc  = base64url-sem-padding(certBytes) "." base64url-sem-padding(sig)   (≤ 1024 chars)
+struct ChatyyRegionCert: Equatable {
+  enum Failure: Error, Equatable {
+    case format, base64, signatureLen, unknownRoot, signature, region, kid, notYet, expired
+  }
+
+  static let magic: [UInt8] = [0x43, 0x59, 0x52, 0x43] // "CYRC"
+  static let version: UInt8 = 1
+  static let context = "chatyy-region-cert/1"
+  static let maxPins = 4
+  static let skewSeconds: Double = 86_400 // notBefore − 24 h
+  static let maxNcLen = 1024
+
+  let rootId: String
+  let region: String
+  let kid: String
+  let noisePub: Data
+  let pins: [Data]
+  let notBefore: Int64
+  let notAfter: Int64
+
+  /// Pins no formato do verify block do chatyy/2: base64 padrão do SHA-256 do SPKI (1º = atual).
+  var pinsB64: [String] { return pins.map { $0.base64EncodedString() } }
+
+  /// [a-z0-9]{1,16} (o regexp do Go; byte não-ASCII nunca casa).
+  static func isId(_ b: [UInt8]) -> Bool {
+    if b.isEmpty || b.count > 16 { return false }
+    for c in b where !((c >= 0x61 && c <= 0x7A) || (c >= 0x30 && c <= 0x39)) { return false }
+    return true
+  }
+
+  /// base64url SEM padding, estrito no alfabeto: '=', '+', '/', espaço e quebra de linha → nil.
+  /// Resto de 1 caractere (len % 4 == 1) → nil. Bits de sobra ≠ 0 são aceitos (= Go RawURLEncoding).
+  static func b64urlRaw<S: Sequence>(_ s: S) -> Data? where S.Element == UInt8 {
+    var out = Data()
+    var acc: UInt32 = 0
+    var bits = 0
+    for c in s {
+      let v: UInt32
+      switch c {
+      case 0x41...0x5A: v = UInt32(c - 0x41)
+      case 0x61...0x7A: v = UInt32(c - 0x61) + 26
+      case 0x30...0x39: v = UInt32(c - 0x30) + 52
+      case 0x2D: v = 62 // '-'
+      case 0x5F: v = 63 // '_'
+      default: return nil
+      }
+      acc = ((acc << 6) | v) & 0xFFF
+      bits += 6
+      if bits >= 8 {
+        bits -= 8
+        out.append(UInt8((acc >> UInt32(bits)) & 0xFF))
+      }
+    }
+    if bits >= 6 { return nil }
+    return out
+  }
+
+  /// SplitNC: (certBytes, sig de 64 bytes).
+  static func split(_ nc: String) throws -> (Data, Data) {
+    let u = Array(nc.utf8)
+    let dots = u.indices.filter { u[$0] == 0x2E }
+    guard u.count <= maxNcLen, dots.count == 1, let i = dots.first, i > 0 else { throw Failure.format }
+    guard let cb = b64urlRaw(u[0..<i]) else { throw Failure.base64 }
+    guard let sig = b64urlRaw(u[(i + 1)...]), sig.count == 64 else { throw Failure.signatureLen }
+    return (cb, sig)
+  }
+
+  /// ParseRegCert: só o formato (sem assinatura).
+  static func parse(_ data: Data) throws -> ChatyyRegionCert {
+    let b = [UInt8](data)
+    guard b.count >= 5, Array(b[0..<4]) == magic, b[4] == version else { throw Failure.format }
+    var p = 5
+    func str() throws -> String {
+      guard p < b.count else { throw Failure.format }
+      let n = Int(b[p])
+      p += 1
+      guard n > 0, p + n <= b.count else { throw Failure.format }
+      let s = Array(b[p..<(p + n)])
+      p += n
+      guard isId(s), let out = String(bytes: s, encoding: .ascii) else { throw Failure.format }
+      return out
+    }
+    let rootId = try str()
+    let region = try str()
+    let kid = try str()
+    guard p + 33 <= b.count else { throw Failure.format }
+    let noisePub = Data(b[p..<(p + 32)])
+    p += 32
+    let n = Int(b[p])
+    p += 1
+    guard n >= 1, n <= maxPins, p + 32 * n + 16 == b.count else { throw Failure.format }
+    var pins: [Data] = []
+    for _ in 0..<n {
+      pins.append(Data(b[p..<(p + 32)]))
+      p += 32
+    }
+    func u64(_ at: Int) -> UInt64 {
+      var v: UInt64 = 0
+      for k in 0..<8 { v = (v << 8) | UInt64(b[at + k]) }
+      return v
+    }
+    // Go: int64(binary.BigEndian.Uint64(..)) — mesmo bit a bit.
+    let nb = Int64(bitPattern: u64(p))
+    let na = Int64(bitPattern: u64(p + 8))
+    guard na > nb else { throw Failure.format }
+    return ChatyyRegionCert(rootId: rootId, region: region, kid: kid, noisePub: noisePub, pins: pins,
+                            notBefore: nb, notAfter: na)
+  }
+
+  static func signedMessage(_ certBytes: Data) -> Data {
+    var m = Data(context.utf8)
+    m.append(0)
+    m.append(certBytes)
+    return m
+  }
+
+  /// VerifyNC. `roots` = só para os testes (raiz vr1 dos vetores); produção = raízes do binário.
+  /// `kid` vazio não confere o kid (igual ao Go); o gate sempre passa o `nk` da região.
+  static func verify(nc: String, region: String, kid: String, now: Double,
+                     roots: [String: Curve25519.Signing.PublicKey] = ChatyyQuicProto.productionRoots) throws -> ChatyyRegionCert {
+    let (cb, sig) = try split(nc)
+    let c = try parse(cb)
+    guard let pub = roots[c.rootId] else { throw Failure.unknownRoot }
+    guard pub.isValidSignature(sig, for: signedMessage(cb)) else { throw Failure.signature }
+    guard c.region == region else { throw Failure.region }
+    if !kid.isEmpty && c.kid != kid { throw Failure.kid }
+    if now < Double(c.notBefore) - skewSeconds { throw Failure.notYet }
+    if now > Double(c.notAfter) { throw Failure.expired }
+    return c
+  }
+}
+
+/// Os 11 vetores de leaf/vectors/regcert_vectors.json (raiz de TESTE vr1 — NÃO é de produção).
+enum ChatyyRegionCertSelfTest {
+  static let vr1 = "gsq4oYdlD8W4rC7IqCsHwmu7mDrVy/X0hCQty/XMYj0="
+  static let okNoisePub = "WdUQDnOSggLK0V5dhr6tsQ4esL/gu3jl8PrvOzQjtH0="
+  static let okPins = ["4af9qeakVNth/LDNkx/vfDqzATYRImE3SDQAfXUlJrY=", "yyQ6W6JHwELBPE40fmjzn//vPHK518LjJiRgBcitiN4="]
+  static let cert = "Q1lSQwEDdnIxA3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA"
+  static let sig = "xhGjej0ehNvkFSEk12FPiTRgL6kbo2Qx1u0OzwKEut7GHcRjaPsip9ZoCxrO1q1eWy2vaFaLX6kJ78aJ1n8QAw"
+  static let ok = cert + "." + sig
+
+  /// (nome, nc, região, kid, agora, ok)
+  static let vectors: [(String, String, String, String, Double, Bool)] = [
+    ("ok", ok, "scl", "p1", 1761350400, true),
+    ("regiao_errada", ok, "mex", "p1", 1761350400, false),
+    ("kid_errado", ok, "scl", "p2", 1761350400, false),
+    ("vencido", ok, "scl", "p1", 1950000001, false),
+    ("antes_do_nb_mais_de_1d", ok, "scl", "p1", 1760913599, false),
+    ("antes_do_nb_dentro_de_1d", ok, "scl", "p1", 1760996400, true),
+    ("assinatura_trocada", cert + ".xxGjej0ehNvkFSEk12FPiTRgL6kbo2Qx1u0OzwKEut7GHcRjaPsip9ZoCxrO1q1eWy2vaFaLX6kJ78aJ1n8QAw",
+     "scl", "p1", 1761350400, false),
+    ("outra_raiz_mesmo_id", cert + ".BjIvZJDPVyA1NsXVXO6yM0gRKAYLYkwhAyRo6TGWno6c2M1ReSsjtH3NqF0Ul6pcBTNKWIiX9PGWsuS36pZzCQ",
+     "scl", "p1", 1761350400, false),
+    ("byte_sobrando", cert + "AA.iMt9YGyl4ohnXq6f5lqoThF7M3S_MqeOAFasXCQ4AQE9SF3sXeIutw7FEdXip6s_EvpMZLu6eA1X43hHLlBLCw",
+     "scl", "p1", 1761350400, false),
+    ("raiz_desconhecida", "Q1lSQwEDeno5A3NjbAJwMVnVEA5zkoICytFeXYa-rbEOHrC_4Lt45fD67zs0I7R9AuGn_anmpFTbYfywzZMf73w6swE2ESJhN0g0AH11JSa2yyQ6W6JHwELBPE40fmjzn__vPHK518LjJiRgBcitiN4AAAAAaPa6QAAAAAB0OqOA.-yck78kuDmcYHHyfRs_BNQjMcBsi_giPO5T8Y8QQQhxw-Ojz-ikHdLQP-KiJI0XaLABRwnf08ksOUi4L2j05BQ",
+     "scl", "p1", 1761350400, false),
+    ("padding_base64", cert + "=." + sig, "scl", "p1", 1761350400, false),
+  ]
+
+  /// nil = passou.
+  static func run() -> String? {
+    let roots = ChatyyQuicProto.decodeRoots(["vr1": vr1])
+    if roots.count != 1 { return "regcert raiz vr1" }
+    // A raiz de TESTE nunca pode estar entre as de produção.
+    if ChatyyQuicProto.productionRoots["vr1"] != nil || ChatyyQuicProto.rootPubs["_"] != nil { return "regcert raiz de teste em produção" }
+    for (name, nc, region, kid, now, want) in vectors {
+      let got = try? ChatyyRegionCert.verify(nc: nc, region: region, kid: kid, now: now, roots: roots)
+      if (got != nil) != want { return "regcert " + name }
+      if let c = got {
+        if c.noisePub.base64EncodedString() != okNoisePub || c.pinsB64 != okPins { return "regcert " + name + " campos" }
+        if c.notBefore != 1761000000 || c.notAfter != 1950000000 || c.rootId != "vr1" || c.region != "scl" || c.kid != "p1" {
+          return "regcert " + name + " validade"
+        }
+      }
+    }
+    // Sem a raiz (lista de produção vazia/sem vr1) o mesmo nc não vale.
+    if (try? ChatyyRegionCert.verify(nc: ok, region: "scl", kid: "p1", now: 1761350400, roots: [:])) != nil { return "regcert sem raiz" }
+    // Formato do nc: 2 pontos, ponto no início, tamanho > 1024, '+'/'/' (base64 padrão).
+    if (try? ChatyyRegionCert.split(ok + ".")) != nil { return "regcert 2 pontos" }
+    if (try? ChatyyRegionCert.split("." + sig)) != nil { return "regcert ponto inicial" }
+    if (try? ChatyyRegionCert.split(String(repeating: "A", count: 1100) + "." + sig)) != nil { return "regcert > 1024" }
+    if (try? ChatyyRegionCert.split(cert.replacingOccurrences(of: "-", with: "+") + "." + sig)) != nil { return "regcert alfabeto" }
+    if ChatyyRegionCert.b64urlRaw(Array("QUJD".utf8)) != Data("ABC".utf8) || ChatyyRegionCert.b64urlRaw(Array("QUI".utf8)) != Data("AB".utf8)
+      || ChatyyRegionCert.b64urlRaw(Array("QQ".utf8)) != Data("A".utf8) || ChatyyRegionCert.b64urlRaw(Array("Q".utf8)) != nil {
+      return "regcert b64url"
+    }
+    return nil
+  }
+}
+
 // MARK: - autoteste de ida e volta (servidor simulado com o respondedor IK)
 
 enum ChatyyQuicSelfTest {
   /// nil = passou. Usa o respondedor do ChatyyNoiseIK como "leaf" de mentira.
   static func run() -> String? {
     if let e = ChatyyNoiseSelfTest.run() { return "noise: " + e }
+    if let e = ChatyyRegionCertSelfTest.run() { return e }
+    // §5: só o prefixo idempotente vai no early (para no 1º proibido).
+    let ef = ChatyyQuicProto.earlySafePrefix(["{\"type\":\"auth\",\"token\":\"x\"}", "{\"type\":\"subscribe\"}",
+                                              "{\"type\":\"chat_send\",\"client_message_id\":\"c1\"}",
+                                              "{\"type\":\"message_read\"}", "{\"type\":\"ping\"}"])
+    if ef.count != 3 { return "early prefix \(ef.count)" }
+    if !ChatyyQuicProto.earlySafePrefix(["{\"type\":\"chat_send\"}"]).isEmpty { return "early chat_send sem cmi" }
+    if !ChatyyQuicProto.earlySafePrefix(["{\"type\":\"ping\"}", "{\"type\":\"auth\"}"]).elementsEqual(["{\"type\":\"ping\"}"]) { return "early auth fora do 1º" }
     // varint: fronteiras do RFC 9000 §16 (+ exemplos do Apêndice A.1).
     let cases: [(UInt64, String)] = [(0, "00"), (37, "25"), (63, "3f"), (64, "4040"), (15293, "7bbd"), (16383, "7fff"),
                                      (16384, "80004000"), (494878333, "9d7f3e7d"), (1073741823, "bfffffff"),
