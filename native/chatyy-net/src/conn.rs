@@ -131,8 +131,8 @@ impl Conn {
     }
 
     pub fn send(&self, op: u8, data: Vec<u8>) -> bool {
-        if self.done.load(Ordering::SeqCst) {
-            return false;
+        if self.done.load(Ordering::SeqCst) || data.len() > proto::MAX_FRAME {
+            return false; // §3: > 1 MiB o servidor fecha 1009 — recusa já, sem gastar o fio
         }
         let n = data.len() as u64;
         self.queued.fetch_add(n, Ordering::SeqCst);
@@ -379,6 +379,11 @@ fn conn_err(e: quinn::ConnectionError) -> String {
         quinn::ConnectionError::ApplicationClosed(a) => {
             format!("qclose {:#x} {}", a.error_code.into_inner(), String::from_utf8_lossy(&a.reason))
         }
+        // TLS recusado AQUI (cliente): no chatyy/2 o único verificador é o PinCheck → pin/assinatura.
+        // Texto fixo p/ o Kotlin NÃO cair para o chatyy/1 (WebPKI) nesse caso (anti-downgrade).
+        quinn::ConnectionError::TransportError(t) if t.code == quinn::TransportErrorCode::crypto(49) => "pin_mismatch".into(),
+        quinn::ConnectionError::TransportError(t) if t.code == quinn::TransportErrorCode::crypto(51) => "pin_tls_sig_bad".into(),
+        quinn::ConnectionError::TransportError(t) if t.code == quinn::TransportErrorCode::crypto(50) => "pin_bad_cert".into(),
         quinn::ConnectionError::TimedOut => "idle_timeout".into(),
         quinn::ConnectionError::Reset => "reset".into(),
         other => format!("{other}"),
@@ -508,7 +513,7 @@ async fn run(
         match connecting.take().unwrap().into_0rtt() {
             Ok((conn, accepted)) => {
                 *me.connection.lock().unwrap() = Some(conn.clone());
-                let k = p.early_count.min(p.frames.len()).min(proto::msg1_fit(&p.frames));
+                let k = proto::early_prefix(&p.frames, p.early_count);
                 let pl = proto::msg1_payload_x(1, &p.dev, &p.ua, now_ms(), &nonce()?, Some("early"), &p.frames[..k]);
                 let r = tokio::time::timeout_at(deadline.into(), async {
                     let h = hs_start(&conn, p, 2, proto::MODE_E, &[], &pl).await?;
@@ -567,7 +572,7 @@ async fn run_after_connect(
 
     // (canal, Accept, quantos de `frames` o servidor já recebeu)
     let (mut send, mut recv, ts, hello, sent_in_msg1, mode) = if let Some(h) = resumed {
-        let k = p.early_count.min(p.frames.len()).min(proto::msg1_fit(&p.frames));
+        let k = proto::early_prefix(&p.frames, p.early_count);
         let (s, r, ts, hello) = match tokio::time::timeout_at(deadline.into(), hs_finish(h)).await {
             Err(_) => return Err("noise_timeout".into()),
             Ok(x) => x?,

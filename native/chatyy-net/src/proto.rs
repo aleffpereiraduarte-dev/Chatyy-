@@ -132,16 +132,60 @@ pub fn msg1_payload_x(v: u8, dev: &str, ua: &str, ts_ms: u64, n: &[u8; 16], list
     s.into_bytes()
 }
 
-/// Quantos frames do prefixo cabem na msg1 (≤ 64 e payload ≤ 60 KiB).
+/// Tamanho EXATO de `json_str(s)` (com aspas) — mesma regra de escape.
+pub fn json_len(s: &str) -> usize {
+    2 + s
+        .chars()
+        .map(|c| match c {
+            '"' | '\\' => 2,
+            c if (c as u32) < 0x20 => 6,
+            c => c.len_utf8(),
+        })
+        .sum::<usize>()
+}
+
+/// Quantos frames do prefixo cabem na msg1 (≤ 64 e payload ≤ 60 KiB). Conta o escape EXATO de cada frame
+/// (frame cheio de aspas/controles dobra/sextuplica) + 512 B p/ v/dev/ts/n/ua — antes era estimativa
+/// (len/8) e um frame com muito escape estourava o payload → noise_w1 → queda para o WSS.
 pub fn msg1_fit(frames: &[String]) -> usize {
-    let mut total = 200usize;
+    let mut total = 512usize;
     for (i, f) in frames.iter().enumerate() {
-        total += f.len() + f.len() / 8 + 4; // folga p/ escapes
+        total += json_len(f) + 1;
         if i >= MSG1_MAX_FRAMES || total > MSG1_MAX_PAYLOAD {
             return i;
         }
     }
     frames.len()
+}
+
+/// §5: frame pode ir no `early` (0-RTT, replayável)? Conservador: TODO `"type":"…"` do texto tem de ser
+/// auth/subscribe/unsubscribe/ping, ou chat_send COM `client_message_id`. Qualquer outro (ou nenhum) → não.
+/// (Aspas dentro de strings JSON vêm escapadas `\"`, então o padrão só casa em chave real.)
+pub fn early_safe(frame: &str) -> bool {
+    const K: &str = "\"type\":\"";
+    let mut any = false;
+    let mut rest = frame;
+    while let Some(i) = rest.find(K) {
+        rest = &rest[i + K.len()..];
+        let Some(j) = rest.find('"') else { return false };
+        let t = &rest[..j];
+        let ok = match t {
+            "auth" | "subscribe" | "unsubscribe" | "ping" => true,
+            "chat_send" => frame.contains("\"client_message_id\":\"") && !frame.contains("\"client_message_id\":\"\""),
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
+/// Prefixo de `frames` que pode ir no early (≤ `want`, só idempotentes, cabe na msg1).
+pub fn early_prefix(frames: &[String], want: usize) -> usize {
+    let k = want.min(frames.len()).min(msg1_fit(frames));
+    frames[..k].iter().take_while(|f| early_safe(f)).count()
 }
 
 /// `early_n` do Accept (msg2). Ausente = 0.
@@ -227,7 +271,8 @@ impl FrameParser {
     pub fn next(&mut self) -> Result<Option<(u8, Vec<u8>)>, ProtoError> {
         let rest = &self.buf[self.pos..];
         let Some((len, n)) = get_varint(rest) else { return Ok(None) };
-        if len as usize > MAX_FRAME {
+        // Compara em u64: em ABI 32 bits (armeabi-v7a) `len as usize` truncaria 2^32+n → n e passaria.
+        if len > MAX_FRAME as u64 {
             return Err(ProtoError("frame_too_big"));
         }
         let len = len as usize;
@@ -306,6 +351,33 @@ mod tests {
         assert_eq!(msg1_fit(&many), 64);
         let big = vec!["y".repeat(40_000), "y".repeat(40_000)];
         assert_eq!(msg1_fit(&big), 1);
+        // escape exato: 25k aspas viram 50k → o 2º não cabe; e o payload real fica ≤ 60 KiB.
+        let q = vec!["\"".repeat(25_000), "\"".repeat(10_000)];
+        assert_eq!(msg1_fit(&q), 1);
+        let ctl = vec!["\u{1}".repeat(10_000)];
+        assert_eq!(msg1_fit(&ctl), 1);
+        let pl = msg1_payload_x(2, "d", &"u".repeat(120), u64::MAX, &[0; 16], Some("frames"), &q[..1]);
+        assert!(pl.len() <= MSG1_MAX_PAYLOAD);
+        for f in [&q[0], &ctl[0]] {
+            let mut s = String::new();
+            json_str(&mut s, f);
+            assert_eq!(s.len(), json_len(f));
+        }
+    }
+
+    #[test]
+    fn early_only_idempotent() {
+        assert!(early_safe(r#"{"type":"auth","token":"x"}"#));
+        assert!(early_safe(r#"{"token":"x","type":"subscribe"}"#));
+        assert!(early_safe(r#"{"type":"chat_send","client_message_id":"c1","text":"oi \"type\":\"message_read\""}"#));
+        assert!(!early_safe(r#"{"type":"chat_send","text":"sem cmi"}"#));
+        assert!(!early_safe(r#"{"type":"chat_send","client_message_id":""}"#));
+        assert!(!early_safe(r#"{"type":"message_read","id":1}"#));
+        assert!(!early_safe(r#"{"type":"ping","x":{"type":"delete_message"}}"#));
+        assert!(!early_safe(r#"{"x":1}"#));
+        let fs: Vec<String> = [r#"{"type":"auth"}"#, r#"{"type":"message_read"}"#, r#"{"type":"ping"}"#].iter().map(|s| s.to_string()).collect();
+        assert_eq!(early_prefix(&fs, 3), 1);
+        assert_eq!(early_prefix(&fs, 0), 0);
     }
 
     #[test]
@@ -313,6 +385,14 @@ mod tests {
         let mut b = Vec::new();
         put_varint(&mut b, (MAX_FRAME + 1) as u64);
         b.push(OP_TEXT);
+        let mut p = FrameParser::default();
+        p.push(&b);
+        assert!(p.next().is_err());
+        // 2^32 + 5 (8 B de varint): tem de ser recusado também em 32 bits.
+        let mut b = Vec::new();
+        put_varint(&mut b, (1u64 << 32) + 5);
+        b.push(OP_TEXT);
+        b.extend_from_slice(&[0u8; 5]);
         let mut p = FrameParser::default();
         p.push(&b);
         assert!(p.next().is_err());
