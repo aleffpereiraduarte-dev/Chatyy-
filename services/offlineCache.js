@@ -1648,6 +1648,8 @@ export async function replayOfflineQueue(api) {
       replayed++;
     } catch (err) {
       failed++;
+      // [sgu F4 P-1] 409 sgu_f4_local_only ("esta ação fica no aparelho"): nenhum retry resolve → sai da fila.
+      try { if (require('./rtF4Local').isLocalOnlyErr(err)) { _dropPendingTwin(action); continue; } } catch {}
       // Hard error sinal vindo do case (ex: chat_file_upload 404/410,
       // 413 too large, 415 mime rejected). Não tem retry que resolva —
       // dropa da fila silenciosamente em vez de bater no servidor pra

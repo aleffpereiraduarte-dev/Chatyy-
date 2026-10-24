@@ -15574,6 +15574,7 @@ export default {
   "chat.noDocsHint": "Los PDF y documentos compartidos aparecen aquí.",
   // [2026-10-20 tg1] paridade Telegram (marcar lidas por aba, responder em outra conversa, etiquetas salvas)
   "chat.scheduleE2eeBlocked": "Programar no está disponible en chats cifrados.",
+  "chat.f4Unavailable": "No disponible en este chat",
   "chat.scheduleFailed": "No se pudo programar el mensaje.",
   "chat.markAllRead": "Marcar como leídos",
   "chat.markTabReadMsg": "{count} chats con mensajes no leídos se marcarán como leídos.",

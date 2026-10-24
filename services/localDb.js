@@ -1736,7 +1736,10 @@ export async function replayOfflineQueue(apiCall) {
       try {
         const payload = JSON.parse(item.payload);
         const res = await apiCall(item.action, payload);
-        if (res?.success) {
+        // [sgu F4 P-1] 409 sgu_f4_local_only = recusa definitiva (conversa F4): sai da fila, sem retry.
+        let _f4Drop = false;
+        try { _f4Drop = require('./rtF4Local').isLocalOnly(res); } catch {}
+        if (res?.success || _f4Drop) {
           await removeOfflineAction(item.id);
         } else {
           // Increment retry count

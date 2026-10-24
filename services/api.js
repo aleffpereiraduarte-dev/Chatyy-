@@ -3017,7 +3017,13 @@ export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
   // [sgu F2 2026-10-23] leitura de mensagens: esqueleto (corpo fora do PG, body:"local") → envelope do aparelho ou
   // da fila do roteador (rtStore/rtInbox). Sem esqueleto = só uma varredura. Kill: __chatyy_rt_hydrate=false.
   if (_RT_READ.has(action) && _r0 && typeof _r0 === 'object') {
-    try { return await require('./rtStore').hydrateResponse(action, params, _r0); } catch {}
+    let _rh = _r0;
+    try { _rh = await require('./rtStore').hydrateResponse(action, params, _r0); } catch {}
+    // [sgu F4 P-1] favorita F4 é só do aparelho: marca a estrela nas linhas da conversa F4.
+    if (params && params.conversation_id != null && action !== 'chat_list') {
+      try { const _f4 = _f4L(); if (_f4) { const d = _rh && _rh.data; _f4.applyStarFlags(Array.isArray(d) ? d : (d && Array.isArray(d.messages) ? d.messages : null), params.conversation_id); } } catch {}
+    }
+    return _rh;
   }
   return _r0;
 }
@@ -6409,6 +6415,8 @@ function _ld() {
   catch { _localDb = false; }
   return _localDb;
 }
+// [sgu F4 P-1 2026-10-24] conversa body_store 3: fixar/favoritar/encaminhar/agendar ficam no aparelho (rtF4Local).
+function _f4L() { try { return require('./rtF4Local'); } catch { return null; } }
 async function _localOptimisticSend({ tempId, conversationId, content, type, replyToId, fileUrl, clientMessageId, senderEmail }) {
   // Native-only path: best-effort write to SQLite *before* the network call.
   // Failures are non-fatal — the caller still fires the POST and the offline
@@ -7572,6 +7580,8 @@ export async function chatEdit(messageId, content, conversationId = null) {
     const _e5m = require('./e2ee/e2ee5');
     if (_e5m.isOn()) { const r5 = await _e5m.editViaSend(messageId, content, conversationId); if (r5) return r5; }
   } catch {}
+  // [sgu F4 P-1] conversa F4 sem E2EE v5 para editar: o servidor não tem a linha (chat_edit = 409) → nem tenta.
+  { const _f4 = _f4L(); if (_f4 && _f4.involves([conversationId != null ? conversationId : _f4.cidOfMid(messageId)])) return _f4.unavailable('chat_edit', conversationId); }
   // Stage 1: write the edit to local SQLite FIRST, then POST. The optimistic
   // row update is what the UI rebinds to on reload — server confirmation
   // arrives later via WS message_edited.
@@ -7803,9 +7813,15 @@ export async function chatRead(conversationId, messageId) {
   // Agora: invalida já, lê no servidor, e só então recalcula o badge.
   try { swrInvalidate('chat_list'); } catch {}
   try {
-    const rust = await _rustChatPost('mark_read', { conversation_id: conversationId, message_id: messageId });
-    if (rust) return rust;
-    return await apiCall('chat_mark_read', { conversation_id: conversationId, message_id: messageId }, 'POST');
+    // [sgu F4 P-1] conversa F4: recibo por aparelho (device_id no corpo) e só pelo PHP (o Rust não repassa o aparelho).
+    const _f4 = _f4L();
+    const _f4Read = !!(_f4 && _f4.isF4Conv(conversationId));
+    if (!_f4Read) {
+      const rust = await _rustChatPost('mark_read', { conversation_id: conversationId, message_id: messageId });
+      if (rust) return rust;
+    }
+    const _mrBody = { conversation_id: conversationId, message_id: messageId };
+    return await apiCall('chat_mark_read', _f4Read ? _f4.withReadDevice(_mrBody, conversationId) : _mrBody, 'POST');
   } finally {
     // Bump the app-icon badge down right after the read POST lands. Without
     // this, the badge keeps the stale unread count until the next foreground
@@ -7958,7 +7974,9 @@ export async function chatReadAck(conversationId) {
   if (ld && typeof ld.queueOfflineAction === 'function' && conversationId) {
     try { await ld.queueOfflineAction('chat_read', { conversation_id: conversationId }); } catch {}
   }
-  const res = await apiCall('chat_read', { conversation_id: conversationId }, 'POST');
+  let _crBody = { conversation_id: conversationId };
+  try { const _f4 = _f4L(); if (_f4) _crBody = _f4.withReadDevice(_crBody, conversationId); } catch {} // [sgu F4 P-1]
+  const res = await apiCall('chat_read', _crBody, 'POST');
   // Mirror the chat-list "read" intent into the app-icon badge so the
   // counter drops immediately after the conversation is acked.
   try { require('./pushNotifications').refreshBadgeCount?.(); } catch {}
@@ -8219,6 +8237,14 @@ export async function chatGroupInviteJoin(token) {
 }
 
 export async function chatForward(messageId, targetConversationId, opts = null) {
+  // [sgu F4 P-1] origem ou destino F4: o servidor não tem a origem (chat_forward = 409) → mensagem nova pelo envio normal.
+  {
+    const _f4 = _f4L();
+    if (_f4 && _f4.f4On()) {
+      const _src = opts && opts.sourceConversationId != null ? opts.sourceConversationId : _f4.cidOfMid(messageId);
+      if (_f4.involves([_src, targetConversationId])) return _f4.asSingle(await _f4.forwardAsNew(messageId, [targetConversationId], opts), targetConversationId);
+    }
+  }
   // [e2ee5 WP-08c] origem cifrada ou destino E2EE: o CLIENTE recifra (o servidor não clona envelope).
   try {
     const _e5m = require('./e2ee/e2ee5');
@@ -8234,13 +8260,23 @@ export async function chatForward(messageId, targetConversationId, opts = null) 
   // [2026-10-12 srv-audit] Idempotência explícita (servidor novo: fwd:<id>:<conv>);
   // servidor antigo ignora o campo (segue o balde de 60 s).
   if (opts?.clientActionId) payload.client_action_id = String(opts.clientActionId);
-  return apiCall('chat_forward', payload, 'POST');
+  const _r = await apiCall('chat_forward', payload, 'POST');
+  { const _f4 = _f4L(); if (_f4 && _f4.isLocalOnly(_r) && _f4.noteF4From(_r) != null) return _f4.asSingle(await _f4.forwardAsNew(messageId, [targetConversationId], opts), targetConversationId); }
+  return _r;
 }
 
 // WhatsApp-style multi-target forward: one server round-trip clones the
 // message into N conversations. Backend reports per-target success/fail
 // so the UI can surface partial results without re-sending.
 export async function chatForwardMulti(messageId, targetConversationIds, opts = null) {
+  {
+    const _f4 = _f4L(); // [sgu F4 P-1] ver chatForward
+    if (_f4 && _f4.f4On()) {
+      const _src = opts && opts.sourceConversationId != null ? opts.sourceConversationId : _f4.cidOfMid(messageId);
+      const _tg = Array.isArray(targetConversationIds) ? targetConversationIds : [];
+      if (_f4.involves([_src, ..._tg])) return _f4.forwardAsNew(messageId, _tg, opts);
+    }
+  }
   try { // [e2ee5 WP-08c] ver chatForward
     const _e5m = require('./e2ee/e2ee5');
     if (_e5m.isOn()) { const r5 = await _e5m.forwardClient(messageId, targetConversationIds, opts); if (r5) return r5; }
@@ -8257,7 +8293,9 @@ export async function chatForwardMulti(messageId, targetConversationIds, opts = 
     for (const [k, v] of Object.entries(opts.clientActionIds)) { if (v) ids[String(k)] = String(v); }
     if (Object.keys(ids).length) payload.client_action_ids = ids;
   }
-  return apiCall('chat_forward_multi', payload, 'POST');
+  const _r = await apiCall('chat_forward_multi', payload, 'POST');
+  { const _f4 = _f4L(); if (_f4 && _f4.isLocalOnly(_r) && _f4.noteF4From(_r) != null) return _f4.forwardAsNew(messageId, payload.conversation_ids, opts); }
+  return _r;
 }
 
 // Long-press → "Salvar": clone a message verbatim into the user's Saved
@@ -8340,7 +8378,11 @@ export async function chatTyping(conversationId, recording = false) {
   return apiCall('chat_typing', params, 'POST');
 }
 
-export async function chatStarMessage(messageId, star = true) {
+export async function chatStarMessage(messageId, star = true, conversationId = null, msgSnap = null) {
+  // [sgu F4 P-1] conversa F4: favorita só no aparelho (o servidor não tem a linha; chat_star_message = 409).
+  const _f4 = _f4L();
+  const _f4cid = _f4 && _f4.f4On() ? (conversationId != null ? conversationId : _f4.cidOfMid(messageId)) : null;
+  if (_f4 && _f4.isF4Conv(_f4cid)) return _f4.starLocal(messageId, star, _f4cid, msgSnap);
   // Stage 1: queue the star intent locally first. No local starred table yet
   // (Stage 2 scope); the offline_queue ensures intent survives a crash mid-POST.
   const ld = _ld();
@@ -8349,7 +8391,9 @@ export async function chatStarMessage(messageId, star = true) {
   }
   // [salvas-fav 2026-10-22] desfavoritar some do cache local de Favoritas na hora.
   if (!star) { try { require('./savedStarredCache').removeCachedStarred(messageId); } catch {} }
-  return apiCall('chat_star_message', { message_id: messageId, star: star ? 1 : 0 }, 'POST');
+  const _r = await apiCall('chat_star_message', { message_id: messageId, star: star ? 1 : 0 }, 'POST');
+  if (_f4 && _f4.isLocalOnly(_r)) { const c = _f4.noteF4From(_r); return _f4.starLocal(messageId, star, c != null ? c : conversationId, msgSnap); }
+  return _r;
 }
 
 export async function chatStarredMessages() {
@@ -8361,7 +8405,7 @@ export async function chatStarredMessages() {
         try {
           const r = await relay.getStarredViaRelay();
           try { globalThis.__chatyy_phone_offline = false; } catch {}
-          return r;
+          return _f4StarMerge(r);
         } catch (e) {
           const code = e?.code || '';
           if (code === 'phone_offline' || code === 'relay_timeout' || code === 'no_paired_device' || code === 'request_timeout') {
@@ -8372,8 +8416,10 @@ export async function chatStarredMessages() {
       }
     } catch {}
   }
-  return apiCall('chat_starred_messages', {}, 'POST');
+  return _f4StarMerge(await apiCall('chat_starred_messages', {}, 'POST'));
 }
+// [sgu F4 P-1] + favoritas das conversas F4 (só no aparelho). Sem favorita local = resposta intacta.
+function _f4StarMerge(r) { try { const _f4 = _f4L(); return _f4 ? _f4.mergeStarred(r) : r; } catch { return r; } }
 
 // Keep message (disappearing chats - WhatsApp style)
 export async function chatKeepMessage(messageId, keep = true) {
@@ -9183,6 +9229,7 @@ export async function chatCheckPin() {
 // Scheduled messages
 export async function chatScheduleMessage(conversationId, content, scheduledAt, extra = null) {
   // [2026-10-21 tg4] extra = mídia/resposta/tópico: { type, file_url, file_name, file_size, thumb_b64, duration, image_width, image_height, reply_to_id, topic_id }
+  { const _f4 = _f4L(); if (_f4 && _f4.involves([conversationId])) return _f4.unavailable('chat_schedule_message', conversationId); } // [sgu F4 P-1]
   return apiCall('chat_schedule_message', { ...(extra && typeof extra === 'object' ? extra : {}), conversation_id: conversationId, content, scheduled_at: scheduledAt }, 'POST');
 }
 
@@ -9196,6 +9243,7 @@ export async function chatScheduleEdit(id, { content, scheduledAt } = {}) {
 
 // [2026-10-21 tg4] "Enviar quando online" (1:1): sai quando o destinatário ficar online.
 export async function chatSendWhenOnline(conversationId, content, extra = null) {
+  { const _f4 = _f4L(); if (_f4 && _f4.involves([conversationId])) return _f4.unavailable('chat_send_when_online', conversationId); } // [sgu F4 P-1]
   return apiCall('chat_send_when_online', { ...(extra && typeof extra === 'object' ? extra : {}), conversation_id: conversationId, content }, 'POST');
 }
 
@@ -10690,7 +10738,11 @@ export async function chatSearchMessages(conversationId, query) {
 //   2592000 = 30d
 // Backend clamps anything else to 7d, so passing nothing is safe. Toggling an
 // already-pinned message ignores duration (unpins it).
-export async function chatPinMessage(messageId, durationSeconds) {
+export async function chatPinMessage(messageId, durationSeconds, conversationId = null, msgSnap = null) {
+  // [sgu F4 P-1] conversa F4: fixar só no aparelho (idempotente: com duração fixa, sem duração desafixa).
+  const _f4 = _f4L();
+  const _f4cid = _f4 && _f4.f4On() ? (conversationId != null ? conversationId : _f4.cidOfMid(messageId)) : null;
+  if (_f4 && _f4.isF4Conv(_f4cid)) { const _lr = _f4.pinLocal(_f4cid, messageId, durationSeconds, msgSnap); try { swrInvalidate('chat_pinned_messages'); } catch {} return _lr; }
   const payload = { message_id: messageId };
   if (durationSeconds && Number.isFinite(durationSeconds)) {
     payload.duration_seconds = durationSeconds;
@@ -10713,6 +10765,12 @@ export async function chatPinMessage(messageId, durationSeconds) {
     r = await apiCall('chat_pin_message', payload, 'POST');
   } catch (e) {
     r = { success: false, error: e?.message || 'pin_failed' };
+  }
+  // [sgu F4 P-1] o servidor disse que a conversa é F4 → aplica aqui, sem fila (a fila repetiria o 409).
+  if (_f4 && _f4.isLocalOnly(r)) {
+    const c = _f4.noteF4From(r);
+    if (c != null) { const _lr = _f4.pinLocal(c, messageId, durationSeconds, msgSnap); try { swrInvalidate('chat_pinned_messages'); } catch {} return _lr; }
+    return r;
   }
   if (!r?.success) {
     if (ld && typeof ld.queueOfflineAction === 'function') {
@@ -10753,7 +10811,10 @@ export async function chatPinnedMessages(conversationId) {
       }
     } catch {}
   }
-  return apiCall('chat_pinned_messages', { conversation_id: conversationId });
+  const _pr = await apiCall('chat_pinned_messages', { conversation_id: conversationId });
+  // [sgu F4 P-1] conversa F4: fixadas do aparelho (+ as de antes da F4 que o servidor ainda lista).
+  try { const _f4 = _f4L(); if (_f4 && _f4.isF4Conv(conversationId)) return _f4.mergePinned(conversationId, _pr); } catch {}
+  return _pr;
 }
 
 export async function chatSetWallpaper(conversationId, wallpaper) {
