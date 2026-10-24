@@ -10641,6 +10641,15 @@ function ConvTypingBubble({ store, colors, t, hideLabel = false }) {
 }
 // Nome + subtítulo (digitando / online / visto por último / membros) do header.
 // Mesmo JSX e mesma regra de antes (presenceText), só que com estado próprio.
+// [conta-empresarial 2026-10-24] "Conta comercial" ao lado do nome (1:1 com conta empresarial). Kill: __chatyy_business=false.
+function _BizHeaderBadge({ members, currentEmail, t, colors }) {
+  const me = String(currentEmail || '').toLowerCase();
+  let peer = '';
+  try { for (const m of (Array.isArray(members) ? members : [])) { const e = String((m && (m.email || m.user_email)) || m || '').toLowerCase(); if (e && e !== me && e.includes('@')) { peer = e; break; } } } catch {}
+  if (!peer || peer.endsWith('@bots.chatyy')) return null;
+  const BizBadge = require('../components/business/BizBadge').default;
+  return <BizBadge email={peer} t={t} colors={colors} />;
+}
 const ConvHeaderTitleStack = React.memo(function ConvHeaderTitleStack({
   typingStore, conversationType, presenceStore, members, t, wsConnected, currentEmail, presenceUpdatedAtRef,
   colors, conversationName, e2eEnabled, advPrivEnabled, netReachable, wsReconnecting, peerEmail,
@@ -10725,6 +10734,7 @@ const ConvHeaderTitleStack = React.memo(function ConvHeaderTitleStack({
               {conversationType === 'direct' && peerEmail ? <VerifiedBadge email={peerEmail} size={14} style={{ marginLeft: 0 }} /> : null}{/* [verificado 2026-10-24] */}
               {e2eEnabled && <IconLock size={12} color={colors.textSecondary} />}
               {advPrivEnabled && <IconShield size={12} color={colors.textSecondary} />}
+              {conversationType === 'direct' ? <_BizHeaderBadge members={members} currentEmail={currentEmail} t={t} colors={colors} /> : null}
             </View>
             {(presenceText !== '') && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -37156,6 +37166,10 @@ function ChatConversationInnerBody() {
                       try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
                       if (btn.url && /^https?:/i.test(btn.url)) {
                         try { require('../services/openLink').openLink(btn.url, { router, colors }); } catch {} // [2026-10-15 native-browser]
+                      } else if (btn.callback_data && String(btn.callback_data).startsWith('biz:')) {
+                        // [conta-empresarial 2026-10-24] botões da Bia (atendente / "Configurar Bia"): o servidor
+                        // registra o toque como mensagem sua e responde na hora (biz_button).
+                        try { require('../services/business').pressButton(conversationId, msg.id, btn.callback_data); } catch {}
                       } else if (btn.callback_data) {
                         // For inline callback_data: fire-and-forget hint to
                         // external bot servers via the WS bot_callback event.

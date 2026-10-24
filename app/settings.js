@@ -65,7 +65,7 @@ import { FontSize, Spacing, BorderRadius, LetterSpacing } from '../constants/the
 import {
   IconArrowLeft, IconSparkles, IconPlusCircle, IconMessageSquare, IconGlobe, IconBell, IconShield, IconUser,
   IconMail, IconDatabase, IconX, IconHelpCircle, IconSearch, IconUserPlus, IconType,
-  IconMonitor, IconStar, IconCreditCard, IconPalette, IconUsers, IconImage,
+  IconMonitor, IconStar, IconCreditCard, IconPalette, IconUsers, IconImage, IconFlag,
 } from '../components/Icons';
 import * as ProfilePhotos from '../services/profilePhotos'; // [perfil-fotos 2026-10-19]
 import * as settingsCache from '../services/settingsCache';
@@ -531,6 +531,10 @@ function SettingsScreenInner() {
     if (gb >= 1000) { const tb = gb / 1024; return `${tb >= 10 || Math.abs(tb - Math.round(tb)) < 0.05 ? Math.round(tb) : tb.toFixed(1)} TB`; }
     return `${gb} GB`;
   })();
+  const [_bizSt, _setBizSt] = useState(() => { try { return require('../services/business').bizStatusCached(); } catch { return null; } }); // [conta-empresarial 2026-10-24]
+  useEffect(() => { let on = true; try { require('../services/business').bizStatus().then((r) => { if (on && r && r.ok) _setBizSt(r.data); }).catch(() => {}); } catch {} return () => { on = false; }; }, []);
+  const _bizOn = !!(_bizSt && _bizSt.enabled) && (() => { try { return globalThis.__chatyy_business !== false; } catch { return true; } })();
+  const _bizHas = !!(_bizSt && _bizSt.account);
   const catRow = (key) => ({ key, type: 'c', cat: key, icon: CATEGORY_META[key].icon, Icon: CAT_ICONS[CATEGORY_META[key].icon], title: categoryTitle(t, key), sub: catSubtitle[key] || '' });
   const rootCards = [
     [
@@ -543,6 +547,9 @@ function SettingsScreenInner() {
       // Listas = abas/pastas da lista de conversas (/chat-folders); transmissão = menu de nova conversa.
       // [verificado 2026-10-24] Solicitar verificação (selo azul) — flag do servidor (allowlist)
       verifEntry && verifEntry.enabled ? { key: 'verif', type: 'r', icon: 'shield', Icon: IconVerifiedOutline, title: verifEntry.verified ? tr('verif.rowVerified', 'Conta verificada') : tr('verif.rowRequest', 'Solicitar verificação'), sub: verifEntry.verified ? '' : ((verifEntry.status === 'new' || verifEntry.status === 'review') ? tr('verif.rowPending', 'Pedido em análise') : tr('verif.rowSub', 'Selo azul ao lado do seu nome')), route: '/verification' } : null,
+      // [conta-empresarial 2026-10-24] só p/ contas liberadas no servidor (biz_status.enabled; cache em services/business)
+      _bizOn ? { key: 'business', type: 'r', icon: 'flag', Icon: IconFlag, title: _bizHas ? t('biz.title', 'Conta empresarial') : t('biz.make', 'Transformar em conta empresarial'), route: '/business-account' } : null,
+      _bizOn ? { key: 'biaReply', type: 'r', icon: 'sparkles', Icon: IconSparkles, title: t('biz.reply.title', 'Bia responde por mim'), route: '/bia-reply' } : null,
       { key: 'starred', type: 'r', icon: 'star', Icon: IconStar, title: t('chat.starredMessages') || 'Mensagens favoritas', route: '/starred-messages' },
       { key: 'devices', type: 'r', icon: 'device', Icon: IconMonitor, title: t('settings.linkedDevices') || 'Aparelhos conectados', route: '/linked-devices' },
       // [2026-10-19 capmember] atalho p/ "Privacidade avançada em todas as conversas" (topo de Privacidade).

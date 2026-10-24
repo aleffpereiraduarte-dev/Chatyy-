@@ -13,6 +13,8 @@ import TgProfileView from './tg/TgProfileView';
 import { useTgProfileData } from './tg/useTgProfileData';
 import { tgT, useTgLang } from './tg/tgStrings';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext'; // [conta-empresarial 2026-10-24]
+import { useBizCard } from '../business/BizBadge'; // [conta-empresarial 2026-10-24]
 
 function _api() { try { return require('../../services/api'); } catch { return null; } }
 function _menu(o) { try { require('../../services/profilePostComposer').showActionMenu(o); } catch {} }
@@ -37,6 +39,8 @@ export default function TgUserProfile({ identifier, router, onOpenChat, onOpenCa
   const em = data.email || (isEmail ? idf.toLowerCase() : '');
   const isSelf = guessSelf || data.isSelf || (!!em && em === me);
   const name = (data.identity && data.identity.name) || String(em).split('@')[0] || idf;
+  const _t = (useLanguage() || {}).t || ((k, f) => f); // [conta-empresarial 2026-10-24]
+  const bizCard = useBizCard(isSelf ? '' : em);
 
   // Notificações da DM (sem a conversa aberta): chat_user_conv_settings.
   const convId = data.conversationId;
@@ -90,6 +94,8 @@ export default function TgUserProfile({ identifier, router, onOpenChat, onOpenCa
     if (isSelf) return {};
     const rows = [];
     if (em && onOpenChat) rows.push({ id: 'openChat', sid: 'more', icon: 'comment', title: tr('openChat'), onPress: message });
+    // [conta-empresarial 2026-10-24] "Conta comercial" → perfil comercial (catálogo, horário, endereço)
+    if (em && bizCard) rows.unshift({ id: 'bizProfile', sid: 'more', icon: 'info', title: `${_t('biz.label', 'Conta comercial')} · ${_t('biz.public.seeCatalog', 'Ver perfil e catálogo')}`, onPress: () => { try { require('../business/BizBadge').openBizProfile(em); } catch {} } });
     rows.push({ id: blocked ? 'unblock' : 'block', sid: 'danger', dest: !blocked, icon: 'block', title: tr(blocked ? 'unblock' : 'block', { name }), onPress: doBlock });
     rows.push({ id: 'report', sid: 'danger', dest: true, icon: 'flag', title: tr('report'), onPress: doReport });
     return {
@@ -105,7 +111,7 @@ export default function TgUserProfile({ identifier, router, onOpenChat, onOpenCa
       rows,
       moreMenu: rows.filter((r) => r.id !== 'openChat'),
     };
-  }, [isSelf, em, onOpenChat, onOpenCall, message, tr, blocked, name, doBlock, doReport, convId, muted, setMute]);
+  }, [isSelf, em, onOpenChat, onOpenCall, message, tr, blocked, name, doBlock, doReport, convId, muted, setMute, bizCard, _t]);
 
   const goBack = onBack || (() => { try { if (router && router.canGoBack && router.canGoBack()) router.back(); else router && router.replace && router.replace('/chat'); } catch {} });
 
