@@ -251,7 +251,8 @@ defmodule ChatyyRouter.BodyStore do
     res =
       with :ok <- on(),
            {:ok, req} <- normalize(req),
-           :ok <- BodyHome.check(req.cid) do
+           :ok <- BodyHome.check(req.cid),
+           :ok <- f4_gate(req) do
         route_store(req)
       end
 
@@ -261,7 +262,7 @@ defmodule ChatyyRouter.BodyStore do
         {:ok, %{dup: true}} -> :dup
         {:ok, %{copies: c, wanted: w}} when c < w -> :partial
         {:ok, _} -> :ok
-        {:error, e} when e in [:disabled, :not_enabled, :not_e2ee, :bad_request] -> e
+        {:error, e} when e in [:disabled, :not_enabled, :not_e2ee, :bad_request, :not_f4, :unknown_target, :forbidden, :receipt_unresolved] -> e
         {:error, _} -> :miss
       end
 
@@ -302,6 +303,12 @@ defmodule ChatyyRouter.BodyStore do
 
   defp on, do: if(ChatyyRouter.Flags.get(:store) == true, do: :ok, else: {:error, :disabled})
 
+  # [sgu F4] recibo e apagar para todos só existem em conversa F4 (RT_F4=1 + body_store >= 3)
+  defp f4_gate(%{kind: k, cid: cid}) when k in [:receipt, :delete],
+    do: if(ChatyyRouter.F4.on?(cid), do: :ok, else: {:error, :not_f4})
+
+  defp f4_gate(_), do: :ok
+
   defp route_store(req) do
     home = BodyHome.home(req.cid)
     target = BodyHome.acting(req.cid)
@@ -339,6 +346,10 @@ defmodule ChatyyRouter.BodyStore do
     cond do
       req[:cid] == nil -> :no_cid
       not is_integer(to_int(req[:cid])) -> :bad_cid
+      kind in ["receipt", "delete"] and str(req[:from_uid]) == nil -> if(kind == "receipt", do: :rc_no_uid, else: :del_no_uid)
+      kind == "receipt" and rc_type(req) == nil -> :rc_bad_type
+      kind == "receipt" -> :rc_no_upto
+      kind == "delete" -> :del_no_ref
       env == nil -> :no_env
       not is_binary(env) -> :bad_env
       env == "" -> :empty_env
@@ -357,6 +368,32 @@ defmodule ChatyyRouter.BodyStore do
     env = req[:env]
 
     cond do
+      # [sgu F4] recibo (✓✓/lida) e apagar para todos: o envelope é metadado gerado aqui (não vem do app)
+      kind == "receipt" and is_integer(cid) ->
+        uid = str(req[:from_uid])
+        rt = rc_type(req)
+        up = to_int(req[:upto_pts])
+        um = to_int(req[:upto_mid])
+
+        if uid != nil and rt != nil and ((is_integer(up) and up > 0) or (is_integer(um) and um > 0)) do
+          e = ChatyyRouter.F4.receipt_env(uid, rt, up || 0, um)
+          r = base(req, cid, {:rc, uid, rt}, :receipt, e)
+          {:ok, Map.merge(r, %{from_uid: uid, rtype: rt, upto_pts: up, upto_mid: um, upto: up || 0})}
+        else
+          {:error, :bad_request}
+        end
+
+      kind == "delete" and is_integer(cid) ->
+        uid = str(req[:from_uid])
+        ref = to_int(req[:ref]) || to_int(req[:mid])
+
+        if uid != nil and is_integer(ref) and ref > 0 do
+          r = base(req, cid, {:del, ref}, :delete, ChatyyRouter.F4.delete_env(uid, ref))
+          {:ok, Map.merge(r, %{from_uid: uid, ref: ref})}
+        else
+          {:error, :bad_request}
+        end
+
       not is_integer(cid) or not is_binary(env) or env == "" -> {:error, :bad_request}
       kind == "reaction" ->
         ref = to_int(req[:ref])
@@ -396,6 +433,14 @@ defmodule ChatyyRouter.BodyStore do
 
     case to_string(t) do
       x when x in ["r", "v"] -> x
+      _ -> nil
+    end
+  end
+
+  @doc "[sgu F4] tipo do recibo: \"d\" (entregue) ou \"r\" (lida)."
+  def rc_type(req) do
+    case to_string(req[:rtype] || req[:rc_type] || "") do
+      x when x in ["d", "r"] -> x
       _ -> nil
     end
   end
@@ -458,6 +503,32 @@ defmodule ChatyyRouter.BodyStore do
   guardado (`mid`, `dup: true, cmi_dup: true`) e não grava um 2º corpo. Toda resposta ok traz `mid`.
   """
   def accept(req) do
+    case ChatyyRouter.F4.prepare(req) do
+      {:ok, req} -> accept_f4(req)
+      {:error, _} = e -> Metrics.inc({:rt_store, :f4_refused}) && e
+    end
+  end
+
+  # [sgu F4] apagar para todos: grava o evento (fila de todos os aparelhos) e troca o corpo da mensagem pela
+  # lápide (revisão máxima: vence em casa e nas cópias; o corpo some do roteador e quem já tinha recebe de novo)
+  defp accept_f4(%{kind: :delete, ref: target} = req) do
+    with {:ok, r} <- accept0(req) do
+      case Store.get(:rt_body, {req.cid, target}) do
+        %{kind: :msg} = old ->
+          tomb = ChatyyRouter.F4.tomb_env(target)
+          t = Map.merge(old, %{env: tomb, sha: sha(tomb), size: byte_size(tomb), edit: true, rev: ChatyyRouter.F4.tomb_rev(), ts: req.ts, src: :f4_delete})
+          _ = accept_key(Map.put(t, :tomb, true))
+          {:ok, Map.put(r, :tomb, true)}
+
+        _ ->
+          {:ok, Map.put(r, :tomb, false)}
+      end
+    end
+  end
+
+  defp accept_f4(req), do: accept0(req)
+
+  defp accept0(req) do
     case cmi_key(req) do
       nil ->
         accept_key(req)
@@ -521,6 +592,15 @@ defmodule ChatyyRouter.BodyStore do
           clear_acks(key)
           write_new(req)
 
+        %{kind: :receipt, upto: old_up} when req.kind == :receipt and req.upto > old_up ->
+          # [sgu F4] recibo novo do mesmo usuário/tipo substitui (até onde leu só cresce) e reabre as confirmações
+          clear_acks(key)
+          write_new(req)
+
+        %{kind: :receipt} when req.kind == :receipt ->
+          Metrics.inc(:rt_store_receipt_stale)
+          {:ok, %{dup: true, stale: true, copies: 1, wanted: 1 + Config.body_copies(), acting: Net.me()}}
+
         %{kind: :reaction} when req.kind == :reaction ->
           Metrics.inc(:rt_store_reaction_stale)
           {:ok, %{dup: true, stale: true, copies: 1, wanted: 1 + Config.body_copies(), acting: Net.me()}}
@@ -563,6 +643,8 @@ defmodule ChatyyRouter.BodyStore do
       end
 
     rec = req |> Map.put(:devices, devices) |> Map.put(:stored_ms, Clock.now_ms()) |> Map.put(:src, req.src)
+    # [sgu F4] conv_pts dado pela casa em exercício (inerte sem RT_F4=1 + body_store >= 3)
+    rec = ChatyyRouter.F4.stamp(rec)
     targets = BodyHome.copy_targets(req.home, Net.me())
     # cópias EM PARALELO com o fsync local; responde só depois dos dois
     task = Task.async(fn -> replicate([rec], targets) end)
@@ -570,15 +652,20 @@ defmodule ChatyyRouter.BodyStore do
     case Store.put(:rt_body, {rec.cid, rec.mid}, rec) do
       :ok ->
         put_cmi([rec])
+        f4 = ChatyyRouter.F4.log_recs([rec])
         copies = Task.await(task, 35_000)
+        if f4 != :ok, do: Metrics.inc(:rt_f4_log_short)
         if copies < Config.body_copies(), do: Metrics.inc(:rt_store_copies_short)
-        {:ok, %{copies: 1 + copies, wanted: 1 + Config.body_copies(), acting: Net.me()}}
+        {:ok, %{copies: 1 + copies, wanted: 1 + Config.body_copies(), acting: Net.me()} |> put_pts(rec)}
 
       {:error, e} ->
         Task.shutdown(task, :brutal_kill)
         {:error, {:store, e}}
     end
   end
+
+  defp put_pts(r, %{pts: p}) when is_integer(p), do: Map.put(r, :pts, p)
+  defp put_pts(r, _), do: r
 
   defp lock(key, n \\ 400) do
     cond do
@@ -606,12 +693,18 @@ defmodule ChatyyRouter.BodyStore do
       for rec <- recs, not ChatyyRouter.BodyStore.Purge.purged?(rec.cid, rec.mid),
           keep?(Store.get(:rt_body, {rec.cid, rec.mid}), rec), do: {{rec.cid, rec.mid}, rec}
 
-    with :ok <- Store.put_many(:rt_body, fresh), do: put_cmi(Enum.map(fresh, &elem(&1, 1)))
+    recs = Enum.map(fresh, &elem(&1, 1))
+
+    with :ok <- Store.put_many(:rt_body, fresh), :ok <- put_cmi(recs) do
+      # [sgu F4] a cópia refaz a MESMA entrada (pts vem no registro): casa e irmãs com os mesmos contadores
+      ChatyyRouter.F4.log_recs(recs)
+    end
   end
 
   defp keep?(nil, _), do: true
   defp keep?(%{sha: s}, %{sha: s}), do: false
   defp keep?(%{kind: :reaction, ts: a}, %{kind: :reaction, ts: b}), do: b > a
+  defp keep?(%{kind: :receipt} = a, %{kind: :receipt} = b), do: (b[:upto] || 0) > (a[:upto] || 0)
   # edição no lugar: a revisão maior vence (sem marca de edição, sha diferente = conflito, fica o que está)
   defp keep?(%{kind: :msg} = a, %{kind: :msg, edit: true} = b), do: Map.get(b, :rev, 0) > Map.get(a, :rev, 0)
   defp keep?(%{devices: nil}, %{devices: d}) when is_list(d), do: true
@@ -628,7 +721,7 @@ defmodule ChatyyRouter.BodyStore do
     device = to_string(device)
     limit = opts[:limit] || 500
 
-    q = %{since: opts[:since], limit: limit, mids: opts[:mids], all: opts[:all] == true}
+    q = %{since: opts[:since], limit: limit, mids: opts[:mids], all: opts[:all] == true, since_pts: opts[:since_pts]}
 
     parts =
       case opts[:cid] do
@@ -650,7 +743,10 @@ defmodule ChatyyRouter.BodyStore do
 
     Metrics.inc(:rt_pull)
     {rx, msgs} = Enum.split_with(parts, &(&1.kind == :reaction))
-    %{messages: msgs |> Enum.sort_by(&{&1.cid, &1.mid}) |> Enum.take(limit), reactions: Enum.sort_by(rx, &{&1.ts, &1.cid})}
+    {ev, msgs} = Enum.split_with(msgs, &(&1.kind in [:receipt, :delete]))
+    # [sgu F4] recibos e apagar para todos em `events` (ordem de pts); mensagens/reações como antes
+    %{messages: msgs |> Enum.sort_by(&{&1.cid, &1.mid}) |> Enum.take(limit), reactions: Enum.sort_by(rx, &{&1.ts, &1.cid}),
+      events: Enum.sort_by(ev, &{&1.cid, &1[:pts] || 0})}
   end
 
   defp ask(r, {:pull_q, d, c, q} = msg) do
@@ -670,12 +766,15 @@ defmodule ChatyyRouter.BodyStore do
     since = q[:since]
     limit = q[:limit] || 500
     want = q[:mids] && MapSet.new(q[:mids])
+    # [sgu F4] since_pts: tudo o que mudou na conversa depois do pts (aparelho esperado/herdeiro), gravado ou não
+    spts = q[:since_pts]
 
     for cid <- cids,
         {sub, {ts, _sha, devs, kind}} <- aux(cid),
         want == nil or MapSet.member?(want, sub),
-        want != nil or kind == :reaction or since == nil or (is_integer(sub) and sub > since),
-        want != nil or (if q[:all], do: expected_for?(sub, devs, device, inh, ts), else: pending_for?(cid, sub, ts, devs, device, inh)) do
+        spts == nil or want != nil or ((ChatyyRouter.F4.sub_pts(cid, sub) || 0) > spts),
+        want != nil or spts != nil or kind in [:reaction, :receipt, :delete] or since == nil or (is_integer(sub) and sub > since),
+        want != nil or (if q[:all] or spts != nil, do: expected_for?(sub, devs, device, inh, ts), else: pending_for?(cid, sub, ts, devs, device, inh)) do
       Store.get(:rt_body, {cid, sub})
     end
     |> Enum.reject(&is_nil/1)
@@ -891,6 +990,7 @@ defmodule ChatyyRouter.BodyStore do
   @impl true
   def init(_) do
     BodyHome.init_tables()
+    ChatyyRouter.F4.rebuild()
 
     for t <- [@inflight, @inherit, @purged, @status], :ets.whereis(t) == :undefined do
       :ets.new(t, [:named_table, :public, :set, write_concurrency: true, read_concurrency: true])
@@ -940,6 +1040,7 @@ defmodule ChatyyRouter.BodyStore do
   end
 
   def handle_call(:inherit_all, from, s), do: async_reply(from, fn -> inherits() end, s)
+  def handle_call({:f4_sum, uid, cids}, from, s), do: async_reply(from, fn -> ChatyyRouter.F4.summaries_local(uid, cids) end, s)
 
   def handle_call({:acks_of, cid, subs}, from, s) do
     async_reply(from, fn ->

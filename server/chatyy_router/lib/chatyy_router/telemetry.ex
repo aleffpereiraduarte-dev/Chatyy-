@@ -173,6 +173,8 @@ defmodule ChatyyRouter.Metrics do
       safe.(fn -> ChatyyRouter.PurgeGc.prom_lines() end) || [],
       safe.(fn -> ChatyyRouter.BodyStore.prom_lines() end) || [],
       safe.(fn -> ChatyyRouter.BodyCompare.prom_lines() end) || [],
+      # [sgu F4 2026-10-23]
+      safe.(fn -> ChatyyRouter.F4.prom_lines() end) || [],
       "chatyy_router_up 1\n"
     ]
   end

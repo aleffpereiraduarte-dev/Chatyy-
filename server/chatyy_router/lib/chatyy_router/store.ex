@@ -13,6 +13,7 @@ defmodule ChatyyRouter.Store do
                    chave = mid Snowflake do leaf (A1: sem seq do roteador); aux = {ts, sha, aparelhos, kind}
        :rt_inherit {uid, de, para} -> %{ts, ...}  [sgu F1] herança de inbox (A5), em TODOS os nós
        :rt_body_cmi {cid, from_uid, cmi} -> %{mid, ts}  [sgu F1/F2] idempotência do /store por cmi
+       :rt_f4_log  {cid, pts} | {cid, :hw} -> entrada  [sgu F4] ordem/recibos/contadores (ChatyyRouter.F4), aux = entrada
 
   2. METADADOS pequenos → Mnesia LOCAL `disc_copies` (schema só deste nó,
      nunca clusterizado: evita o "inconsistent_database" do Mnesia em
@@ -34,7 +35,7 @@ defmodule ChatyyRouter.Store do
   alias ChatyyRouter.{Config, Seglog}
 
   @mnesia [:rt_pend, :rt_dedupe, :rt_meta, :rt_home, :rt_home_acc, :rt_body_ack]
-  @logs [:rt_msg, :rt_replica, :rt_inbox, :rt_body, :rt_inherit, :rt_body_cmi]
+  @logs [:rt_msg, :rt_replica, :rt_inbox, :rt_body, :rt_inherit, :rt_body_cmi, :rt_f4_log]
 
   def tables, do: @mnesia ++ @logs
   def log_tables, do: @logs
@@ -90,6 +91,8 @@ defmodule ChatyyRouter.Store do
   defp exp_aux(:rt_body, _k, m), do: {m.ts + Config.retention_ms(), {m.ts, m.sha, m.devices, m.kind}}
   defp exp_aux(:rt_inherit, _k, m), do: {m.ts + Config.retention_ms(), nil}
   defp exp_aux(:rt_body_cmi, _k, m), do: {m.ts + Config.retention_ms(), m.mid}
+  defp exp_aux(:rt_f4_log, {_, :hw}, m), do: {m.ts + 10 * Config.retention_ms(), m}
+  defp exp_aux(:rt_f4_log, _k, m), do: {m.ts + Config.retention_ms(), m}
 
   @doc "Grava. Tabelas de log devolvem :ok | {:error, motivo} (disco cheio/E/S)."
   def put(t, k, v) when t in @logs do
