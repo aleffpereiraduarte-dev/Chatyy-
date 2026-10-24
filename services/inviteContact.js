@@ -11,7 +11,7 @@
 import { Platform, Share, Linking } from 'react-native';
 import { getCachedSync, setCache } from './cache';
 
-export const INVITE_BASE_URL = 'https://chatyy.com.br/baixar';
+export const INVITE_BASE_URL = 'https://chatyy.app/baixar';
 const REF_CACHE_KEY = 'invite_ref_code_v1';
 const REF_TTL_MS = 30 * 24 * 3600 * 1000;
 let _refInflight = null;

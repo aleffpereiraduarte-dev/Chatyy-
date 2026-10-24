@@ -6274,7 +6274,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, newStat
                         <TextInput
                           value={linkPromptUrl}
                           onChangeText={setLinkPromptUrl}
-                          placeholder={t?.('statusTab.linkUrlPlaceholder') || 'chatyy.com.br ou https://...'}
+                          placeholder={t?.('statusTab.linkUrlPlaceholder') || 'chatyy.app ou https://...'}
                           placeholderTextColor="rgba(255,255,255,0.35)"
                           autoCapitalize="none"
                           autoCorrect={false}

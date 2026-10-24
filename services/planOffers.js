@@ -146,10 +146,10 @@ export function purchaseHistoryUrl() {
 }
 
 export function termsUrl() {
-  return Platform.OS === 'ios' ? 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/' : 'https://chatyy.com.br/terms.html';
+  return Platform.OS === 'ios' ? 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/' : 'https://chatyy.app/terms.html';
 }
-export const PRIVACY_URL = 'https://chatyy.com.br/privacy.html';
-export const SUPPORT_URL = 'https://chatyy.com.br/suporte/';
+export const PRIVACY_URL = 'https://chatyy.app/privacy.html';
+export const SUPPORT_URL = 'https://chatyy.app/suporte/';
 
 /** "DD/MM/AAAA" (ou null). Aceita ISO, "YYYY-MM-DD HH:MM:SS" e epoch (s/ms). */
 export function fmtDMY(v) {

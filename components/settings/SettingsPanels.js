@@ -14,6 +14,7 @@
 //   - bloqueados → chat_blocked_list / chat_unblock_user.
 //   - exportação → account_data_export. Plano → plan_info + chat_storage_usage.
 import React, { useCallback, useEffect, useState } from 'react';
+import { displayEmail as toDisplayEmail } from '../../utils/displayEmail';
 import { View, Text, ActivityIndicator, Alert, Linking, Platform, Pressable, StyleSheet } from 'react-native';
 import * as api from '../../services/api';
 import * as settingsCache from '../../services/settingsCache'; // [2026-10-13 settings-instant]
@@ -384,7 +385,7 @@ export function ProfileHeaderCard({ user, profile, onPress, onPressQr, avatarKey
     || (user?.email ? user.email.split('@')[0] : '');
   const about = (profile?.about || profile?.recado || '').trim();
   const handle = (profile?.username || '').trim();
-  const sub = about || (handle ? '@' + handle : (user?.email || ''));
+  const sub = about || (handle ? '@' + handle : (toDisplayEmail(user?.email) || ''));
   return (
     <SettingsGroup>
       <PressableRow

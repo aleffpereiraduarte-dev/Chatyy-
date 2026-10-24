@@ -65,6 +65,7 @@ import { hasNativeCircleCrop } from './flag';
 import { fitPhoneFontSize, textEm } from './phoneFit';
 import OpeningScreen from './OpeningScreen';
 import WelcomeIntro from './WelcomeIntro'; // [2026-10-18 onb-telegram]
+import { signupDomainLabel } from '../../utils/displayEmail';
 
 const FORM_STEPS = ['phone', 'otp', 'profile', 'username'];
 // Nomes do rascunho compartilhado com o fluxo legado (signupSmarts).
@@ -501,7 +502,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
   const latestUserRef = useRef('');
   const runUsernameCheck = useDebouncedCallback(async (uname) => {
     try {
-      const r = await api.checkUsername(uname, 'chatyy.com.br');
+      const r = await api.checkUsername(uname, signupDomainLabel());
       if (!mountedRef.current || latestUserRef.current !== uname) return;
       const status = Number(r?.__httpStatus || 0);
       if (r?.success) {
@@ -544,7 +545,7 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
     setError(''); setBusy(true);
     try {
       let _ref = ''; try { _ref = await require('../../services/pendingReferral').getPendingRef(); } catch {} // [bia-convite 2026-10-19]
-      const r = await api.phoneSignup({ verify_token: verifyToken, username, name, domain: 'chatyy.com.br', password: '', ref: _ref });
+      const r = await api.phoneSignup({ verify_token: verifyToken, username, name, domain: signupDomainLabel(), password: '', ref: _ref });
       if (r?.success && r.data?.email) { try { await markFreshSignup(r.data.email, { skip: ['profile'] }); } catch {} }
       if (!mountedRef.current) return;
       if (r?.success && r.data?.token) {
@@ -1134,8 +1135,8 @@ export default function NativeOnboardingFlow({ entry = 'phone', params = {}, onE
         </View>
         <Text style={[st.hint, { color: usernameAvailable === false ? (colors.error || fg) : sub }]} accessibilityLiveRegion="polite" testID="nob-username-status">
           {usernameChecking ? T('signupPhone.checking', 'Verificando…')
-            : ok ? `${T('onb.available', 'Disponível')} · ${username}@chatyy.com.br`
-              : reasonText || (username ? `${username}@chatyy.com.br` : ' ')}
+            : ok ? `${T('onb.available', 'Disponível')} · ${username}@${signupDomainLabel()}`
+              : reasonText || (username ? `${username}@${signupDomainLabel()}` : ' ')}
         </Text>
         {usernameSuggestions.length > 0 && (
           <View style={st.chips}>

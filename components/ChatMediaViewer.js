@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
+import { displayEmail as toDisplayEmail } from '../utils/displayEmail';
 import { KEYBOARD_CONTROLLER_ACTIVE as _KC_ACTIVE } from '../utils/threadKeyboard'; // [2026-10-08 photo-editor] gate do zoom UI-thread
 import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback, StyleSheet, Modal, Image, Platform,
@@ -3113,7 +3114,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               transform: [{ rotate: '-22deg' }], textAlign: 'center',
               textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 4,
             }}>
-              {(_currentUserEmail || 'chatyy.com.br') + '\n' + new Date().toLocaleString()}
+              {(toDisplayEmail(_currentUserEmail) || 'chatyy.app') + '\n' + new Date().toLocaleString()}
             </Text>
           </View>
         )}

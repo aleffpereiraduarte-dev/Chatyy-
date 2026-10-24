@@ -17,7 +17,7 @@
 //    off (the native header owns the top inset).
 import { Platform, Linking, Appearance } from 'react-native';
 
-const OWN_HOSTS = ['chatyy.com.br', 'onemundo.com.br'];
+const OWN_HOSTS = ['chatyy.com.br', 'chatyy.app', 'onemundo.com.br'];
 
 export function isOwnHost(url) {
   try {

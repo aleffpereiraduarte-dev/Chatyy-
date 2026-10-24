@@ -104,8 +104,8 @@ export default function HelpCategory() {
       <SettingsGroup header={t('settings.rd2.help') || 'Ajuda'}>
         <SettingsRow
           title={t('settings.help.contactSupport') || 'Falar com o suporte'}
-          subtitle="support@chatyy.com.br"
-          onPress={() => { Linking.openURL('mailto:support@chatyy.com.br').catch(() => {}); }}
+          subtitle="support@chatyy.app"
+          onPress={() => { Linking.openURL('mailto:support@chatyy.app').catch(() => {}); }}
         />
       </SettingsGroup>
       <SettingsGroup header={t('settings.about.title') || 'Sobre'}>

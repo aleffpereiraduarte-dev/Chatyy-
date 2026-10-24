@@ -161,7 +161,7 @@ export function HelpModal({ visible, onClose }) {
       {/* Contact info */}
       <View style={[ms.contactBox, { backgroundColor: itemBg, borderColor: itemBorder }]}>
         <IconMail size={15} color={colors.textTertiary} />
-        <Text style={[ms.contactText, { color: colors.textSecondary }]}>support@chatyy.com.br</Text>
+        <Text style={[ms.contactText, { color: colors.textSecondary }]}>support@chatyy.app</Text>
       </View>
     </>
   );

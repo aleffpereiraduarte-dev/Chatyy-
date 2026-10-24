@@ -5,7 +5,7 @@
 import { useCallback } from 'react';
 import { useLanguage } from '../../context/LanguageContext';
 
-export const INVITE_URL = 'https://chatyy.com.br/baixar';
+export const INVITE_URL = 'https://chatyy.app/baixar';
 
 const PT = {
   'welcome.value': 'Conversas, chamadas e e-mail.\nTudo num app só.',
@@ -18,7 +18,7 @@ const PT = {
   'welcome.s2.title': 'Voz e vídeo',
   'welcome.s2.sub': 'Ligue para quem você quiser, no celular ou no computador.',
   'welcome.s3.title': 'E-mail e Drive',
-  'welcome.s3.sub': 'Seu endereço @chatyy.com.br e seus arquivos, no mesmo lugar.',
+  'welcome.s3.sub': 'Seu endereço @chatyy.app e seus arquivos, no mesmo lugar.',
   'welcome.swipeHint': 'Deslize para conhecer',
 
   'fr.skip': 'Pular',
@@ -83,7 +83,7 @@ const EN = {
   'welcome.s2.title': 'Voice and video',
   'welcome.s2.sub': 'Call anyone, from your phone or your computer.',
   'welcome.s3.title': 'Email and Drive',
-  'welcome.s3.sub': 'Your @chatyy.com.br address and your files, in one place.',
+  'welcome.s3.sub': 'Your @chatyy.app address and your files, in one place.',
   'welcome.swipeHint': 'Swipe to explore',
   'fr.skip': 'Skip',
   'fr.continue': 'Continue',
@@ -146,7 +146,7 @@ const ES = {
   'welcome.s2.title': 'Voz y video',
   'welcome.s2.sub': 'Llama a quien quieras, desde el celular o la computadora.',
   'welcome.s3.title': 'Correo y Drive',
-  'welcome.s3.sub': 'Tu dirección @chatyy.com.br y tus archivos, en un solo lugar.',
+  'welcome.s3.sub': 'Tu dirección @chatyy.app y tus archivos, en un solo lugar.',
   'welcome.swipeHint': 'Desliza para conocer',
   'fr.skip': 'Omitir',
   'fr.continue': 'Continuar',

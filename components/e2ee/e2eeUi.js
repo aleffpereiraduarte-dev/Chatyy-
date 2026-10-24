@@ -18,7 +18,7 @@ export function isE2eeUiEnabled() {
 }
 
 // Página pública (WP-15 também é dono dela).
-export const E2EE_LEARN_URL = 'https://chatyy.com.br/p/criptografia.html';
+export const E2EE_LEARN_URL = 'https://chatyy.app/p/criptografia.html';
 
 // Paleta do aviso "amarelo" (o mesmo tom do WhatsApp) — claro e escuro.
 export function noticePalette(isDark) {

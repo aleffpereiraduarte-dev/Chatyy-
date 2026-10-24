@@ -3057,7 +3057,7 @@ export default function PlansScreen() {
               </TouchableOpacity>
               <Text style={{ color: colors.textTertiary, fontSize: 12 }}>·</Text>
               <TouchableOpacity
-                onPress={() => openInApp('https://chatyy.com.br/privacy.html', { colors, isDark })}
+                onPress={() => openInApp('https://chatyy.app/privacy.html', { colors, isDark })}
                 activeOpacity={0.7}
                 accessibilityRole="link"
               >
@@ -3067,7 +3067,7 @@ export default function PlansScreen() {
               </TouchableOpacity>
               <Text style={{ color: colors.textTertiary, fontSize: 12 }}>·</Text>
               <TouchableOpacity
-                onPress={() => openInApp('https://chatyy.com.br/suporte/', { colors, isDark })}
+                onPress={() => openInApp('https://chatyy.app/suporte/', { colors, isDark })}
                 activeOpacity={0.7}
                 accessibilityRole="link"
               >

@@ -17,7 +17,7 @@ import { PinField, PrimaryButton, TextButton, twoStepErrorText, safeCall } from 
 import { twoStepError, loginPinResetRequest, loginPinResetConfirm } from './twoStepState';
 
 const CODE_LEN = 6;
-const SUPPORT_EMAIL = 'suporte@chatyy.com.br';
+const SUPPORT_EMAIL = 'suporte@chatyy.app';
 
 function openSupportMail() {
   try { Linking.openURL('mailto:' + SUPPORT_EMAIL).catch(() => {}); } catch {}

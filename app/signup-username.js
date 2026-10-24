@@ -36,6 +36,7 @@ import {
 import SignupPasswordMeter from '../components/signup/SignupPasswordMeter';
 import { SignupConsentBlock } from '../components/consent/ConsentOptions'; // [2026-10-13 consent-lgpd]
 import { usernameLocalError, sanitizeUsernameTyping, friendlyServerError } from '../components/signup/signupSmarts';
+import { signupDomainLabel } from '../utils/displayEmail';
 
 // [phone-obrigatorio 2026-10-15] Cadastro SEM telefone FECHADO (founder: 1 conta = 1 número, como WhatsApp).
 // O servidor recusa username_signup (403 phone_required); a rota (links antigos / URL no web) cai no
@@ -136,7 +137,7 @@ function SignupUsername() {
   const _usernameLatestRef = useRef('');
   const runUsernameCheck = useDebouncedCallback(async (uname) => {
     try {
-      const r = await api.checkUsername(uname, 'chatyy.com.br');
+      const r = await api.checkUsername(uname, signupDomainLabel());
       if (!mountedRef.current || _usernameLatestRef.current !== uname) return;
       const status = Number(r?.__httpStatus || 0);
       if (r?.success) {
@@ -202,7 +203,7 @@ function SignupUsername() {
     setError(''); setBusy(true);
     try {
       let _ref = ''; try { _ref = await require('../services/pendingReferral').getPendingRef(); } catch {} // [bia-convite 2026-10-19]
-      const r = await api.usernameSignup({ username, name: fn, password, domain: 'chatyy.com.br', ref: _ref });
+      const r = await api.usernameSignup({ username, name: fn, password, domain: signupDomainLabel(), ref: _ref });
       if (!mountedRef.current) return;
       if (r?.success && r.data?.token) {
         const lr = await loginWithToken(r.data.token, r.data.email);
@@ -356,7 +357,7 @@ function SignupUsername() {
                       onFocus={() => setFocused('handle')}
                       onBlur={() => setFocused('')}
                     />
-                    <Text style={{ fontSize: 13, color: colors.textSecondary, flexShrink: 0 }}>@chatyy.com.br</Text>
+                    <Text style={{ fontSize: 13, color: colors.textSecondary, flexShrink: 0 }}>@{signupDomainLabel()}</Text>
                     {usernameChecking ? (
                       <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 6 }} />
                     ) : usernameAvailable === true ? (
@@ -398,7 +399,7 @@ function SignupUsername() {
                         {t('onb.handlePreview')}
                       </Text>
                       <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginTop: 3 }} numberOfLines={1}>
-                        {username}@chatyy.com.br
+                        {username}@{signupDomainLabel()}
                       </Text>
                       {!usernameChecking && (usernameAvailable !== null || usernameReason === 'short') && (
                         <Text style={{ fontSize: 12, fontWeight: '600', marginTop: 3, color: usernameAvailable ? colors.success : (usernameReason === 'short' ? colors.textTertiary : colors.error) }} accessibilityLiveRegion="polite">

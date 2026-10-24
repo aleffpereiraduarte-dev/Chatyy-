@@ -158,7 +158,7 @@ export function ChatPreviewCard({ isDark, wallpaper, bubbleShape, fontPx, tx, ac
         <Text style={{ fontSize: 12, fontWeight: '600', color: isDark ? '#EBEBF5' : '#3C3C43' }}>{tx('settings.appear.previewToday', 'Hoje')}</Text>
       </View>
       <PreviewBubble own={false} tk={tk} fontPx={px} shape={bubbleShape} time="10:41" text={tx('settings.appear.previewMsg1', 'Bom dia! Viu como ficou o novo visual?')} />
-      <PreviewBubble own={false} last tk={tk} fontPx={px} shape={bubbleShape} time="10:41" text={tx('settings.appear.previewMsg2', 'Muda o tema e olha aqui.')} link="chatyy.com.br" />
+      <PreviewBubble own={false} last tk={tk} fontPx={px} shape={bubbleShape} time="10:41" text={tx('settings.appear.previewMsg2', 'Muda o tema e olha aqui.')} link="chatyy.app" />
       <PreviewBubble own last tk={tk} fontPx={px} shape={bubbleShape} time="10:42" text={tx('settings.appear.previewMsg3', 'Ficou elegante. Vou deixar assim.')} />
       {/* compositor de mentira: botão enviar na cor de destaque */}
       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }} pointerEvents="none">

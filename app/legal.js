@@ -98,7 +98,7 @@ export default function LegalScreen() {
         {doc === 'privacy' && (
           <TouchableOpacity
             style={[st.linkBtn, { borderColor: colors.border || '#e5e7eb' }]}
-            onPress={() => openInApp('https://chatyy.com.br/privacy.html', { colors, isDark })}
+            onPress={() => openInApp('https://chatyy.app/privacy.html', { colors, isDark })}
             accessibilityRole="link"
           >
             <Text style={[st.linkText, { color: colors.primary }]}>{t('legal.fullPolicy') !== 'legal.fullPolicy' ? t('legal.fullPolicy') : 'Ver política completa'}</Text>

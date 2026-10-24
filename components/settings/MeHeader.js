@@ -21,6 +21,7 @@
 // buscar · QR · Editar numa LINHA só (antes o voltar ocupava uma linha
 // própria acima). Desligar por OTA: globalThis.__chatyy_me_hero_immersive = false.
 import React, { useState, useCallback } from 'react';
+import { displayEmail as toDisplayEmail } from '../../utils/displayEmail';
 import { View, Text, StyleSheet, Platform, Pressable, Image as RNImage } from 'react-native';
 import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
@@ -250,7 +251,7 @@ export default function MeHeader({
   // Notes, 24 h) e o toque abre a folha da nota; sem onNote = recado de antes.
   const noteMode = typeof onNote === 'function';
   const about = noteMode ? String(note?.text || '').trim() : _about;
-  const idLine = [phone, handle ? '@' + handle : ''].filter(Boolean).join('  •  ') || (user?.email || '');
+  const idLine = [phone, handle ? '@' + handle : ''].filter(Boolean).join('  •  ') || (toDisplayEmail(user?.email) || '');
 
   // Capa que falhou (404/rede) some até a URL mudar → volta ao visual sem capa.
   const [failedCover, setFailedCover] = useState('');

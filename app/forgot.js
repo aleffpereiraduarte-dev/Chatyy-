@@ -33,7 +33,7 @@ import { saveLastIdentifier } from '../components/login/loginSmart';
 import { tap as hTap, success as hSuccess, error as hError, selection as hSelection } from '../services/haptics';
 import { PASSKEYS_ENABLED } from '../constants/featureFlags';
 
-const SUPPORT_EMAIL = 'suporte@chatyy.com.br';
+const SUPPORT_EMAIL = 'suporte@chatyy.app';
 
 function firstParam(v) {
   if (Array.isArray(v)) return v[0] || '';

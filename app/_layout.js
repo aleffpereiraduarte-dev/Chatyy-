@@ -762,7 +762,7 @@ function useDeepLinking() {
       // Patterns: chatyy.com.br/chat/123, chatyy.com.br/email/456
       let pathname = null;
       try {
-        if (url.includes('chatyy.com.br') || url.includes('mail.onemundo.com.br')) {
+        if (url.includes('chatyy.com.br') || url.includes('mail.onemundo.com.br') || /^https?:\/\/(www\.)?chatyy\.app(\/|$|\?)/i.test(url)) {
           const parsed = new URL(url);
           pathname = parsed.pathname;
         } else if (url.startsWith('onemundomail://')) {

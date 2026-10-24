@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { displayEmail as toDisplayEmail } from '../utils/displayEmail';
 import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-ui] native cell feedback
 import {
   View, Text, TouchableOpacity, StyleSheet, TextInput, Image,
@@ -1514,7 +1515,7 @@ export default function ChatNewScreen() {
   const handleInvitePhone = (item) => {
     const digits = String(item?.phone || '').replace(/\D/g, '');
     if (!digits) return;
-    const msg = t('chat.inviteShareMessage') || 'Baixe o Chatyy! Mensagens seguras e gratuitas. https://chatyy.com.br';
+    const msg = t('chat.inviteShareMessage') || 'Baixe o Chatyy! Mensagens seguras e gratuitas. https://chatyy.app';
     const wa = `https://wa.me/${digits}?text=${encodeURIComponent(msg)}`;
     if (Platform.OS === 'web') { Linking.openURL(wa).catch(() => {}); return; }
     const sms = Platform.OS === 'ios'
@@ -3088,7 +3089,7 @@ export default function ChatNewScreen() {
                     {user?.name || user?.email?.split('@')[0]}
                   </Text>
                   <Text style={{ fontSize: 13, color: '#666', marginTop: 4 }}>
-                    {user?.email}
+                    {toDisplayEmail(user?.email)}
                   </Text>
                   <View style={{ marginTop: 16, padding: 12, backgroundColor: '#fff', borderRadius: 12 }}>
                     {QRCodeSvg ? (

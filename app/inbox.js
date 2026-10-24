@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
+import { displayEmail as toDisplayEmail } from '../utils/displayEmail';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Modal, Pressable, TextInput,
   ActivityIndicator, useWindowDimensions, Platform, Animated, Easing, Alert, AppState, BackHandler, ScrollView,
@@ -1831,7 +1832,7 @@ function InboxScreenInner() {
             <View style={[s.dropHeader, { borderBottomColor: colors.borderLight }]}>
               <AvatarCircle name={user?.name || user?.email || '?'} email={user?.email} size={64} style={{ marginBottom: 12 }} />
               <Text style={[s.dropName, { color: colors.text }]}>{user?.name || user?.email?.split('@')[0] || t('menu.user')}</Text>
-              <Text style={[s.dropEmail, { color: colors.textSecondary }]}>{user?.email}</Text>
+              <Text style={[s.dropEmail, { color: colors.textSecondary }]}>{toDisplayEmail(user?.email)}</Text>
               <TouchableOpacity
                 style={{ marginTop: 10, paddingVertical: 6, paddingHorizontal: 18, borderRadius: 20, borderWidth: 1, borderColor: colors.border }}
                 onPress={() => { setShowMenu(false); if (user?.email) router.push(`/u/${encodeURIComponent(user.email)}`); }}
@@ -2600,7 +2601,7 @@ function InboxScreenInner() {
           <QRScannerView onScan={async (token) => {
             setShowQRScanner(false);
             try {
-              const cleanToken = token.replace('chatyy://qr/', '').replace('https://chatyy.com.br/qr/', '').trim();
+              const cleanToken = token.replace('chatyy://qr/', '').replace('https://chatyy.com.br/qr/', '').replace('https://chatyy.app/qr/', '').trim();
               const res = await api.qrConfirm(cleanToken);
               if (res?.success) Alert.alert(t('login.qrConnected') || 'Conectado!', t('login.qrConnectedMsg') || 'Dispositivo conectado com sucesso!');
               else Alert.alert(t('common.error') || 'Erro', res?.message || t('login.qrScanInvalid') || 'QR Code inválido');

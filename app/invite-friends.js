@@ -41,7 +41,7 @@ const HEAD_H = 36;
 const AV = 44;
 
 function inviteLink(code) {
-  return code ? `https://chatyy.com.br/signup?ref=${encodeURIComponent(code)}` : 'https://chatyy.com.br';
+  return code ? `https://chatyy.app/signup?ref=${encodeURIComponent(code)}` : 'https://chatyy.app';
 }
 
 function openSms(digits, msg) {

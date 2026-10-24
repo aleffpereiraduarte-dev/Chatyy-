@@ -75,7 +75,7 @@ function ThreadNativeBody({ m, colors, t }) {
         isDark={isDark}
         colors={colors}
         blockRemote={!show}
-        allowHosts={['chatyy.com.br', 'onemundo.com.br']}
+        allowHosts={['chatyy.com.br', 'chatyy.app', 'onemundo.com.br']}
         contentKey={`t:${m.uid}:${m.folder || ''}`}
         labels={{ open: t('common.open') || 'Abrir', copyLink: t('common.copyLink') || 'Copiar link', share: t('common.share') || 'Compartilhar', cancel: t('common.cancel') || 'Cancelar' }}
         onLinkPress={(url) => openEmailLink(url, { colors, isDark })}

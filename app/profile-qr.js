@@ -11,6 +11,7 @@
  * in-app scanner. Falls back gracefully if the lib isn't bundled.
  */
 import React, { useMemo, useState } from 'react';
+import { displayEmail as toDisplayEmail } from '../utils/displayEmail';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   Share, ScrollView, Alert,
@@ -186,7 +187,7 @@ export default function ProfileQRScreen() {
             <View style={{ alignItems: 'center', marginTop: 12 }}>
               <AvatarCircle email={user?.email} name={user?.name} size={72} />
               <Text style={[s.name, { color: colors.text }]}>{user?.name || user?.email?.split('@')[0]}</Text>
-              <Text style={[s.email, { color: colors.textSecondary }]}>{user?.email}</Text>
+              <Text style={[s.email, { color: colors.textSecondary }]}>{toDisplayEmail(user?.email)}</Text>
             </View>
 
             <View style={{ alignItems: 'center', marginTop: 24 }}>

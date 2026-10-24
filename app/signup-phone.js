@@ -38,6 +38,7 @@ import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, Ic
 import SignupIntro from '../components/SignupIntro';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
+import { signupDomainLabel } from '../utils/displayEmail';
 import { VOICE_OTP_ENABLED } from '../constants/featureFlags';
 import { markFreshSignup } from '../services/firstRun'; // [2026-10-11 funnel-qa]
 import NativeOnboardingGate from '../components/nativeOnboarding/NativeOnboardingGate'; // [2026-10-15 native-onboarding]
@@ -853,7 +854,7 @@ function SignupPhoneLegacy() {
   const _usernameLatestRef = useRef('');
   const runUsernameCheck = useDebouncedCallback(async (uname) => {
     try {
-      const r = await api.checkUsername(uname, 'chatyy.com.br');
+      const r = await api.checkUsername(uname, signupDomainLabel());
       if (!mountedRef.current || _usernameLatestRef.current !== uname) return;
       const status = Number(r?.__httpStatus || 0);
       if (r?.success) {
@@ -917,7 +918,7 @@ function SignupPhoneLegacy() {
     setError(''); setBusy(true);
     try {
       let _ref = ''; try { _ref = await require('../services/pendingReferral').getPendingRef(); } catch {} // [bia-convite 2026-10-19]
-      const r = await api.phoneSignup({ verify_token: verifyToken, username, name, domain: 'chatyy.com.br', password, ref: _ref });
+      const r = await api.phoneSignup({ verify_token: verifyToken, username, name, domain: signupDomainLabel(), password, ref: _ref });
       if (r?.success && r.data?.email) { try { await markFreshSignup(r.data.email, { skip: ['profile'] }); } catch {} } // name + photo were just asked here
       if (!mountedRef.current) return;
       if (r?.success && r.data?.token) {
@@ -1855,7 +1856,7 @@ function SignupPhoneLegacy() {
                       onFocus={() => setFocused('handle')}
                       onBlur={() => setFocused('')}
                     />
-                    {!isWide && <Text style={{ fontSize: 13, color: colors.textSecondary }}>@chatyy.com.br</Text>}
+                    {!isWide && <Text style={{ fontSize: 13, color: colors.textSecondary }}>@{signupDomainLabel()}</Text>}
                     {usernameChecking ? (
                       <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 6 }} />
                     ) : usernameAvailable === true ? (
@@ -1867,7 +1868,7 @@ function SignupPhoneLegacy() {
                     ) : null}
                   </View>
                   {isWide && (
-                    <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 4 }}>@chatyy.com.br</Text>
+                    <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 4 }}>@{signupDomainLabel()}</Text>
                   )}
                 </View>
               );
@@ -1929,11 +1930,11 @@ function SignupPhoneLegacy() {
               const _uStatus = (() => {
                 if (!username) return null;
                 if (usernameChecking) return { text: t('signupPhone.checking'), color: colors.textTertiary };
-                if (usernameAvailable === true) return { text: `${username}@chatyy.com.br · ${t('onb.available')}`, color: colors.success };
+                if (usernameAvailable === true) return { text: `${username}@${signupDomainLabel()} · ${t('onb.available')}`, color: colors.success };
                 if (usernameReason === 'taken') return { text: t('onb.taken'), color: colors.error };
                 if (usernameReason === 'short') return { text: t('signupPhone.err.usernameShort'), color: colors.textTertiary };
                 if (usernameReason) return { text: t('signupPhone.err.usernameInvalid'), color: colors.error };
-                return { text: `${username}@chatyy.com.br`, color: colors.textTertiary };
+                return { text: `${username}@${signupDomainLabel()}`, color: colors.textTertiary };
               })();
               return (
                 <>

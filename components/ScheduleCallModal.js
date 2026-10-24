@@ -472,7 +472,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
                 value={participantInput}
                 onChangeText={setParticipantInput}
                 onSubmitEditing={handleParticipantSubmit}
-                placeholder={t('calls.addEmail') || 'email@chatyy.com.br'}
+                placeholder={t('calls.addEmail') || 'email@chatyy.app'}
                 placeholderTextColor={colors.textTertiary}
                 autoCapitalize="none"
                 keyboardType="email-address"

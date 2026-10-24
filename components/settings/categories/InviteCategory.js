@@ -27,7 +27,7 @@ const PAGE = 25;
 const MILESTONES = [1, 3, 5, 10, 25, 50, 100, 250, 500, 1000];
 
 function inviteLink(code) {
-  return code ? `https://chatyy.com.br/signup?ref=${encodeURIComponent(code)}` : 'https://chatyy.com.br';
+  return code ? `https://chatyy.app/signup?ref=${encodeURIComponent(code)}` : 'https://chatyy.app';
 }
 
 // Número da agenda → dígitos internacionais (wa.me / sms).

@@ -45,7 +45,7 @@ export function refFromUrl(url) {
   if (!url || typeof url !== 'string') return '';
   const s = url.trim();
   let path = '';
-  const https = s.match(/^https?:\/\/(?:www\.)?chatyy\.com\.br(\/[^?#]*)?/i);
+  const https = s.match(/^https?:\/\/(?:www\.)?(?:chatyy\.com\.br|chatyy\.app)(\/[^?#]*)?/i);
   if (https) path = https[1] || '/';
   else if (/^onemundomail:\/\//i.test(s)) path = '/' + s.replace(/^onemundomail:\/\//i, '').replace(/^\/+/, '').split(/[?#]/)[0];
   else if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) path = '/' + s.replace(/^\/+/, '').split(/[?#]/)[0];

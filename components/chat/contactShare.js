@@ -263,7 +263,7 @@ export async function inviteContact(c, t) {
   // [2026-10-21 contato-msg] link pessoal (chatyy.com.br/baixar?ref=<código>) do inviteContact.
   let msg = '';
   try { const inv = require('../../services/inviteContact'); try { await inv.prefetchInviteRef(); } catch {} msg = inv.buildInviteMessage(t, c && c.name); } catch {}
-  if (!msg) msg = `${c && c.name ? c.name + ', ' : ''}${_tr(t, 'chat.inviteShareMessage', 'instala o Chatyy: https://chatyy.com.br')}`;
+  if (!msg) msg = `${c && c.name ? c.name + ', ' : ''}${_tr(t, 'chat.inviteShareMessage', 'instala o Chatyy: https://chatyy.app')}`;
   if (c && c.phone && Platform.OS !== 'web') {
     const clean = c.phone.replace(/[^+\d]/g, '');
     const sep = Platform.OS === 'ios' ? '&' : '?';

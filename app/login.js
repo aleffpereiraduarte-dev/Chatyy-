@@ -1,5 +1,6 @@
 import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { displayEmail as toDisplayEmail } from '../utils/displayEmail';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
@@ -1951,7 +1952,7 @@ export default function LoginScreen() {
   const currentLang = LANGUAGES.find(l => l.code === language);
   const langShort = language.split('-')[0].toUpperCase();
 
-  const displayEmail = email.includes('@') ? email : (email ? `${email}@chatyy.com.br` : '');
+  const displayEmail = toDisplayEmail(email.includes('@') ? email : (email ? `${email}@chatyy.com.br` : ''));
 
   // --- Device Verification Screen ---
   if (verificationStep) {
@@ -3298,7 +3299,7 @@ export default function LoginScreen() {
               if (m1) token = m1[1];
               const m2 = token.match(/[?&]token=([a-f0-9]{64})/i);
               if (m2) token = m2[1];
-              token = token.replace('https://chatyy.com.br/qr/', '').trim();
+              token = token.replace('https://chatyy.com.br/qr/', '').replace('https://chatyy.app/qr/', '').trim();
               if (!token || token.length !== 64 || !/^[a-f0-9]+$/i.test(token)) {
                 Alert.alert(t('common.error'), t('login.qrScanInvalid'));
                 return;
