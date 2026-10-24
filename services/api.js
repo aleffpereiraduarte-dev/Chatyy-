@@ -1,5 +1,8 @@
 import { Platform } from 'react-native';
 import { DEFAULT_E2EE } from '../constants/featureFlags';
+// [migracao .app 2026-10-24] chatyy.app como domínio primário de API/WS, com volta automática a .com.br (services/domainApp.js)
+import { installDomainApp } from './domainApp';
+try { installDomainApp(); } catch {}
 
 // ─── Edge Network — auto-detect fastest server ───
 // Tests all edge servers in parallel, picks the one with lowest latency.
