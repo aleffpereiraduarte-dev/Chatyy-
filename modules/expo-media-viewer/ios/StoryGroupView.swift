@@ -516,7 +516,9 @@ final class SVGroupView: UIView {
     let safe = chromeInsets
     let w = b.width
     let h = b.height
-    mediaHost.frame = b
+    // [status-zoom 2026-10-23] bounds+center (o zoom mexe no transform)
+    mediaHost.bounds = CGRect(origin: .zero, size: b.size)
+    mediaHost.center = CGPoint(x: b.midX, y: b.midY)
     textBg.frame = mediaHost.bounds
     playerView.frame = mediaHost.bounds
     imageView.frame = mediaHost.bounds
@@ -524,7 +526,8 @@ final class SVGroupView: UIView {
     spinner.center = CGPoint(x: w / 2, y: h / 2)
     errorLabel.frame = CGRect(x: 32, y: h / 2 - 60, width: w - 64, height: 120)
     voiceView.frame = mediaHost.bounds
-    overlayLayer.frame = b
+    overlayLayer.bounds = CGRect(origin: .zero, size: b.size)
+    overlayLayer.center = CGPoint(x: b.midX, y: b.midY)
     shade.frame = b
     chrome.frame = b
 
@@ -657,6 +660,7 @@ final class SVGroupView: UIView {
     videoEnded = false
     bars.setCount(group.items.count)
     bars.set(index: idx, fraction: 0)
+    setZoom(.identity) // [status-zoom 2026-10-23]
     let item = group.items[idx]
     typeRevealed = item.textAnim == "typewriter" ? 0 : -1
     timeLabel.text = item.timeLabel
@@ -786,6 +790,39 @@ final class SVGroupView: UIView {
       }
     }
     setNeedsLayout()
+  }
+
+  // MARK: - Zoom [status-zoom 2026-10-23]
+  // O controller calcula escala/deslocamento; aqui só aplica na mídia + blocos
+  // (figurinhas acompanham a foto) e troca a foto pelo original acima de 1.5x.
+
+  private(set) var zoomTransform: CGAffineTransform = .identity
+  private var hiresToken = -1
+
+  /// Foto/vídeo com mídia (não texto/voz, não erro).
+  var isZoomable: Bool {
+    guard let it = currentItem, !failed else { return false }
+    return it.type == .image || it.type == .video
+  }
+
+  func setZoom(_ t: CGAffineTransform) {
+    zoomTransform = t
+    mediaHost.transform = t
+    overlayLayer.transform = t
+  }
+
+  /// Foto já pintada (variante) → baixa o original em alta e troca com fade.
+  func loadHiresIfNeeded() {
+    guard let item = currentItem, item.type == .image, ready, !failed,
+          !item.hires.isEmpty, item.hires != item.uri, hiresToken != token else { return }
+    hiresToken = token
+    let t = token
+    MVImageLoader.shared.load(item.hires, maxPixel: MVImageLoader.fullMaxPixel) { [weak self] img in
+      guard let self = self, self.token == t, let img = img else { return }
+      UIView.transition(with: self.imageView, duration: 0.18, options: [.transitionCrossDissolve, .allowUserInteraction], animations: {
+        self.imageView.image = img
+      })
+    }
   }
 
   private func imageSources(_ item: SVItem) -> [String] {

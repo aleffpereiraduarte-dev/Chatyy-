@@ -94,6 +94,7 @@ class SVItem(
   var translated: Boolean = false,
   val overlays: List<SVOverlay> = emptyList(),
   val paths: List<SVPath> = emptyList(),
+  val hires: String = "", // [status-zoom 2026-10-23] apiVersion 5: original em alta (zoom > 1.5x)
 ) {
   fun hasFlag(f: String): Boolean = when (f) {
     "translatable" -> translatable
@@ -184,6 +185,7 @@ class SVItem(
           val n = nums.size - (nums.size % 2)
           SVPath(color(pm["color"] as? String) ?: Color.WHITE, (num(pm["width"]) ?: 3.0).toFloat().let { if (it > 0f) it else 3f }, nums.subList(0, n).toFloatArray())
         } ?: emptyList(),
+        hires = str(m, "hires"),
       )
     }
   }

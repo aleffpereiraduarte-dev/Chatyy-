@@ -138,6 +138,19 @@ class StoryViewerDialog(
   // [2026-10-17 status-reacoes] apiVersion 4 — bolha ao segurar o coração +
   // "+" com a grade completa (SVEmojiStore). O módulo liga antes do show().
   var reactionHold = false
+
+  // [status-zoom 2026-10-23] Pinça até 4x / duplo toque (apiVersion 5). JS liga
+  // por `zoom` no open() (kill switch globalThis.__chatyy_status_zoom=false).
+  var zoomEnabled = false
+  private val zoomMax = 4f
+  private var zoomS = 1f
+  private var zoomTx = 0f
+  private var zoomTy = 0f
+  private var zoomSticky = false   // duplo toque: fica ampliado até novo duplo toque
+  private var zoomActive = false   // dedos no gesto de zoom
+  private var zoomAnim: ValueAnimator? = null
+  private var lastZoomTapAt = 0L
+  private val isZoomed: Boolean get() = zoomActive || zoomSticky || zoomS > 1.01f
   private var reactBubble: SVReactBubble? = null
   private var bubbleCatcher: View? = null
   private var bubbleStartedOnHeart = true
@@ -527,6 +540,7 @@ class StoryViewerDialog(
     pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
       override fun onPageSelected(position: Int) {
         if (closed || position == currentGroup || position < 0 || position >= groups.size) return
+        if (isZoomed) resetZoom(false) // [status-zoom]
         val old = currentPage()
         old?.deactivate()
         currentGroup = position
@@ -635,7 +649,95 @@ class StoryViewerDialog(
     private var vDrag = false
     private var tracker: VelocityTracker? = null
 
-    private fun canVertical(): Boolean = !composerOpen && !sheetOpen && !closed && pendingMore == null && emojiSheet == null && reactBubble == null
+    private fun canVertical(): Boolean = !composerOpen && !sheetOpen && !closed && pendingMore == null && emojiSheet == null && reactBubble == null && !isZoomed
+
+    // [status-zoom 2026-10-23] gesto de zoom (2 dedos, ou 1 dedo com a foto ampliada pelo duplo toque)
+    private var zDrag = false
+    private var zN = 0
+    private var zF0x = 0f
+    private var zF0y = 0f
+    private var zD0 = 0f
+    private var zS0 = 1f
+    private var zTx0 = 0f
+    private var zTy0 = 0f
+    private var zCx = 0f
+    private var zCy = 0f
+
+    private fun canZoom(): Boolean {
+      if (!zoomEnabled || closed || composerOpen || sheetOpen || pendingMore != null || emojiSheet != null || reactBubble != null || originClosing) return false
+      val pg = currentPage() ?: return false
+      return pg.isZoomable && pager.scrollState == ViewPager2.SCROLL_STATE_IDLE
+    }
+
+    /** Foco/abertura dos dedos (até 2), ignorando o ponteiro `skip` (que está saindo). */
+    private fun zoomBase(ev: MotionEvent, skip: Int) {
+      var n = 0; var x0 = 0f; var y0 = 0f; var x1 = 0f; var y1 = 0f
+      for (i in 0 until ev.pointerCount) {
+        if (i == skip) continue
+        if (n == 0) { x0 = ev.getX(i); y0 = ev.getY(i) } else if (n == 1) { x1 = ev.getX(i); y1 = ev.getY(i) }
+        n++
+        if (n >= 2) break
+      }
+      zN = min(n, 2)
+      if (zN == 0) return
+      if (zN == 1) { x1 = x0; y1 = y0 }
+      zF0x = (x0 + x1) / 2f
+      zF0y = (y0 + y1) / 2f
+      zD0 = if (zN >= 2) Math.hypot((x0 - x1).toDouble(), (y0 - y1).toDouble()).toFloat() else 0f
+      zS0 = zoomS; zTx0 = zoomTx; zTy0 = zoomTy
+    }
+
+    private fun zoomStart(ev: MotionEvent) {
+      zDrag = true
+      val pg = currentPage()
+      if (pg != null) {
+        val a = IntArray(2); val b = IntArray(2)
+        pg.getLocationInWindow(a); getLocationInWindow(b)
+        zCx = (a[0] - b[0]) + pg.width / 2f
+        zCy = (a[1] - b[1]) + pg.height / 2f
+      } else { zCx = width / 2f; zCy = height / 2f }
+      beginZoomSession()
+      zoomActive = true
+      zoomBase(ev, -1)
+    }
+
+    private fun zoomMove(ev: MotionEvent) {
+      val n = min(ev.pointerCount, 2)
+      if (n != zN) { zoomBase(ev, -1); return }
+      val x0 = ev.getX(0); val y0 = ev.getY(0)
+      val x1 = if (n >= 2) ev.getX(1) else x0
+      val y1 = if (n >= 2) ev.getY(1) else y0
+      val fx = (x0 + x1) / 2f
+      val fy = (y0 + y1) / 2f
+      var s = zS0
+      if (n >= 2 && zD0 > 8f) s = zS0 * (Math.hypot((x0 - x1).toDouble(), (y0 - y1).toDouble()).toFloat() / zD0)
+      if (s < 1f) s = max(0.7f, 1f - (1f - s) * 0.4f)
+      if (s > zoomMax) s = min(zoomMax * 1.15f, zoomMax + (s - zoomMax) * 0.25f)
+      if (zoomSticky && n == 1) {
+        // ampliado pelo duplo toque: 1 dedo só arrasta, dentro dos limites
+        val c = clampZoom(s, zTx0 + (fx - zF0x), zTy0 + (fy - zF0y))
+        applyZoom(s, c[0], c[1])
+        return
+      }
+      // ponto do conteúdo sob o foco inicial continua sob os dedos
+      val qx = (zF0x - zCx - zTx0) / max(0.01f, zS0)
+      val qy = (zF0y - zCy - zTy0) / max(0.01f, zS0)
+      applyZoom(s, fx - zCx - s * qx, fy - zCy - s * qy)
+    }
+
+    private fun zoomTouch(ev: MotionEvent): Boolean {
+      when (ev.actionMasked) {
+        MotionEvent.ACTION_POINTER_DOWN -> zoomBase(ev, -1)
+        MotionEvent.ACTION_POINTER_UP -> zoomBase(ev, ev.actionIndex)
+        MotionEvent.ACTION_MOVE -> zoomMove(ev)
+        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+          zDrag = false
+          zoomActive = false
+          endZoomGesture()
+        }
+      }
+      return true
+    }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
       when (ev.actionMasked) {
@@ -648,7 +750,7 @@ class StoryViewerDialog(
           // Bordas: arrastar além da última/primeira pessoa pede mais ao JS.
           val dx = ev.rawX - downX
           val dy = ev.rawY - downY
-          if (!vDrag && canVertical() && abs(dx) > width * 0.18f && abs(dx) > abs(dy) && currentGroup == startGroup) {
+          if (!vDrag && !zDrag && canVertical() && abs(dx) > width * 0.18f && abs(dx) > abs(dy) && currentGroup == startGroup) {
             if (dx < 0 && currentGroup == groups.size - 1 && hasMoreNext) requestMore("next", false)
             else if (dx > 0 && currentGroup == 0 && hasMorePrev) requestMore("prev", false)
           }
@@ -659,14 +761,27 @@ class StoryViewerDialog(
 
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
       when (ev.actionMasked) {
+        MotionEvent.ACTION_POINTER_DOWN -> {
+          // [status-zoom] 2º dedo → pinça (as zonas de toque recebem CANCEL: não navega)
+          if (!vDrag && !zDrag && ev.pointerCount >= 2 && canZoom()) {
+            zoomStart(ev)
+            return true
+          }
+        }
         MotionEvent.ACTION_DOWN -> {
           vDrag = false
+          zDrag = false
           tracker?.recycle()
           tracker = VelocityTracker.obtain()
           tracker?.addMovement(ev)
         }
         MotionEvent.ACTION_MOVE -> {
           tracker?.addMovement(ev)
+          // [status-zoom] ampliado pelo duplo toque: arrastar move a foto (nunca fecha)
+          if (!zDrag && zoomSticky && (abs(ev.rawX - downX) > slop || abs(ev.rawY - downY) > slop) && canZoom()) {
+            zoomStart(ev)
+            return true
+          }
           if (!vDrag && canVertical() && pager.scrollState == ViewPager2.SCROLL_STATE_IDLE) {
             val dx = ev.rawX - downX
             val dy = ev.rawY - downY
@@ -690,6 +805,17 @@ class StoryViewerDialog(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(ev: MotionEvent): Boolean {
+      if (zDrag) return zoomTouch(ev) // [status-zoom]
+      // [status-zoom] arrasto de fechar + 2º dedo → vira pinça; palco volta
+      if (vDrag && ev.actionMasked == MotionEvent.ACTION_POINTER_DOWN && ev.pointerCount >= 2 && zoomEnabled && (currentPage()?.isZoomable == true)) {
+        vDrag = false
+        tracker?.recycle(); tracker = null
+        stage.animate().translationX(0f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(180).start()
+        backdrop.animate().alpha(1f).setDuration(180).start()
+        removePause("dismiss")
+        zoomStart(ev)
+        return true
+      }
       if (!vDrag) return false
       tracker?.addMovement(ev)
       val dy = ev.rawY - downY
@@ -741,6 +867,98 @@ class StoryViewerDialog(
     }
   }
 
+  // ─── Zoom [status-zoom 2026-10-23] ───────────────────────────────────────
+
+  private fun beginZoomSession() {
+    pendingTap?.let { handler.removeCallbacks(it) }
+    pendingTap = null
+    zoomAnim?.cancel(); zoomAnim = null
+    addPause("zoom")
+    currentPage()?.setChromeHidden(true)
+    pager.isUserInputEnabled = false
+    if (holdF > 0f) { holdAnim?.cancel(); holdAnim = null; animateHold(0f) }
+  }
+
+  private fun clampZoom(s: Float, tx: Float, ty: Float): FloatArray {
+    val pg = currentPage()
+    val w = (pg?.width ?: root.width).toFloat()
+    val h = (pg?.height ?: root.height).toFloat()
+    val mx = max(0f, (s - 1f) * w / 2f)
+    val my = max(0f, (s - 1f) * h / 2f)
+    return floatArrayOf(tx.coerceIn(-mx, mx), ty.coerceIn(-my, my))
+  }
+
+  private fun applyZoom(s: Float, tx: Float, ty: Float) {
+    zoomS = s; zoomTx = tx; zoomTy = ty
+    val pg = currentPage() ?: return
+    pg.setZoom(s, tx, ty)
+    if (s > 1.5f) pg.loadHiresIfNeeded()
+  }
+
+  private fun animateZoomTo(s: Float, tx: Float, ty: Float, done: (() -> Unit)? = null) {
+    zoomAnim?.cancel()
+    val s0 = zoomS; val x0 = zoomTx; val y0 = zoomTy
+    val a = ValueAnimator.ofFloat(0f, 1f)
+    a.duration = 260
+    a.interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+    a.addUpdateListener { v ->
+      val f = v.animatedValue as Float
+      applyZoom(s0 + (s - s0) * f, x0 + (tx - x0) * f, y0 + (ty - y0) * f)
+    }
+    a.addListener(object : android.animation.AnimatorListenerAdapter() {
+      private var cancelled = false
+      override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
+      override fun onAnimationEnd(animation: android.animation.Animator) {
+        if (zoomAnim === a) zoomAnim = null
+        if (!cancelled) done?.invoke()
+      }
+    })
+    zoomAnim = a
+    a.start()
+  }
+
+  private fun resetZoom(animated: Boolean) {
+    zoomSticky = false
+    zoomActive = false
+    val done = {
+      if (!zoomActive && !zoomSticky) {
+        if (::pager.isInitialized) pager.isUserInputEnabled = true
+        if (pauseReasons.contains("zoom")) {
+          removePause("zoom")
+          if (!pauseReasons.contains("hold") && !closed) currentPage()?.setChromeHidden(false)
+        }
+      }
+      Unit
+    }
+    if (animated && (abs(zoomS - 1f) > 0.001f || abs(zoomTx) > 0.5f || abs(zoomTy) > 0.5f)) {
+      animateZoomTo(1f, 0f, 0f) { done() }
+    } else {
+      zoomAnim?.cancel(); zoomAnim = null
+      applyZoom(1f, 0f, 0f)
+      done()
+    }
+  }
+
+  private fun endZoomGesture() {
+    if (zoomSticky && zoomS >= 1.05f) {
+      val s = min(zoomMax, zoomS)
+      val c = clampZoom(s, zoomTx, zoomTy)
+      animateZoomTo(s, c[0], c[1])
+    } else {
+      // pinça (Instagram): soltar volta ao tamanho e retoma
+      resetZoom(true)
+    }
+  }
+
+  private fun zoomDoubleTap(page: SVGroupPage, x: Float, y: Float) {
+    page.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+    beginZoomSession()
+    zoomSticky = true
+    val s = 2.5f
+    val c = clampZoom(s, (1f - s) * (x - page.width / 2f), (1f - s) * (y - page.height / 2f))
+    animateZoomTo(s, c[0], c[1])
+  }
+
   private fun dismissBySwipe() {
     val h = root.height.toFloat()
     stage.animate().translationY(stage.translationY + h * 0.6f).alpha(0f).setInterpolator(AccelerateDecelerateInterpolator()).setDuration(200).start()
@@ -751,6 +969,7 @@ class StoryViewerDialog(
 
   private fun goNext() {
     if (closed) return
+    if (isZoomed) resetZoom(false) // [status-zoom]
     val pg = currentPage() ?: return
     val g = pg.group ?: return
     if (pg.index < g.items.size - 1) {
@@ -772,6 +991,7 @@ class StoryViewerDialog(
 
   private fun goPrev() {
     if (closed) return
+    if (isZoomed) resetZoom(false) // [status-zoom]
     val pg = currentPage() ?: return
     if (pg.index > 0) {
       pg.showItem(pg.index - 1, true)
@@ -853,14 +1073,23 @@ class StoryViewerDialog(
     if (closed || pendingMore != null || page !== currentPage()) return
     val w = page.width
     pendingTap?.let { handler.removeCallbacks(it) }
+    // [status-zoom 2026-10-23] ampliado: toque nunca troca de status; duplo toque volta a 1x.
+    if (isZoomed) {
+      pendingTap = null
+      val now = android.os.SystemClock.uptimeMillis()
+      if (now - lastZoomTapAt < 280) { lastZoomTapAt = 0L; resetZoom(true) } else lastZoomTapAt = now
+      return
+    }
+    val canZoom = zoomEnabled && page.isZoomable
     if (x < w * 0.3f) { pendingTap = null; goPrev(); return }
     val canLike = page.group?.isSelf == false
-    if (!canLike || x > w * 0.72f) { pendingTap = null; goNext(); return }
+    if ((!canLike && !canZoom) || x > w * 0.72f) { pendingTap = null; goNext(); return }
     val now = android.os.SystemClock.uptimeMillis()
     if (pendingTap != null && now - lastTapAt < 280) {
       pendingTap = null
       lastTapAt = 0L
-      doubleTapLike(page, x, y)
+      // [status-zoom] foto/vídeo: duplo toque amplia (curtir segue no coração)
+      if (canZoom) zoomDoubleTap(page, x, y) else doubleTapLike(page, x, y)
       return
     }
     lastTapAt = now
@@ -910,11 +1139,11 @@ class StoryViewerDialog(
       page.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
       addPause("hold")
       page.setChromeHidden(true)
-      if (MVMotion.holdScale && !MVMotion.reduceMotion && !originClosing && originAnim == null
+      if (MVMotion.holdScale && !MVMotion.reduceMotion && !isZoomed && !originClosing && originAnim == null
           && stage.translationX == 0f && stage.translationY == 0f && !pauseReasons.contains("dismiss")) animateHold(1f)
     } else if (pauseReasons.contains("hold")) {
       removePause("hold")
-      page.setChromeHidden(false)
+      if (!isZoomed) page.setChromeHidden(false) // [status-zoom]
       if (holdF > 0f && !pauseReasons.contains("dismiss") && !originClosing) animateHold(0f)
     }
   }
@@ -1828,6 +2057,7 @@ class StoryViewerDialog(
   }
 
   fun removeItem(id: String) {
+    if (isZoomed) resetZoom(false) // [status-zoom]
     val gi = groups.indexOfFirst { g -> g.items.any { it.id == id } }
     if (gi < 0) return
     val g = groups[gi]

@@ -88,6 +88,8 @@ final class SVItem {
   let uri: String
   let localUri: String
   let thumb: String
+  /// [status-zoom 2026-10-23] apiVersion 5: original em alta, trocado quando o zoom passa de 1.5x.
+  let hires: String
   let text: String
   var caption: String
   let bg: UIColor
@@ -130,6 +132,7 @@ final class SVItem {
     uri = (dict["uri"] as? String) ?? ""
     localUri = (dict["localUri"] as? String) ?? ""
     thumb = (dict["thumb"] as? String) ?? ""
+    hires = (dict["hires"] as? String) ?? ""
     text = (dict["text"] as? String) ?? ""
     caption = (dict["caption"] as? String) ?? ""
     bg = SVItem.color((dict["bg"] as? String) ?? "") ?? UIColor(white: 0.07, alpha: 1)
