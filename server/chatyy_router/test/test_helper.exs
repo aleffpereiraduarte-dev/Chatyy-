@@ -4,4 +4,4 @@ unless Node.alive?() do
   {:ok, _} = :net_kernel.start(:"rt_test_runner@127.0.0.1", %{name_domain: :longnames})
 end
 
-ExUnit.start(exclude: [:bench], timeout: 180_000)
+ExUnit.start(exclude: [:bench, :carga], timeout: 180_000)

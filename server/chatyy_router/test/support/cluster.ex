@@ -53,6 +53,8 @@ defmodule ChatyyRouter.TestCluster do
       rpc(p, :application, :ensure_all_started, [:elixir])
       rpc(p, :application, :load, [:chatyy_router])
       for {k, v} <- [{:region, r} | env], do: rpc(p, :application, :set_env, [:chatyy_router, k, v])
+      # [sgu TODOS carga] env por região (ex.: log_dir próprio com store "disc")
+      for {k, v} <- (opts[:env_by_region] || fn _ -> [] end).(r), do: rpc(p, :application, :set_env, [:chatyy_router, k, v])
       rpc(p, :logger, :set_primary_config, [:level, :warning])
       rpc(p, :application, :set_env, [:logger, :level, :warning])
       {:ok, _} = rpc(p, :application, :ensure_all_started, [:chatyy_router])
