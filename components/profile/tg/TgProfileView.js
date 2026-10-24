@@ -38,6 +38,7 @@ import { getDefaultAudience, loadDefaultAudience, setDefaultAudience, subscribeD
 import { useAnchoredMenu, AnchoredMenuButton, AnchoredMenuHost, sfSymbolFor } from '../../AnchoredMenu'; // [2026-10-21 menu-ancorado]
 import { useFollowRequestState } from '../../../services/followRequests'; // [privado 2026-10-22]
 import { FlyProfileBadge } from '../../flyGame/FlyHero'; // [voar 2026-10-22]
+import VerifiedBadge from '../../VerifiedBadge'; // [verificado 2026-10-24]
 
 export function isTgProfileEnabled() {
   try { if (globalThis.__chatyy_profile_tg === false) return false; } catch {}
@@ -560,7 +561,10 @@ export default function TgProfileView(props) {
     <View onLayout={(e) => { hdrH.current = e.nativeEvent.layout.height; }} style={{ backgroundColor: th.bg }}>
       <View style={s.hd}>
         <Avatar size={104} email={em} name={name} uri={avRef && avRef.uri} headers={avRef && avRef.headers} th={th} ring={ring} onPress={onAvatar} label={name} />
-        <Text style={[s.h1, { color: th.text }]} numberOfLines={2}>{name}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 12, maxWidth: '100%' }}>{/* [verificado 2026-10-24] */}
+          <Text style={[s.h1, { color: th.text, marginTop: 0, flexShrink: 1 }]} numberOfLines={2}>{name}</Text>
+          <VerifiedBadge email={em} size={20} />
+        </View>
         {handle ? <Text style={[s.un, { color: th.muted }]}>@{handle}</Text> : null}
         {presence ? <Text style={[s.seen, { color: th.muted }]} numberOfLines={1}>{presence}</Text> : null}
         {em ? <FlyProfileBadge email={em} th={th} /> : null}{/* [voar 2026-10-22] selo top da semana no Brisa */}
@@ -668,7 +672,7 @@ export default function TgProfileView(props) {
     );
   };
 
-  const meAuthor = useMemo(() => ({ name, username: handle, avatar: (sz) => <SmallAvatar size={sz} email={em} name={name} th={th} /> }), [name, handle, em, th]);
+  const meAuthor = useMemo(() => ({ name, username: handle, email: em, avatar: (sz) => <SmallAvatar size={sz} email={em} name={name} th={th} /> }), [name, handle, em, th]);
 
   const renderItem = ({ item }) => {
     switch (item.k) {
@@ -829,7 +833,10 @@ export default function TgProfileView(props) {
 
   const barTitle = (
     <Animated.View pointerEvents="none" style={[s.barTtl, { opacity: barOp, transform: [{ translateY: ttlY }] }]}>
-      <Text style={[s.barTtlB, { color: th.text }]} numberOfLines={1}>{name}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>{/* [verificado 2026-10-24] */}
+        <Text style={[s.barTtlB, { color: th.text, flexShrink: 1 }]} numberOfLines={1}>{name}</Text>
+        <VerifiedBadge email={em} size={14} />
+      </View>
       {presence ? <Text style={[s.barTtlS, { color: th.muted }]} numberOfLines={1}>{presence}</Text> : null}
     </Animated.View>
   );

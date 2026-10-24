@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
+import VerifiedBadge from './VerifiedBadge'; // [verificado 2026-10-24]
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Modal,
   TextInput, Platform, ActivityIndicator,
@@ -203,7 +204,7 @@ const CommentItem = memo(function CommentItem({
           <View style={styles.commentBubble}>
             {audioUrl ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={[styles.commentAuthor, { color: colors.text }]}>{authorName}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}><Text style={[styles.commentAuthor, { color: colors.text }]}>{authorName}</Text><VerifiedBadge email={authorEmail} size={13} /></View>
                 <Pressable
                   onPress={toggleVoice}
                   style={{
@@ -226,7 +227,7 @@ const CommentItem = memo(function CommentItem({
               </View>
             ) : isStickerComment ? (
               <View>
-                <Text style={[styles.commentAuthor, { color: colors.text, marginBottom: 4 }]}>{authorName}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}><Text style={[styles.commentAuthor, { color: colors.text }]}>{authorName}</Text><VerifiedBadge email={authorEmail} size={13} /></View>
                 {Platform.OS === 'web' ? (
                   // eslint-disable-next-line jsx-a11y/alt-text
                   <img src={mediaUrl} style={{ maxWidth: 160, maxHeight: 160, borderRadius: 10 }} />
@@ -237,7 +238,7 @@ const CommentItem = memo(function CommentItem({
               </View>
             ) : isVideoComment ? (
               <View>
-                <Text style={[styles.commentAuthor, { color: colors.text, marginBottom: 4 }]}>{authorName}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}><Text style={[styles.commentAuthor, { color: colors.text }]}>{authorName}</Text><VerifiedBadge email={authorEmail} size={13} /></View>
                 {Platform.OS === 'web' ? (
                   <video src={mediaUrl} controls playsInline style={{ maxWidth: 200, borderRadius: 10, backgroundColor: '#000' }} />
                 ) : (
@@ -261,6 +262,7 @@ const CommentItem = memo(function CommentItem({
             ) : (
               <Text style={[styles.commentText, { color: colors.text }]}>
                 <Text style={styles.commentAuthor}>{authorName}</Text>
+                {authorEmail ? <VerifiedBadge email={authorEmail} size={13} style={{ marginLeft: 3, transform: [{ translateY: 2 }] }} /> : null}{/* [verificado 2026-10-24] */}
                 {'  '}<MentionText text={item.content} mentions={item.mentions} mentionStyle={{ color: isDark ? '#e0f1ff' : '#00376b' }} />
               </Text>
             )}
@@ -1216,6 +1218,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                     <View style={styles.captionHeaderBody}>
                       <Text style={[styles.captionHeaderText, { color: colors.text }]}>
                         <Text style={styles.captionHeaderAuthor}>{captionAuthor}</Text>
+                        {post.author_email ? <VerifiedBadge email={post.author_email} size={13} style={{ marginLeft: 3, transform: [{ translateY: 2 }] }} /> : null}
                         {'  '}{post.caption}
                       </Text>
                       <Text style={[styles.captionHeaderTime, { color: colors.textTertiary }]}>

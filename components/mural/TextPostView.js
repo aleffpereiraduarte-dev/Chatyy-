@@ -3,6 +3,7 @@
 // de quem curtiu, contadores, Curtir | Comentar | Compartilhar e os comentários
 // na MESMA tela, com o campo de comentar fixo acima do teclado.
 import React, { useCallback, useRef, useState, useEffect } from 'react';
+import VerifiedBadge from '../VerifiedBadge'; // [verificado 2026-10-24]
 import { View, Text, Pressable, ScrollView, Platform, StatusBar, StyleSheet, Keyboard } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../../context/LanguageContext';
@@ -67,7 +68,7 @@ export default function TextPostView({ postId, onBack, onEdit, onReport, onDelet
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <Avatar email={post.author_email} name={name} uri={post.author_avatar} size={40} />
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ color: th.text, fontSize: 15, fontWeight: '700' }} numberOfLines={1}>{name}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}><Text style={{ color: th.text, fontSize: 15, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>{name}</Text><VerifiedBadge email={post.author_email} size={14} /></View>{/* [verificado 2026-10-24] */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                   <Text style={{ color: th.muted, fontSize: 13, flexShrink: 1 }} numberOfLines={1}>{`@${handle(post)} · ${fullWhen(post.created_at, t)} ·`}</Text>
                   <MIcon name={audienceIcon(post.audience)} size={14} color={th.muted} />

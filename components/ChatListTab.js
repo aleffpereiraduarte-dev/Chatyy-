@@ -1,5 +1,6 @@
 import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { giftPreviewText as _giftPreviewText } from './gifts/giftCatalog'; // [2026-10-13 diamantes]
+import VerifiedBadge from './VerifiedBadge'; // [verificado 2026-10-24]
 import RollingNumber from './RollingNumber'; // [2026-10-15 nav-motion]
 import { ChipRail, RailChip, chipRailEnabled } from './chatlist/ChipRail'; // [2026-10-16 motion-nav] pílula deslizante dos filtros
 import React, { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
@@ -2186,6 +2187,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 {/* [2026-10-16 polish3] nome sem flex:1 aqui: empurrava o "online" p/ a
                     direita, colado na hora ("online 18:17" lia como 1 coisa). */}
                 <Text style={[s.rowName, _rowNameHug, { color: P.text }, unread && s.rowNameUnread, unread && _vv && _NAME_UNREAD_VIVO]} numberOfLines={1} maxFontSizeMultiplier={1.35}>{displayName}</Text>
+                {!isGroup && !isChannel && !_isSavedRow && _peerEmail ? <VerifiedBadge email={_peerEmail} size={14} style={{ flexShrink: 0 }} /> : null}{/* [verificado 2026-10-24] */}
                 {!isGroup && !isChannel && (() => {
                   const activity = formatActivityStatus(isOnline, lastSeen, t);
                   if (!activity) return null;

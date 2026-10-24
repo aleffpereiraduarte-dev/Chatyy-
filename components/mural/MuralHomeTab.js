@@ -211,7 +211,7 @@ const FeedRow = memo(function FeedRow({ raw, th, lang, shadow, onMore, ctx }) {
   }, [raw, sp]);
   const au = raw.author || {};
   const author = useMemo(() => ({
-    name: au.name || '', username: au.username || '',
+    name: au.name || '', username: au.username || '', email: au.email || '', // [verificado 2026-10-24] selo
     avatar: (sz) => <Avatar email={au.email} name={au.name || au.email} size={sz} />,
   }), [au.email, au.name, au.username]); // eslint-disable-line react-hooks/exhaustive-deps
   const onOpen = useCallback(() => { signals.trackMural(raw.id, 'open', ctx); try { muralNav.openPost(raw); } catch {} }, [raw, ctx]);

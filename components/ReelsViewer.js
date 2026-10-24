@@ -12,6 +12,8 @@ import AvatarCircle from './AvatarCircle';
 import PressableScale from './PressableScale';
 import { haptic } from '../constants/theme';
 import FeedComments from './FeedComments';
+import VerifiedBadge from './VerifiedBadge'; // [verificado 2026-10-24]
+import { isVerifiedSync, useVerifiedRev } from '../services/verification'; // [verificado 2026-10-24]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // [#1231 2026-05-20] useIsFocused para pausar reel quando user troca de aba
 // (Conversas/Apps/etc.). Bug: vídeo continuava tocando áudio no background
@@ -2461,7 +2463,10 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
       {/* ── BOTTOM LEFT INFO ── */}
       <View style={[styles.bottomInfo, { paddingBottom: insets.bottom + 16 }, desktopFrame && { right: 56 }]}>
         {/* Username */}
-        <Text style={styles.username}>{reel.is_catalog ? authorDisplay : `@${authorDisplay}`}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>{/* [verificado 2026-10-24] */}
+          <Text style={[styles.username, { flexShrink: 1 }]} numberOfLines={1}>{reel.is_catalog ? authorDisplay : `@${authorDisplay}`}</Text>
+          {!reel.is_catalog ? <VerifiedBadge email={reel.author_email} verified={(reel.author_verified || reel.is_verified) ? true : undefined} size={15} /> : null}
+        </View>
         {/* [reels-v1 2026-10-13] Crédito obrigatório da fonte licenciada ("Vídeo: Nome · Pexels") → página do vídeo */}
         {reel.credit ? (
           <Text
@@ -3810,6 +3815,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     nQueueRef.current.set(key, q);
   }, []);
 
+  const _verifRev = useVerifiedRev(); // [verificado 2026-10-24] lista de selos mudou → recalcula verified
   const nativeItems = useMemo(() => {
     if (!nativeOn || !Array.isArray(activeReels)) return [];
     const me = String(user?.email || '').toLowerCase();
@@ -3856,14 +3862,14 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         // [2026-10-16 reels-rail-v2] contadores/selo/capa do áudio (binário v1 ignora)
         shares: Number(r.share_count ?? r.shares_count ?? r.shares) || 0,
         saves: Number(r.save_count ?? r.bookmark_count ?? r.saves_count) || 0,
-        verified: !!(r.author_verified || r.is_verified || r.verified),
+        verified: !!(r.author_verified || r.is_verified || r.verified || (!r.is_catalog && isVerifiedSync(r.author_email))), // [verificado 2026-10-24]
         musicCover: (r.sound_cover_url || r.audio_cover_url || r.sound_cover) ? resolveMediaUrl(r.sound_cover_url || r.audio_cover_url || r.sound_cover) : '',
         width: Number(r.video_width || r.width) || 0,
         height: Number(r.video_height || r.height) || 0,
         subtitles: Array.isArray(r.subtitles) ? r.subtitles : [],
       };
     });
-  }, [nativeOn, activeReels, user?.email, t, showLiveRing]);
+  }, [nativeOn, activeReels, user?.email, t, showLiveRing, _verifRev]);
 
   const nativeLabels = useMemo(() => ({
     like: t('reels.native.like'),

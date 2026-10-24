@@ -7,6 +7,7 @@ import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import FastImage from '../../FastImage';
 import Animated, { useSharedValue, useAnimatedStyle, withSequence, withTiming, withSpring } from 'react-native-reanimated';
 import TgIcon from './TgIcons';
+import VerifiedBadge from '../../VerifiedBadge'; // [verificado 2026-10-24]
 import { THEME_V2, Grafite } from '../../../constants/theme';
 import { tgT, relTime } from './tgStrings';
 
@@ -204,7 +205,10 @@ export const PostCard = memo(function PostCard({ post, th, lang, author, onOpen,
       <View style={st.ph}>
         {author && author.avatar ? author.avatar(40) : null}
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[st.who, { color: th.text }]} numberOfLines={1}>{name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>{/* [verificado 2026-10-24] */}
+            <Text style={[st.who, { color: th.text, flexShrink: 1 }]} numberOfLines={1}>{name}</Text>
+            <VerifiedBadge email={(author && author.email) || (p.author && p.author.email) || p.author_email || ''} size={14} />
+          </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text style={[st.whoSub, { color: th.muted }]} numberOfLines={1}>{sub}{sub ? ' · ' : ''}</Text>
             <TgIcon name={AUD_ICON[p.audience] || 'globe'} size={13} color={th.muted} />

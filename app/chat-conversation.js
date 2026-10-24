@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, useSyncExternalStore } from 'react';
 import { regionalLocale } from '../utils/dateFormat'; // [2026-10-09 geo-qa]
+import VerifiedBadge from '../components/VerifiedBadge'; // [verificado 2026-10-24]
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Image, InteractionManager,
   ActivityIndicator, TextInput, Platform, Keyboard, Dimensions,
@@ -10642,7 +10643,7 @@ function ConvTypingBubble({ store, colors, t, hideLabel = false }) {
 // Mesmo JSX e mesma regra de antes (presenceText), só que com estado próprio.
 const ConvHeaderTitleStack = React.memo(function ConvHeaderTitleStack({
   typingStore, conversationType, presenceStore, members, t, wsConnected, currentEmail, presenceUpdatedAtRef,
-  colors, conversationName, e2eEnabled, advPrivEnabled, netReachable, wsReconnecting,
+  colors, conversationName, e2eEnabled, advPrivEnabled, netReachable, wsReconnecting, peerEmail,
 }) {
   const presence = useSyncExternalStore(presenceStore.subscribe, presenceStore.get, presenceStore.get);
   const { typingUsers, typingUser, typingIsRecording } = useTypingInfo(typingStore, t);
@@ -10721,6 +10722,7 @@ const ConvHeaderTitleStack = React.memo(function ConvHeaderTitleStack({
               <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1} maxFontSizeMultiplier={1.3}>
                 {conversationName}
               </Text>
+              {conversationType === 'direct' && peerEmail ? <VerifiedBadge email={peerEmail} size={14} style={{ marginLeft: 0 }} /> : null}{/* [verificado 2026-10-24] */}
               {e2eEnabled && <IconLock size={12} color={colors.textSecondary} />}
               {advPrivEnabled && <IconShield size={12} color={colors.textSecondary} />}
             </View>
@@ -38531,6 +38533,7 @@ function ChatConversationInnerBody() {
             t={t} wsConnected={wsConnected} currentEmail={currentEmail} presenceUpdatedAtRef={presenceUpdatedAtRef}
             colors={colors} conversationName={conversationName} e2eEnabled={e2eShown} advPrivEnabled={!!_advPriv.enabled}
             netReachable={netReachable} wsReconnecting={!wsConnected && hasEverConnectedRef.current}
+            peerEmail={conversationType === 'direct' ? getContactPeerEmail() : ''}
           />
           </_HdrBox>
         </TouchableOpacity>
@@ -47756,7 +47759,7 @@ function ConvLightShell({ rec, params, acct, colors, isDark, t, insets, onBack }
           <ConvHeaderTitleStack
             typingStore={stores.typing} conversationType={type} presenceStore={stores.presence} members={Array.isArray(I.members) ? I.members : []}
             t={t} wsConnected={false} currentEmail={acct} presenceUpdatedAtRef={stores.at}
-            colors={colors} conversationName={name} e2eEnabled={false} advPrivEnabled={false}
+            colors={colors} conversationName={name} e2eEnabled={false} advPrivEnabled={false} peerEmail={type === 'direct' ? (peer || '') : ''}
           />
         </View>
         <View pointerEvents="none" style={{ flexDirection: 'row', alignItems: 'center' }}>

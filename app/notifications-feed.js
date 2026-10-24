@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { VerifiedGlyph } from '../components/VerifiedBadge'; // [verificado 2026-10-24]
 import {
   View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator,
   RefreshControl, Platform, Animated, Easing,
@@ -114,6 +115,7 @@ function NotificationIcon({ type, colors }) {
   if (type === 'follow' || type === 'follow_request' || type === 'follow_accept') return <IconUser size={22} color={colors.text} />; // [privado 2026-10-22]
   if (type === 'one_alert') return <BiaIcon size={20} color={colors.text} />;
   if (type === 'contact_joined') return <IconUser size={22} color={colors.text} />;
+  if (type === 'verification') return <VerifiedGlyph size={22} />; // [verificado 2026-10-24]
   return <IconMessageCircle size={22} color={colors.textSecondary} />;
 }
 
@@ -330,6 +332,8 @@ export default function NotificationsFeedScreen() {
     } else if (item.type === 'one_alert') {
       // One flagged an urgent email — open inbox
       router.push('/inbox');
+    } else if (item.type === 'verification') { // [verificado 2026-10-24] aprovado/recusado/removido
+      router.push('/verification');
     }
   };
 

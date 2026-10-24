@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import VerifiedBadge from '../components/VerifiedBadge'; // [verificado 2026-10-24]
 import FastImage from '../components/FastImage'; // [2026-10-09 expo-image]
 import {
   View, Text, TouchableOpacity, StyleSheet, TextInput,
@@ -330,9 +331,12 @@ export default function SearchScreen() {
         >
           <AvatarCircle name={u.name || u.email} email={u.email} size={46} />
           <View style={styles.rowText}>
-            <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>
-              {u.name || u.email?.split('@')[0]}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>{/* [verificado 2026-10-24] */}
+              <Text style={[styles.rowTitle, { color: colors.text, flexShrink: 1 }]} numberOfLines={1}>
+                {u.name || u.email?.split('@')[0]}
+              </Text>
+              <VerifiedBadge email={u.email} size={14} />
+            </View>
             <Text style={[styles.rowSub, { color: colors.textSecondary }]} numberOfLines={1}>
               {u.username ? `@${u.username}` : u.email /* [2026-10-21 tg4] */}
             </Text>

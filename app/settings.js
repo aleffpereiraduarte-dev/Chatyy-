@@ -87,6 +87,8 @@ import SettingsCategoryScreen from '../components/settings/SettingsCategoryScree
 import BiaIcon from '../components/bia/BiaIcon';
 import { nativeIconKey } from '../components/settings/nativeCollect';
 import { useAdvPrivacyDefault } from '../services/captureBlock'; // [2026-10-19 capmember]
+import { loadVerifEntry, peekVerifEntry } from '../services/verification'; // [verificado 2026-10-24]
+import { IconVerifiedOutline } from '../components/VerifiedBadge'; // [verificado 2026-10-24]
 import { pushOnce, useReleaseNavLockOnFocus } from '../services/navOnce';
 
 const CAT_ICONS = {
@@ -234,6 +236,14 @@ function SettingsScreenInner() {
     const u = v.avatar_url || '';
     if (u !== _avatarUrlRef.current) { _avatarUrlRef.current = u; setAvatarKey(Date.now()); }
   }), []);
+  // [verificado 2026-10-24] linha "Solicitar verificação" só quando o servidor liga a flag p/ esta conta.
+  const [verifEntry, setVerifEntry] = useState(() => peekVerifEntry());
+  useFocusEffect(useCallback(() => {
+    if (!user?.email) return undefined;
+    let alive = true;
+    loadVerifEntry().then((v) => { if (alive && v) setVerifEntry(v); }).catch(() => {});
+    return () => { alive = false; };
+  }, [user?.email]));
   const _profileFetchedAt = useRef(0);
   useFocusEffect(useCallback(() => {
     if (!user?.email) return undefined;
@@ -531,6 +541,8 @@ function SettingsScreenInner() {
       ProfilePhotos.isProfilePostsCiEnabled() ? { key: 'ppPublish', type: 'r', icon: 'image', Icon: IconImage, title: ProfilePhotos.ppT(t, 'publish'), sub: ProfilePhotos.ppT(t, 'publishHint'), go: () => { ProfilePhotos.startProfilePost(router, t); } } : null,
       // [2026-10-21 me-enxuto] "Listas" e "Mensagens de transmissão" saíram daqui (founder):
       // Listas = abas/pastas da lista de conversas (/chat-folders); transmissão = menu de nova conversa.
+      // [verificado 2026-10-24] Solicitar verificação (selo azul) — flag do servidor (allowlist)
+      verifEntry && verifEntry.enabled ? { key: 'verif', type: 'r', icon: 'shield', Icon: IconVerifiedOutline, title: verifEntry.verified ? tr('verif.rowVerified', 'Conta verificada') : tr('verif.rowRequest', 'Solicitar verificação'), sub: verifEntry.verified ? '' : ((verifEntry.status === 'new' || verifEntry.status === 'review') ? tr('verif.rowPending', 'Pedido em análise') : tr('verif.rowSub', 'Selo azul ao lado do seu nome')), route: '/verification' } : null,
       { key: 'starred', type: 'r', icon: 'star', Icon: IconStar, title: t('chat.starredMessages') || 'Mensagens favoritas', route: '/starred-messages' },
       { key: 'devices', type: 'r', icon: 'device', Icon: IconMonitor, title: t('settings.linkedDevices') || 'Aparelhos conectados', route: '/linked-devices' },
       // [2026-10-19 capmember] atalho p/ "Privacidade avançada em todas as conversas" (topo de Privacidade).

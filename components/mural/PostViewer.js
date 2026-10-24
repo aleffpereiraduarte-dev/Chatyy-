@@ -6,6 +6,7 @@
 // comentários"; 1 comentário em destaque; visualizações e tempo; campo
 // "Adicione um comentário". Dono: "…" → Editar / Apagar.
 import React, { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
+import VerifiedBadge from '../VerifiedBadge'; // [verificado 2026-10-24]
 import { View, Text, Pressable, ScrollView, FlatList, Platform, StatusBar, useWindowDimensions, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image as ExpoImage } from 'expo-image';
@@ -222,7 +223,7 @@ export default function PostViewer({ postId, onBack, onOpenComments, onOpenLiker
         </Pressable>
         <Avatar email={post.author_email} name={name} uri={post.author_avatar} size={34} />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ color: fg, fontSize: 15, fontWeight: '700' }} numberOfLines={1}>{name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}><Text style={{ color: fg, fontSize: 15, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>{name}</Text><VerifiedBadge email={post.author_email} size={14} /></View>
           <Text style={{ color: sub, fontSize: 12.5 }} numberOfLines={1}>{`${fullWhen(post.created_at, t)} · ${audienceLabel(post.audience, t)}`}</Text>
         </View>
         <Pressable onPress={openMenu} hitSlop={8} style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }} accessibilityLabel={t('mural.more', 'Mais opções')}>
