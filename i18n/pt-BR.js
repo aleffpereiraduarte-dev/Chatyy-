@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Conversa temporária",
+  "bia.temp.body": "Não fica salva no seu histórico e a Bia não aprende com esta conversa. Some quando você sair.",
+  "bia.temp.actions": "O que você pedir para a Bia fazer, como mandar uma mensagem ou criar um lembrete, acontece de verdade.",
+  "bia.temp.providers": "Os provedores de IA que geram as respostas podem manter uma cópia por até 30 dias só para segurança e prevenção de abuso, sem usar para treinar modelos.",
+  "bia.temp.pill": "Temporária · não fica salva",
+  "bia.temp.turnOn": "Ativar conversa temporária",
+  "bia.temp.turnOff": "Sair da conversa temporária",
+  "bia.temp.unavailable": "A conversa temporária não está disponível agora. Tente de novo em instantes.",
+  "bia.temp.startAlways": "Começar sempre no modo temporário",
+  "bia.temp.startAlwaysDesc": "Ao abrir a Bia, a conversa não fica salva e a Bia não aprende com ela.",
   // [privado 2026-10-22] Perfil privado nível Instagram (PrivacyCategory, app/follow-requests, Atividade, Profile)
   "privateProfile.title": "Perfil privado",
   "privateProfile.subOn": "Só seguidores que você aprovar veem suas publicações, o Mural e o Status.",

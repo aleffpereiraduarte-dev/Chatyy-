@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "დროებითი ჩატი",
+  "bia.temp.body": "ის არ ინახება თქვენს ისტორიაში და Bia ამ ჩატიდან არ სწავლობს. გასვლისას ქრება.",
+  "bia.temp.actions": "რასაც Bia-ს სთხოვთ, მაგალითად შეტყობინების გაგზავნა ან შეხსენების შექმნა, მართლა სრულდება.",
+  "bia.temp.providers": "პასუხების შემქმნელმა AI პროვაიდერებმა შეიძლება ასლი შეინახონ 30 დღემდე მხოლოდ უსაფრთხოებისა და ბოროტად გამოყენების თავიდან ასაცილებლად და არ იყენებენ მას მოდელების გასაწვრთნელად.",
+  "bia.temp.pill": "დროებითი · არ ინახება",
+  "bia.temp.turnOn": "დროებითი ჩატის ჩართვა",
+  "bia.temp.turnOff": "დროებითი ჩატიდან გასვლა",
+  "bia.temp.unavailable": "დროებითი ჩატი ახლა მიუწვდომელია. სცადეთ ცოტა ხანში.",
+  "bia.temp.startAlways": "ყოველთვის დროებით რეჟიმში დაწყება",
+  "bia.temp.startAlwaysDesc": "Bia-ს გახსნისას ჩატი არ ინახება და Bia მისგან არ სწავლობს.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "ახალი ზარი",
   "calls.freeViaChatyy": "უფასო ზარები Chatyy-ით, ხმოვანი და ვიდეო",

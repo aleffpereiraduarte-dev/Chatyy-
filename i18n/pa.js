@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "ਅਸਥਾਈ ਚੈਟ",
+  "bia.temp.body": "ਇਹ ਤੁਹਾਡੇ ਇਤਿਹਾਸ ਵਿੱਚ ਸੇਵ ਨਹੀਂ ਹੁੰਦੀ ਅਤੇ Bia ਇਸ ਚੈਟ ਤੋਂ ਨਹੀਂ ਸਿੱਖਦੀ। ਬਾਹਰ ਜਾਣ 'ਤੇ ਗਾਇਬ ਹੋ ਜਾਂਦੀ ਹੈ।",
+  "bia.temp.actions": "ਜੋ ਤੁਸੀਂ Bia ਨੂੰ ਕਰਨ ਲਈ ਕਹਿੰਦੇ ਹੋ, ਜਿਵੇਂ ਸੁਨੇਹਾ ਭੇਜਣਾ ਜਾਂ ਰਿਮਾਈਂਡਰ ਬਣਾਉਣਾ, ਉਹ ਸੱਚਮੁੱਚ ਹੁੰਦਾ ਹੈ।",
+  "bia.temp.providers": "ਜਵਾਬ ਬਣਾਉਣ ਵਾਲੇ AI ਪ੍ਰਦਾਤਾ ਸਿਰਫ਼ ਸੁਰੱਖਿਆ ਅਤੇ ਦੁਰਵਰਤੋਂ ਰੋਕਣ ਲਈ 30 ਦਿਨਾਂ ਤੱਕ ਕਾਪੀ ਰੱਖ ਸਕਦੇ ਹਨ, ਅਤੇ ਮਾਡਲ ਸਿਖਲਾਈ ਲਈ ਇਸਦੀ ਵਰਤੋਂ ਨਹੀਂ ਕਰਦੇ।",
+  "bia.temp.pill": "ਅਸਥਾਈ · ਸੇਵ ਨਹੀਂ ਹੁੰਦੀ",
+  "bia.temp.turnOn": "ਅਸਥਾਈ ਚੈਟ ਚਾਲੂ ਕਰੋ",
+  "bia.temp.turnOff": "ਅਸਥਾਈ ਚੈਟ ਤੋਂ ਬਾਹਰ ਜਾਓ",
+  "bia.temp.unavailable": "ਅਸਥਾਈ ਚੈਟ ਹੁਣ ਉਪਲਬਧ ਨਹੀਂ। ਥੋੜ੍ਹੀ ਦੇਰ ਬਾਅਦ ਮੁੜ ਕੋਸ਼ਿਸ਼ ਕਰੋ।",
+  "bia.temp.startAlways": "ਹਮੇਸ਼ਾ ਅਸਥਾਈ ਮੋਡ ਵਿੱਚ ਸ਼ੁਰੂ ਕਰੋ",
+  "bia.temp.startAlwaysDesc": "Bia ਖੋਲ੍ਹਣ 'ਤੇ ਚੈਟ ਸੇਵ ਨਹੀਂ ਹੁੰਦੀ ਅਤੇ Bia ਇਸ ਤੋਂ ਨਹੀਂ ਸਿੱਖਦੀ।",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "ਨਵੀਂ ਕਾਲ",
   "calls.freeViaChatyy": "Chatyy 'ਤੇ ਮੁਫ਼ਤ ਕਾਲਾਂ, ਆਵਾਜ਼ ਅਤੇ ਵੀਡੀਓ",

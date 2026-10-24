@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Laikinas pokalbis",
+  "bia.temp.body": "Jis neišsaugomas istorijoje, o Bia iš šio pokalbio nesimoko. Jis dingsta, kai išeinate.",
+  "bia.temp.actions": "Tai, ko paprašote Bia, pavyzdžiui, išsiųsti žinutę ar sukurti priminimą, iš tikrųjų įvykdoma.",
+  "bia.temp.providers": "Atsakymus kuriantys DI paslaugų teikėjai gali saugoti kopiją iki 30 dienų tik saugumo ir piktnaudžiavimo prevencijos tikslais ir nenaudoja jos modeliams mokyti.",
+  "bia.temp.pill": "Laikinas · neišsaugomas",
+  "bia.temp.turnOn": "Įjungti laikiną pokalbį",
+  "bia.temp.turnOff": "Išeiti iš laikino pokalbio",
+  "bia.temp.unavailable": "Laikinas pokalbis dabar nepasiekiamas. Bandykite dar kartą po akimirkos.",
+  "bia.temp.startAlways": "Visada pradėti laikinu režimu",
+  "bia.temp.startAlwaysDesc": "Atidarius Bia, pokalbis neišsaugomas ir Bia iš jo nesimoko.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Naujas skambutis",
   "calls.freeViaChatyy": "Nemokami skambučiai per Chatyy, balsas ir vaizdas",

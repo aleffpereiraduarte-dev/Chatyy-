@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "ການສົນທະນາຊົ່ວຄາວ",
+  "bia.temp.body": "ມັນບໍ່ຖືກບັນທຶກໃນປະຫວັດຂອງທ່ານ ແລະ Bia ບໍ່ຮຽນຮູ້ຈາກການສົນທະນານີ້. ມັນຈະຫາຍໄປເມື່ອທ່ານອອກ.",
+  "bia.temp.actions": "ສິ່ງທີ່ທ່ານຂໍໃຫ້ Bia ເຮັດ ເຊັ່ນ ສົ່ງຂໍ້ຄວາມ ຫຼື ສ້າງການແຈ້ງເຕືອນ ຈະເກີດຂຶ້ນແທ້.",
+  "bia.temp.providers": "ຜູ້ໃຫ້ບໍລິການ AI ທີ່ສ້າງຄຳຕອບອາດເກັບສຳເນົາໄວ້ໄດ້ສູງສຸດ 30 ມື້ ເພື່ອຄວາມປອດໄພ ແລະ ປ້ອງກັນການໃຊ້ໃນທາງທີ່ຜິດເທົ່ານັ້ນ ແລະ ບໍ່ນຳໄປຝຶກໂມເດລ.",
+  "bia.temp.pill": "ຊົ່ວຄາວ · ບໍ່ບັນທຶກ",
+  "bia.temp.turnOn": "ເປີດການສົນທະນາຊົ່ວຄາວ",
+  "bia.temp.turnOff": "ອອກຈາກການສົນທະນາຊົ່ວຄາວ",
+  "bia.temp.unavailable": "ການສົນທະນາຊົ່ວຄາວຍັງໃຊ້ບໍ່ໄດ້ຕອນນີ້. ລອງໃໝ່ອີກຄັ້ງໃນອີກບໍ່ດົນ.",
+  "bia.temp.startAlways": "ເລີ່ມໃນໂໝດຊົ່ວຄາວສະເໝີ",
+  "bia.temp.startAlwaysDesc": "ເມື່ອເປີດ Bia ການສົນທະນາຈະບໍ່ຖືກບັນທຶກ ແລະ Bia ບໍ່ຮຽນຮູ້ຈາກມັນ.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "ໂທໃໝ່",
   "calls.freeViaChatyy": "ໂທຟຣີຜ່ານ Chatyy ທັງສຽງ ແລະ ວິດີໂອ",

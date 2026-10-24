@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "عارضی گفتگو",
+  "bia.temp.body": "یہ آپ کی ہسٹری میں محفوظ نہیں ہوتی اور Bia اس گفتگو سے نہیں سیکھتی۔ باہر نکلتے ہی ختم ہو جاتی ہے۔",
+  "bia.temp.actions": "جو کام آپ Bia سے کرواتے ہیں، جیسے پیغام بھیجنا یا یاد دہانی بنانا، وہ واقعی ہوتا ہے۔",
+  "bia.temp.providers": "جوابات بنانے والے AI فراہم کنندگان صرف حفاظت اور غلط استعمال کی روک تھام کے لیے 30 دن تک ایک نقل رکھ سکتے ہیں، اور اسے ماڈلز کی تربیت کے لیے استعمال نہیں کرتے۔",
+  "bia.temp.pill": "عارضی · محفوظ نہیں",
+  "bia.temp.turnOn": "عارضی گفتگو آن کریں",
+  "bia.temp.turnOff": "عارضی گفتگو سے باہر نکلیں",
+  "bia.temp.unavailable": "عارضی گفتگو ابھی دستیاب نہیں۔ تھوڑی دیر بعد دوبارہ کوشش کریں۔",
+  "bia.temp.startAlways": "ہمیشہ عارضی موڈ میں شروع کریں",
+  "bia.temp.startAlwaysDesc": "Bia کھولنے پر گفتگو محفوظ نہیں ہوتی اور Bia اس سے نہیں سیکھتی۔",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "نئی کال",
   "calls.freeViaChatyy": "Chatyy پر مفت کالز، آواز اور ویڈیو",

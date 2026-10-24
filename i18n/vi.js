@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Trò chuyện tạm thời",
+  "bia.temp.body": "Không được lưu vào lịch sử và Bia không học từ cuộc trò chuyện này. Sẽ biến mất khi bạn rời đi.",
+  "bia.temp.actions": "Những việc bạn nhờ Bia làm, như gửi tin nhắn hay tạo lời nhắc, vẫn được thực hiện thật.",
+  "bia.temp.providers": "Các nhà cung cấp AI tạo câu trả lời có thể giữ một bản sao tối đa 30 ngày chỉ để bảo mật và chống lạm dụng, và không dùng để huấn luyện mô hình.",
+  "bia.temp.pill": "Tạm thời · không lưu",
+  "bia.temp.turnOn": "Bật trò chuyện tạm thời",
+  "bia.temp.turnOff": "Thoát trò chuyện tạm thời",
+  "bia.temp.unavailable": "Trò chuyện tạm thời hiện không khả dụng. Hãy thử lại sau giây lát.",
+  "bia.temp.startAlways": "Luôn bắt đầu ở chế độ tạm thời",
+  "bia.temp.startAlwaysDesc": "Khi mở Bia, cuộc trò chuyện không được lưu và Bia không học từ đó.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Cuộc gọi mới",
   "calls.freeViaChatyy": "Gọi miễn phí qua Chatyy, thoại và video",

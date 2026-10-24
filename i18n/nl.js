@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Tijdelijke chat",
+  "bia.temp.body": "Wordt niet in je geschiedenis opgeslagen en Bia leert niets van deze chat. Verdwijnt als je weggaat.",
+  "bia.temp.actions": "Wat je Bia vraagt te doen, zoals een bericht sturen of een herinnering maken, gebeurt wel echt.",
+  "bia.temp.providers": "De AI-aanbieders die de antwoorden maken, kunnen tot 30 dagen een kopie bewaren, alleen voor veiligheid en misbruikpreventie, en gebruiken die niet om modellen te trainen.",
+  "bia.temp.pill": "Tijdelijk · niet opgeslagen",
+  "bia.temp.turnOn": "Tijdelijke chat aanzetten",
+  "bia.temp.turnOff": "Tijdelijke chat verlaten",
+  "bia.temp.unavailable": "Tijdelijke chat is nu niet beschikbaar. Probeer het zo opnieuw.",
+  "bia.temp.startAlways": "Altijd starten in tijdelijke modus",
+  "bia.temp.startAlwaysDesc": "Als je Bia opent, wordt de chat niet opgeslagen en leert Bia er niets van.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Nieuwe oproep",
   "calls.freeViaChatyy": "Gratis bellen via Chatyy, spraak en video",

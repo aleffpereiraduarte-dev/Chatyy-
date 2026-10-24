@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Ajutine vestlus",
+  "bia.temp.body": "Seda ei salvestata ajalukku ja Bia ei õpi sellest vestlusest. See kaob, kui lahkud.",
+  "bia.temp.actions": "See, mida palud Bial teha, näiteks sõnumi saata või meeldetuletuse luua, toimub päriselt.",
+  "bia.temp.providers": "Vastuseid loovad tehisintellekti teenusepakkujad võivad hoida koopiat kuni 30 päeva ainult turvalisuse ja kuritarvituste ennetamise eesmärgil ega kasuta seda mudelite treenimiseks.",
+  "bia.temp.pill": "Ajutine · ei salvestata",
+  "bia.temp.turnOn": "Lülita ajutine vestlus sisse",
+  "bia.temp.turnOff": "Lahku ajutisest vestlusest",
+  "bia.temp.unavailable": "Ajutine vestlus pole praegu saadaval. Proovi hetke pärast uuesti.",
+  "bia.temp.startAlways": "Alusta alati ajutises režiimis",
+  "bia.temp.startAlwaysDesc": "Bia avamisel vestlust ei salvestata ja Bia sellest ei õpi.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Uus kõne",
   "calls.freeViaChatyy": "Tasuta kõned Chatyys, hääl ja video",

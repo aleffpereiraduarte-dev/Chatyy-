@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Pagaidu tērzēšana",
+  "bia.temp.body": "Tā netiek saglabāta vēsturē, un Bia no šīs tērzēšanas nemācās. Tā pazūd, kad izejat.",
+  "bia.temp.actions": "Tas, ko lūdzat Bia izdarīt, piemēram, nosūtīt ziņu vai izveidot atgādinājumu, tiešām notiek.",
+  "bia.temp.providers": "MI pakalpojumu sniedzēji, kas ģenerē atbildes, var glabāt kopiju līdz 30 dienām tikai drošības un ļaunprātīgas izmantošanas novēršanas nolūkos un neizmanto to modeļu apmācībai.",
+  "bia.temp.pill": "Pagaidu · netiek saglabāta",
+  "bia.temp.turnOn": "Ieslēgt pagaidu tērzēšanu",
+  "bia.temp.turnOff": "Iziet no pagaidu tērzēšanas",
+  "bia.temp.unavailable": "Pagaidu tērzēšana pašlaik nav pieejama. Mēģiniet vēlreiz pēc brīža.",
+  "bia.temp.startAlways": "Vienmēr sākt pagaidu režīmā",
+  "bia.temp.startAlwaysDesc": "Atverot Bia, tērzēšana netiek saglabāta, un Bia no tās nemācās.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Jauns zvans",
   "calls.freeViaChatyy": "Bezmaksas zvani Chatyy, balss un video",

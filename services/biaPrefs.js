@@ -25,6 +25,10 @@ export function setBiaAutoRead(on) { _set('bia_pref_auto_read', on ? '1' : '0');
 export function biaDailyUserOn() { return _get('bia_pref_daily') !== '0'; }
 export function setBiaDailyUserOn(on) { _set('bia_pref_daily', on ? '1' : '0'); }
 
+// [bia-temp 2026-10-24] "Começar sempre no modo temporário" (só a escolha; nada da conversa)
+export function biaTempStartAlways() { return _get('bia_pref_temp_start') === '1'; }
+export function setBiaTempStartAlways(on) { _set('bia_pref_temp_start', on ? '1' : '0'); }
+
 // Vozes aceitas pelo servidor (ai-memory.php aiMemoryVoices; padrão = shimmer).
 export const BIA_DEFAULT_VOICE = 'shimmer';
 export const BIA_VOICES = [

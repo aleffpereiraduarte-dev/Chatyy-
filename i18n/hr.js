@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Privremeni chat",
+  "bia.temp.body": "Ne sprema se u povijest i Bia ne uči iz ovog chata. Nestaje kad izađete.",
+  "bia.temp.actions": "Ono što zatražite od Bie, poput slanja poruke ili izrade podsjetnika, stvarno se izvrši.",
+  "bia.temp.providers": "Pružatelji AI-ja koji generiraju odgovore mogu čuvati kopiju do 30 dana samo radi sigurnosti i sprječavanja zlouporabe, bez korištenja za treniranje modela.",
+  "bia.temp.pill": "Privremeno · ne sprema se",
+  "bia.temp.turnOn": "Uključi privremeni chat",
+  "bia.temp.turnOff": "Izađi iz privremenog chata",
+  "bia.temp.unavailable": "Privremeni chat trenutno nije dostupan. Pokušajte ponovno za trenutak.",
+  "bia.temp.startAlways": "Uvijek započni u privremenom načinu",
+  "bia.temp.startAlwaysDesc": "Kad otvorite Biu, chat se ne sprema i Bia iz njega ne uči.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Novi poziv",
   "calls.freeViaChatyy": "Besplatni pozivi putem Chatyyja, glas i video",

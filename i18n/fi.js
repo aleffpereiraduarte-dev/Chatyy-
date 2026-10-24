@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Tilapäinen keskustelu",
+  "bia.temp.body": "Sitä ei tallenneta historiaasi, eikä Bia opi tästä keskustelusta. Se katoaa, kun poistut.",
+  "bia.temp.actions": "Se, mitä pyydät Biaa tekemään, kuten lähettämään viestin tai luomaan muistutuksen, tapahtuu oikeasti.",
+  "bia.temp.providers": "Vastaukset tuottavat tekoälypalveluntarjoajat voivat säilyttää kopion enintään 30 päivää vain turvallisuuden ja väärinkäytösten estämisen vuoksi, eivätkä käytä sitä mallien kouluttamiseen.",
+  "bia.temp.pill": "Tilapäinen · ei tallennu",
+  "bia.temp.turnOn": "Ota tilapäinen keskustelu käyttöön",
+  "bia.temp.turnOff": "Poistu tilapäisestä keskustelusta",
+  "bia.temp.unavailable": "Tilapäinen keskustelu ei ole nyt käytettävissä. Yritä hetken päästä uudelleen.",
+  "bia.temp.startAlways": "Aloita aina tilapäisessä tilassa",
+  "bia.temp.startAlwaysDesc": "Kun avaat Bian, keskustelua ei tallenneta eikä Bia opi siitä.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Uusi puhelu",
   "calls.freeViaChatyy": "Ilmaiset puhelut Chatyyssa, ääni ja video",

@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Müvəqqəti söhbət",
+  "bia.temp.body": "Tarixçənizdə saxlanmır və Bia bu söhbətdən öyrənmir. Çıxanda yox olur.",
+  "bia.temp.actions": "Bia-dan etməsini istədiyiniz şeylər, məsələn mesaj göndərmək və ya xatırlatma yaratmaq, həqiqətən baş verir.",
+  "bia.temp.providers": "Cavabları yaradan süni intellekt provayderləri yalnız təhlükəsizlik və sui-istifadənin qarşısını almaq üçün 30 günə qədər surət saxlaya bilər və onu modelləri öyrətmək üçün istifadə etmir.",
+  "bia.temp.pill": "Müvəqqəti · saxlanmır",
+  "bia.temp.turnOn": "Müvəqqəti söhbəti aç",
+  "bia.temp.turnOff": "Müvəqqəti söhbətdən çıx",
+  "bia.temp.unavailable": "Müvəqqəti söhbət hazırda əlçatan deyil. Bir azdan yenidən cəhd edin.",
+  "bia.temp.startAlways": "Həmişə müvəqqəti rejimdə başla",
+  "bia.temp.startAlwaysDesc": "Bia açılanda söhbət saxlanmır və Bia ondan öyrənmir.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Yeni zəng",
   "calls.freeViaChatyy": "Chatyy ilə pulsuz səsli və görüntülü zənglər",

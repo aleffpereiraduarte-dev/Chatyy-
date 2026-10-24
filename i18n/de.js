@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Temporärer Chat",
+  "bia.temp.body": "Er wird nicht in deinem Verlauf gespeichert und Bia lernt nichts aus diesem Chat. Er verschwindet, wenn du gehst.",
+  "bia.temp.actions": "Was du Bia erledigen lässt, etwa eine Nachricht senden oder eine Erinnerung erstellen, passiert trotzdem wirklich.",
+  "bia.temp.providers": "Die KI-Anbieter, die die Antworten erzeugen, können eine Kopie bis zu 30 Tage nur für Sicherheit und Missbrauchsschutz aufbewahren und nutzen sie nicht zum Trainieren von Modellen.",
+  "bia.temp.pill": "Temporär · wird nicht gespeichert",
+  "bia.temp.turnOn": "Temporären Chat einschalten",
+  "bia.temp.turnOff": "Temporären Chat verlassen",
+  "bia.temp.unavailable": "Der temporäre Chat ist gerade nicht verfügbar. Versuche es gleich noch einmal.",
+  "bia.temp.startAlways": "Immer im temporären Modus starten",
+  "bia.temp.startAlwaysDesc": "Beim Öffnen von Bia wird der Chat nicht gespeichert und Bia lernt nicht daraus.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Neuer Anruf",
   "calls.freeViaChatyy": "Kostenlose Anrufe über Chatyy, Sprache und Video",

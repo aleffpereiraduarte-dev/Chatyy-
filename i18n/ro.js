@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Chat temporar",
+  "bia.temp.body": "Nu se salvează în istoric, iar Bia nu învață din acest chat. Dispare când ieși.",
+  "bia.temp.actions": "Ce îi ceri Biei să facă, cum ar fi să trimită un mesaj sau să creeze un memento, chiar se întâmplă.",
+  "bia.temp.providers": "Furnizorii de IA care generează răspunsurile pot păstra o copie până la 30 de zile doar pentru siguranță și prevenirea abuzurilor, fără a o folosi la antrenarea modelelor.",
+  "bia.temp.pill": "Temporar · nu se salvează",
+  "bia.temp.turnOn": "Activează chatul temporar",
+  "bia.temp.turnOff": "Ieși din chatul temporar",
+  "bia.temp.unavailable": "Chatul temporar nu este disponibil acum. Încearcă din nou peste puțin timp.",
+  "bia.temp.startAlways": "Începe mereu în modul temporar",
+  "bia.temp.startAlwaysDesc": "Când deschizi Bia, chatul nu se salvează și Bia nu învață din el.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Apel nou",
   "calls.freeViaChatyy": "Apeluri gratuite prin Chatyy, voce și video",

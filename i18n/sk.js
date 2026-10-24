@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Dočasný chat",
+  "bia.temp.body": "Neukladá sa do histórie a Bia sa z tohto chatu neučí. Zmizne, keď odídete.",
+  "bia.temp.actions": "Čo Bii zadáte, napríklad poslať správu alebo vytvoriť pripomienku, sa naozaj vykoná.",
+  "bia.temp.providers": "Poskytovatelia AI, ktorí generujú odpovede, môžu uchovávať kópiu až 30 dní len kvôli bezpečnosti a prevencii zneužitia a nepoužívajú ju na trénovanie modelov.",
+  "bia.temp.pill": "Dočasný · neukladá sa",
+  "bia.temp.turnOn": "Zapnúť dočasný chat",
+  "bia.temp.turnOff": "Opustiť dočasný chat",
+  "bia.temp.unavailable": "Dočasný chat teraz nie je k dispozícii. Skúste to o chvíľu znova.",
+  "bia.temp.startAlways": "Vždy začínať v dočasnom režime",
+  "bia.temp.startAlwaysDesc": "Po otvorení Bie sa chat neukladá a Bia sa z neho neučí.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Nový hovor",
   "calls.freeViaChatyy": "Hovory zadarmo cez Chatyy, hlas aj video",

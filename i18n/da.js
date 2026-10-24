@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Midlertidig chat",
+  "bia.temp.body": "Den gemmes ikke i din historik, og Bia lærer ikke af denne chat. Den forsvinder, når du går.",
+  "bia.temp.actions": "Det, du beder Bia om at gøre, fx sende en besked eller oprette en påmindelse, sker stadig rigtigt.",
+  "bia.temp.providers": "AI-udbyderne, der laver svarene, kan gemme en kopi i op til 30 dage udelukkende af hensyn til sikkerhed og forebyggelse af misbrug, og de bruger den ikke til at træne modeller.",
+  "bia.temp.pill": "Midlertidig · gemmes ikke",
+  "bia.temp.turnOn": "Slå midlertidig chat til",
+  "bia.temp.turnOff": "Forlad midlertidig chat",
+  "bia.temp.unavailable": "Midlertidig chat er ikke tilgængelig lige nu. Prøv igen om lidt.",
+  "bia.temp.startAlways": "Start altid i midlertidig tilstand",
+  "bia.temp.startAlwaysDesc": "Når du åbner Bia, gemmes chatten ikke, og Bia lærer ikke af den.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Nyt opkald",
   "calls.freeViaChatyy": "Gratis opkald via Chatyy, tale og video",

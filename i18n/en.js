@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Temporary chat",
+  "bia.temp.body": "It won't be saved to your history and Bia won't learn from this chat. It disappears when you leave.",
+  "bia.temp.actions": "Anything you ask Bia to do, like sending a message or creating a reminder, still really happens.",
+  "bia.temp.providers": "The AI providers that generate the replies may keep a copy for up to 30 days only for safety and abuse prevention, and don't use it to train models.",
+  "bia.temp.pill": "Temporary · not saved",
+  "bia.temp.turnOn": "Turn on temporary chat",
+  "bia.temp.turnOff": "Leave temporary chat",
+  "bia.temp.unavailable": "Temporary chat isn't available right now. Try again in a moment.",
+  "bia.temp.startAlways": "Always start in temporary mode",
+  "bia.temp.startAlwaysDesc": "When you open Bia, the chat isn't saved and Bia doesn't learn from it.",
   // [privado 2026-10-22] Perfil privado nível Instagram (PrivacyCategory, app/follow-requests, Atividade, Profile)
   "privateProfile.title": "Private profile",
   "privateProfile.subOn": "Only followers you approve can see your posts, wall and status.",

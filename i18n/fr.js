@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Discussion temporaire",
+  "bia.temp.body": "Elle n'est pas enregistrée dans votre historique et Bia n'apprend rien de cette discussion. Elle disparaît quand vous quittez.",
+  "bia.temp.actions": "Ce que vous demandez à Bia, comme envoyer un message ou créer un rappel, est vraiment effectué.",
+  "bia.temp.providers": "Les fournisseurs d'IA qui génèrent les réponses peuvent conserver une copie jusqu'à 30 jours uniquement pour la sécurité et la prévention des abus, sans l'utiliser pour entraîner des modèles.",
+  "bia.temp.pill": "Temporaire · non enregistrée",
+  "bia.temp.turnOn": "Activer la discussion temporaire",
+  "bia.temp.turnOff": "Quitter la discussion temporaire",
+  "bia.temp.unavailable": "La discussion temporaire n'est pas disponible pour le moment. Réessayez dans un instant.",
+  "bia.temp.startAlways": "Toujours démarrer en mode temporaire",
+  "bia.temp.startAlwaysDesc": "À l'ouverture de Bia, la discussion n'est pas enregistrée et Bia n'en apprend rien.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Nouvel appel",
   "calls.freeViaChatyy": "Appels gratuits sur Chatyy, voix et vidéo",

@@ -37,7 +37,9 @@ import {
   BiaTypingBubble, BiaChatComposer, BiaChipsStrip, biaMsgTs, biaDayKey, biaDayLabel,
 } from '../components/bia/BiaChatLayout';
 import { biaToolLabel } from '../components/BiaRich';
-import { biaTtsRate, biaAutoRead, readBiaThread, writeBiaThread, removeBiaThread } from '../services/biaPrefs'; // [2026-10-21 bia-ajustes] velocidade + mãos livres
+import { biaTtsRate, biaAutoRead, readBiaThread, writeBiaThread, removeBiaThread, biaTempStartAlways } from '../services/biaPrefs'; // [2026-10-21 bia-ajustes] velocidade + mãos livres
+import { isBiaTempActive, setBiaTempActive, biaTempSupported, buildTempHistory, tempTtsUrl, purgeTempTts } from '../services/biaTemp'; // [bia-temp 2026-10-24]
+import { BiaTempButton, BiaTempBanner, BiaTempPill, IconTempChat } from '../components/bia/BiaTempMode'; // [bia-temp 2026-10-24]
 import { safeAlert } from '../services/alerts';
 import { IconEye } from '../components/Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from '../components/ui/useDragToDismiss';
@@ -245,7 +247,7 @@ async function speakElevenLabs(text, lang, onDone) {
     if (__gen !== _speakGen) return false;
 
     if (Platform.OS === 'web') {
-      const url = await api.oneTTS(text);
+      const url = await api.oneTTS(text, { temp: isBiaTempActive() }); // [bia-temp 2026-10-24] temporária: servidor não guarda o áudio
       if (!url) { if (onDone) onDone(); return false; }
       const audio = new window.Audio(url);
       _currentAudio = audio;
@@ -262,7 +264,10 @@ async function speakElevenLabs(text, lang, onDone) {
       // Native: use expo-audio createAudioPlayer
       try {
         if (ExpoAV?.createAudioPlayer) {
-          const url = api.oneTTSUrl(text);
+          // [bia-temp 2026-10-24] temporária: áudio em RAM no servidor (tid), sem o texto na URL
+          const url = isBiaTempActive() ? await tempTtsUrl(text) : api.oneTTSUrl(text);
+          if (__gen !== _speakGen) return false;
+          if (!url) return speakFallback(text, lang, onDone);
           const player = ExpoAV.createAudioPlayer({ uri: url });
           _currentSound = player;
           // Listen for playback end
@@ -305,6 +310,7 @@ async function speakElevenLabs(text, lang, onDone) {
 let _speakGen = 0;
 function prefetchTTS(text) {
   if (Platform.OS === 'web' || !text) return;
+  if (isBiaTempActive()) { tempTtsUrl(text); return; } // [bia-temp 2026-10-24] prepara em RAM no servidor
   try { fetch(api.oneTTSUrl(text), { headers: { Range: 'bytes=0-1' } }).catch(() => {}); } catch {}
 }
 function ttsChunks(plain) {
@@ -720,6 +726,7 @@ export default function OneScreen() {
   // (saudação na hora, sem esperar a rede). Sem cache nenhum = espera o servidor (sem saudação).
   const [bootThread] = useState(() => {
     if (!biaChatLayoutOn()) return null;
+    if (biaTempStartAlways()) return null; // [bia-temp 2026-10-24] começa vazia e temporária
     // user ainda não carregou no 1º quadro (web) → conta ativa síncrona do api.js
     let acct = user?.email || '';
     if (!acct) { try { acct = api.getActiveAccountEmail() || ''; } catch {} }
@@ -733,6 +740,11 @@ export default function OneScreen() {
   const [attachedImage, setAttachedImage] = useState(null); // { uri, base64, mimeType }
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState(() => (bootThread && bootThread.fresh ? bootThread.cid : null));
+  // [bia-temp 2026-10-24] conversa temporária: só no estado desta tela; some ao sair/fechar
+  const [tempMode, setTempMode] = useState(() => biaTempStartAlways());
+  const tempModeRef = useRef(tempMode);
+  const messagesRef = useRef([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
   // Suggested follow-up chips for the most-recent AI reply. Rendered as a
   // SmartReplyChips strip under the last assistant message — tap = autosend.
   // Cleared whenever the user types, picks an image, switches threads, or
@@ -955,6 +967,7 @@ export default function OneScreen() {
       // we ALWAYS start fresh regardless of what the server timestamp says.
       // [bia-cache] abriu pintada do cache do aparelho → só sincroniza com o servidor por trás
       // (troca as mensagens só se mudaram e se nada está em andamento; conversa sumiu = nova).
+      if (autoRestore && tempModeRef.current) return; // [bia-temp 2026-10-24] temporária não restaura conversa salva
       if (autoRestore && bootThread && bootThread.fresh && conversationIdRef.current === bootThread.cid) {
         try {
           const hRes = await api.oneHistory(bootThread.cid);
@@ -1060,6 +1073,7 @@ export default function OneScreen() {
   // which this effect fires and captures it). Long TTL (90d) matches the
   // auto-restore write at the bottom of loadConversations.
   useEffect(() => {
+    if (tempModeRef.current) return; // [bia-temp 2026-10-24] nada no aparelho
     if (!conversationId) return;
     if (!Array.isArray(messages) || messages.length === 0) return;
     // Don't persist transient streaming placeholders that have no content
@@ -1070,6 +1084,7 @@ export default function OneScreen() {
   }, [messages, conversationId]);
   // [bia-cache] espelho síncrono (MMKV) p/ abrir pintado; conversa nova/apagada = some do aparelho
   useEffect(() => {
+    if (tempModeRef.current) return; // [bia-temp 2026-10-24] nada no aparelho
     if (!biaChatLayoutOn()) return;
     let acct = user?.email || '';
     if (!acct) { try { acct = api.getActiveAccountEmail() || ''; } catch {} }
@@ -1136,6 +1151,7 @@ export default function OneScreen() {
   }, [params?.intent, params?.prefill]);
 
   const loadConversation = useCallback(async (conv) => {
+    if (tempModeRef.current) { tempModeRef.current = false; setTempMode(false); setBiaTempActive(false); purgeTempTts(); } // [bia-temp 2026-10-24] abrir conversa salva = sai do temporário
     setConversationId(conv.id);
     setMessages([]);
     setLastFollowups([]); // Chips belong to the just-finished thread, not the switched-to one.
@@ -1433,19 +1449,22 @@ export default function OneScreen() {
   }, [locale, router, bumpActivity]);
 
   // ─── Fallback: non-streaming path ────────────────────────────────────────────
-  const sendMessageFallback = useCallback(async (msg, currentImage, aiMsgId, isCurrentTurn = () => true) => {
+  const sendMessageFallback = useCallback(async (msg, currentImage, aiMsgId, isCurrentTurn = () => true, tempHist = null) => {
     try {
+      const __tempNow = tempModeRef.current; // [bia-temp 2026-10-24]
       const result = await api.oneChat(
         msg || (currentImage ? 'Analise esta imagem. Se for um recibo/nota fiscal/conta, extraia os dados e me pergunte se quero criar uma planilha.' : ''),
-        conversationIdRef.current,
+        __tempNow ? null : conversationIdRef.current,
         currentImage ? currentImage.base64 : null,
         currentImage ? currentImage.mimeType : null,
         currentImage ? currentImage.driveFileId : null,
         currentImage ? currentImage.extra : null,
+        __tempNow ? { temp: 1, temp_history: Array.isArray(tempHist) ? tempHist : [] } : null,
       );
       if (!isCurrentTurn()) return; // [bia-lenta 2026-10-19] resposta de turno velho não entra/fala
       if (result?.success && result.data) {
-        if (result.data.conversation_id) { conversationIdRef.current = result.data.conversation_id; setConversationId(result.data.conversation_id); }
+        if (__tempNow) { if (result.data.conversation_id && Number(result.data.temp) !== 1) api.oneHistoryDelete({ conversationId: result.data.conversation_id }).catch(() => {}); } // [bia-temp 2026-10-24] servidor antigo gravou → apaga
+        else if (result.data.conversation_id) { conversationIdRef.current = result.data.conversation_id; setConversationId(result.data.conversation_id); }
         const responseTextRaw = result.data.response || t('one.errorProcess');
         // Backend already strips <followups> for the JSON path, but parse
         // defensively in case an old PHP-FPM worker still has the old code
@@ -1543,6 +1562,8 @@ export default function OneScreen() {
       }
     }
     const currentImage = attachedImage;
+    // [bia-temp 2026-10-24] histórico ANTES da fala atual (a fala vai em message), só da tela
+    const __tempHist = tempModeRef.current ? buildTempHistory(messagesRef.current) : null;
     if (!opts.proactive) setInputText('');
     setVoiceTranscript('');
     setAttachedImage(null);
@@ -1630,9 +1651,10 @@ export default function OneScreen() {
         }
       };
 
+      const __tempNow = tempModeRef.current; // [bia-temp 2026-10-24] o turno inteiro segue o modo em que começou
       const abortCtrl = api.oneChatStream(
         effectiveMsg,
-        conversationIdRef.current,
+        __tempNow ? null : conversationIdRef.current,
         {
           onDelta: (delta) => {
             if (!isMountedRef.current) return;
@@ -1660,6 +1682,10 @@ export default function OneScreen() {
           },
           onMeta: (meta) => {
             if (!isMountedRef.current) return;
+            if (__tempNow) { // [bia-temp 2026-10-24] nunca vira conversa salva; servidor antigo que gravou → apaga
+              if (meta.conversation_id && Number(meta.temp) !== 1) api.oneHistoryDelete({ conversationId: meta.conversation_id }).catch(() => {});
+              meta = { ...meta, conversation_id: null, message_id: 0 };
+            }
             if (meta.conversation_id && isCurrentTurn()) {
               streamConvId = meta.conversation_id;
               conversationIdRef.current = meta.conversation_id;
@@ -1733,7 +1759,7 @@ export default function OneScreen() {
               return;
             }
             setMessages(prev => prev.filter(m => m.id !== aiMsgId));
-            sendMessageFallback(effectiveMsg, currentImage, aiMsgId, isCurrentTurn).finally(() => {
+            sendMessageFallback(effectiveMsg, currentImage, aiMsgId, isCurrentTurn, __tempHist).finally(() => {
               if (!isCurrentTurn()) return;
               setLoading(false);
               loadingRef.current = false;
@@ -1746,6 +1772,7 @@ export default function OneScreen() {
         currentImage ? currentImage.mimeType : null,
         currentImage ? currentImage.driveFileId : null,
         currentImage ? currentImage.extra : null,
+        __tempNow ? { temp: 1, temp_history: __tempHist } : null,
       );
 
       // Store abort controller so the cancel button works
@@ -1756,7 +1783,7 @@ export default function OneScreen() {
 
     // ── Non-streaming fallback (native or no ReadableStream) ───────────────────
     try {
-      await sendMessageFallback(effectiveMsg, currentImage, aiMsgId, isCurrentTurn);
+      await sendMessageFallback(effectiveMsg, currentImage, aiMsgId, isCurrentTurn, __tempHist);
     } finally {
       if (isCurrentTurn()) { setLoading(false); loadingRef.current = false; inflightAiMsgIdRef.current = null; }
       loadConversations(false);
@@ -1772,6 +1799,48 @@ export default function OneScreen() {
     cancelInflightTurn(); conversationIdRef.current = null; // [bia-lenta 2026-10-19] thread nova de verdade
     setMessages([]); setConversationId(null); setLastFollowups([]); loadConversations(false);
   }, [loadConversations]);
+
+  // [bia-temp 2026-10-24] Conversa TEMPORÁRIA (estilo ChatGPT). Ligar/desligar sempre começa uma
+  // conversa vazia; a temporária vive só neste estado React (some ao sair da tela ou fechar o app).
+  // Só liga se o servidor anunciar suporte (one_status temp_mode=1) — servidor antigo gravaria.
+  const applyTempMode = useCallback((on) => {
+    cancelInflightTurn();
+    try { stopAllRealtimeSessions(); } catch {}
+    realtimeRef.current = null;
+    if (voiceModeRef.current) { voiceModeRef.current = false; setVoiceMode(false); }
+    try { abortVoiceSpeaking(); } catch {}
+    try { stopSpeak(); } catch {}
+    if (!on) purgeTempTts();
+    tempModeRef.current = !!on;
+    setBiaTempActive(!!on);
+    setTempMode(!!on);
+    conversationIdRef.current = null;
+    setMessages([]); setConversationId(null); setLastFollowups([]); setInputText(''); setAttachedImage(null);
+    didFirstScrollRef.current = false;
+  }, [cancelInflightTurn]);
+  const tempUnavailable = useCallback(() => {
+    const msg = t('bia.temp.unavailable');
+    if (Platform.OS === 'web') { try { window.alert(msg); } catch {} } else Alert.alert(t('bia.temp.title'), msg);
+  }, [t]);
+  const toggleTempMode = useCallback(async () => {
+    haptic('light');
+    if (tempModeRef.current) { applyTempMode(false); return; }
+    if (!(await biaTempSupported())) { tempUnavailable(); return; }
+    applyTempMode(true);
+  }, [applyTempMode, tempUnavailable]);
+  // "Começar sempre no modo temporário": confere o suporte do servidor ao abrir
+  useEffect(() => {
+    if (!tempModeRef.current) return;
+    setBiaTempActive(true);
+    let alive = true;
+    biaTempSupported().then((ok) => { if (alive && !ok && tempModeRef.current) { applyTempMode(false); tempUnavailable(); } });
+    return () => { alive = false; };
+  }, []);
+  // saiu da tela: a conversa temporária some e os áudios temporários do servidor são apagados
+  useEffect(() => () => {
+    if (tempModeRef.current) { try { purgeTempTts(); } catch {} }
+    setBiaTempActive(false);
+  }, []);
 
   // [2026-10-16 bia-repagina] conversas fixadas (por conta, no aparelho) + renomear (servidor)
   const pinsKey = `bia_pins_${user?.email || 'anon'}`;
@@ -1978,9 +2047,10 @@ export default function OneScreen() {
           const form = new FormData();
           const ext = mimeType.includes('webm') ? 'webm' : 'm4a';
           form.append('audio', blob, 'audio.' + ext);
+          if (tempModeRef.current) form.append('temp', '1'); // [bia-temp 2026-10-24]
           const base = require('../services/api').BASE_URL || 'https://chatyy.com.br';
           const authHeaders = require('../services/api').getAuthHeaders();
-          const resp = await fetch(base + '/api/email.php?action=ai_transcribe_audio', {
+          const resp = await fetch(base + '/api/email.php?action=ai_transcribe_audio' + (tempModeRef.current ? '&temp=1' : ''), {
             method: 'POST',
             body: form,
             headers: { Accept: 'application/json', ...authHeaders },
@@ -2055,7 +2125,7 @@ export default function OneScreen() {
           if (typeof alert !== 'undefined') alert(t('oneScreen.recTooShortHint'));
           return;
         }
-        const transRes = await api.aiTranscribeAudio(uri);
+        const transRes = await api.aiTranscribeAudio(uri, { temp: tempModeRef.current }); // [bia-temp 2026-10-24]
         if (__DEV__) console.log('[one] Whisper response:', JSON.stringify(transRes)?.slice(0, 200));
         const text = (transRes?.success && transRes?.data?.text) ? String(transRes.data.text).trim() : '';
         setLoading(false);
@@ -2164,7 +2234,7 @@ export default function OneScreen() {
           return;
         }
         try {
-          const transRes = await api.aiTranscribeAudio(uri);
+          const transRes = await api.aiTranscribeAudio(uri, { temp: tempModeRef.current }); // [bia-temp 2026-10-24]
           if (!isFreshSession()) return;
           const text = (transRes?.success && transRes?.data?.text) ? String(transRes.data.text).trim() : '';
           if (text) {
@@ -2366,6 +2436,7 @@ export default function OneScreen() {
     // or the connect fails.
     if (isRealtimeSupported()) {
       const session = new OneRealtimeSession({
+        temp: tempModeRef.current, // [bia-temp 2026-10-24] sessão de voz sem memória
         onState: (s) => {
           if (!voiceModeRef.current) return;
           if (s === 'listening' || s === 'connecting') setVoiceState('listening');
@@ -2644,6 +2715,7 @@ export default function OneScreen() {
   // opcional "o que estava errado?" — a correção vira memória e a Bia usa nas próximas respostas.
   const [fbSheet, setFbSheet] = useState(null); // { item, reason, text, sending }
   const sendFeedback = useCallback((item, value, extra) => {
+    if (tempModeRef.current) return Promise.resolve(null); // [bia-temp 2026-10-24] temporária: nada é gravado
     const mid = Number(item?.serverId) || 0;
     return api.apiCall('one_feedback', { message_id: mid, conversation_id: mid ? 0 : (conversationId || 0), value, ...(extra || {}) }, 'POST')
       .catch(() => null);
@@ -2948,6 +3020,8 @@ export default function OneScreen() {
           onVoice={enterVoiceMode}
           onMenu={() => { haptic('light'); setChatMenuOpen(true); }}
           onInfo={openBiaSettingsHub}
+          tempOn={tempMode}
+          onTemp={toggleTempMode}
         />
       ) : (
         <View style={[st.headerClean, { paddingTop: insets.top + 4, backgroundColor: canvasBg }]}>
@@ -2965,6 +3039,7 @@ export default function OneScreen() {
             {hasMessages ? <BiaOrb size={20} lite isDark={isDark} mode={loading ? 'thinking' : 'idle'} animated={loading} /> : null}
             <Text style={[st.headerCleanTitle, { color: P.fg }]} accessibilityRole="header">Bia</Text>
           </View>
+          <BiaTempButton active={tempMode} onPress={toggleTempMode} color={P.fg} activeBg={isDark ? 'rgba(255,255,255,0.16)' : 'rgba(24,24,27,0.10)'} t={t} style={st.headerCleanBtn} />
           <HeaderIconButton onPress={() => router.push('/bia-settings')} style={st.headerCleanBtn} accessibilityLabel={t('bia.title')}>
             <IconSliders size={19} color={P.fg} />
           </HeaderIconButton>
@@ -2976,6 +3051,7 @@ export default function OneScreen() {
 
       <View style={[st.chatArea, { backgroundColor: canvasBg }]}>
         {chatLayout ? <BiaChatWallpaper isDark={isDark} /> : null}
+        {tempMode ? (hasMessages ? <BiaTempPill isDark={isDark} t={t} /> : <BiaTempBanner isDark={isDark} t={t} />) : null}
         {chatLayout ? renderChatThread() : initialLoading && !hasMessages ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: composerH }}>
             <BiaOrb size={64} isDark={isDark} mode="thinking" />
@@ -3219,6 +3295,7 @@ export default function OneScreen() {
           insets={insets}
           items={[
             { key: 'new', label: t('one.newChat'), icon: IconEdit, onPress: newChat },
+            { key: 'temp', label: tempMode ? t('bia.temp.turnOff') : t('bia.temp.turnOn'), icon: IconTempChat, onPress: toggleTempMode }, // [bia-temp 2026-10-24]
             { key: 'history', label: t('one.history'), icon: IconMenu, onPress: () => { loadConversations(false); setHistoryOpen(true); } },
             { key: 'memory', label: t('biaChat.memory'), icon: IconEye, onPress: () => router.push('/one-memory') },
             { key: 'settings', label: t('one.biaSettings'), icon: IconSliders, onPress: openBiaSettingsHub },

@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "แชทชั่วคราว",
+  "bia.temp.body": "จะไม่ถูกบันทึกในประวัติ และ Bia จะไม่เรียนรู้จากแชทนี้ หายไปเมื่อคุณออก",
+  "bia.temp.actions": "สิ่งที่คุณขอให้ Bia ทำ เช่น ส่งข้อความหรือสร้างการเตือน จะเกิดขึ้นจริง",
+  "bia.temp.providers": "ผู้ให้บริการ AI ที่สร้างคำตอบอาจเก็บสำเนาไว้ได้นานสูงสุด 30 วันเพื่อความปลอดภัยและป้องกันการใช้งานในทางที่ผิดเท่านั้น และไม่นำไปฝึกโมเดล",
+  "bia.temp.pill": "ชั่วคราว · ไม่บันทึก",
+  "bia.temp.turnOn": "เปิดแชทชั่วคราว",
+  "bia.temp.turnOff": "ออกจากแชทชั่วคราว",
+  "bia.temp.unavailable": "แชทชั่วคราวยังใช้งานไม่ได้ในตอนนี้ ลองอีกครั้งในอีกสักครู่",
+  "bia.temp.startAlways": "เริ่มในโหมดชั่วคราวเสมอ",
+  "bia.temp.startAlwaysDesc": "เมื่อเปิด Bia แชทจะไม่ถูกบันทึกและ Bia จะไม่เรียนรู้จากแชทนั้น",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "โทรใหม่",
   "calls.freeViaChatyy": "โทรฟรีผ่าน Chatyy ทั้งเสียงและวิดีโอ",

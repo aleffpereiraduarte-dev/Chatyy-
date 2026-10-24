@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Conversa temporária",
+  "bia.temp.body": "Não fica guardada no seu histórico e a Bia não aprende com esta conversa. Desaparece quando sair.",
+  "bia.temp.actions": "O que pedir à Bia para fazer, como enviar uma mensagem ou criar um lembrete, acontece mesmo.",
+  "bia.temp.providers": "Os fornecedores de IA que geram as respostas podem manter uma cópia até 30 dias apenas para segurança e prevenção de abuso, sem a usar para treinar modelos.",
+  "bia.temp.pill": "Temporária · não fica guardada",
+  "bia.temp.turnOn": "Ativar conversa temporária",
+  "bia.temp.turnOff": "Sair da conversa temporária",
+  "bia.temp.unavailable": "A conversa temporária não está disponível agora. Tente novamente daqui a pouco.",
+  "bia.temp.startAlways": "Começar sempre no modo temporário",
+  "bia.temp.startAlwaysDesc": "Ao abrir a Bia, a conversa não fica guardada e a Bia não aprende com ela.",
   // [mural 2026-10-20] Perfil com Mural — posts (components/mural)
   "mural.locale": "pt-PT",
   "mural.post": "Publicação",

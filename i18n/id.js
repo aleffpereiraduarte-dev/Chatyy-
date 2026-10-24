@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Obrolan sementara",
+  "bia.temp.body": "Tidak disimpan ke riwayat dan Bia tidak belajar dari obrolan ini. Hilang saat kamu keluar.",
+  "bia.temp.actions": "Hal yang kamu minta Bia lakukan, seperti mengirim pesan atau membuat pengingat, tetap benar-benar terjadi.",
+  "bia.temp.providers": "Penyedia AI yang membuat jawaban dapat menyimpan salinan hingga 30 hari hanya untuk keamanan dan pencegahan penyalahgunaan, dan tidak memakainya untuk melatih model.",
+  "bia.temp.pill": "Sementara · tidak disimpan",
+  "bia.temp.turnOn": "Nyalakan obrolan sementara",
+  "bia.temp.turnOff": "Keluar dari obrolan sementara",
+  "bia.temp.unavailable": "Obrolan sementara belum tersedia sekarang. Coba lagi sebentar lagi.",
+  "bia.temp.startAlways": "Selalu mulai dalam mode sementara",
+  "bia.temp.startAlwaysDesc": "Saat membuka Bia, obrolan tidak disimpan dan Bia tidak belajar darinya.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Panggilan baru",
   "calls.freeViaChatyy": "Panggilan gratis lewat Chatyy, suara dan video",

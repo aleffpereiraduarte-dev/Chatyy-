@@ -35,6 +35,7 @@ import {
 } from '../components/settings/SettingsKit';
 import BiaOrb, { BiaOrbLite } from '../components/bia/BiaOrb';
 import BiaIcon from '../components/bia/BiaIcon'; // [2026-10-18 bia-orb-icon] Bia/IA = orb (não a estrelinha)
+import { biaTempStartAlways, setBiaTempStartAlways } from '../services/biaPrefs'; // [bia-temp 2026-10-24]
 
 // Valores gravados no servidor (o LLM lê em pt; independem do idioma do app).
 const TONES = [
@@ -184,6 +185,8 @@ export default function BiaSettings() {
   const [learnOn, setLearnOn] = useState(true);
   // [bia-ferramentas-voz 2026-10-18] "Bia pode acessar meus e-mails e conversas" (ai_memory bia_data_access; padrão ligado)
   const [dataOn, setDataOn] = useState(true);
+  // [bia-temp 2026-10-24] "Começar sempre no modo temporário" (preferência só do aparelho)
+  const [tempStart, setTempStart] = useState(() => biaTempStartAlways());
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -591,6 +594,10 @@ export default function BiaSettings() {
               title={t('bia.seeMemory', 'Ver o que a Bia lembra')}
               onPress={() => router.push('/one-memory')}
             />
+          </SettingsGroup>
+
+          <SettingsGroup footer={t('bia.temp.startAlwaysDesc')}>
+            <SettingsSwitchRow title={t('bia.temp.startAlways')} value={tempStart} onValueChange={(v) => { setTempStart(v); setBiaTempStartAlways(v); try { Haptics.selectionAsync?.(); } catch {} }} />
           </SettingsGroup>
 
           <SettingsGroup footer={t('bia.dataAccessDesc', 'Ligado, a Bia pode ler e resumir seus e-mails e conversas quando você pede, no texto e na voz. Enviar, apagar ou marcar compromissos sempre pede a sua confirmação.')}>

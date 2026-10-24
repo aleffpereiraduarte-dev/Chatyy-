@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "තාවකාලික කතාබහ",
+  "bia.temp.body": "එය ඔබගේ ඉතිහාසයේ සුරැකෙන්නේ නැති අතර Bia මෙම කතාබහෙන් ඉගෙන ගන්නේ නැත. ඔබ ඉවත් වූ විට අතුරුදහන් වේ.",
+  "bia.temp.actions": "පණිවිඩයක් යැවීම හෝ මතක් කිරීමක් සෑදීම වැනි ඔබ Bia ගෙන් ඉල්ලන දේ ඇත්තටම සිදු වේ.",
+  "bia.temp.providers": "පිළිතුරු සාදන AI සැපයුම්කරුවන්ට ආරක්ෂාව සහ අපයෝජනය වැළැක්වීම සඳහා පමණක් දින 30ක් දක්වා පිටපතක් තබා ගත හැකි අතර ආකෘති පුහුණුවට එය භාවිත නොකරයි.",
+  "bia.temp.pill": "තාවකාලික · සුරැකෙන්නේ නැත",
+  "bia.temp.turnOn": "තාවකාලික කතාබහ සක්‍රිය කරන්න",
+  "bia.temp.turnOff": "තාවකාලික කතාබහෙන් ඉවත් වන්න",
+  "bia.temp.unavailable": "තාවකාලික කතාබහ දැන් ලබා ගත නොහැක. මඳ වේලාවකින් නැවත උත්සාහ කරන්න.",
+  "bia.temp.startAlways": "සෑම විටම තාවකාලික ප්‍රකාරයෙන් අරඹන්න",
+  "bia.temp.startAlwaysDesc": "Bia විවෘත කළ විට කතාබහ සුරැකෙන්නේ නැති අතර Bia එයින් ඉගෙන ගන්නේ නැත.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "නව ඇමතුම",
   "calls.freeViaChatyy": "Chatyy හරහා නොමිලේ ඇමතුම්, හඬ සහ වීඩියෝ",

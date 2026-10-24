@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Pansamantalang chat",
+  "bia.temp.body": "Hindi ito nase-save sa history mo at hindi natututo si Bia mula sa chat na ito. Nawawala ito kapag umalis ka.",
+  "bia.temp.actions": "Ang ipinapagawa mo kay Bia, gaya ng pagpapadala ng mensahe o paggawa ng paalala, ay talagang nangyayari.",
+  "bia.temp.providers": "Maaaring magtago ng kopya ang mga AI provider na gumagawa ng mga sagot nang hanggang 30 araw para lang sa seguridad at pag-iwas sa pang-aabuso, at hindi ito ginagamit para mag-train ng mga model.",
+  "bia.temp.pill": "Pansamantala · hindi nase-save",
+  "bia.temp.turnOn": "I-on ang pansamantalang chat",
+  "bia.temp.turnOff": "Umalis sa pansamantalang chat",
+  "bia.temp.unavailable": "Hindi available ang pansamantalang chat ngayon. Subukan ulit mamaya.",
+  "bia.temp.startAlways": "Laging magsimula sa pansamantalang mode",
+  "bia.temp.startAlwaysDesc": "Pagbukas ng Bia, hindi nase-save ang chat at hindi ito pinag-aaralan ni Bia.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Bagong tawag",
   "calls.freeViaChatyy": "Libreng tawag sa Chatyy, boses at video",

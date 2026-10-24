@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Ideiglenes csevegés",
+  "bia.temp.body": "Nem kerül az előzményeid közé, és Bia nem tanul ebből a csevegésből. Eltűnik, amikor kilépsz.",
+  "bia.temp.actions": "Amit Biától kérsz, például üzenet küldését vagy emlékeztető létrehozását, az valóban megtörténik.",
+  "bia.temp.providers": "A válaszokat előállító MI-szolgáltatók legfeljebb 30 napig megőrizhetnek egy másolatot kizárólag biztonsági és visszaélés-megelőzési célból, és nem használják modellek tanítására.",
+  "bia.temp.pill": "Ideiglenes · nem mentődik",
+  "bia.temp.turnOn": "Ideiglenes csevegés bekapcsolása",
+  "bia.temp.turnOff": "Kilépés az ideiglenes csevegésből",
+  "bia.temp.unavailable": "Az ideiglenes csevegés most nem érhető el. Próbáld újra egy kicsit később.",
+  "bia.temp.startAlways": "Mindig ideiglenes módban induljon",
+  "bia.temp.startAlwaysDesc": "Bia megnyitásakor a csevegés nem mentődik, és Bia nem tanul belőle.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Új hívás",
   "calls.freeViaChatyy": "Ingyenes hívások a Chatyyn, hang és videó",

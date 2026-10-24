@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "临时聊天",
+  "bia.temp.body": "不会保存到你的历史记录，Bia 也不会从这次聊天中学习。离开后即消失。",
+  "bia.temp.actions": "你让 Bia 做的事，比如发消息或创建提醒，仍会真实执行。",
+  "bia.temp.providers": "生成回复的 AI 服务商可能仅出于安全和防止滥用的目的保留副本最多 30 天，且不会用于训练模型。",
+  "bia.temp.pill": "临时 · 不保存",
+  "bia.temp.turnOn": "开启临时聊天",
+  "bia.temp.turnOff": "退出临时聊天",
+  "bia.temp.unavailable": "临时聊天暂时不可用，请稍后再试。",
+  "bia.temp.startAlways": "始终以临时模式开始",
+  "bia.temp.startAlwaysDesc": "打开 Bia 时，聊天不会保存，Bia 也不会从中学习。",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "新通话",
   "calls.freeViaChatyy": "通过 Chatyy 免费语音和视频通话",

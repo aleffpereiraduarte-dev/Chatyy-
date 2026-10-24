@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "임시 채팅",
+  "bia.temp.body": "기록에 저장되지 않으며 Bia는 이 채팅에서 학습하지 않습니다. 나가면 사라집니다.",
+  "bia.temp.actions": "메시지 보내기나 알림 만들기처럼 Bia에게 요청한 일은 실제로 실행됩니다.",
+  "bia.temp.providers": "답변을 생성하는 AI 제공업체는 보안 및 악용 방지 목적으로만 최대 30일간 사본을 보관할 수 있으며, 모델 학습에는 사용하지 않습니다.",
+  "bia.temp.pill": "임시 · 저장 안 됨",
+  "bia.temp.turnOn": "임시 채팅 켜기",
+  "bia.temp.turnOff": "임시 채팅 나가기",
+  "bia.temp.unavailable": "지금은 임시 채팅을 사용할 수 없습니다. 잠시 후 다시 시도하세요.",
+  "bia.temp.startAlways": "항상 임시 모드로 시작",
+  "bia.temp.startAlwaysDesc": "Bia를 열면 채팅이 저장되지 않으며 Bia는 이를 학습하지 않습니다.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "새 통화",
   "calls.freeViaChatyy": "Chatyy로 음성·영상 무료 통화",

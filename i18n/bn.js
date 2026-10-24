@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "অস্থায়ী চ্যাট",
+  "bia.temp.body": "এটি আপনার ইতিহাসে সংরক্ষিত হয় না এবং Bia এই চ্যাট থেকে শেখে না। বের হলেই মুছে যায়।",
+  "bia.temp.actions": "আপনি Bia-কে যা করতে বলেন, যেমন বার্তা পাঠানো বা রিমাইন্ডার তৈরি, তা সত্যিই হয়।",
+  "bia.temp.providers": "উত্তর তৈরি করা AI প্রদানকারীরা শুধু নিরাপত্তা ও অপব্যবহার রোধে ৩০ দিন পর্যন্ত একটি কপি রাখতে পারে, এবং মডেল প্রশিক্ষণে তা ব্যবহার করে না।",
+  "bia.temp.pill": "অস্থায়ী · সংরক্ষিত নয়",
+  "bia.temp.turnOn": "অস্থায়ী চ্যাট চালু করুন",
+  "bia.temp.turnOff": "অস্থায়ী চ্যাট থেকে বের হন",
+  "bia.temp.unavailable": "অস্থায়ী চ্যাট এখন পাওয়া যাচ্ছে না। একটু পরে আবার চেষ্টা করুন।",
+  "bia.temp.startAlways": "সবসময় অস্থায়ী মোডে শুরু করুন",
+  "bia.temp.startAlwaysDesc": "Bia খুললে চ্যাট সংরক্ষিত হয় না এবং Bia তা থেকে শেখে না।",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "নতুন কল",
   "calls.freeViaChatyy": "Chatyy-তে বিনামূল্যে কল, ভয়েস ও ভিডিও",

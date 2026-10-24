@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Xat temporal",
+  "bia.temp.body": "No es desa a l'historial i la Bia no aprèn d'aquest xat. Desapareix quan surts.",
+  "bia.temp.actions": "El que li demanis a la Bia, com enviar un missatge o crear un recordatori, es fa de debò.",
+  "bia.temp.providers": "Els proveïdors d'IA que generen les respostes poden conservar una còpia fins a 30 dies només per seguretat i prevenció d'abusos, sense fer-la servir per entrenar models.",
+  "bia.temp.pill": "Temporal · no es desa",
+  "bia.temp.turnOn": "Activa el xat temporal",
+  "bia.temp.turnOff": "Surt del xat temporal",
+  "bia.temp.unavailable": "El xat temporal no està disponible ara. Torna-ho a provar d'aquí a un moment.",
+  "bia.temp.startAlways": "Comença sempre en mode temporal",
+  "bia.temp.startAlwaysDesc": "En obrir la Bia, el xat no es desa i la Bia no n'aprèn.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Trucada nova",
   "calls.freeViaChatyy": "Trucades gratuïtes per Chatyy, veu i vídeo",

@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Czat tymczasowy",
+  "bia.temp.body": "Nie zapisuje się w historii, a Bia nie uczy się z tego czatu. Znika, gdy wyjdziesz.",
+  "bia.temp.actions": "To, o co poprosisz Bię, np. wysłanie wiadomości lub utworzenie przypomnienia, naprawdę się wykona.",
+  "bia.temp.providers": "Dostawcy AI, którzy generują odpowiedzi, mogą przechowywać kopię do 30 dni wyłącznie dla bezpieczeństwa i zapobiegania nadużyciom, bez używania jej do trenowania modeli.",
+  "bia.temp.pill": "Tymczasowy · niezapisywany",
+  "bia.temp.turnOn": "Włącz czat tymczasowy",
+  "bia.temp.turnOff": "Wyjdź z czatu tymczasowego",
+  "bia.temp.unavailable": "Czat tymczasowy jest teraz niedostępny. Spróbuj ponownie za chwilę.",
+  "bia.temp.startAlways": "Zawsze zaczynaj w trybie tymczasowym",
+  "bia.temp.startAlwaysDesc": "Po otwarciu Bii czat nie jest zapisywany, a Bia się z niego nie uczy.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Nowe połączenie",
   "calls.freeViaChatyy": "Darmowe połączenia w Chatyy, głosowe i wideo",

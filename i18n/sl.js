@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Začasni klepet",
+  "bia.temp.body": "Ne shrani se v zgodovino in Bia se iz tega klepeta ne uči. Izgine, ko odidete.",
+  "bia.temp.actions": "Kar Bii naročite, na primer poslati sporočilo ali ustvariti opomnik, se res zgodi.",
+  "bia.temp.providers": "Ponudniki UI, ki ustvarjajo odgovore, lahko kopijo hranijo do 30 dni samo zaradi varnosti in preprečevanja zlorab in je ne uporabljajo za učenje modelov.",
+  "bia.temp.pill": "Začasno · ni shranjeno",
+  "bia.temp.turnOn": "Vklopi začasni klepet",
+  "bia.temp.turnOff": "Zapusti začasni klepet",
+  "bia.temp.unavailable": "Začasni klepet trenutno ni na voljo. Poskusite znova čez trenutek.",
+  "bia.temp.startAlways": "Vedno začni v začasnem načinu",
+  "bia.temp.startAlwaysDesc": "Ko odprete Bio, se klepet ne shrani in Bia se iz njega ne uči.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Nov klic",
   "calls.freeViaChatyy": "Brezplačni klici prek Chatyy, glas in video",

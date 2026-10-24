@@ -33,6 +33,7 @@ import { isReduceMotionEnabled } from '../reducedMotion';
 import { BiaMarkdown, BiaToolCards } from '../BiaRich';
 import BiaOrb from './BiaOrb';
 import { BiaFadeIn, BiaMessageActions, GlyphWave } from './BiaUI';
+import { BiaTempButton } from './BiaTempMode'; // [bia-temp 2026-10-24]
 
 const ND = Platform.OS !== 'web';
 
@@ -141,7 +142,7 @@ export const BiaChatWallpaper = memo(function BiaChatWallpaper({ isDark }) {
 });
 
 // ─── cabeçalho ───────────────────────────────────────────────────────────────
-export function BiaChatHeader({ isDark, t, topInset = 0, subtitle, busy, onBack, onVoice, onMenu, onInfo }) {
+export function BiaChatHeader({ isDark, t, topInset = 0, subtitle, busy, onBack, onVoice, onMenu, onInfo, tempOn = false, onTemp = null }) {
   const c = biaChatColors(isDark);
   return (
     <View style={[hs.bar, { paddingTop: topInset + 6, backgroundColor: c.bar, borderBottomColor: c.line }]}>
@@ -169,6 +170,9 @@ export function BiaChatHeader({ isDark, t, topInset = 0, subtitle, busy, onBack,
           ) : null}
         </View>
       </Pressable>
+      {onTemp ? ( // [bia-temp 2026-10-24] conversa temporária (estilo ChatGPT)
+        <BiaTempButton active={tempOn} onPress={onTemp} color={c.fg} activeBg={isDark ? 'rgba(255,255,255,0.16)' : 'rgba(24,24,27,0.10)'} t={t} />
+      ) : null}
       <HeaderIconButton onPress={onVoice} style={hs.btn} accessibilityLabel={t('one.voiceConversation')}>
         <GlyphWave size={20} color={c.fg} />
       </HeaderIconButton>

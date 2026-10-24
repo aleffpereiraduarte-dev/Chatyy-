@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "一時チャット",
+  "bia.temp.body": "履歴には保存されず、Bia はこのチャットから学習しません。終了すると消えます。",
+  "bia.temp.actions": "メッセージの送信やリマインダーの作成など、Bia に頼んだことは実際に実行されます。",
+  "bia.temp.providers": "回答を生成する AI プロバイダーは、安全性と不正利用防止のためだけに最大 30 日間コピーを保持する場合がありますが、モデルの学習には使用しません。",
+  "bia.temp.pill": "一時的 · 保存されません",
+  "bia.temp.turnOn": "一時チャットをオンにする",
+  "bia.temp.turnOff": "一時チャットを終了",
+  "bia.temp.unavailable": "一時チャットは現在利用できません。しばらくしてからもう一度お試しください。",
+  "bia.temp.startAlways": "常に一時モードで開始",
+  "bia.temp.startAlwaysDesc": "Bia を開いたとき、チャットは保存されず、Bia はそこから学習しません。",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "新しい通話",
   "calls.freeViaChatyy": "Chatyy なら音声もビデオも無料で通話",

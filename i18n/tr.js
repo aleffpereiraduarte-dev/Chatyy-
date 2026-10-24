@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Geçici sohbet",
+  "bia.temp.body": "Geçmişine kaydedilmez ve Bia bu sohbetten öğrenmez. Çıktığında kaybolur.",
+  "bia.temp.actions": "Bia'dan yapmasını istediğin şeyler, mesaj göndermek ya da hatırlatıcı oluşturmak gibi, gerçekten yapılır.",
+  "bia.temp.providers": "Yanıtları üreten yapay zekâ sağlayıcıları bir kopyayı yalnızca güvenlik ve kötüye kullanımı önleme amacıyla 30 güne kadar saklayabilir; model eğitmek için kullanmaz.",
+  "bia.temp.pill": "Geçici · kaydedilmez",
+  "bia.temp.turnOn": "Geçici sohbeti aç",
+  "bia.temp.turnOff": "Geçici sohbetten çık",
+  "bia.temp.unavailable": "Geçici sohbet şu anda kullanılamıyor. Birazdan tekrar dene.",
+  "bia.temp.startAlways": "Her zaman geçici modda başla",
+  "bia.temp.startAlwaysDesc": "Bia'yı açtığında sohbet kaydedilmez ve Bia ondan öğrenmez.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Yeni arama",
   "calls.freeViaChatyy": "Chatyy ile ücretsiz sesli ve görüntülü arama",

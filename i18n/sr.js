@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Привремени чет",
+  "bia.temp.body": "Не чува се у историји и Bia не учи из овог чета. Нестаје када изађете.",
+  "bia.temp.actions": "Оно што затражите од Bie, као слање поруке или прављење подсетника, заиста се изврши.",
+  "bia.temp.providers": "Добављачи вештачке интелигенције који генеришу одговоре могу да чувају копију до 30 дана само ради безбедности и спречавања злоупотребе, без коришћења за обучавање модела.",
+  "bia.temp.pill": "Привремено · не чува се",
+  "bia.temp.turnOn": "Укључи привремени чет",
+  "bia.temp.turnOff": "Изађи из привременог чета",
+  "bia.temp.unavailable": "Привремени чет тренутно није доступан. Покушајте поново за тренутак.",
+  "bia.temp.startAlways": "Увек почни у привременом режиму",
+  "bia.temp.startAlwaysDesc": "Када отворите Bia, чет се не чува и Bia из њега не учи.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Нови позив",
   "calls.freeViaChatyy": "Бесплатни позиви преко Chatyy-ја, глас и видео",

@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Түр чат",
+  "bia.temp.body": "Таны түүхэнд хадгалагдахгүй бөгөөд Bia энэ чатаас суралцахгүй. Гарахад алга болно.",
+  "bia.temp.actions": "Мессеж илгээх, сануулга үүсгэх зэрэг Bia-аас хийлгэх зүйлс үнэхээр биелнэ.",
+  "bia.temp.providers": "Хариулт үүсгэдэг AI нийлүүлэгчид зөвхөн аюулгүй байдал, зүй бус хэрэглээнээс сэргийлэх зорилгоор хуулбарыг 30 хүртэл хоног хадгалж болох ба загвар сургахад ашиглахгүй.",
+  "bia.temp.pill": "Түр · хадгалагдахгүй",
+  "bia.temp.turnOn": "Түр чатыг асаах",
+  "bia.temp.turnOff": "Түр чатаас гарах",
+  "bia.temp.unavailable": "Түр чат одоогоор боломжгүй байна. Түр хүлээгээд дахин оролдоно уу.",
+  "bia.temp.startAlways": "Үргэлж түр горимоор эхлэх",
+  "bia.temp.startAlwaysDesc": "Bia-г нээхэд чат хадгалагдахгүй бөгөөд Bia үүнээс суралцахгүй.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Шинэ дуудлага",
   "calls.freeViaChatyy": "Chatyy-ээр үнэгүй дуут болон видео дуудлага",

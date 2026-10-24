@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "محادثة مؤقتة",
+  "bia.temp.body": "لا تُحفظ في سجلك ولا تتعلم Bia من هذه المحادثة. تختفي عند خروجك.",
+  "bia.temp.actions": "ما تطلبه من Bia، مثل إرسال رسالة أو إنشاء تذكير، يتم تنفيذه فعلًا.",
+  "bia.temp.providers": "قد يحتفظ مزوّدو الذكاء الاصطناعي الذين يولّدون الردود بنسخة لمدة تصل إلى 30 يومًا لأغراض الأمان ومنع إساءة الاستخدام فقط، دون استخدامها لتدريب النماذج.",
+  "bia.temp.pill": "مؤقتة · لا تُحفظ",
+  "bia.temp.turnOn": "تشغيل المحادثة المؤقتة",
+  "bia.temp.turnOff": "الخروج من المحادثة المؤقتة",
+  "bia.temp.unavailable": "المحادثة المؤقتة غير متاحة الآن. حاول مجددًا بعد قليل.",
+  "bia.temp.startAlways": "البدء دائمًا في الوضع المؤقت",
+  "bia.temp.startAlwaysDesc": "عند فتح Bia، لا تُحفظ المحادثة ولا تتعلم Bia منها.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "مكالمة جديدة",
   "calls.freeViaChatyy": "مكالمات مجانية عبر Chatyy، صوت وفيديو",

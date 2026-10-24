@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Vaqtinchalik suhbat",
+  "bia.temp.body": "U tarixingizga saqlanmaydi va Bia bu suhbatdan o‘rganmaydi. Chiqib ketganingizda yo‘qoladi.",
+  "bia.temp.actions": "Bia’dan so‘ragan ishlaringiz, masalan xabar yuborish yoki eslatma yaratish, haqiqatan bajariladi.",
+  "bia.temp.providers": "Javoblarni yaratadigan sun’iy intellekt provayderlari nusxani faqat xavfsizlik va suiiste’molning oldini olish uchun 30 kungacha saqlashi mumkin va undan modellarni o‘qitishda foydalanmaydi.",
+  "bia.temp.pill": "Vaqtinchalik · saqlanmaydi",
+  "bia.temp.turnOn": "Vaqtinchalik suhbatni yoqish",
+  "bia.temp.turnOff": "Vaqtinchalik suhbatdan chiqish",
+  "bia.temp.unavailable": "Vaqtinchalik suhbat hozir mavjud emas. Birozdan keyin qayta urinib ko‘ring.",
+  "bia.temp.startAlways": "Doim vaqtinchalik rejimda boshlash",
+  "bia.temp.startAlwaysDesc": "Bia ochilganda suhbat saqlanmaydi va Bia undan o‘rganmaydi.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Yangi qo'ng'iroq",
   "calls.freeViaChatyy": "Chatyy orqali bepul ovozli va video qo'ng'iroqlar",

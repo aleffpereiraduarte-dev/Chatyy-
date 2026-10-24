@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Sembang sementara",
+  "bia.temp.body": "Ia tidak disimpan dalam sejarah anda dan Bia tidak belajar daripada sembang ini. Ia hilang apabila anda keluar.",
+  "bia.temp.actions": "Perkara yang anda minta Bia lakukan, seperti menghantar mesej atau membuat peringatan, tetap benar-benar berlaku.",
+  "bia.temp.providers": "Penyedia AI yang menjana jawapan mungkin menyimpan salinan sehingga 30 hari hanya untuk keselamatan dan pencegahan penyalahgunaan, dan tidak menggunakannya untuk melatih model.",
+  "bia.temp.pill": "Sementara · tidak disimpan",
+  "bia.temp.turnOn": "Hidupkan sembang sementara",
+  "bia.temp.turnOff": "Keluar daripada sembang sementara",
+  "bia.temp.unavailable": "Sembang sementara tidak tersedia sekarang. Cuba lagi sebentar nanti.",
+  "bia.temp.startAlways": "Sentiasa mula dalam mod sementara",
+  "bia.temp.startAlwaysDesc": "Apabila membuka Bia, sembang tidak disimpan dan Bia tidak belajar daripadanya.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Panggilan baharu",
   "calls.freeViaChatyy": "Panggilan percuma melalui Chatyy, suara dan video",

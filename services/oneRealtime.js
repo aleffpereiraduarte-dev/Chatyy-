@@ -114,13 +114,15 @@ function userTimezone() {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
 }
 
-async function mintEphemeralToken() {
+async function mintEphemeralToken(temp = false) { // [bia-temp 2026-10-24] temp=1 → sessão sem memória/ferramentas de memória
   // [bia-ferramentas-voz 2026-10-18] tools=1 = este app sabe executar ferramentas
   // (one_tool_exec). Servidor sem o kit ignora o campo → sessão sem ferramentas,
   // nada muda.
   // [bia-escuta 2026-10-19] turn_ctl=1: o servidor cria a sessão SEM resposta
   // automática e o app dispara a resposta após a pausa de "pensando".
-  const res = await api.apiCall('realtime_ephemeral_token', { tools: 1, turn_ctl: 1, timezone: userTimezone() }, 'POST');
+  const res = await api.apiCall('realtime_ephemeral_token', { tools: 1, turn_ctl: 1, timezone: userTimezone(), ...(temp ? { temp: 1 } : {}) }, 'POST');
+  // servidor sem suporte ao modo temporário: não abre a voz (seria uma sessão com memória)
+  if (temp && res?.success && Number(res?.data?.temp || 0) !== 1) throw new Error('temp_unsupported');
   if (!res?.success || !res?.data?.client_secret) {
     throw new Error(res?.message || 'token mint failed');
   }
@@ -275,7 +277,7 @@ export class OneRealtimeSession {
 
     this._alive();
     // 1. Ephemeral token from our backend
-    const { token, model, toolsEnabled, turnCtl } = await mintEphemeralToken();
+    const { token, model, toolsEnabled, turnCtl } = await mintEphemeralToken(!!this.handlers.temp); // [bia-temp 2026-10-24]
     this._alive();
     this._toolsEnabled = !!toolsEnabled;
     this._turnCtl = !!turnCtl;
@@ -650,7 +652,7 @@ export class OneRealtimeSession {
     const now = Date.now();
     for (const [k, p] of this._pendingConfirm) if (p.exp < now) this._pendingConfirm.delete(k);
 
-    const body = { tool: name, args, timezone: userTimezone() };
+    const body = { tool: name, args, timezone: userTimezone(), ...(this.handlers.temp ? { temp: 1 } : {}) }; // [bia-temp 2026-10-24]
     const pending = this._pendingConfirm.get(key);
     if (pending) {
       // Confirmação exige uma fala NOVA do usuário depois da pergunta.

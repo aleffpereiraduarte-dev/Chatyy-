@@ -11420,7 +11420,7 @@ export async function aiVoiceCommand(text, { language } = {}) {
 // forever on stalled cellular connections (the "mic stays listening" bug).
 // On Android we copy content:// URIs to a file:// path so RN's FormData
 // serializer can read them (it can't read ContentProvider URIs directly).
-export async function aiTranscribeAudio(audioUri, { timeoutMs = 45000 } = {}) {
+export async function aiTranscribeAudio(audioUri, { timeoutMs = 45000, temp = false } = {}) { // [bia-temp 2026-10-24] temp → servidor sem cópia em disco + gravação local apagada
   if (!audioUri) throw new Error('no audio uri');
   let uri = audioUri;
   if (Platform.OS === 'android' && typeof uri === 'string' && uri.startsWith('content://')) {
@@ -11433,7 +11433,8 @@ export async function aiTranscribeAudio(audioUri, { timeoutMs = 45000 } = {}) {
   }
   const form = new FormData();
   form.append('audio', { uri, name: 'audio.m4a', type: 'audio/m4a' });
-  const url = `${BASE_URL || 'https://chatyy.com.br'}/api/email.php?action=ai_transcribe_audio`;
+  if (temp) form.append('temp', '1');
+  const url = `${BASE_URL || 'https://chatyy.com.br'}/api/email.php?action=ai_transcribe_audio${temp ? '&temp=1' : ''}`;
   // NEVER set Content-Type manually — RN must append the multipart boundary itself.
   const headers = { Accept: 'application/json' };
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
@@ -11446,6 +11447,13 @@ export async function aiTranscribeAudio(audioUri, { timeoutMs = 45000 } = {}) {
     catch { throw new Error(`bad json (${resp.status}): ${text.slice(0, 200)}`); }
   } finally {
     clearTimeout(tid);
+    if (temp) { // [bia-temp 2026-10-24] a gravação da fala não fica no aparelho
+      try {
+        let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
+        const del = [uri]; if (audioUri !== uri) del.push(audioUri);
+        del.forEach((u) => { if (typeof u === 'string' && u.startsWith('file:')) FS.deleteAsync(u, { idempotent: true }).catch(() => {}); });
+      } catch {}
+    }
   }
 }
 
@@ -11675,7 +11683,7 @@ export function getOneScreenContext() { return _oneScreenContext; }
  * Returns an AbortController so the caller can cancel the stream.
  * Falls back to null if ReadableStream is not available (very old environments).
  */
-export function oneChatStream(message, conversationId = null, callbacks = {}, imageBase64 = null, imageMimeType = null, driveFileId = null, extraImages = null) {
+export function oneChatStream(message, conversationId = null, callbacks = {}, imageBase64 = null, imageMimeType = null, driveFileId = null, extraImages = null, extraBody = null) { // [bia-temp 2026-10-24] extraBody = {temp, temp_history}
   const { onDelta, onToolCall, onToolResult, onMeta, onDone, onError } = callbacks;
   const tz = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || 'America/Sao_Paulo';
   const locale = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale || '';
@@ -11699,6 +11707,7 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
   if (driveFileId) { body.drive_file_id = driveFileId; }
   // [bia-visao 2026-10-17] imagens adicionais (servidor normaliza HEIC/resize e manda tudo ao modelo de visão)
   if (Array.isArray(extraImages) && extraImages.length) body.images = extraImages.filter(x => x && x.base64).slice(0, 4).map(x => ({ data: x.base64, mime_type: x.mimeType || 'image/jpeg' }));
+  if (extraBody && typeof extraBody === 'object') { Object.assign(body, extraBody); if (extraBody.temp) body.conversation_id = null; } // [bia-temp 2026-10-24]
 
   const headers = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream', ...getAuthHeaders() };
 
@@ -11869,13 +11878,14 @@ async function _probeRustOne() {
   return false;
 }
 
-export async function oneChat(message, conversationId = null, imageBase64 = null, imageMimeType = null, driveFileId = null, extraImages = null) {
+export async function oneChat(message, conversationId = null, imageBase64 = null, imageMimeType = null, driveFileId = null, extraImages = null, extraBody = null) { // [bia-temp 2026-10-24]
+  const _temp = !!(extraBody && extraBody.temp);
   const tz = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.timeZone || 'America/Sao_Paulo';
   const locale = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale || '';
 
   // Rust path — Claude Haiku 4.5 + tools + persistent memory. Fast (~2s).
   // Vision and drive-file inputs still need PHP for now (complex to port).
-  if (!imageBase64 && !driveFileId && (await _probeRustOne())) {
+  if (!_temp && !imageBase64 && !driveFileId && (await _probeRustOne())) { // [bia-temp 2026-10-24] temporária só no PHP (sem gravação)
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 120000);
@@ -11919,6 +11929,7 @@ export async function oneChat(message, conversationId = null, imageBase64 = null
       body.drive_file_id = driveFileId;
     }
     if (Array.isArray(extraImages) && extraImages.length) body.images = extraImages.filter(x => x && x.base64).slice(0, 4).map(x => ({ data: x.base64, mime_type: x.mimeType || 'image/jpeg' })); // [bia-visao 2026-10-17]
+    if (_temp) { Object.assign(body, extraBody); body.conversation_id = null; } // [bia-temp 2026-10-24]
     const res = await fetch(`${API_URL}?action=one_chat`, {
       method: 'POST',
       headers,
@@ -11983,7 +11994,7 @@ export async function oneHistoryDelete({ conversationId, clearAll } = {}) {
 }
 
 // ElevenLabs TTS — returns blob URL (web) or null on failure
-export async function oneTTS(text) {
+export async function oneTTS(text, opts = {}) { // [bia-temp 2026-10-24] opts.temp → servidor não guarda (RAM, sem cache)
   const headers = {};
   if (sessionCookie) headers['Cookie'] = sessionCookie;
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
@@ -11993,7 +12004,7 @@ export async function oneTTS(text) {
     const res = await fetch(`${API_URL}?action=one_tts`, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(opts && opts.temp ? { text, temp: 1 } : { text }),
       credentials: 'include',
     });
     if (!res.ok) return null;
@@ -12003,6 +12014,12 @@ export async function oneTTS(text) {
     if (__DEV__) console.warn('[api] oneTTS error:', e?.message);
     return null;
   }
+}
+
+// [bia-temp 2026-10-24] URL do áudio temporário (por tid; o texto NÃO vai na URL)
+export function oneTTSTempUrl(tid) {
+  const token = authToken || '';
+  return `${API_URL}?action=one_tts&temp=1&tid=${encodeURIComponent(tid)}&token=${token}`;
 }
 
 // ElevenLabs TTS — returns direct URL for native playback (expo-av / Audio)

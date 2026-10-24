@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "Gumzo la muda",
+  "bia.temp.body": "Halihifadhiwi kwenye historia yako na Bia hajifunzi kutoka kwa gumzo hili. Linatoweka unapoondoka.",
+  "bia.temp.actions": "Unachomwomba Bia afanye, kama kutuma ujumbe au kuunda kikumbusho, kinafanyika kweli.",
+  "bia.temp.providers": "Watoa huduma wa AI wanaotoa majibu wanaweza kuhifadhi nakala hadi siku 30 kwa ajili ya usalama na kuzuia matumizi mabaya tu, bila kuitumia kufunza miundo.",
+  "bia.temp.pill": "Muda · halihifadhiwi",
+  "bia.temp.turnOn": "Washa gumzo la muda",
+  "bia.temp.turnOff": "Ondoka kwenye gumzo la muda",
+  "bia.temp.unavailable": "Gumzo la muda halipatikani sasa. Jaribu tena baada ya muda mfupi.",
+  "bia.temp.startAlways": "Anza kila mara katika hali ya muda",
+  "bia.temp.startAlwaysDesc": "Ukifungua Bia, gumzo halihifadhiwi na Bia hajifunzi kutoka kwalo.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "Simu mpya",
   "calls.freeViaChatyy": "Simu za bure kupitia Chatyy, sauti na video",

@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "ጊዜያዊ ውይይት",
+  "bia.temp.body": "በታሪክዎ ውስጥ አይቀመጥም፣ Bia ከዚህ ውይይት አትማርም። ሲወጡ ይጠፋል።",
+  "bia.temp.actions": "Bia እንድታደርግ የሚጠይቁት ነገር፣ እንደ መልዕክት መላክ ወይም ማስታወሻ መፍጠር፣ በእርግጥ ይከናወናል።",
+  "bia.temp.providers": "መልሶቹን የሚያመነጩ የAI አቅራቢዎች ለደህንነትና አላግባብ መጠቀምን ለመከላከል ብቻ እስከ 30 ቀን ቅጂ ሊያስቀምጡ ይችላሉ፤ ሞዴሎችን ለማሰልጠን አይጠቀሙበትም።",
+  "bia.temp.pill": "ጊዜያዊ · አይቀመጥም",
+  "bia.temp.turnOn": "ጊዜያዊ ውይይት አብራ",
+  "bia.temp.turnOff": "ከጊዜያዊ ውይይት ውጣ",
+  "bia.temp.unavailable": "ጊዜያዊ ውይይት አሁን አይገኝም። ትንሽ ቆይተው እንደገና ይሞክሩ።",
+  "bia.temp.startAlways": "ሁልጊዜ በጊዜያዊ ሁነታ ጀምር",
+  "bia.temp.startAlwaysDesc": "Bia ሲከፈት ውይይቱ አይቀመጥም፣ Bia ከእሱ አትማርም።",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "አዲስ ጥሪ",
   "calls.freeViaChatyy": "በChatyy ነጻ የድምፅ እና የቪዲዮ ጥሪዎች",

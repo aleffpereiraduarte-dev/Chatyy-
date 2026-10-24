@@ -1,4 +1,15 @@
 export default {
+  // [bia-temp 2026-10-24] conversa temporária da Bia
+  "bia.temp.title": "צ'אט זמני",
+  "bia.temp.body": "הוא לא נשמר בהיסטוריה ו-Bia לא לומדת מהצ'אט הזה. הוא נעלם כשאתה יוצא.",
+  "bia.temp.actions": "מה שתבקש מ-Bia לעשות, כמו לשלוח הודעה או ליצור תזכורת, באמת מתבצע.",
+  "bia.temp.providers": "ספקי ה-AI שמפיקים את התשובות עשויים לשמור עותק עד 30 יום לצורכי אבטחה ומניעת ניצול לרעה בלבד, בלי להשתמש בו לאימון מודלים.",
+  "bia.temp.pill": "זמני · לא נשמר",
+  "bia.temp.turnOn": "הפעלת צ'אט זמני",
+  "bia.temp.turnOff": "יציאה מהצ'אט הזמני",
+  "bia.temp.unavailable": "הצ'אט הזמני לא זמין כרגע. נסה שוב בעוד רגע.",
+  "bia.temp.startAlways": "להתחיל תמיד במצב זמני",
+  "bia.temp.startAlwaysDesc": "כשפותחים את Bia, הצ'אט לא נשמר ו-Bia לא לומדת ממנו.",
   // [2026-10-17 sem-pstn] Ligações só pelo Chatyy ("Nova chamada" no lugar do discador)
   "calls.newCall": "שיחה חדשה",
   "calls.freeViaChatyy": "שיחות חינם ב-Chatyy, קול ווידאו",
