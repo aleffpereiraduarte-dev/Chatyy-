@@ -908,6 +908,31 @@ async function _process(row) {
           if (ctrl.signal.aborted) return;
         }
       }
+      // [2026-10-24 midia-wa2] nota de voz → PUT direto no R2 pelo edge mais perto (presign), como foto/vídeo:
+      // antes ia multipart ao chat_upload (6 de 11 edges encaminham ao US; o arquivo ficava no disco do US
+      // e o destinatário baixava de lá). A onda viaja no nome (_w1-…, voiceWaveName) — sem ela (nome
+      // antigo) NÃO usa o R2 (o destinatário perderia as barras reais). Falha → chat_upload de sempre.
+      // Flag por conta: mediaWaFlags 'audio_r2' (kill __chatyy_mwa2_audio_r2=false).
+      if (usePhp && !p.cdn_url && p.type === 'audio' && !p.view_once && p.mwa2_wave && (Number(p.r2_fail) || 0) < 2) {
+        let _aOn = false;
+        const r2 = _r2();
+        try { _aOn = !!(r2 && typeof r2.uploadDirect === 'function' && r2.directEnabled?.() && require('./mediaWaFlags').mediaWaOn('audio_r2')); } catch { _aOn = false; }
+        if (_aOn) {
+          let d = null;
+          try { d = await r2.uploadDirect(file, { context: 'chat', signal: ctrl.signal, onPct: (f) => _emit(p, cmi, Math.round((Number(f) || 0) * 100), 'upload'), cmi }); }
+          catch (e) { d = { success: false, error: e?.message || 'r2_exception' }; }
+          if (ctrl.signal.aborted || d?.aborted) return;
+          if (d?.success && d.cdn_url) {
+            const _m = { m_via: 'r2', m_base: _hostOf(d.cdn_url), m_up_ms: Date.now() - _upT0, m_up_end: Date.now(), m_tries: _tries.get(String(cmi)) || 1 };
+            p = { ...p, cdn_url: d.cdn_url, server_size: Number(d.size) || size, server_file_name: p.file_name, ..._m };
+            await markUploadReady(cmi, { cdn_url: p.cdn_url, server_size: p.server_size, server_file_name: p.server_file_name, ..._m });
+            if (ctrl.signal.aborted) return;
+          } else {
+            p = { ...p, r2_fail: (Number(p.r2_fail) || 0) + 1 };
+            updatePayload(cmi, { r2_fail: p.r2_fail }).catch(() => {});
+          }
+        }
+      }
       if (!p.cdn_url) {
         // Audio (server transcodes/peaks) or Rust down → PHP combined upload +
         // insert, idempotent on client_message_id.
@@ -1097,6 +1122,20 @@ export async function enqueueMedia(payload) {
   // [e2ee5 WP-11] estado da conversa conhecido ANTES de gravar (a linha de conversa E2EE guarda a legenda
   // só no rascunho cifrável e nunca vai à fila nativa/upload em claro).
   try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn() && payload.conversation_id != null && _e5.convModeSync(payload.conversation_id) == null) await _e5.convState(payload.conversation_id); if (_e5.isOn() && payload.conversation_id != null) await _e5.autoOnWait?.(payload.conversation_id); } catch {} // [e2ee5 padrão] ativação automática em andamento
+  // [2026-10-24 midia-wa2] nota de voz: a onda vai no NOME do arquivo (_w1-<40>) → o destinatário
+  // desenha as barras reais mesmo com o áudio no R2 (servidor só lia .peaks.json do disco do US).
+  // Nunca em conversa E2EE (o nome iria em claro na URL) nem quando o estado E2EE é desconhecido.
+  try {
+    if ((payload.type === 'audio' || payload.type === 'voice') && Array.isArray(payload.waveform) && !payload.view_once
+      && require('./mediaWaFlags').mediaWaOn('voice_wave_name')) {
+      let _plain = true;
+      try { const _e5 = require('./e2ee/e2ee5'); if (_e5.isOn() && payload.conversation_id != null && _e5.convModeSync(payload.conversation_id) !== 0) _plain = false; } catch {}
+      if (_plain) {
+        const _nm = require('./voiceWaveName').encodeWaveName(payload.file_name || 'voice.m4a', payload.waveform);
+        if (_nm && _nm !== payload.file_name) payload = { ...payload, file_name: _nm, mwa2_wave: 1 };
+      }
+    }
+  } catch {}
   const r = await enqueue(payload, { lane: 'upload' });
   if (!r && _srcCopy) { try { await _deleteDurable({ durable_name: _srcCopy }); } catch {} }
   if (r) {

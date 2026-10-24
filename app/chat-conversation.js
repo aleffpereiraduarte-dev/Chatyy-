@@ -5284,6 +5284,8 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
         return Math.max(0.08, Math.min(1, isFinite(n) ? n : 0));
       });
     }
+    // [2026-10-24 midia-wa2] onda que viajou no nome do arquivo (_w1-…)
+    try { const _wn = require('../services/voiceWaveName').waveformFromName(url); if (_wn) return _wn.map(v => Math.max(0.08, Math.min(1, v))); } catch {}
     return generateWaveformBars(url);
   }, [waveform, url]);
 
@@ -36185,7 +36187,7 @@ function ChatConversationInnerBody() {
           if (isGifUrl) {
             return (
               <ExpoImage
-                source={{ uri: tenorUrl }}
+                source={{ uri: (() => { try { return require('../services/gifLight').lightGifUrl(tenorUrl) || tenorUrl; } catch { return tenorUrl; } })() /* [2026-10-24 midia-wa2] */ }}
                 style={{ width: 200, height: 200, borderRadius: 16 }}
                 contentFit="contain"
                 cachePolicy="memory-disk"

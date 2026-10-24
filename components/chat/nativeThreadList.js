@@ -1367,7 +1367,9 @@ function _mediaFor(m, ctx) {
   const r = (ctx.resolveMedia && ctx.resolveMedia(m)) || {};
   let w = Number(m.width) || 0; let h = Number(m.height) || 0;
   if (!(w > 0 && h > 0) && r.w > 0 && r.h > 0) { w = r.w; h = r.h; }
-  const gifUrl = m.type === 'gif' && !r.uri ? _gifContentUrl(m) : '';
+  let gifUrl = m.type === 'gif' && !r.uri ? _gifContentUrl(m) : '';
+  // [2026-10-24 midia-wa2] GIF do Giphy → rendição WebP (3–11x menor); flag por conta gif_light.
+  if (gifUrl) { try { gifUrl = require('../../services/gifLight').lightGifUrl(gifUrl) || gifUrl; } catch {} }
   if (gifUrl && !(w > 0 && h > 0)) { w = 220; h = 180; } // mesmo quadro do render JS
   const out = { t: m.type === 'gif' ? 'gif' : m.type, uri: r.uri || (gifUrl ? _stkLocal(gifUrl, true) : '') || '', w: w || 0, h: h || 0 };
   if (r.thumb) out.th = r.thumb;
@@ -1666,7 +1668,9 @@ function _buildRowInner(item, key, ctx) {
     return row;
   }
   if (type === 'audio' || type === 'voice') {
-    const wf = Array.isArray(item.waveform) ? item.waveform : null;
+    let wf = Array.isArray(item.waveform) ? item.waveform : null;
+    // [2026-10-24 midia-wa2] onda que veio no nome do arquivo (_w1-…) quando o servidor não mandou.
+    if (!wf || wf.length < 8) { try { wf = require('../../services/voiceWaveName').waveformOf(item) || wf; } catch {} }
     row.au = {
       d: Math.max(0, Math.round(Number(item.duration) || 0)),
       v: type === 'voice' || /voice|ptt|\.(m4a|aac|ogg|opus)$/i.test(String(item.file_name || item.file_url || '')) ? 1 : 0,
