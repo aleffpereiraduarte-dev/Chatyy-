@@ -10,7 +10,10 @@
 // same screen twice. Anything not listed here returns null and keeps the old
 // behavior (custom scheme, share intents, notifications, etc.).
 
-const HOSTS = new Set(['chatyy.com.br', 'www.chatyy.com.br']);
+// [dominios-novos 2026-10-24] chatyy.app = domínio global novo (mesmas rotas do chatyy.com.br);
+// ctyy.me = links curtos (t.me/wa.me), resolvidos em _resolveShort().
+const HOSTS = new Set(['chatyy.com.br', 'www.chatyy.com.br', 'chatyy.app', 'www.chatyy.app', 'ctyy.me', 'www.ctyy.me']);
+const SHORT_HOSTS = new Set(['ctyy.me', 'www.ctyy.me']);
 
 // Conservative token/handle shapes: never let an arbitrary string become a path.
 const TOKEN_RE = /^[A-Za-z0-9_-]{4,128}$/;
@@ -27,6 +30,7 @@ function _parse(url) {
   try {
     const u = new URL(url);
     if (!HOSTS.has(String(u.hostname || '').toLowerCase())) return null;
+    try { u.__short = SHORT_HOSTS.has(String(u.hostname || '').toLowerCase()); } catch {}
     return u;
   } catch {
     // Minimal fallback parser (URL polyfill missing on very old engines).
@@ -40,6 +44,7 @@ function _parse(url) {
       params[k] = _safeDecode(i >= 0 ? kv.slice(i + 1) : '');
     });
     return {
+      __short: SHORT_HOSTS.has(m[1].toLowerCase()),
       pathname: m[2] || '/',
       searchParams: { get: (k) => (Object.prototype.hasOwnProperty.call(params, k) ? params[k] : null) },
     };
@@ -59,6 +64,7 @@ export function resolveUniversalLink(url) {
   const path = String(u.pathname || '/').replace(/\/+$/, '') || '/';
   const seg = path.split('/').filter(Boolean).map(_safeDecode);
   const first = seg[0] || '';
+  if (u.__short || SHORT_HOSTS.has(String(u.hostname || '').toLowerCase())) return _resolveShort(seg);
 
   // /@handle → profile
   if (first.startsWith('@') && seg.length === 1) {
@@ -107,6 +113,29 @@ export function resolveUniversalLink(url) {
     default:
       return null;
   }
+}
+
+// [dominios-novos 2026-10-24] ctyy.me/<user> | /@<user> | /g/<código> | /r/<id> | /c/<código> | /+<telefone>.
+// Mesmo mapa do Worker ctyy-me (/root/dominios-novos-2026-10-24/ctyy-worker/worker.js) — manter juntos.
+// /+<telefone> abre "Nova conversa" já buscando o número: quem decide se a pessoa aparece é o
+// find_by_phone autenticado (respeita discoverable/bloqueios), o link em si não revela nada.
+function _resolveShort(seg) {
+  const a = seg[0] || '';
+  const b = seg[1] || '';
+  if (!a) return null; // raiz → app abre normal
+  if (a.startsWith('+') && seg.length === 1) {
+    const digits = a.slice(1).replace(/[^0-9]/g, '');
+    return digits.length >= 8 && digits.length <= 15 ? { href: '/chat-new?phone=' + encodeURIComponent('+' + digits), owner: 'router' } : null;
+  }
+  if ((a === 'g' || a === 'j') && TOKEN_RE.test(b)) return { href: '/j/' + b, owner: 'router' };
+  if (a === 'r' && ID_RE.test(b)) return { href: '/r/' + b, owner: 'router' };
+  if ((a === 'c' || a === 'call') && ID_RE.test(b)) return { href: '/call/' + b, owner: 'router' };
+  if (a === 'u' && HANDLE_RE.test(b)) return { href: '/u/' + encodeURIComponent(b), owner: 'router' };
+  if (seg.length === 1) {
+    const h = a.startsWith('@') ? a.slice(1) : a;
+    if (/^[A-Za-z0-9._-]{1,64}$/.test(h)) return { href: '/u/' + encodeURIComponent(h), owner: 'router' };
+  }
+  return null;
 }
 
 // Mirror of the app-claimed paths (documentation + tests).

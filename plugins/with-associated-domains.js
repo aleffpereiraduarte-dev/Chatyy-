@@ -15,7 +15,9 @@ const path = require('path');
 const { withEntitlementsPlist } = require('expo/config-plugins');
 
 const KEY = 'com.apple.developer.associated-domains';
-const DOMAINS = ['applinks:chatyy.com.br', 'webcredentials:chatyy.com.br'];
+// [dominios-novos 2026-10-24] + chatyy.app (domínio global) e ctyy.me (links curtos). Só publique
+// o BUILD depois que status.sh mostrar AASA 200 nos dois (senão o iOS só tenta de novo dias depois).
+const DOMAINS = ['applinks:chatyy.com.br', 'webcredentials:chatyy.com.br', 'applinks:chatyy.app', 'applinks:ctyy.me'];
 
 function associatedDomainsGate(projectRoot) {
   const force = (process.env.CHATYY_ASSOC_DOMAINS || '').trim().toLowerCase();

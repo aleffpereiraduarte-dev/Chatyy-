@@ -1271,6 +1271,17 @@ export default function ChatNewScreen() {
       }
     }, 280);
   }, [user?.email, allChatyyUsers, otherContacts, t]);
+  // [dominios-novos 2026-10-24] ctyy.me/+<telefone> → /chat-new?phone=+<telefone>: já abre buscando o
+  // número. Quem decide se a pessoa aparece é o find_by_phone (respeita discoverable/bloqueios).
+  const _phoneParamDone = useRef(false);
+  useEffect(() => {
+    if (_phoneParamDone.current) return;
+    const raw = String(pageParams.phone || '');
+    const digits = raw.replace(/[^0-9]/g, '');
+    if (digits.length < 8 || digits.length > 15) return;
+    _phoneParamDone.current = true;
+    try { handleSearch('+' + digits); } catch {}
+  }, [pageParams.phone, handleSearch]);
 
   const handleSelectContact = (contact) => {
     // Pick-mode: adding this contact to an existing group. One-tap flow —

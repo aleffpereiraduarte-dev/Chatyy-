@@ -27290,7 +27290,10 @@ function ChatConversationInnerBody() {
       await api.chatGroupInviteRevoke(conversationId);
       // Force a fresh link (regenerate=true) so the old token is dead.
       const r = await api.chatGroupInviteLink(conversationId, true);
-      const link = r?.data?.link || r?.data?.url || '';
+      // [dominios-novos 2026-10-24] chatyy.com.br/g/<código> → ctyy.me/g/<código> atrás da flag __chatyy_short_links
+      const _rawLink = r?.data?.link || r?.data?.url || '';
+      let link = _rawLink;
+      try { link = require('../utils/shortLinks').shortenUrl(_rawLink) || _rawLink; } catch {}
       if (r?.success && link) {
         setInviteLink(link);
         safeAlert(
@@ -27547,7 +27550,10 @@ function ChatConversationInnerBody() {
       // — user reported "compartilhar link não tá funcionando" because we
       // only read `.link` while server filled `.url`.
       const r = await api.chatGroupInviteLink(conversationId, regenerate);
-      const link = r?.data?.link || r?.data?.url || '';
+      // [dominios-novos 2026-10-24] chatyy.com.br/g/<código> → ctyy.me/g/<código> atrás da flag __chatyy_short_links
+      const _rawLink = r?.data?.link || r?.data?.url || '';
+      let link = _rawLink;
+      try { link = require('../utils/shortLinks').shortenUrl(_rawLink) || _rawLink; } catch {}
       if (r?.success && link) {
         setInviteLink(link);
         if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {

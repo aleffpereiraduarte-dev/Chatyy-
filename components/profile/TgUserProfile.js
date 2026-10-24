@@ -127,7 +127,7 @@ export default function TgUserProfile({ identifier, router, onOpenChat, onOpenCa
           onEdit: () => { try { router.push('/edit-profile'); } catch {} },
           onShare: () => {
             const h = (data.identity && data.identity.username) || em;
-            const url = `https://chatyy.com.br/u/${encodeURIComponent(h)}`;
+            const url = require('../../utils/shortLinks').profileShareUrl(h); // [dominios-novos 2026-10-24] ctyy.me atrás de flag
             try {
               if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.share) { navigator.share({ title: name, url }); return; }
               require('react-native').Share.share(Platform.OS === 'ios' ? { url } : { message: url });

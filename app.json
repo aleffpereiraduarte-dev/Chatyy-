@@ -256,6 +256,91 @@
           ]
         },
         {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": [
+            "DEFAULT",
+            "BROWSABLE"
+          ],
+          "data": [
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/call/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/c/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/j/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/g/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/u/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/@"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/ch/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/live/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/feed/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/meet/room.html"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/chat/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/stickers/store"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/signup"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.app",
+              "pathPrefix": "/r/"
+            },
+            {
+              "scheme": "https",
+              "host": "ctyy.me",
+              "pathPattern": "/..*"
+            }
+          ]
+        },
+        {
           "action": "SEND",
           "category": [
             "DEFAULT"

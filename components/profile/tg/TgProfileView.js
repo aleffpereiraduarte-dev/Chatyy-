@@ -580,7 +580,7 @@ export default function TgProfileView(props) {
         <View style={s.acts}>
           {actBtn({ icon: "plus", label: tr('publish'), pri: true, onPress: () => muralNav.openComposer({ from: 'profile', audience, router }) })}
           {actBtn({ icon: "edit", label: tr('edit'), onPress: selfCb.onEdit || (() => { try { router.push('/edit-profile'); } catch {} }) })}
-          {actBtn({ icon: "share", label: tr('share'), onPress: selfCb.onShare || (() => { try { Share.share({ url: `https://chatyy.com.br/u/${encodeURIComponent(handle || em)}`, message: Platform.OS === 'android' ? `https://chatyy.com.br/u/${encodeURIComponent(handle || em)}` : undefined }); } catch {} }) })}
+          {actBtn({ icon: "share", label: tr('share'), onPress: selfCb.onShare || (() => { try { const _su = require('../../../utils/shortLinks').profileShareUrl(handle || em); Share.share({ url: _su, message: Platform.OS === 'android' ? _su : undefined }); /* [dominios-novos 2026-10-24] */ } catch {} }) })}
         </View>
       ) : (
         <View style={s.acts}>

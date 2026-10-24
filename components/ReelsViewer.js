@@ -2011,7 +2011,8 @@ const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDa
   const handleShareExternal = useCallback(async () => {
     setShareSheetOpen(false);
     try { trackReelEvent(reel.id, 'share'); } catch {} // [reels-v1]
-    const url = guestGate ? (reel.share_url || guestReelUrl(reel.id)) : `${BASE_URL}/feed/${reel.id}`; // [guest-reels] link público /r/<id>
+    const _longUrl = guestGate ? (reel.share_url || guestReelUrl(reel.id)) : `${BASE_URL}/feed/${reel.id}`; // [guest-reels] link público /r/<id>
+    const url = require('../utils/shortLinks').reelShareUrl(reel.id, _longUrl); // [dominios-novos 2026-10-24] ctyy.me/r/<id> atrás de flag
     if (isWeb && typeof navigator !== 'undefined' && navigator.share) {
       try { await navigator.share({ title: reel.caption || '', url }); } catch {}
     } else if (!isWeb) {
@@ -4131,7 +4132,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     setNShareReel(null);
     if (!reel) return;
     try { trackReelEvent(reel.id, 'share'); } catch {}
-    try { await Share.share({ message: `${BASE_URL}/feed/${reel.id}` }); } catch {}
+    try { await Share.share({ message: require('../utils/shortLinks').reelShareUrl(reel.id, `${BASE_URL}/feed/${reel.id}`) }); } catch {} // [dominios-novos 2026-10-24]
   }, [nShareReel]);
   const nShareCopy = useCallback(async (reelArg) => {
     const reel = reelArg && reelArg.id ? reelArg : nShareReel;

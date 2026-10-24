@@ -2316,7 +2316,8 @@ export default function Profile({
   // renderHeader during render, so TDZ fires if the handlers live later in
   // the function body.
   const handleShareProfile = useCallback(() => {
-    const url = `https://chatyy.com.br/u/${encodeURIComponent(identity?.email || '')}`;
+    // [dominios-novos 2026-10-24] ctyy.me/<usuario> atrás da flag __chatyy_short_links (padrão = link longo de sempre)
+    const url = require('../utils/shortLinks').profileShareUrl(identity?.email || '');
     setMenuOpen(false);
     try {
       if (WEB && typeof navigator !== 'undefined' && navigator.share) {
