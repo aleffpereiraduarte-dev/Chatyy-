@@ -437,7 +437,9 @@ export default function VideoStudioEditor() {
         <View style={[styles.rail, { right: 8 }]} pointerEvents={voiceBusy ? 'none' : 'auto'}>
           <Tool Icon={IconType} label={t('studio.tool.text')} onPress={() => { pause(); setTextEdit({ id: null, initial: null }); }} />
           <Tool Icon={IconSmile} label={t('studio.tool.stickers')} onPress={() => openSheet('sticker')} />
+          {(globalThis.__chatyy_reels_music === true || !!edl.audio?.music) && ( // [23/10] sem biblioteca licenciada: música escondida (liga: __chatyy_reels_music=true)
           <Tool Icon={IconMusic} label={t('studio.tool.sounds')} onPress={() => openSheet('sounds')} on={!!edl.audio?.music} />
+          )}
           <Tool Icon={IconSparkles} label={t('studio.tool.filters')} onPress={() => openSheet('filters')} on={edl.filter?.id && edl.filter.id !== 'none'} />
           <Tool Icon={IconMic} label={t('studio.tool.voice')} onPress={() => openSheet('voice')} on={!!edl.audio?.voiceover} />
           <Tool Icon={IconMessageSquare} label={t('studio.tool.captions')} onPress={() => openSheet('captions')} on={!!edl.captions?.enabled} />
@@ -472,7 +474,7 @@ export default function VideoStudioEditor() {
         onMoveClip={onMoveClip}
         onOverlayRange={onOverlayRange}
         onAddClip={addClips}
-        onOpenSounds={() => openSheet('sounds')}
+        onOpenSounds={(globalThis.__chatyy_reels_music === true || !!edl.audio?.music) ? () => openSheet('sounds') : null}
         onOpenVoice={() => openSheet('voice')}
       />
 
