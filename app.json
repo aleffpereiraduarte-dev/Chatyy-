@@ -123,7 +123,7 @@
         ],
         "NSSpeechRecognitionUsageDescription": "Chatyy uses speech recognition to turn your voice into text when you use dictation or transcribe a voice message. Example: hold a voice message and tap Transcribe to read it instead of listening."
       },
-      "buildNumber": "776"
+      "buildNumber": "777"
     },
     "android": {
       "package": "com.onemundo.mail",
