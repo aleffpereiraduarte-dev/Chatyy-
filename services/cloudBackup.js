@@ -2,8 +2,11 @@
  * cloudBackup — "Backup da conversa" v4 (CYB4) na NOSSA nuvem (R2), cifrado no aparelho.
  * [backup-nuvem 2026-10-22] Plano: /root/backup-nuvem-2026-10-22/PLANO.md
  *
- * FLAG: tudo desligado salvo `globalThis.__chatyy_cloud_backup === true` (e o servidor
- * libera a conta: chat_cbk4_status.enabled). Desligado = nenhuma chamada, nada roda.
+ * FLAG: [backup-diario 2026-10-24] LIGADO por padrão — quem decide é o servidor (chat_cbk4_status.enabled,
+ * resposta "desligado" fica em cache 6 h). Kill OTA: `globalThis.__chatyy_cloud_backup = false` (nenhuma chamada).
+ * Automático diário segue status.policy: janela 02–06 h no horário do aparelho (+ minuto sorteado por conta),
+ * Wi-Fi, carregando de preferência (expo-battery só com BUILD; sem o módulo = não bloqueia), atrasado > 30 h →
+ * 1ª chance no Wi-Fi; 1º backup da conta = assim que der.
  *
  * Diferenças para o ownBackup (CYB3, que continua no ar e intocado):
  *  - FONTE = o APARELHO (SQLite chatyy.db + texto já decifrado do E2EE v5 via
@@ -94,7 +97,7 @@ const MSG_FIELDS = [
 // ─── flag ────────────────────────────────────────────────────────────────
 let _bgOn = false; // só dentro da tarefa de 2º plano (espelho da flag)
 export function isOn() {
-  try { return globalThis.__chatyy_cloud_backup === true || _bgOn; } catch { return false; }
+  try { return globalThis.__chatyy_cloud_backup !== false || _bgOn; } catch { return false; }
 }
 
 // ─── estado / progresso ──────────────────────────────────────────────────
@@ -616,14 +619,18 @@ async function _networkOk(prefs, manual) {
 function _appVersion() { try { return String(require('expo-constants').default?.expoConfig?.version || ''); } catch { return ''; } }
 
 // ─── backup ──────────────────────────────────────────────────────────────
+let _offUntil = 0; // [backup-diario] servidor disse "desligado p/ a conta" → não pergunta de novo por 6 h
 export async function status() {
   if (!isOn()) return { enabled: false };
+  if (_offUntil > Date.now()) return { enabled: false, cached: true };
   const d = await _call('chat_cbk4_status', null, 'GET');
+  if (!d?.enabled) { _offUntil = Date.now() + 6 * 3600 * 1000; return { enabled: false }; }
+  _offUntil = 0;
   // [cbk4c] só o ÚLTIMO backup: sets = [atual]; previous = o anterior (ainda restaurável na janela de 24 h)
   return {
     enabled: !!d.enabled, sets: d.sets || [], previous: d.previous || [], quota: d.quota || null, keep: d.keep || 1, media: !!d.media, window: d.window,
     // [cbk4d] modelo store-and-forward: o servidor deixa de guardar o histórico → backup é a ÚNICA cópia
-    historyOnServer: _historyOnServer(d), defaultOn: _defaultOn(d),
+    historyOnServer: _historyOnServer(d), defaultOn: _defaultOn(d), policy: d.policy || null,
   };
 }
 /** Servidor guarda o histórico? (campo history_on_server do chat_cbk4_status; ausente = sim). QA: globalThis.__chatyy_history_on_server. */
@@ -879,6 +886,40 @@ async function _runBackup(opts) {
 }
 
 // ─── automático (1º plano + tarefa de 2º plano) ──────────────────────────
+/** Carregando? null = não dá para saber (binário sem expo-battery). */
+async function _power() {
+  try {
+    const B = require('expo-battery');
+    if (!B?.getBatteryLevelAsync) return null;
+    const lvl = await B.getBatteryLevelAsync();
+    let charging = null;
+    try { const s = await B.getBatteryStateAsync(); charging = s === B.BatteryState?.CHARGING || s === B.BatteryState?.FULL; } catch {}
+    return { lvl: typeof lvl === 'number' && lvl >= 0 ? lvl : null, charging };
+  } catch { return null; }
+}
+/**
+ * [backup-diario 2026-10-24] Política do servidor (status.policy) p/ o automático, modelo WhatsApp:
+ * madrugada local (win_start..win_end + slot_min da conta), carregando de preferência, bateria ≥ min_battery.
+ * Fora da janela só se atrasado (> overdue_h) ou nunca fez backup. Devolve o motivo de pular ou null.
+ */
+async function _policyGate(pol, prefs, background) {
+  if (!pol || globalThis.__chatyy_cbk4_policy === false) return null;
+  const last = Date.parse(prefs.lastAt || 0) || 0;
+  const overdue = !last || Date.now() - last >= (Number(pol.overdue_h) || 30) * 3600 * 1000;
+  const pw = await _power();
+  if (pw?.lvl != null && pw.charging !== true && pw.lvl < (Number(pol.min_battery) || 0.25)) return 'battery';
+  if (overdue) return null;
+  const d = new Date();
+  const ws = Number(pol.win_start ?? 2); const we = Number(pol.win_end ?? 6);
+  const span = ((we - ws + 24) % 24 || 24) * 60;
+  const mins = ((d.getHours() - ws + 24) % 24) * 60 + d.getMinutes();
+  if (mins >= span) return 'window';
+  if (mins < Math.min(Number(pol.slot_min) || 0, span - 30)) return 'slot';
+  if (pol.charging === 'required' && pw?.charging === false) return 'charging';
+  // "de preferência": fora da tomada só na última hora da janela (dá chance de ligar no carregador)
+  if (pol.charging === 'preferred' && pw?.charging === false && mins < span - 60) return 'charging';
+  return null;
+}
 export async function maybeRunAuto(opts = {}) {
   try {
     if (!isOn() || _running) return { skipped: 'off_or_busy' };
@@ -893,6 +934,8 @@ export async function maybeRunAuto(opts = {}) {
     if (!(await _networkOk(prefs, false))) return { skipped: 'network' };
     const st = await status();
     if (!st.enabled) return { skipped: 'server_off' };
+    const gate = await _policyGate(st.policy, prefs, !!opts.background);
+    if (gate) return { skipped: gate };
     if (!(await _rootKey(em))) {
       const dk = await ensureDefaultOn({ email: em, st });
       if (!dk?.created) return { skipped: 'not_setup' };
@@ -937,7 +980,7 @@ async function _registerBg() {
   let BT;
   try { BT = require('expo-background-task'); } catch { return; }
   if (!BT?.registerTaskAsync) return;
-  try { defineBackgroundTask(); await BT.registerTaskAsync(BG_TASK, { minimumInterval: 12 * 60 }); } catch {}
+  try { defineBackgroundTask(); await BT.registerTaskAsync(BG_TASK, { minimumInterval: 60 }); } catch {} // [backup-diario] acorda de hora em hora (o SO decide); a janela da política filtra
 }
 /**
  * Corpo da tarefa de 2º plano (iOS BGTaskScheduler / Android WorkManager via expo-background-task,
@@ -955,7 +998,7 @@ export async function runBackgroundTask() {
     try { await _timeout(api.waitForTokenReady?.(), 15000); } catch {}
     const rr = await resumePendingRestore().catch(() => null);
     if (rr?.ran) return rr;
-    return await maybeRunAuto();
+    return await maybeRunAuto({ background: true });
   } finally { _bgOn = false; }
 }
 export function defineBackgroundTask() {

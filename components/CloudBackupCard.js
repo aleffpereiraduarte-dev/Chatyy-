@@ -1,5 +1,5 @@
 // CloudBackupCard — "Backup da conversa" v4 (nuvem do Chatyy, CYB4). [backup-nuvem 2026-10-22]
-// Só aparece com globalThis.__chatyy_cloud_backup === true E o servidor liberando a conta.
+// [backup-diario 2026-10-24] Aparece quando o servidor libera a conta (ligado por padrão; kill globalThis.__chatyy_cloud_backup = false).
 // A chave é a mesma do bloco "Backup no Chatyy" acima (OwnBackupCard): sem ela, pede para configurar lá.
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, Switch, StyleSheet, Platform, Alert } from 'react-native';
@@ -55,7 +55,9 @@ export function confirmAsync(title, msg, ok, cancel) {
 
 export default function CloudBackupCard() {
   const { colors } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  // [backup-diario 2026-10-24] textos novos sem mexer nos i18n/* (pt/en/es; demais idiomas = en)
+  const L = (pt, en, es) => { const l = String(language || 'pt').toLowerCase(); return l.startsWith('pt') ? pt : l.startsWith('es') ? es : en; };
   const [srv, setSrv] = useState(null);
   const [prefs, setPrefsState] = useState(null);
   const [local, setLocal] = useState(null);
@@ -166,7 +168,11 @@ export default function CloudBackupCard() {
         <Text style={[st.title, { color: fg }]}>{t('cbk4.title', 'Backup da conversa')}</Text>
       </View>
       <Text style={[st.small, { color: colors.textSecondary }]}>
-        {t('cbk4.subtitle', 'Cifrado neste aparelho e guardado na nuvem do Chatyy. Nem o Chatyy consegue ler. Conta no espaço do seu plano.')}
+        {srv?.quota?.separate
+          ? L('Cifrado neste aparelho e guardado na nuvem do Chatyy. Nem o Chatyy consegue ler. Até {s} grátis, fora do espaço do seu plano; ficam sempre os 2 últimos backups.',
+              'Encrypted on this device and stored in the Chatyy cloud. Not even Chatyy can read it. Up to {s} free, outside your plan storage; the 2 latest backups are always kept.',
+              'Cifrado en este dispositivo y guardado en la nube de Chatyy. Ni Chatyy puede leerlo. Hasta {s} gratis, fuera del espacio de tu plan; siempre quedan las 2 últimas copias.').replace('{s}', fmtBytes(srv.quota.cap))
+          : t('cbk4.subtitle', 'Cifrado neste aparelho e guardado na nuvem do Chatyy. Nem o Chatyy consegue ler. Conta no espaço do seu plano.')}
       </Text>
       <Text style={[st.body, { color: fg, marginTop: Spacing.md }]} testID="cbk4-last">
         {last
@@ -184,6 +190,16 @@ export default function CloudBackupCard() {
         <Text style={[st.small, { color: colors.textSecondary }]}>
           {t('cbk4.used', 'Espaço usado pelo backup: {s}').replace('{s}', fmtBytes(srv.quota.backup_used))}
           {srv.quota.cap ? ' ' + t('cbk4.capOf', 'de {s}').replace('{s}', fmtBytes(srv.quota.cap)) : ''}
+        </Text>
+      ) : null}
+      {srv.quota?.warn ? (
+        <Text style={[st.small, { color: colors.error || '#d93025', marginTop: 4 }]} testID="cbk4-quota-warn">
+          {srv.quota.full
+            ? L('O backup chegou ao limite grátis. Desligue "Incluir vídeos" ou apague conversas grandes para a mídia nova entrar.',
+                'Your backup reached the free limit. Turn off "Include videos" or delete large chats so new media fits.',
+                'La copia llegó al límite gratis. Desactiva "Incluir videos" o borra chats grandes para que entren los archivos nuevos.')
+            : L('O backup está perto do limite grátis ({p}%).', 'Your backup is close to the free limit ({p}%).', 'La copia está cerca del límite gratis ({p}%).')
+              .replace('{p}', String(Math.min(100, Math.round(100 * (srv.quota.backup_used || 0) / (srv.quota.cap || 1)))))}
         </Text>
       ) : null}
 
