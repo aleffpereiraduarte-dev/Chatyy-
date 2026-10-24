@@ -2521,8 +2521,10 @@ export default function RootLayout() {
                   <Stack.Screen name="video-studio/camera" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), gestureEnabled: false, freezeOnBlur: false /* desmontar a câmera ao ir pro editor */, ..._DARK_BG }} />
                   {/* [2026-10-13 video-studio] Editor (timeline/texto/sons/filtros/legendas/capa) → Publicar; Rascunhos. */}
                   <Stack.Screen name="video-studio/editor" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('fade'), gestureEnabled: false }} />{/* [2026-10-20 tg-modal] revisado: SEM arrasto de propósito — timeline, alças de corte, texto/figurinhas arrastáveis em tela cheia conflitam; sair = X (salva o rascunho) */}
-                  <Stack.Screen name="video-studio/publish" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
-                  <Stack.Screen name="video-studio/drafts" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  {/* [2026-10-24 reels-next] publicar/rascunhos abrem POR CIMA do editor/câmera (fullScreenModal). Como 'card', o iOS
+                      empilhava a tela ABAIXO do modal do editor → "Avançar não faz nada" (a tela abria invisível, 1 por toque). */}
+                  <Stack.Screen name="video-studio/publish" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_right'), gestureEnabled: false, ..._DARK_BG }} />
+                  <Stack.Screen name="video-studio/drafts" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom'), ..._DARK_BG }} />
                   {/* Reels drafts — grid of persisted drafts; tap to resume. */}
                   <Stack.Screen name="reels-drafts" options={{ headerShown: false, ..._FULL_MODAL }} />
                   {/* [2026-10-08 reels-publish] Reels composer — galeria/câmera → corte/capa/legenda → Publicar (2º plano). */}

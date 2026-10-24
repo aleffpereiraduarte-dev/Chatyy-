@@ -348,14 +348,25 @@ export default function VideoStudioEditor() {
   }, [commit, clock]);
 
   // ─── Avançar ────────────────────────────────────────────────────────────
+  const navRef = useRef(0);
   const goNext = useCallback(async () => {
+    // [2026-10-24 reels-next] 1 toque = 1 tela (antes: cada toque empilhava outra /publish invisível).
+    if (Date.now() - navRef.current < 1500) return;
+    navRef.current = Date.now();
     pause();
     const e = edlRef.current;
     const v = validate({ ...e, overlays: (e.overlays || []).map(({ id, kind, ...o }) => o) });
     if (!v.ok) { vsDiag('ed_invalid', { e: String((v.errors || [])[0] || '').slice(0, 50) }); Alert.alert(t('studio.editor.title'), t('studio.editor.invalid')); return; }
     if (draftRef.current) await Promise.race([saveDraftNow(draftRef.current).catch(() => {}), new Promise((r) => setTimeout(r, 2000))]);
-    vsDiag('ed_next', { n: (e.clips || []).length, ov: (e.overlays || []).length, mus: e.audio?.music ? 1 : 0 });
-    router.push({ pathname: '/video-studio/publish', params: { draft: draftRef.current } });
+    vsDiag('ed_next', { n: (e.clips || []).length, ov: (e.overlays || []).length, mus: e.audio?.music ? 1 : 0, vo: e.audio?.voiceover ? 1 : 0 });
+    if (!draftRef.current) { vsDiag('ed_next_err', { e: 'no_draft' }); navRef.current = 0; Alert.alert(t('studio.editor.title'), t('studio.editor.notFound')); return; }
+    try {
+      router.push({ pathname: '/video-studio/publish', params: { draft: draftRef.current } });
+      vsDiag('ed_next_nav', { ok: 1 });
+    } catch (err) {
+      navRef.current = 0;
+      vsDiag('ed_next_err', { e: String(err?.message || 'push').slice(0, 50) });
+    }
   }, [pause, router, t]);
 
   const close = useCallback(() => {

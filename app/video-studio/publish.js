@@ -28,6 +28,7 @@ import { loadDraft, updateDraft, saveDraftNow } from '../../services/videoStudio
 import { validate } from '../../services/videoStudio/edl';
 import { locate, totalDuration, fmtTime } from '../../services/videoStudio/edlOps';
 import { enqueueStudioRender, isDraftPublishing } from '../../services/videoStudio/renderQueue';
+import { vsDiag } from '../../services/videoStudio/diag';
 
 const CAPTION_MAX = 2200;
 const VIS = [
@@ -277,6 +278,7 @@ export default function VideoStudioPublish() {
   }, [draft, draftId, publishObj, t, closeStudio]);
 
   const publish = useCallback(async () => {
+    vsDiag('pub_tap', { d: draft ? 1 : 0, busy: busy ? 1 : 0, vis: visibility });
     if (!draft || busy) return;
     if (!email) { Alert.alert(t('studio.publish.title'), t('studio.publish.loginRequired')); return; }
     if (isDraftPublishing(draftId)) { closeStudio(); return; }
@@ -295,11 +297,12 @@ export default function VideoStudioPublish() {
       updateDraft(draftId, (x) => ({ ...x, meta: { ...(x.meta || {}), publish: p } }), { status: 'publishing', immediate: true });
       try { haptic.success(); } catch {}
       closeStudio();
-    } catch {
+    } catch (err) {
+      vsDiag('pub_err', { e: String(err?.message || 'err').slice(0, 50) });
       setBusy(false);
       Alert.alert(t('studio.publish.title'), t('studio.publish.failed'));
     }
-  }, [draft, busy, email, draftId, saveToDevice, publishObj, t, closeStudio]);
+  }, [draft, busy, email, draftId, saveToDevice, publishObj, t, closeStudio, visibility]);
 
   if (draft === false) {
     return (

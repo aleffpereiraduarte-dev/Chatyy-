@@ -10,6 +10,7 @@ import { useClockValue } from './EdlPreview';
 import { clipStarts, totalDuration, fmtTime, fmtTimePrecise } from '../../services/videoStudio/edlOps';
 import { captions as fetchCaptions } from '../../services/videoStudio/studioApi';
 import { uploadEdlAssets } from '../../services/videoStudio/renderQueue';
+import { vsDiag } from '../../services/videoStudio/diag';
 
 // ─── Filtros ────────────────────────────────────────────────────────────────
 function FilterCard({ f, clip, on, onPress, label }) {
@@ -222,7 +223,12 @@ function CoverCell({ clip, src }) {
 }
 
 // ─── Voz por cima ───────────────────────────────────────────────────────────
-function RecorderPanel({ t, edl, clock, preview, onRecorded, onBusy }) {
+function withTimeout(p, ms) {
+  if (!p || typeof p.then !== 'function') return Promise.resolve(p);
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+}
+
+function RecorderPanel({ t, edl, clock, preview, onRecorded, onBusy, stopRef }) {
   const A = useMemo(() => { try { return require('expo-audio'); } catch { return null; } }, []);
   const recorder = A?.useAudioRecorder ? A.useAudioRecorder(A.RecordingPresets.HIGH_QUALITY) : null; // eslint-disable-line react-hooks/rules-of-hooks
   const [state, setState] = useState('idle'); // idle | recording | saving
@@ -236,13 +242,19 @@ function RecorderPanel({ t, edl, clock, preview, onRecorded, onBusy }) {
     setState('saving');
     try { preview.current?.pause(); } catch {}
     let uri = null;
-    try { await recorder.stop(); uri = recorder.uri; } catch {}
-    try { await A.setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }); } catch {}
+    let err = '';
+    // [2026-10-24 reels-voz] stop() do expo-audio pode não voltar (sessão de áudio disputada c/ os players
+    // da prévia) → teto de 3 s; o arquivo já está gravado e recorder.uri vale.
+    try { await withTimeout(recorder.stop(), 3000); } catch (e) { err = String(e?.message || 'stop').slice(0, 40); }
+    try { uri = recorder.uri || null; } catch {}
+    try { await withTimeout(A.setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }), 1500); } catch {}
     stoppingRef.current = false;
     setState('idle');
     onBusy?.(false);
-    if (uri) onRecorded(uri);
+    vsDiag(uri ? 'vo_rec_ok' : 'vo_rec_fail', { ms: Date.now() - (recT0.current || Date.now()), e: uri ? '' : (err || 'no_uri') });
+    if (uri) { try { await onRecorded(uri); } catch (e) { vsDiag('vo_rec_fail', { e: 'adopt_' + String(e?.message || 'err').slice(0, 30) }); } }
   }, [recorder, A, preview, onRecorded, onBusy]);
+  const recT0 = useRef(0);
 
   useEffect(() => {
     if (state !== 'recording') return;
@@ -256,14 +268,21 @@ function RecorderPanel({ t, edl, clock, preview, onRecorded, onBusy }) {
     try {
       const perm = await A.requestRecordingPermissionsAsync();
       if (!perm?.granted) { Alert.alert(t('studio.voice.title'), t('studio.voice.micDenied')); return; }
-      await A.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await recorder.prepareToRecordAsync();
+      await withTimeout(A.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true }), 2000);
+      await withTimeout(recorder.prepareToRecordAsync(), 4000);
       onBusy?.(true);
-      await preview.current?.seek(0);
+      // [2026-10-24 reels-voz] seek/play da prévia trocam a fonte do player (replaceAsync) e podiam
+      // NUNCA resolver no iOS com a sessão em gravação → estado ficava 'idle' com o gravador ligado,
+      // folha travada (busy) e editor congelado. Teto curto e o estado vira 'recording' já.
+      try { await withTimeout(preview.current?.seek(0), 1500); } catch {}
       recorder.record();
-      await preview.current?.play();
+      recT0.current = Date.now();
       setState('recording');
+      withTimeout(preview.current?.play(), 1500).catch(() => {});
     } catch (e) {
+      vsDiag('vo_rec_fail', { e: 'start_' + String(e?.message || 'err').slice(0, 34) });
+      try { recorder.stop(); } catch {}
+      try { A.setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }); } catch {}
       onBusy?.(false);
       Alert.alert(t('studio.voice.title'), t('studio.voice.failed'));
     }
@@ -271,6 +290,7 @@ function RecorderPanel({ t, edl, clock, preview, onRecorded, onBusy }) {
 
   const stateRef = useRef(state);
   stateRef.current = state;
+  if (stopRef) stopRef.current = () => { if (stateRef.current === 'recording') stop(); };
   useEffect(() => () => {
     if (stateRef.current === 'recording') {
       try { recorder?.stop(); } catch {}
@@ -299,13 +319,15 @@ function RecorderPanel({ t, edl, clock, preview, onRecorded, onBusy }) {
 export function VoiceSheet({ visible, onClose, t, edl, clock, preview, onRecorded, onRemove, onVolume, onBusy }) {
   const vo = edl?.audio?.voiceover;
   const [busy, setBusy] = useState(false);
+  const stopRef = useRef(null);
+  // [2026-10-24 reels-voz] fechar com a gravação ligada = parar e salvar (antes: folha não fechava → "congelou").
   return (
-    <StudioSheet visible={visible} onClose={() => { if (!busy) onClose(); }} title={t('studio.voice.title')}>
+    <StudioSheet visible={visible} onClose={() => { if (busy) { try { stopRef.current?.(); } catch {} return; } onClose(); }} title={t('studio.voice.title')}>
       <View style={{ paddingHorizontal: 14, gap: 6 }}>
         {Platform.OS === 'web' ? (
           <Text style={styles.note}>{t('studio.voice.unavailable')}</Text>
         ) : (
-          visible ? <RecorderPanel t={t} edl={edl} clock={clock} preview={preview} onRecorded={onRecorded} onBusy={(b) => { setBusy(b); onBusy?.(b); }} /> : null
+          visible ? <RecorderPanel t={t} edl={edl} clock={clock} preview={preview} onRecorded={onRecorded} stopRef={stopRef} onBusy={(b) => { setBusy(b); onBusy?.(b); }} /> : null
         )}
         {!!vo && !busy && (
           <>
