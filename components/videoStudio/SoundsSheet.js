@@ -108,6 +108,8 @@ export default function SoundsSheet({ visible, onClose, t, edl, videoDur, onAppl
     const r = await musicList({ q: q.trim(), category: cat, cursor: reset ? null : cursor });
     if (id !== reqRef.current) return;
     setLoading(false);
+    // [2026-10-23 reels-sumiu] mede a biblioteca vazia (era 0 faixas em prod → "não dá p/ pôr música").
+    if (reset) { try { require('../../services/videoStudio/diag').vsDiag('ed_music', { ok: r.ok ? 1 : 0, n: (r.tracks || []).length, q: q.trim() ? 1 : 0, leg: r.legacy ? 1 : 0 }); } catch {} }
     if (!r.ok) { setErr(r.missing ? 'missing' : 'error'); if (reset) setTracks([]); return; }
     setTracks((prev) => (reset ? r.tracks : [...prev, ...r.tracks.filter((x) => !prev.some((p) => p.id === x.id))]));
     setCursor(r.cursor || null);

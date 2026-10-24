@@ -504,6 +504,8 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
     failed = false
     bars.setCount(g.items.size)
     bars.set(idx, 0f)
+    setZoom(1f, 0f, 0f) // [status-zoom 2026-10-23]
+    hiresToken = -1
     val it = g.items[idx]
     textAnimPlayed = false
     typeRevealed = if (it.textAnim == "typewriter") 0 else -1
@@ -834,6 +836,49 @@ class SVGroupPage(context: Context, private val labels: SVLabels) : FrameLayout(
     val ar = dw.toFloat() / dh
     val vr = vw / vh
     imageView.scaleType = if (abs(ar - vr) / vr < 0.18f) ImageView.ScaleType.CENTER_CROP else ImageView.ScaleType.FIT_CENTER
+  }
+
+  // ─── Zoom [status-zoom 2026-10-23] ────────────────────────────────────────
+  // O dialog calcula escala/deslocamento; aqui só aplica na mídia + blocos
+  // (figurinhas acompanham a foto) e troca pelo original acima de 1.5x.
+
+  var zoomS = 1f
+    private set
+  private var hiresToken = -1
+
+  /** Foto/vídeo com mídia (não texto/voz, não erro). */
+  val isZoomable: Boolean
+    get() {
+      val it = currentItem ?: return false
+      return !failed && (it.type == SVType.IMAGE || it.type == SVType.VIDEO)
+    }
+
+  fun setZoom(s: Float, tx: Float, ty: Float) {
+    zoomS = s
+    for (v in arrayOf<View>(media, overlayLayer)) {
+      v.scaleX = s
+      v.scaleY = s
+      v.translationX = tx
+      v.translationY = ty
+    }
+  }
+
+  /** Foto já pintada (variante) → baixa o original em alta e troca. */
+  fun loadHiresIfNeeded() {
+    val it = currentItem ?: return
+    if (it.type != SVType.IMAGE || !ready || failed || it.hires.isEmpty() || it.hires == it.uri || hiresToken == token) return
+    val model = MVItem.glideModel(it.hires) ?: return
+    hiresToken = token
+    val t = token
+    val target = object : CustomTarget<Drawable>() {
+      override fun onResourceReady(resource: Drawable, transition: Transition<in Drawable>?) {
+        if (token != t) return
+        imageView.setImageDrawable(resource)
+      }
+      override fun onLoadCleared(placeholder: Drawable?) {}
+    }
+    targets.add(target)
+    request(model, MVPageView.FULL_PX).into(target)
   }
 
   private fun loadImage(it: SVItem) {

@@ -11,7 +11,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, Image, TouchableOpacity, StyleSheet, Platform, ScrollView,
-  ActivityIndicator, Dimensions,
+  ActivityIndicator, Dimensions, Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,7 +20,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext'; // [2026-10-10 feed-polish] i18n
 import * as api from '../../services/api';
 import AvatarCircle from '../../components/AvatarCircle';
-import { IconHeart, IconMessageSquare, IconShare, IconX, IconMapPin, IconDownload, IconChevronLeft, IconArrowLeft } from '../../components/Icons';
+import { IconHeart, IconMessageSquare, IconShare, IconX, IconMapPin, IconDownload, IconChevronLeft, IconArrowLeft, IconUser } from '../../components/Icons';
+import { taggedPeople, tagRemove } from '../../services/videoStudio/studioApi'; // [2026-10-24 reels-marcar]
 import { cachedVideoSource } from '../../services/videoCacheSource';
 
 // [2026-10-17 notif-audit] Lazy: FeedComments pulls the comment stack — only
@@ -328,6 +329,39 @@ export default function FeedPostPublic() {
         {!!post.caption && (
           <Text style={[styles.caption, { color: colors.text }]}>{post.caption}</Text>
         )}
+        {/* [2026-10-24 reels-marcar] "com @fulano" + quem foi marcado pode se tirar (a notificação "marcou você" abre aqui). */}
+        {(() => {
+          const ppl = taggedPeople(post);
+          if (!ppl.length) return null;
+          const me = String(user?.email || '').toLowerCase();
+          const amTagged = !!me && ppl.some((p) => p.email === me);
+          const untag = () => Alert.alert(t('reels.tag.removeMe'), t('reels.tag.removeBody'), [
+            { text: t('common.cancel'), style: 'cancel' },
+            { text: t('reels.tag.removeConfirm'), style: 'destructive', onPress: async () => {
+              const r = await tagRemove(post.id).catch(() => null);
+              if (r && r.ok) setPost((p) => ({ ...p, tagged: r.tagged, tagged_users: r.tagged_users }));
+              else Alert.alert(t('reels.tag.removeMe'), t('reels.tag.removeFailed'));
+            } },
+          ]);
+          return (
+            <View style={{ marginTop: 10, gap: 8 }}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+                <IconUser size={13} color={colors.textSecondary} />
+                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{t('feed.with')}</Text>
+                {ppl.map((p) => (
+                  <TouchableOpacity key={p.email} onPress={() => { if (user?.email) router.push(`/u/${encodeURIComponent(p.email)}`); }} accessibilityRole="link" hitSlop={{ top: 6, bottom: 6, left: 2, right: 2 }}>
+                    <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700' }}>{`@${p.handle}`}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {amTagged && (
+                <TouchableOpacity onPress={untag} style={{ alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }} accessibilityRole="button">
+                  <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{t('reels.tag.removeMe')}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        })()}
         <View style={{ flexDirection: 'row', gap: 20, marginTop: 14, alignItems: 'center' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <IconHeart size={18} color="#e11d48" />

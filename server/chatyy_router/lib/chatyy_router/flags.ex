@@ -20,6 +20,8 @@ defmodule ChatyyRouter.Flags do
     RT_F1_CMP=0    desliga o comparador roteador × PG (ChatyyRouter.BodyCompare). Padrão ligado.
     RT_STORE_REPAIR=pg  o comparador COPIA do PG (réplica) o que faltar na casa (conta como reparo, não
                    como acerto). Padrão desligado: na F1 a falta tem que aparecer.
+    [sgu F4 2026-10-23] RT_F4=1  conv_pts na casa + recibos/apagar para todos/contadores (ChatyyRouter.F4) nas
+                   conversas body_store >= 3. PADRÃO 0 (inerte): sem pts novo, /store recusa receipt/delete.
     RT_INHERIT=auto  herança de inbox automática (A5) quando um aparelho é revogado e outro do mesmo uid
                    nasce ±24 h da revogação. Padrão desligado (só o POST /inherit explícito).
   `override/2` (Control POST /flags?route=&fanout=) vale até o restart.
@@ -27,7 +29,7 @@ defmodule ChatyyRouter.Flags do
   use GenServer
   require Logger
 
-  @defaults %{route: true, fanout: false, hub_http: false, offline_skip: false, f0_cmp: true, store: false, f1_cmp: true, store_repair: false, inherit_auto: false}
+  @defaults %{route: true, fanout: false, hub_http: false, offline_skip: false, f0_cmp: true, store: false, f1_cmp: true, store_repair: false, inherit_auto: false, f4: false}
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -36,7 +38,7 @@ defmodule ChatyyRouter.Flags do
   def get(k), do: :persistent_term.get({__MODULE__, k}, @defaults[k])
 
   def override(v) when is_boolean(v), do: override(:route, v)
-  def override(k, v) when k in [:route, :fanout, :hub_http, :offline_skip, :f0_cmp, :store, :f1_cmp, :store_repair, :inherit_auto] and is_boolean(v), do: GenServer.call(__MODULE__, {:override, k, v})
+  def override(k, v) when k in [:route, :fanout, :hub_http, :offline_skip, :f0_cmp, :store, :f1_cmp, :store_repair, :inherit_auto, :f4] and is_boolean(v), do: GenServer.call(__MODULE__, {:override, k, v})
 
   @impl true
   def init(_) do
@@ -60,7 +62,7 @@ defmodule ChatyyRouter.Flags do
       end
 
     for {k, var} <- [route: "RT_ROUTE", fanout: "RT_FANOUT", hub_http: "RT_HUB", offline_skip: "RT_OFFLINE", f0_cmp: "RT_F0_CMP",
-                    store: "RT_STORE", f1_cmp: "RT_F1_CMP", store_repair: "RT_STORE_REPAIR", inherit_auto: "RT_INHERIT"],
+                    store: "RT_STORE", f1_cmp: "RT_F1_CMP", store_repair: "RT_STORE_REPAIR", inherit_auto: "RT_INHERIT", f4: "RT_F4"],
         not Map.has_key?(s.override, k) do
       v =
         cond do
@@ -69,6 +71,7 @@ defmodule ChatyyRouter.Flags do
           k == :store_repair -> line?(body, "RT_STORE_REPAIR", "pg")
           k == :inherit_auto -> line?(body, "RT_INHERIT", "auto")
           k == :store -> line?(body, "RT_STORE", "1")
+          k == :f4 -> line?(body, "RT_F4", "1")
           String.contains?(body, var <> "=0") -> false
           String.contains?(body, var <> "=1") -> true
           true -> @defaults[k]

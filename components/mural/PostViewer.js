@@ -16,6 +16,7 @@ import MIcon from './MuralIcons';
 import { LIKE } from './muralTheme';
 import { Avatar, AnimatedHeart, BurstHeart, ActBtn, shortAgo, fullWhen, audienceLabel, count, displayName, handle, likersText, sharePost } from './parts';
 import * as store from '../../services/muralStore';
+import { MentionText } from '../comments/mentions'; // [2026-10-24 coment-mencao]
 
 let _GH = null;
 if (Platform.OS !== 'web') { try { _GH = require('react-native-gesture-handler'); } catch { _GH = null; } }
@@ -269,7 +270,7 @@ export default function PostViewer({ postId, onBack, onOpenComments, onOpenLiker
             {highlight ? (
               <Pressable onPress={() => onOpenComments?.(false)} style={{ paddingTop: 6 }}>
                 <Text style={{ color: fg, fontSize: 14, lineHeight: 19 }} numberOfLines={2}>
-                  <Text style={{ fontWeight: '700' }}>{highlight.username || String(highlight.email || '').split('@')[0] || highlight.name}</Text>{'  '}{highlight.content}
+                  <Text style={{ fontWeight: '700' }}>{highlight.username || String(highlight.email || '').split('@')[0] || highlight.name}</Text>{'  '}<MentionText text={highlight.content} mentions={highlight.mentions} mentionStyle={{ color: '#e0f1ff' }} />
                 </Text>
               </Pressable>
             ) : null}

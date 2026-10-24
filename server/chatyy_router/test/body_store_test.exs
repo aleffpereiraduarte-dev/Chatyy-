@@ -213,6 +213,11 @@ defmodule ChatyyRouter.BodyStoreTest do
     eventually(fn -> on(c, "b", BodyHome, :check, [109]) == {:error, :not_e2ee} end)
     assert {:error, :not_e2ee} = put(c, "b", 109, 9001, "K")
     assert {:error, :bad_request} = put(c, "b", 108, nil, "K")
+    # o motivo vai no rótulo: {} (sonda do kit PHP) = no_cid; mid ausente = no_mid
+    assert {:error, :bad_request} = on(c, "b", BodyStore, :store, [%{}])
+    prom = on(c, "b", Metrics, :prometheus, [])
+    assert prom =~ ~s(chatyy_router_rt_store_total{result="bad_request",why="no_mid"} 1)
+    assert prom =~ ~s(chatyy_router_rt_store_total{result="bad_request",why="no_cid"} 1)
 
     # gancho do /fanout (R1): cópia assíncrona com src fanout
     :ok = on(c, "c", BodyStore, :from_fanout, [%{cid: 108, seq: 9002, body: "F", from: "u1@chatyy.com.br", ts: 1}])
@@ -258,6 +263,19 @@ defmodule ChatyyRouter.BodyStoreTest do
     assert m.cmi == "cmi-1" and m.from_uid == "u1" and m.reply_to_id == 77 and m.mentions == ["u2"] and m.from_device == "d1a"
     # mids vale até para quem não era esperado (o PHP pede por id)
     assert [_] = on(c, "e", BodyStore, :pull, ["outro", [cid: 113, mids: [13_001]]]).messages
+  end
+
+  test "status responde na hora mesmo com o processo BodyStore parado (busy_dist_port de 23/10 no mad)", %{c: c} do
+    conv(c, 114, "a")
+    pid = on(c, "b", Process, :whereis, [BodyStore])
+    :ok = on(c, "b", :sys, :suspend, [pid])
+    for _ <- 1..150, do: on(c, "b", :erlang, :send, [pid, :encher_fila])
+    {t, st} = :timer.tc(fn -> on(c, "b", BodyStore, :status, []) end)
+    assert t < 1_000_000
+    assert 114 in st.enabled_cids
+    assert st.partial and Enum.any?(st.warn, &(&1 =~ "fila do BodyStore")), inspect(st)
+    :ok = on(c, "b", :sys, :resume, [pid])
+    eventually(fn -> on(c, "b", BodyStore, :status, []).warn == [] end)
   end
 
   test "persisted de todos tira do pull e conta 'apagaria' — a F1 NÃO apaga", %{c: c} do

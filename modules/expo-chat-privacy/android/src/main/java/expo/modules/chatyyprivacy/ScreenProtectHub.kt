@@ -221,13 +221,28 @@ object ScreenProtectHub {
   private fun reapplyAll(allowClear: Boolean) {
     onMain {
       val loc = activityLocal()
-      for (a in activities.keys.toList()) {
+      // [2026-10-23 loja] NUNCA .toList() em WeakHashMap: com 1 entrada o Kotlin faz
+      // iterator().next() direto e, se o GC limpou a referência entre size() e next(),
+      // estoura NoSuchElementException (crash Play vc738, ScreenProtectHub\$d.run).
+      for (a in snapKeys(activities)) {
         try { if (!a.isDestroyed) applyWindow(a.window, loc, allowClear) } catch (_: Throwable) {}
       }
-      for ((w, l) in windows.entries.toList()) {
+      for ((w, l) in snapEntries(windows)) {
         applyWindow(w, l, allowClear)
       }
     }
+  }
+
+  /** Cópia segura (hasNext() antes de cada next() segura a chave forte). */
+  private fun <K, V> snapKeys(m: WeakHashMap<K, V>): List<K> {
+    val out = ArrayList<K>(m.size)
+    try { val it = m.keys.iterator(); while (it.hasNext()) { val k = it.next() ?: continue; out.add(k) } } catch (_: Throwable) {}
+    return out
+  }
+  private fun <K, V> snapEntries(m: WeakHashMap<K, V>): List<Pair<K, V>> {
+    val out = ArrayList<Pair<K, V>>(m.size)
+    try { val it = m.entries.iterator(); while (it.hasNext()) { val e = it.next(); val k = e.key ?: continue; out.add(k to e.value) } } catch (_: Throwable) {}
+    return out
   }
 
   private fun applyWindow(w: Window?, local: Boolean, allowClear: Boolean) {
@@ -248,7 +263,7 @@ object ScreenProtectHub {
 
   // ─── [2026-10-22 print-local] Recentes: ícone do app / capa em vez de preto ──
   private fun activityOf(w: Window): Activity? {
-    for (a in activities.keys) { try { if (a.window === w) return a } catch (_: Throwable) {} }
+    for (a in snapKeys(activities)) { try { if (a.window === w) return a } catch (_: Throwable) {} }
     return null
   }
 

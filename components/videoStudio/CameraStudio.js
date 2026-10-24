@@ -38,6 +38,7 @@ import { tap as hapticTap, selection as hapticSelection, warning as hapticWarnin
 import { SPEEDS } from '../../services/videoStudio/edl';
 import { STUDIO_FILTERS, getStudioFilter } from '../../services/videoStudio/filters';
 import { useSegmentSession, LIMITS_S, assetsToClips, probeVideo } from '../../services/videoStudio/useSegmentSession';
+import { vsDiag } from '../../services/videoStudio/diag';
 
 const { height: SCREEN_H } = Dimensions.get('window');
 const MIN_CLIP_MS = 500;          // iOS/Android falham com trechos muito curtos
@@ -210,9 +211,10 @@ export default function CameraStudio({ t, draftId, initialMusic, onNext, onClose
     try { KeepAwake?.activateKeepAwakeAsync?.(KA_TAG); } catch {}
     startMusic(live.current.totalS, spd);
     let res = null;
+    let recErr = '';
     try {
       res = await cameraRef.current.recordAsync({ maxDuration: Math.max(1, Math.ceil(remaining * spd) + 1) });
-    } catch (e) { res = null; }
+    } catch (e) { res = null; recErr = String(e?.code || e?.message || 'err').slice(0, 40); }
     const wallS = (Date.now() - recStartRef.current) / 1000;
     recordingRef.current = false;
     setRecording(false);
@@ -227,14 +229,17 @@ export default function CameraStudio({ t, draftId, initialMusic, onNext, onClose
           { move: true },
         );
         // Duração REAL (start-up da gravação come ~100-300 ms do relógio de parede) + frame p/ Alinhar.
+        vsDiag('rec_ok', { ms: Math.round(wallS * 1000), n: index + 1, cam: fac, ext: (/\.([a-z0-9]{2,4})$/i.exec(String(res.uri)) || [])[1] });
         probeVideo(clip.uri).then(({ duration, thumb }) => {
           if (duration > 0.05) session.patchSegment(index, { out: Math.min(duration, remaining * spd + 0.05) });
           if (thumb) setGhost({ thumb, index, camera: fac });
         }).catch(() => {});
-      } catch {
+      } catch (e) {
+        vsDiag('rec_save_fail', { ms: Math.round(wallS * 1000), e: String(e?.message || 'err').slice(0, 40) });
         showToast(t('videoStudio.cam.recordFailed'));
       }
     } else if (wallS > 0.6) {
+      vsDiag('rec_fail', { ms: Math.round(wallS * 1000), e: recErr || 'no_uri' });
       showToast(t('videoStudio.cam.recordFailed'));
     }
     if (pendingFlipRef.current) {
@@ -384,11 +389,18 @@ export default function CameraStudio({ t, draftId, initialMusic, onNext, onClose
     if (recordingRef.current || busy) return;
     if (!session.segments.length) return;
     setBusy('next');
+    const t0 = Date.now();
     try {
-      const r = await session.finish();
-      if (r.id) onNext?.(r.id, r.edl);
+      // [2026-10-23 reels-sumiu] o rascunho já está em memória + disco desde o fim de cada
+      // trecho; gravar a EDL final não pode travar a ida ao editor (antes: await sem teto →
+      // botão girando p/ sempre e "nada acontece"). Teto de 2,5 s e segue com o id.
+      const fin = session.finish().catch((e) => ({ id: session.getDraftId?.() || null, errors: [String(e?.message || 'err')] }));
+      const r = await Promise.race([fin, new Promise((res) => setTimeout(() => res({ id: session.getDraftId?.() || null, errors: ['finish_timeout'] }), 2500))]);
+      vsDiag('cam_next', { ms: Date.now() - t0, n: session.segments.length, id: r?.id ? 1 : 0, err: (r?.errors || [])[0] });
+      if (r?.id) onNext?.(r.id, r.edl);
+      else showToast(t('videoStudio.cam.recordFailed'));
     } finally { setBusy(null); }
-  }, [busy, session, onNext]);
+  }, [busy, session, onNext, showToast, t]);
 
   const importGallery = useCallback(async () => {
     if (recordingRef.current || busy) return;

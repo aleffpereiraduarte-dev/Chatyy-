@@ -112,6 +112,24 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
   private let vpan = UIPanGestureRecognizer()
   private var vpanUp = false
 
+  // [status-zoom 2026-10-23] Pinça até 4x / duplo toque (apiVersion 5). JS liga
+  // por `zoom` no open() (kill switch globalThis.__chatyy_status_zoom=false).
+  var zoomEnabled = false
+  private let pinch = UIPinchGestureRecognizer()
+  private let zoomPan = UIPanGestureRecognizer()
+  private let zoomMax: CGFloat = 4
+  private var zoomScale: CGFloat = 1
+  private var zoomT: CGPoint = .zero
+  private var zoomSticky = false   // duplo toque: fica ampliado até novo duplo toque
+  private var zoomActive = false   // pinça em curso
+  private var zoomBaseS: CGFloat = 1
+  private var zoomBaseT: CGPoint = .zero
+  private var zoomBaseF: CGPoint = .zero
+  private var zoomBasePinch: CGFloat = 1
+  private var zoomBaseN = 0
+  private var lastZoomTapAt: CFTimeInterval = 0
+  private var isZoomed: Bool { return zoomActive || zoomSticky || zoomScale > 1.01 }
+
   // Composer (responder / reagir)
   private let composer = UIView()
   private let composerDim = UIView()
@@ -330,6 +348,17 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     pager.addGestureRecognizer(vpan)
     pager.panGestureRecognizer.require(toFail: vpan)
 
+    // [status-zoom 2026-10-23]
+    pinch.addTarget(self, action: #selector(handlePinch(_:)))
+    pinch.delegate = self
+    pager.addGestureRecognizer(pinch)
+    zoomPan.minimumNumberOfTouches = 1
+    zoomPan.maximumNumberOfTouches = 1
+    zoomPan.addTarget(self, action: #selector(handleZoomPan(_:)))
+    zoomPan.delegate = self
+    zoomPan.isEnabled = false
+    pager.addGestureRecognizer(zoomPan)
+
     buildComposer()
     buildSheet()
 
@@ -518,6 +547,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     guard w > 0, !closed else { return }
     let i = max(0, min(groups.count - 1, Int(round(pager.contentOffset.x / w))))
     if i != currentGroup {
+      if isZoomed { resetZoom(animated: false) } // [status-zoom]
       currentPage?.deactivate()
       currentGroup = i
       ensurePages()
@@ -556,6 +586,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
   // MARK: - Navegação
 
   private func goNext() {
+    if isZoomed { resetZoom(animated: false) } // [status-zoom]
     guard !closed, let gv = currentPage else { return }
     if gv.index < gv.group.items.count - 1 {
       gv.showItem(gv.index + 1, autoplay: true)
@@ -574,6 +605,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
   }
 
   private func goPrev() {
+    if isZoomed { resetZoom(animated: false) } // [status-zoom]
     guard !closed, let gv = currentPage else { return }
     if gv.index > 0 {
       gv.showItem(gv.index - 1, autoplay: true)
@@ -652,7 +684,14 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
       let inHeader = sheetPan.location(in: sheetPanel).y < 58
       return v.y > 0 && abs(v.y) > abs(v.x) && (inHeader || sheetTable.contentOffset.y <= 0)
     }
+    if g === pinch {
+      // [status-zoom] só foto/vídeo, sem cubo girando
+      guard zoomEnabled, let page = currentPage, page.isZoomable, !closed, pendingMore == nil else { return false }
+      return !pager.isDragging && !pager.isDecelerating
+    }
+    if g === zoomPan { return zoomSticky && !closed }
     if g === vpan {
+      if isZoomed { return false } // [status-zoom] ampliado: arrastar não fecha
       if pager.isDragging || pager.isDecelerating { return false }
       let v = vpan.velocity(in: view)
       return abs(v.y) > abs(v.x) * 1.15
@@ -666,6 +705,8 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     if other === hold && g === pager.panGestureRecognizer { return true }
     // Segurar e arrastar p/ baixo ainda fecha.
     if (g === hold && other === vpan) || (g === vpan && other === hold) { return true }
+    // [status-zoom] pinça junto com segurar e com o arrasto ampliado
+    if (g === pinch && (other === hold || other === zoomPan)) || (other === pinch && (g === hold || g === zoomPan)) { return true }
     return false
   }
 
@@ -673,6 +714,14 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     guard !closed, pendingMore == nil else { return }
     let loc = g.location(in: view)
     let w = view.bounds.width
+    // [status-zoom 2026-10-23] ampliado: toque nunca troca de status; duplo toque volta a 1x.
+    if isZoomed {
+      pendingTap?.cancel(); pendingTap = nil
+      let now = CACurrentMediaTime()
+      if now - lastZoomTapAt < 0.28 { lastZoomTapAt = 0; resetZoom(animated: true) } else { lastZoomTapAt = now }
+      return
+    }
+    let canZoom = zoomEnabled && (currentPage?.isZoomable ?? false)
     if loc.x < w * 0.3 {
       pendingTap?.cancel(); pendingTap = nil
       goPrev()
@@ -680,7 +729,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     }
     // Duplo toque no centro = curtir (status dos outros), como no viewer JS.
     let canLike = currentGroup < groups.count && !groups[currentGroup].isSelf
-    if !canLike || loc.x > w * 0.72 {
+    if (!canLike && !canZoom) || loc.x > w * 0.72 {
       pendingTap?.cancel(); pendingTap = nil
       goNext()
       return
@@ -690,7 +739,8 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
       p.cancel()
       pendingTap = nil
       lastTapAt = 0
-      doubleTapLike(at: loc)
+      // [status-zoom] foto/vídeo: duplo toque amplia (curtir segue no coração)
+      if canZoom, let page = currentPage { zoomDoubleTap(at: g.location(in: page)) } else { doubleTapLike(at: loc) }
       return
     }
     lastTapAt = now
@@ -722,7 +772,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
       addPause("hold")
       currentPage?.setChromeHidden(true, animated: true)
       // [2026-10-16 motion] Segurar = leve recuo com mola (kill switch __chatyy_motion_story_hold).
-      if MVMotion.holdScale && !MVMotion.reduceMotion && stage.transform.isIdentity && !originClosing && stage.mask == nil {
+      if MVMotion.holdScale && !MVMotion.reduceMotion && !isZoomed && stage.transform.isIdentity && !originClosing && stage.mask == nil {
         UIView.animate(withDuration: 0.34, delay: 0, usingSpringWithDamping: 0.8, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
           self.stage.transform = CGAffineTransform(scaleX: 0.965, y: 0.965)
           self.stage.layer.cornerRadius = 14
@@ -731,7 +781,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     case .ended, .cancelled, .failed:
       if pauseReasons.contains("hold") {
         removePause("hold")
-        currentPage?.setChromeHidden(false, animated: true)
+        if !isZoomed { currentPage?.setChromeHidden(false, animated: true) } // [status-zoom]
       }
       if !pauseReasons.contains("dismiss") && !originClosing && !closed
           && vpan.state != .began && vpan.state != .changed && !stage.transform.isIdentity {
@@ -743,6 +793,140 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
     default:
       break
     }
+  }
+
+  // MARK: - Zoom [status-zoom 2026-10-23]
+
+  private func beginZoomSession() {
+    pendingTap?.cancel(); pendingTap = nil
+    addPause("zoom")
+    currentPage?.setChromeHidden(true, animated: true)
+    pager.isScrollEnabled = false
+    // arrasto de fechar em curso (1º dedo) → cancela e volta o palco
+    if vpan.state == .began || vpan.state == .changed { vpan.isEnabled = false; vpan.isEnabled = true }
+    if !stage.transform.isIdentity && !originClosing && stage.mask == nil {
+      UIView.animate(withDuration: 0.25, delay: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+        self.stage.transform = .identity
+        self.stage.layer.cornerRadius = 0
+        self.backdrop.alpha = 1
+      })
+    }
+  }
+
+  private func applyZoom() {
+    guard let page = currentPage else { return }
+    page.setZoom(CGAffineTransform(translationX: zoomT.x, y: zoomT.y).scaledBy(x: zoomScale, y: zoomScale))
+    if zoomScale > 1.5 { page.loadHiresIfNeeded() }
+  }
+
+  private func clampZoomT(_ t: CGPoint, _ s: CGFloat, _ page: UIView) -> CGPoint {
+    let mx = max(0, (s - 1) * page.bounds.width / 2)
+    let my = max(0, (s - 1) * page.bounds.height / 2)
+    return CGPoint(x: min(mx, max(-mx, t.x)), y: min(my, max(-my, t.y)))
+  }
+
+  private func animateZoom(completion: (() -> Void)? = nil) {
+    UIView.animate(withDuration: 0.34, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+      self.applyZoom()
+    }, completion: { _ in completion?() })
+  }
+
+  private func resetZoom(animated: Bool) {
+    zoomSticky = false
+    zoomActive = false
+    zoomPan.isEnabled = false
+    zoomScale = 1
+    zoomT = .zero
+    let page = currentPage
+    let done = { [weak self] in
+      guard let self = self, !self.zoomActive, !self.zoomSticky else { return }
+      self.pager.isScrollEnabled = true
+      if self.pauseReasons.contains("zoom") {
+        self.removePause("zoom")
+        if !self.pauseReasons.contains("hold") && !self.closed { self.currentPage?.setChromeHidden(false, animated: true) }
+      }
+    }
+    if animated {
+      UIView.animate(withDuration: 0.32, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0, options: [.allowUserInteraction, .beginFromCurrentState], animations: {
+        page?.setZoom(.identity)
+      }, completion: { _ in done() })
+    } else {
+      page?.setZoom(.identity)
+      done()
+    }
+  }
+
+  private func zoomRebase(_ g: UIPinchGestureRecognizer, _ page: UIView) {
+    zoomBaseS = zoomScale
+    zoomBaseT = zoomT
+    zoomBaseF = g.location(in: page)
+    zoomBasePinch = g.scale
+    zoomBaseN = g.numberOfTouches
+  }
+
+  @objc private func handlePinch(_ g: UIPinchGestureRecognizer) {
+    guard let page = currentPage else { return }
+    switch g.state {
+    case .began:
+      zoomActive = true
+      beginZoomSession()
+      zoomRebase(g, page)
+    case .changed:
+      // dedo entrou/saiu → nova base (sem salto); 1 dedo = só arrasta
+      if g.numberOfTouches != zoomBaseN { zoomRebase(g, page); return }
+      let f = g.location(in: page)
+      var s = zoomBaseS
+      if g.numberOfTouches >= 2 { s = zoomBaseS * (g.scale / max(0.01, zoomBasePinch)) }
+      if s < 1 { s = max(0.7, 1 - (1 - s) * 0.4) }
+      if s > zoomMax { s = min(zoomMax * 1.15, zoomMax + (s - zoomMax) * 0.25) }
+      let c = CGPoint(x: page.bounds.midX, y: page.bounds.midY)
+      let qx = (zoomBaseF.x - c.x - zoomBaseT.x) / max(0.01, zoomBaseS)
+      let qy = (zoomBaseF.y - c.y - zoomBaseT.y) / max(0.01, zoomBaseS)
+      zoomScale = s
+      zoomT = CGPoint(x: f.x - c.x - s * qx, y: f.y - c.y - s * qy)
+      applyZoom()
+    case .ended, .cancelled, .failed:
+      zoomActive = false
+      if zoomSticky && zoomScale >= 1.05 {
+        // duplo toque antes: continua ampliado, dentro dos limites
+        zoomScale = min(zoomMax, zoomScale)
+        zoomT = clampZoomT(zoomT, zoomScale, page)
+        zoomPan.isEnabled = true
+        animateZoom()
+      } else {
+        // pinça (Instagram): soltar volta ao tamanho e retoma
+        resetZoom(animated: true)
+      }
+    default:
+      break
+    }
+  }
+
+  @objc private func handleZoomPan(_ g: UIPanGestureRecognizer) {
+    guard let page = currentPage else { return }
+    switch g.state {
+    case .began, .changed:
+      let d = g.translation(in: page)
+      g.setTranslation(.zero, in: page)
+      if zoomActive || !zoomSticky { return } // a pinça manda
+      zoomT = clampZoomT(CGPoint(x: zoomT.x + d.x, y: zoomT.y + d.y), zoomScale, page)
+      applyZoom()
+    default:
+      break
+    }
+  }
+
+  private func zoomDoubleTap(at p: CGPoint) {
+    guard let page = currentPage else { return }
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    beginZoomSession()
+    zoomSticky = true
+    zoomPan.isEnabled = true
+    let s: CGFloat = 2.5
+    let c = CGPoint(x: page.bounds.midX, y: page.bounds.midY)
+    zoomScale = s
+    zoomT = clampZoomT(CGPoint(x: (1 - s) * (p.x - c.x), y: (1 - s) * (p.y - c.y)), s, page)
+    animateZoom()
   }
 
   @objc private func handleVerticalPan(_ g: UIPanGestureRecognizer) {
@@ -1566,6 +1750,7 @@ final class StoryViewerController: UIViewController, UIScrollViewDelegate, UIGes
   }
 
   func removeItem(id: String) {
+    if isZoomed { resetZoom(animated: false) } // [status-zoom]
     guard let gi = groups.firstIndex(where: { g in g.items.contains(where: { $0.id == id }) }) else { return }
     let g = groups[gi]
     guard let ii = g.items.firstIndex(where: { $0.id == id }) else { return }

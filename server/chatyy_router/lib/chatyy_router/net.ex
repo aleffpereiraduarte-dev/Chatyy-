@@ -74,6 +74,24 @@ defmodule ChatyyRouter.Net do
     end
   end
 
+  @doc """
+  [23/10 mad] Resposta de GenServer a quem chamou de OUTRO nó sai de um processo à parte: com a porta de
+  distribuição daquele par cheia (busy_dist_port), o send suspende quem envia — e era o processo inteiro
+  (Net.Cluster, BodyStore) que ficava parado. Chamador local: resposta direta.
+  """
+  def reply_async({pid, _} = from, v) when is_pid(pid) do
+    if node(pid) == node(), do: GenServer.reply(from, v), else: spawn(fn -> GenServer.reply(from, v) end)
+    :ok
+  end
+
+  def reply_async(from, v), do: GenServer.reply(from, v)
+
+  @doc "Envio a outro nó sem prender quem chama (mesmo motivo de `reply_async/2`)."
+  def cast_async(region, name, msg) do
+    spawn(fn -> cast(region, name, msg) end)
+    :ok
+  end
+
   def pid_alive?(pid) do
     n = node(pid)
     n == node() or (n in Node.list() and not blocked?(region_of(n)))
@@ -154,9 +172,9 @@ defmodule ChatyyRouter.Net.Cluster do
   end
 
   @impl true
-  def handle_call(:ping, _from, s), do: {:reply, :pong, s}
+  def handle_call(:ping, from, s), do: (Net.reply_async(from, :pong); {:noreply, s})
   # voto de quórum do failover (aqui p/ nunca bloquear atrás de um tick)
-  def handle_call({:sees_down?, r}, _from, s), do: {:reply, not Net.alive?(r), s}
+  def handle_call({:sees_down?, r}, from, s), do: (Net.reply_async(from, not Net.alive?(r)); {:noreply, s})
 
   @impl true
   def handle_info(:tick, s) do

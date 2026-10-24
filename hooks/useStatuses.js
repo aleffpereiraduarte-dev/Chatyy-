@@ -325,6 +325,9 @@ function _normalize(raw, currentEmail) {
 // — cacheMedia dedupes by URL via syncIndex.
 function _warmCacheVideos(mine, others) {
   if (Platform.OS === 'web' || !_cacheMedia) return;
+  // [status-rapido 2026-10-23] fotos também: 1ª história não vista de cada pessoa
+  // (variante leve ~100–250 KB) + miniaturas das 2 seguintes → abrir pinta do disco.
+  try { require('../services/statusMedia').prefetchStatusGroups(others, { maxGroups: 8, forceFirst: 4 }); } catch {}
   try {
     const candidates = [];
     for (const it of (mine || []).slice(0, 2)) {
@@ -336,6 +339,8 @@ function _warmCacheVideos(mine, others) {
       }
     }
     for (const it of candidates) {
+      // [status-rapido 2026-10-23] com variante 720p faststart, baixa ela (≈4× menor) e não o original.
+      if (it?.meta?.sv?.m && !it.meta.sv.err) { try { require('../services/statusMedia').prefetchStatusItem(it, { force: true }); } catch {} continue; }
       const raw = (it.media_url || it.content || '').split('\n')[0];
       const fullUrl = raw.startsWith('/') ? api.getMediaUrl(raw) : raw;
       if (fullUrl) _cacheMedia(fullUrl, { force: true }).catch(() => {});

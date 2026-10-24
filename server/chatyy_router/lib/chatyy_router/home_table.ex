@@ -329,19 +329,20 @@ defmodule ChatyyRouter.HomeTable do
   end
 
   @impl true
-  def handle_call({:merge, cid, region, epoch}, _from, s), do: {:reply, do_merge(cid, region, epoch), s}
+  def handle_call({:merge, cid, region, epoch}, from, s), do: (Net.reply_async(from, do_merge(cid, region, epoch)); {:noreply, s})
 
-  def handle_call({:query, cid}, _from, s) do
+  def handle_call({:query, cid}, from, s) do
     c = case :ets.lookup(@ets, cid) do
       [{_, r, e}] -> {r, e}
       [] -> nil
     end
 
-    {:reply, {:home, c, local_acc(cid)}, s}
+    Net.reply_async(from, {:home, c, local_acc(cid)})
+    {:noreply, s}
   end
 
   # aceitadora: só aceita epoch MAIOR que tudo o que já viu (mesmo par = idempotente)
-  def handle_call({:accept, cid, region, epoch}, _from, s) do
+  def handle_call({:accept, cid, region, epoch}, from, s) do
     cur =
       [local_acc(cid), case(:ets.lookup(@ets, cid), do: ([{_, r, e}] -> {r, e}; [] -> nil))]
       |> Enum.reject(&is_nil/1)
@@ -358,10 +359,12 @@ defmodule ChatyyRouter.HomeTable do
     case reply do
       :accept ->
         Store.put(:rt_home_acc, cid, {region, epoch})
-        {:reply, :accepted, s}
+        Net.reply_async(from, :accepted)
+        {:noreply, s}
 
       rej ->
-        {:reply, rej, s}
+        Net.reply_async(from, rej)
+        {:noreply, s}
     end
   end
 
@@ -404,7 +407,7 @@ defmodule ChatyyRouter.HomeTable do
   end
 
   def handle_cast({:push_sync, region}, s) do
-    Net.cast(region, __MODULE__, {:sync, entries(), MapSet.to_list(failed())})
+    Net.cast_async(region, __MODULE__, {:sync, entries(), MapSet.to_list(failed())})
     {:noreply, s}
   end
 

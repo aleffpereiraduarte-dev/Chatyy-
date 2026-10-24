@@ -32,6 +32,8 @@ import {
   addOverlay, updateOverlay, removeOverlay, setOverlayRange, ensureOverlayIds, clampOverlays, clipStarts, fmtTime,
 } from '../../services/videoStudio/edlOps';
 import { createDraft, loadDraft, updateDraft, saveDraftNow, adoptFile } from '../../services/videoStudio/draftStore';
+import { vsDiag } from '../../services/videoStudio/diag';
+import { fileExists } from '../../services/durablePath';
 
 const HISTORY_MAX = 40;
 
@@ -112,10 +114,22 @@ export default function VideoStudioEditor() {
     let alive = true;
     (async () => {
       const id = String(params.draft || params.draftId || '');
+      const t0 = Date.now();
       if (id) {
-        const d = await loadDraft(id).catch(() => null); // [2026-10-21 media-audit] falha de leitura → tela de erro (antes: carregando p/ sempre)
+        let d = await loadDraft(id).catch(() => null); // [2026-10-21 media-audit] falha de leitura → tela de erro (antes: carregando p/ sempre)
+        // [2026-10-23 reels-sumiu] a gravação do disco pode ainda estar terminando → 2ª tentativa curta.
+        if (!d?.edl && alive) { await new Promise((r) => setTimeout(r, 400)); d = await loadDraft(id).catch(() => null); }
         if (!alive) return;
-        if (d?.edl) { setDraftId(id); setEdl(clampOverlays(ensureOverlayIds(d.edl))); return; }
+        if (d?.edl) {
+          setDraftId(id); setEdl(clampOverlays(ensureOverlayIds(d.edl)));
+          // Metadados: quantos trechos e quantos arquivos locais sumiram do disco.
+          (async () => {
+            let miss = 0;
+            for (const c of (d.edl.clips || [])) { if ((await fileExists(c.uri)) === false) miss += 1; }
+            vsDiag('ed_load', { ms: Date.now() - t0, n: (d.edl.clips || []).length, miss });
+          })().catch(() => {});
+          return;
+        }
       }
       if (params.edl) {
         try {
@@ -127,7 +141,7 @@ export default function VideoStudioEditor() {
           return;
         } catch {}
       }
-      if (alive) setLoadErr(true);
+      if (alive) { vsDiag('ed_load_fail', { id: id ? 1 : 0, edl: params.edl ? 1 : 0 }); setLoadErr(true); }
     })();
     return () => { alive = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -313,6 +327,13 @@ export default function VideoStudioEditor() {
     setSheet(null);
     const url = typeof item === 'string' ? item : (item?.url || item?.media_url || item?.uri || '');
     if (!url) return;
+    // [2026-10-24 rascunho-durável] figurinha de arquivo LOCAL vai p/ a pasta do rascunho (o cache do SO
+    // pode ser limpo e o caminho absoluto do iOS muda na atualização) antes de entrar na EDL.
+    if (Platform.OS !== 'web' && /^file:/i.test(url) && draftRef.current && !(item && item._durable)) {
+      const fin = (u) => onStickerPicked({ url: u || url, _durable: true }, isGif);
+      adoptFile(draftRef.current, url, {}).then(fin, () => fin(url));
+      return;
+    }
     let next;
     if (/^(https?:|file:|content:|data:)/i.test(url)) {
       next = addOverlay(edlRef.current, { type: 'sticker', sticker_url: url, kind: isGif ? 'gif' : undefined }, clock.t);
@@ -327,13 +348,25 @@ export default function VideoStudioEditor() {
   }, [commit, clock]);
 
   // ─── Avançar ────────────────────────────────────────────────────────────
+  const navRef = useRef(0);
   const goNext = useCallback(async () => {
+    // [2026-10-24 reels-next] 1 toque = 1 tela (antes: cada toque empilhava outra /publish invisível).
+    if (Date.now() - navRef.current < 1500) return;
+    navRef.current = Date.now();
     pause();
     const e = edlRef.current;
     const v = validate({ ...e, overlays: (e.overlays || []).map(({ id, kind, ...o }) => o) });
-    if (!v.ok) { Alert.alert(t('studio.editor.title'), t('studio.editor.invalid')); return; }
-    if (draftRef.current) await saveDraftNow(draftRef.current);
-    router.push({ pathname: '/video-studio/publish', params: { draft: draftRef.current } });
+    if (!v.ok) { vsDiag('ed_invalid', { e: String((v.errors || [])[0] || '').slice(0, 50) }); Alert.alert(t('studio.editor.title'), t('studio.editor.invalid')); return; }
+    if (draftRef.current) await Promise.race([saveDraftNow(draftRef.current).catch(() => {}), new Promise((r) => setTimeout(r, 2000))]);
+    vsDiag('ed_next', { n: (e.clips || []).length, ov: (e.overlays || []).length, mus: e.audio?.music ? 1 : 0, vo: e.audio?.voiceover ? 1 : 0 });
+    if (!draftRef.current) { vsDiag('ed_next_err', { e: 'no_draft' }); navRef.current = 0; Alert.alert(t('studio.editor.title'), t('studio.editor.notFound')); return; }
+    try {
+      router.push({ pathname: '/video-studio/publish', params: { draft: draftRef.current } });
+      vsDiag('ed_next_nav', { ok: 1 });
+    } catch (err) {
+      navRef.current = 0;
+      vsDiag('ed_next_err', { e: String(err?.message || 'push').slice(0, 50) });
+    }
   }, [pause, router, t]);
 
   const close = useCallback(() => {
@@ -422,7 +455,9 @@ export default function VideoStudioEditor() {
         <View style={[styles.rail, { right: 8 }]} pointerEvents={voiceBusy ? 'none' : 'auto'}>
           <Tool Icon={IconType} label={t('studio.tool.text')} onPress={() => { pause(); setTextEdit({ id: null, initial: null }); }} />
           <Tool Icon={IconSmile} label={t('studio.tool.stickers')} onPress={() => openSheet('sticker')} />
+          {(globalThis.__chatyy_reels_music === true || !!edl.audio?.music) && ( // [23/10] sem biblioteca licenciada: música escondida (liga: __chatyy_reels_music=true)
           <Tool Icon={IconMusic} label={t('studio.tool.sounds')} onPress={() => openSheet('sounds')} on={!!edl.audio?.music} />
+          )}
           <Tool Icon={IconSparkles} label={t('studio.tool.filters')} onPress={() => openSheet('filters')} on={edl.filter?.id && edl.filter.id !== 'none'} />
           <Tool Icon={IconMic} label={t('studio.tool.voice')} onPress={() => openSheet('voice')} on={!!edl.audio?.voiceover} />
           <Tool Icon={IconMessageSquare} label={t('studio.tool.captions')} onPress={() => openSheet('captions')} on={!!edl.captions?.enabled} />
@@ -457,7 +492,7 @@ export default function VideoStudioEditor() {
         onMoveClip={onMoveClip}
         onOverlayRange={onOverlayRange}
         onAddClip={addClips}
-        onOpenSounds={() => openSheet('sounds')}
+        onOpenSounds={(globalThis.__chatyy_reels_music === true || !!edl.audio?.music) ? () => openSheet('sounds') : null}
         onOpenVoice={() => openSheet('voice')}
       />
 

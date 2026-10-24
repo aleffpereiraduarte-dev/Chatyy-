@@ -26,6 +26,7 @@ import { storyReactionDefs, storyReactionKind, storyReactionsEnabled, isStoryRea
 import { nativeEmojiPayload } from '../chat/nativeEmojiData';
 import { getCachedStatusViewers, fetchStatusViewers } from '../../services/statusViewersCache'; // [viewers 2026-10-20]
 import { blurhashToDataUri } from '../../utils/blurhashDataUri'; // [viewers 2026-10-20]
+import { statusDisplayMedia, statusLocalUri, statusLocalThumb, statusZoomOn, statusZoomHiresUrl } from '../../services/statusMedia'; // [status-rapido 2026-10-23] [status-zoom 2026-10-23]
 
 let _NS; // undefined = não resolvido; null = indisponível
 function _mod() {
@@ -321,7 +322,10 @@ function _toNativeItem(it, t, isSelf) {
   const poll = v2 && it.type === 'poll' ? _pollOf(it) : null;
   const type = voiceUrl ? 'voice' : (it.type === 'video' ? 'video' : (it.type === 'text' || poll) ? 'text' : 'image');
   const { url, caption: mediaCaption } = _rawMedia(it);
-  const uri = (type === 'image' || type === 'video') ? _resolveUrl(url) : '';
+  // [status-rapido 2026-10-23] variante leve da CDN (meta.sv) quando existe; senão o original.
+  const _isMedia = type === 'image' || type === 'video';
+  const _disp = _isMedia ? statusDisplayMedia(it) : null;
+  const uri = _isMedia ? ((_disp && _disp.uri) || _resolveUrl(url)) : '';
   const text = type === 'text' && !poll ? String(it.content || '') : '';
   const bgRaw = itemBg(it);
   const grad = type === 'text' ? resolveTextGradient(bgRaw) : null;
@@ -339,9 +343,15 @@ function _toNativeItem(it, t, isSelf) {
     id: String(it.id),
     type,
     uri,
-    localUri: uri ? _local(uri) : '',
+    localUri: uri ? (statusLocalUri(it) || _local(uri)) : '',
     // [viewers 2026-10-20] sem miniatura no servidor → blurhash (meta) vira data: URI 32×32.
-    thumb: it.thumbnail_url ? _resolveUrl(it.thumbnail_url) : (uri ? _blurThumb(it) : ''),
+    // [status-rapido 2026-10-23] ordem: t320 já no disco → pôster do vídeo → blurhash
+    // (instantâneo) → t320 remoto.
+    thumb: !uri ? '' : (statusLocalThumb(it)
+      || (type === 'video' && _disp && _disp.poster ? _disp.poster : '')
+      || (it.thumbnail_url ? _resolveUrl(it.thumbnail_url) : '')
+      || _blurThumb(it)
+      || (_disp && _disp.thumb) || ''),
     text,
     caption,
     bg: (type === 'text' || type === 'voice') ? textStatusSolid(bgRaw) : '#000000',
@@ -363,6 +373,12 @@ function _toNativeItem(it, t, isSelf) {
       } : null),
     link,
   };
+  // [status-zoom 2026-10-23] apiVersion >= 5: original em alta p/ trocar acima de 1.5x
+  // (binário antigo ignora a chave). Vídeo não troca de fonte.
+  if (type === 'image' && statusZoomOn()) {
+    const hires = statusZoomHiresUrl(it, uri);
+    if (hires) out.hires = hires;
+  }
   if (!v2) return out;
   if (type === 'text' && !poll) {
     const anim = String(it.text_animation || it.meta?.text_animation || 'none');
@@ -590,8 +606,16 @@ export function closeNativeStories() {
  *   onMentionPress({ email, username }) } — os 4 últimos abrem UI do JS: o
  *   nativo fecha antes (closeThen).
  */
+/** [status-zoom 2026-10-23] binário com pinça/duplo toque no visualizador nativo (apiVersion >= 5). */
+export function nativeStoryZoomSupported() { return !!_mod() && _api() >= 5; }
+
 export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, hasMoreNext = false, hasMorePrev = false, callbacks = {} }) {
   if (!nativeStoriesAvailable()) return false;
+  // [status-zoom 2026-10-23] Opt-in (padrão OFF): binário sem zoom nativo → abre o
+  // viewer JS (que tem pinça) só se globalThis.__chatyy_status_zoom_js === true.
+  try {
+    if (globalThis.__chatyy_status_zoom_js === true && statusZoomOn() && _api() < 5) return false;
+  } catch {}
   const list = Array.isArray(groups) ? groups.filter(g => g && Array.isArray(g.items) && g.items.length > 0) : [];
   if (!list.length) return false;
   if (!list.every(g => isNativeStoryGroup(g.items))) return false;
@@ -611,6 +635,8 @@ export function tryOpenNativeStories({ groups, startGroup = 0, startItem, t, has
       hasMorePrev: !!hasMorePrev,
     };
     if (typeof startItem === 'number' && startItem >= 0) payload.startItem = startItem;
+    // [status-zoom 2026-10-23] apiVersion >= 5: pinça/duplo toque (kill switch __chatyy_status_zoom)
+    payload.zoom = statusZoomOn();
     // [2026-10-17 status-reacoes] apiVersion >= 4: "+" com a grade completa de
     // emojis do app + segurar o coração abre a bolha de reações.
     if (_api() >= 4 && storyReactionsEnabled()) {

@@ -16,6 +16,7 @@ import NativeVideoModal, { nativeVideoAvailable } from './NativeVideoModal';
 import { openInApp } from '../utils/inAppBrowser';
 import * as api from '../services/api';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragBackdrop } from './ui/useDragToDismiss';
+import { useCommentMentions, MentionSuggestList, MentionText, useMentionCloser } from './comments/mentions'; // [2026-10-24 coment-mencao]
 
 const ACCENT = '#111111';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -260,7 +261,7 @@ const CommentItem = memo(function CommentItem({
             ) : (
               <Text style={[styles.commentText, { color: colors.text }]}>
                 <Text style={styles.commentAuthor}>{authorName}</Text>
-                {'  '}{item.content}
+                {'  '}<MentionText text={item.content} mentions={item.mentions} mentionStyle={{ color: isDark ? '#e0f1ff' : '#00376b' }} />
               </Text>
             )}
           </View>
@@ -482,6 +483,9 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
   // (viewer_is_owner, allow_anon, anon_available, anon_unavailable_reason, is_platform_admin).
   const [anonMode, setAnonMode] = useState(false);
   const [meta, setMeta] = useState({});
+  // [2026-10-24 coment-mencao] lista "@" do campo + @ tocável (fecha a folha antes de abrir o perfil)
+  const mention = useCommentMentions({ postId: post?.id, text, setText, enabled: !anonMode });
+  useMentionCloser(!!visible, onClose);
   const [optionsFor, setOptionsFor] = useState(null);
   const [reportMode, setReportMode] = useState(false);
   const [notice, setNotice] = useState('');
@@ -670,8 +674,10 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
       reply_to_id: replyTo?.id,
       _pending: true,
     };
+    const mentionHints = asAnon ? [] : mention.mentionsFor(content); // [2026-10-24 coment-mencao]
+    if (mentionHints.length) optimisticComment.mentions = mentionHints;
     try {
-      const r = await api.feedComment(post.id, content, replyTo?.id, asAnon ? { anonymous: true } : undefined);
+      const r = await api.feedComment(post.id, content, replyTo?.id, asAnon ? { anonymous: true } : (mentionHints.length ? { mentions: mentionHints } : undefined));
       if (r && r.success === false && asAnon) {
         // [anon-comment 2026-10-14] recusado (dados pessoais, ameaça, limite, idade da conta...).
         showNotice(anonErrorText(r));
@@ -692,6 +698,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         setComments(prev => (prev.some(c => Number(c.id) === Number(newComment.id) || (Array.isArray(c.replies) && c.replies.some(x => Number(x.id) === Number(newComment.id))))
           ? prev : insertComment(prev, newComment, replyTo)));
         setText('');
+        mention.reset(); // [2026-10-24 coment-mencao]
         setReplyTo(null);
         currentCountRef.current += 1;
         onCommentCountChange?.(currentCountRef.current);
@@ -726,10 +733,11 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         const { queueOfflineAction } = require('../services/offlineCache');
         await queueOfflineAction({
           type: 'feed_comment',
-          params: { post_id: post.id, content, reply_to_id: replyTo?.id || null },
+          params: { post_id: post.id, content, reply_to_id: replyTo?.id || null, ...(mentionHints.length ? { mentions: mentionHints } : {}) },
         });
         setComments(prev => insertComment(prev, optimisticComment, replyTo));
         setText('');
+        mention.reset(); // [2026-10-24 coment-mencao]
         setReplyTo(null);
         currentCountRef.current += 1;
         onCommentCountChange?.(currentCountRef.current);
@@ -737,7 +745,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     } finally {
       setSending(false);
     }
-  }, [text, sending, post, replyTo, user, onCommentCountChange, anonMode, meta.anon_available, showNotice, anonErrorText, t]);
+  }, [text, sending, post, replyTo, user, onCommentCountChange, anonMode, meta.anon_available, showNotice, anonErrorText, t, mention]);
 
   // Voice comment record/upload. Web uses MediaRecorder; native uses
   // expo-audio's AudioModule + RecordingPresets. The upload itself goes
@@ -1304,6 +1312,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
             backgroundColor: isDark ? sheetBg : '#fafafa',
             paddingBottom: Math.max(10, insets.bottom),
           }]}>
+            <MentionSuggestList state={mention} isDark={isDark} colors={colors} t={t} />
             {/* Sticker / GIF reply — Reels P1. Opens GifPicker (Tenor-backed)
                 and posts the picked GIF as a comment with media_type=sticker
                 + media_url=<gif_url>. */}
@@ -1350,6 +1359,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                 placeholderTextColor={colors.textTertiary}
                 value={text}
                 onChangeText={setText}
+                onSelectionChange={mention.onSelectionChange}
                 multiline
                 // [2026-10-11 social-qa] Web: Enter publica (Shift+Enter quebra
                 // linha), igual Instagram web — antes Enter só pulava linha e o
@@ -1358,6 +1368,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                   const ne = e?.nativeEvent || {};
                   if (ne.key === 'Enter' && !ne.shiftKey && !ne.isComposing) {
                     try { e.preventDefault?.(); } catch {}
+                    if (mention.open && mention.users.length) { mention.pick(mention.users[0]); return; } // [2026-10-24 coment-mencao]
                     if (text.trim() && !sending) handleSend();
                   }
                 } : undefined}

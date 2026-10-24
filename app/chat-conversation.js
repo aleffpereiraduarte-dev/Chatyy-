@@ -22957,6 +22957,15 @@ function ChatConversationInnerBody() {
         return;
       }
     } catch {}
+    // [sgu F4 P-1] conversa sem cópia no servidor (body_store 3): agendar / enviar quando online não existem.
+    try {
+      if (require('../services/rtF4Local').isF4Conv(conversationId)) {
+        const _fv = t('chat.f4Unavailable');
+        setScheduleToast(_fv && _fv !== 'chat.f4Unavailable' ? _fv : 'Indisponível nesta conversa');
+        setTimeout(() => setScheduleToast(''), 3000);
+        return;
+      }
+    } catch {}
     if (editingMsg) return;
     try {
       const r = await api.chatScheduleMessage(conversationId, text, scheduledAt);
@@ -23045,6 +23054,15 @@ function ChatConversationInnerBody() {
         return;
       }
     } catch {}
+    // [sgu F4 P-1] conversa sem cópia no servidor (body_store 3): agendar / enviar quando online não existem.
+    try {
+      if (require('../services/rtF4Local').isF4Conv(conversationId)) {
+        const _fv = t('chat.f4Unavailable');
+        setScheduleToast(_fv && _fv !== 'chat.f4Unavailable' ? _fv : 'Indisponível nesta conversa');
+        setTimeout(() => setScheduleToast(''), 3000);
+        return;
+      }
+    } catch {}
     setScheduleToast(_tr('chat.scheduleUploading', 'Enviando mídia para agendar…'));
     let ok = 0;
     for (let i = 0; i < batch.length; i++) {
@@ -23088,6 +23106,15 @@ function ChatConversationInnerBody() {
       if (require('../services/e2eeV4').isConversationE2ee(conversationId)) {
         const _m = t('chat.scheduleE2eeBlocked');
         safeAlert(t('common.error'), _m && _m !== 'chat.scheduleE2eeBlocked' ? _m : 'Agendar não está disponível em conversa criptografada.');
+        return;
+      }
+    } catch {}
+    // [sgu F4 P-1] conversa sem cópia no servidor (body_store 3): agendar / enviar quando online não existem.
+    try {
+      if (require('../services/rtF4Local').isF4Conv(conversationId)) {
+        const _fv = t('chat.f4Unavailable');
+        setScheduleToast(_fv && _fv !== 'chat.f4Unavailable' ? _fv : 'Indisponível nesta conversa');
+        setTimeout(() => setScheduleToast(''), 3000);
         return;
       }
     } catch {}
@@ -27015,12 +27042,12 @@ function ChatConversationInnerBody() {
   const [liveLocDurationSheet, setLiveLocDurationSheet] = _useStateT(false); // [2026-10-12 srv-audit] web
   const _executePin = useCallback(async (msg, durationSeconds) => {
     try {
-      let r = await api.chatPinMessage(msg.id, durationSeconds);
+      let r = await api.chatPinMessage(msg.id, durationSeconds, conversationId, msg); // [sgu F4 P-1] cid+msg: F4 fixa só no aparelho
       // [2026-10-12 srv-audit] chat_pin_message é TOGGLE. Uma fixação VENCIDA
       // (pinned_until passou, cron ainda não limpou) faz o servidor "desafixar"
       // quando a intenção era fixar → repete uma vez (agora insere de novo).
       if (r?.success && durationSeconds && r.data && r.data.pinned === false) {
-        try { r = await api.chatPinMessage(msg.id, durationSeconds); } catch {}
+        try { r = await api.chatPinMessage(msg.id, durationSeconds, conversationId, msg); } catch {}
       }
       if (r.success) {
         // Optimistic update — server will broadcast pts/event for other
@@ -28744,7 +28771,7 @@ function ChatConversationInnerBody() {
     if (id == null) return;
     setStarredMessages(prev => prev.filter(m => String(m.id) !== String(id)));
     setMessages(prev => _mapKeep(prev, m => String(m.id) === String(id) ? { ...m, starred: false } : m));
-    Promise.resolve(api.chatStarMessage(Number(id), false)).then((r) => {
+    Promise.resolve(api.chatStarMessage(Number(id), false, conversationId, item)).then((r) => {
       if (r && r.success === false) throw new Error('unstar');
     }).catch(() => {
       setStarredMessages(prev => (prev.some(m => String(m.id) === String(id)) ? prev : [item, ...prev]));
@@ -28757,7 +28784,7 @@ function ChatConversationInnerBody() {
     setStarredMessages(prev => (prev.some(m => String(m.id) === String(id)) ? prev
       : [...prev, item].sort((a, b) => String(b.starred_at || b.created_at || '').localeCompare(String(a.starred_at || a.created_at || '')))));
     setMessages(prev => _mapKeep(prev, m => String(m.id) === String(id) ? { ...m, starred: true } : m));
-    Promise.resolve(api.chatStarMessage(Number(id), true)).catch(() => {});
+    Promise.resolve(api.chatStarMessage(Number(id), true, conversationId, item)).catch(() => {});
   };
 
   const handleStarMessage = async (msg) => {
@@ -28781,7 +28808,7 @@ function ChatConversationInnerBody() {
     // Optimistic update
     setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, starred: !isStarred } : m));
     try {
-      const r = await api.chatStarMessage(numericId, !isStarred);
+      const r = await api.chatStarMessage(numericId, !isStarred, conversationId, msg); // [sgu F4 P-1]
       if (!r || r.success === false) {
         // Revert on failure + surface it (no more silent no-op)
         setMessages(prev => _mapKeep(prev, m => m.id === msg.id ? { ...m, starred: isStarred } : m));
@@ -28921,7 +28948,7 @@ function ChatConversationInnerBody() {
         } catch {}
       };
       const perConv = async () => {
-        const results = await Promise.allSettled(targets.map(id => api.chatForward(msgId, id, { clientActionId: caids[String(id)] })));
+        const results = await Promise.allSettled(targets.map(id => api.chatForward(msgId, id, { clientActionId: caids[String(id)], sourceConversationId: _fm.conversation_id ?? conversationId, sourceMsg: _fm })));
         const netIds = [];
         results.forEach((x, i) => {
           const id = targets[i];
@@ -28934,7 +28961,8 @@ function ChatConversationInnerBody() {
         queueTargets(netIds);
       };
       try {
-        const r = await api.chatForwardMulti(msgId, targets, { clientActionIds: caids });
+        // [sgu F4 P-1] origem/destino F4: o api reenvia como mensagem nova (precisa da conversa e do conteúdo de origem)
+        const r = await api.chatForwardMulti(msgId, targets, { clientActionIds: caids, sourceConversationId: _fm.conversation_id ?? conversationId, sourceMsg: _fm });
         if (r?.success && r?.data?.results) {
           const res = Array.isArray(r.data.results) ? r.data.results : [];
           for (const id of targets) {

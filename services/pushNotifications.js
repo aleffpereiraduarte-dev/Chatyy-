@@ -3626,7 +3626,7 @@ function _feedPostTarget(data) {
   if (!_FEED_POST_TYPES.includes(t)) return '';
   const pid = _str(data.post_id || data.reel_id || (t === 'post_gift_received' ? data.ref_id : '')).trim();
   if (!/^\d+$/.test(pid)) return '';
-  const isComment = t === 'comment' || t === 'feed_comment' || t === 'comment_reply' || t === 'comment_like';
+  const isComment = t === 'comment' || t === 'feed_comment' || t === 'comment_reply' || t === 'comment_like' || (t === 'feed_mention' && !!_str(data.comment_id)); // [2026-10-24 coment-mencao]
   return `/feed/${pid}${isComment ? '?comments=1' : ''}`;
 }
 function _convHref(cid, extra) {

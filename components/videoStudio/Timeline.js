@@ -317,10 +317,12 @@ export default function Timeline(props) {
             </View>
           )}
           <View style={{ marginTop: 6, width: contentW, gap: 4 }}>
+{(!!onOpenSounds || !!music) && (
             <Pressable onPress={onOpenSounds} style={[styles.audioBar, { width: contentW }, !music && styles.audioEmpty]}>
               <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round"><Path d="M9 18V5l12-2v13M9 18a3 3 0 11-6 0 3 3 0 016 0zM21 16a3 3 0 11-6 0 3 3 0 016 0z" /></Svg>
               <Text numberOfLines={1} style={styles.audioTxt}>{music ? [music.title, music.artist].filter(Boolean).join(' · ') || t('studio.sounds.title') : t('studio.tl.addSound')}</Text>
             </Pressable>
+            )}
             {!!vo && (
               <Pressable onPress={onOpenVoice} style={[styles.audioBar, styles.voiceBar, { width: contentW }]}>
                 <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round"><Path d="M12 2a3 3 0 00-3 3v7a3 3 0 006 0V5a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2M12 19v3" /></Svg>

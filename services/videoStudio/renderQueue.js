@@ -19,6 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as S from './studioApi';
 import { localAssets, toRemoteEdl, isPlainEdl, isLocalUri } from './edlOps';
 import { duration as edlDuration } from './edl';
+import { vsDiag } from './diag';
 
 const STORE_KEY = 'vstudio_render_jobs_v1';
 const CACHE_KEY = 'vstudio_upload_cache_v1';
@@ -113,6 +114,8 @@ async function _load() {
         if (!j?.id || _jobs.has(j.id)) continue;
         if (j.status === 'uploading') j.status = 'queued';
         j.attempts = 0;
+        // [2026-10-23 reels-sumiu] container do iOS muda na atualização → re-aponta os arquivos locais.
+        if (j.edl && !j.serverJobId) { try { j.edl = require('./draftStore').rebaseEdl(j.edl); } catch {} }
         _jobs.set(j.id, j);
       }
     }
@@ -223,6 +226,7 @@ export async function enqueueStudioRender(input) {
     urlMap: {},
   };
   if (!job.edl?.clips?.length) throw new Error('no_clips');
+  vsDiag('enqueue', { n: job.edl.clips.length, mus: job.edl.audio?.music ? 1 : 0, vis: job.publish?.visibility });
   _jobs.set(id, job);
   _emit(true);
   await _persist();
@@ -300,6 +304,7 @@ async function _run(job) {
         onProgress: (f) => { job.progress = Math.min(UPLOAD_SHARE, f * UPLOAD_SHARE); _emit(); },
       });
       if (job.cancelled) return;
+      vsDiag(up.ok ? 'up_ok' : 'up_fail', { n: (job.edl?.clips || []).length, a: job.attempts || 0, e: up.ok ? '' : String(up.error || '').slice(0, 40) });
       if (!up.ok) throw Object.assign(new Error(up.error || 'upload_failed'), { hard: up.hard });
       job.urlMap = up.map;
       job.progress = UPLOAD_SHARE;
@@ -313,6 +318,7 @@ async function _run(job) {
       // client_job_id idempotente; muda só quando o usuário re-tenta um render que FALHOU no servidor.
       const sub = await S.renderSubmit(remote, job.publish, job.submitSeq ? `${job.id}_${job.submitSeq}` : job.id);
       if (job.cancelled) return;
+      vsDiag(sub.ok ? 'submit_ok' : 'submit_fail', { e: sub.ok ? '' : String(sub.error || '').slice(0, 40), miss: sub.missing ? 1 : 0 });
       if (!sub.ok) {
         if (sub.missing) {
           // "Só eu" não existe no caminho antigo → nunca cai nele (privacidade).
@@ -359,6 +365,7 @@ async function _run(job) {
     job.attempts = (job.attempts || 0) + 1;
     const msg = e?.message || 'error';
     if (e?.hard || job.attempts >= MAX_ATTEMPTS) {
+      vsDiag('job_failed', { e: String(msg).slice(0, 40), a: job.attempts });
       job.status = 'failed';
       job.error = msg;
       _emit(true);
@@ -389,6 +396,7 @@ async function _legacyPublish(job, remote) {
   if (p.visibility === 'friends') fd.append('audience', 'followers');
   fd.append('allow_comments', p.allow_comments === false ? '0' : '1');
   if (p.cover_t != null) fd.append('cover_ms', String(Math.round((p.cover_t || 0) * 1000)));
+  if (Array.isArray(p.tagged) && p.tagged.length) fd.append('tagged', JSON.stringify(p.tagged.slice(0, 20))); // [2026-10-24 reels-marcar]
   const urls = remote.clips.map((c) => c.uri);
   if (remote.clips.length === 1) {
     const c = remote.clips[0];
@@ -410,7 +418,7 @@ async function _finish(job, st) {
   job.post = {
     media_type: 'video',
     likes: 0, likes_count: 0, comments: 0, comments_count: 0, views: 0,
-    user_liked: false, user_bookmarked: false, tagged_users: [],
+    user_liked: false, user_bookmarked: false, tagged_users: Array.isArray(p.tagged) ? p.tagged.slice(0, 20) : [],
     created_at: now.toISOString(),
     id: st.postId,
     media_url: st.url,
@@ -420,6 +428,7 @@ async function _finish(job, st) {
     ...(st.post || {}),
     is_reel: true,
   };
+  vsDiag('job_done', { post: job.post?.id ? 1 : 0 });
   job.status = 'done';
   job.phase = null;
   job.progress = 1;

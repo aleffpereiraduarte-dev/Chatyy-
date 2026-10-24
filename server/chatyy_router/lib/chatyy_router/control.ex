@@ -27,6 +27,14 @@ defmodule ChatyyRouter.Control do
     POST /ack_store {"device","cid","mids":[...],"persisted":1}
     POST /inherit {"uid","from","to"}            (A5: aparelho novo herda as pendências do antigo)
     GET  /f1/report  (comparador roteador × PG deste nó)   GET /f1/status   POST /f1/repair
+  [sgu F4] conversa body_store >= 3 com RT_F4=1 (ChatyyRouter.F4):
+    POST /store  + "kind":"receipt" {"from_uid","rtype":"d"|"r","upto_mid"|"upto_pts"}  (envelope gerado aqui)
+                 + "kind":"delete"  {"from_uid","from","ref"(mid alvo)}  → evento na fila + lápide no corpo
+                 respostas trazem "pts" (conv_pts dado pela casa)
+    GET  /pull ... &since_pts=P (com cid) → tudo que mudou depois de P; itens trazem pts/pts0/rtype/upto/ref
+                 resposta ganha "events" (recibos e apagar para todos)
+    GET  /f4/convs?uid=U&cids=1,2   → {"convs":[{cid,pts,unread,read_pts,last,peers}]} (calculado na casa)
+    GET  /f4/status          GET /f4/locate?cids=1,2&mid=M → {"found":{cid,pts,from_uid,deleted}|null}
   """
   use GenServer
   require Logger
@@ -74,6 +82,9 @@ defmodule ChatyyRouter.Control do
           route(method, path, qs, body)
         rescue
           e -> {500, "application/json", json(%{error: Exception.message(e)})}
+        catch
+          # chamada a um processo ocupado estourou o tempo: responde em vez de fechar mudo
+          :exit, e -> {503, "application/json", json(%{error: "busy", detail: inspect(e) |> String.slice(0, 200)})}
         end
 
       :gen_tcp.send(sock, [
@@ -199,6 +210,7 @@ defmodule ChatyyRouter.Control do
       meta: p["meta"], src: :store, rev: p["rev"], edited_at: p["edited_at"], rx_type: p["rx_type"],
       cmi: p["cmi"], from_uid: p["from_uid"], reply_to_id: p["reply_to_id"], edit_of: p["edit_of"],
       mentions: p["mentions"],
+      rtype: p["rtype"], upto_mid: p["upto_mid"], upto_pts: p["upto_pts"],
       env: env && Base.decode64!(env)
     }
 
@@ -215,15 +227,20 @@ defmodule ChatyyRouter.Control do
       l -> l |> String.split(",", trim: true) |> Enum.flat_map(&(case Integer.parse(String.trim(&1)) do {i, ""} -> [i]; _ -> [] end))
     end
 
-    r = ChatyyRouter.BodyStore.pull(d, cid: int.("cid"), since: int.("since"), limit: int.("limit") || 500, mids: mids, all: q["all"] == "1")
+    r = ChatyyRouter.BodyStore.pull(d, cid: int.("cid"), since: int.("since"), limit: int.("limit") || 500, mids: mids, all: q["all"] == "1",
+          since_pts: int.("since_pts"))
 
     j = fn m ->
       %{cid: m.cid, mid: sub_json(m.mid), kind: m.kind, ref: m.ref, ts: m.ts, from: m.from, type: m.type, sha: m.sha,
         env_b64: Base.encode64(m.env), from_device: m[:from_device], from_uid: m[:from_uid], cmi: m[:cmi],
         reply_to_id: m[:reply_to_id], edit_of: m[:edit_of], mentions: m[:mentions], rev: m[:rev] || 0,
-        rx_type: (case m.mid do {:rx, _, _, t} -> t; _ -> nil end)}
+        rx_type: (case m.mid do {:rx, _, _, t} -> t; _ -> nil end),
+        # [sgu F4] ordem da conversa e metadados dos eventos (nil fora da F4)
+        pts: ChatyyRouter.F4.sub_pts(m.cid, m.mid) || m[:pts],
+        pts0: (if is_integer(m.mid), do: ChatyyRouter.F4.mid_pts(m.cid, m.mid)),
+        rtype: m[:rtype], upto: m[:upto], upto_mid: m[:upto_mid], tomb: Map.get(m, :tomb) == true}
     end
-    ok(%{messages: Enum.map(r.messages, j), reactions: Enum.map(r.reactions, j)})
+    ok(%{messages: Enum.map(r.messages, j), reactions: Enum.map(r.reactions, j), events: Enum.map(r[:events] || [], j)})
   end
 
   defp route(:POST, "/ack_store", _, b) do
@@ -238,6 +255,26 @@ defmodule ChatyyRouter.Control do
     case ChatyyRouter.BodyStore.inherit(p["uid"], p["from"], p["to"]) do
       :ok -> ok(%{ok: true})
       {:error, e} -> {400, "application/json", json(%{ok: false, error: e})}
+    end
+  end
+
+  defp route(:GET, "/f4/convs", q, _) do
+    cids = (q["cids"] || "") |> String.split(",", trim: true) |> Enum.flat_map(&(case Integer.parse(String.trim(&1)) do {i, ""} -> [i]; _ -> [] end))
+
+    case q["uid"] do
+      u when is_binary(u) and u != "" -> ok(%{convs: ChatyyRouter.F4.summaries(u, Enum.take(Enum.uniq(cids), 500)), f4_on: ChatyyRouter.Flags.get(:f4) == true})
+      _ -> {400, "application/json", json(%{ok: false, error: "no_uid"})}
+    end
+  end
+
+  defp route(:GET, "/f4/status", _, _), do: ok(ChatyyRouter.F4.status())
+
+  defp route(:GET, "/f4/locate", q, _) do
+    cids = (q["cids"] || "") |> String.split(",", trim: true) |> Enum.flat_map(&(case Integer.parse(String.trim(&1)) do {i, ""} -> [i]; _ -> [] end))
+
+    case Integer.parse(q["mid"] || "") do
+      {mid, ""} -> ok(%{found: ChatyyRouter.F4.locate(Enum.take(cids, 200), mid)})
+      _ -> {400, "application/json", json(%{ok: false, error: "no_mid"})}
     end
   end
 
@@ -327,6 +364,8 @@ defmodule ChatyyRouter.Control do
 
   defp sub_json({:rx, m, e, t}), do: "rx:#{m}:#{e}:#{t}"
   defp sub_json({:rx, m, e}), do: "rx:#{m}:#{e}"
+  defp sub_json({:rc, u, t}), do: "rc:#{u}:#{t}"
+  defp sub_json({:del, m}), do: "del:#{m}"
   defp sub_json(m), do: m
   defp inspect_err(e) when is_atom(e), do: e
   defp inspect_err(e), do: inspect(e)

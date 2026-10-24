@@ -171,4 +171,58 @@ export async function captions({ mediaUrl, jobId, lang = 'pt' }) {
   };
 }
 
-export default { musicList, uploadAsset, mediaUploadMultipart, renderSubmit, renderStatus, captions, fileDescriptor };
+// ─── [2026-10-24 reels-marcar] Marcar pessoas ───────────────────────────────
+export const TAG_MAX = 20;
+function normPerson(u) {
+  if (!u) return null;
+  const email = String(u.email || '').toLowerCase().trim();
+  if (!email || !email.includes('@')) return null;
+  const username = String(u.username || u.handle || '').replace(/^@/, '');
+  return { email, name: String(u.name || '').trim() || email.split('@')[0], username: username || null, avatar_url: u.avatar_url || '', rel: u.rel || (u.is_contact ? 'contact' : '') };
+}
+/**
+ * Busca p/ "Marcar pessoas" → { ok, users:[{email,name,username,avatar_url,rel}], suggested }.
+ * q vazio = sugestões (seguidos/seguidores/conversas). Servidor sem o kit → cai no people_search
+ * (mesmo motor; já respeita bloqueios e "não me encontrar").
+ */
+export async function tagSearch(q = '') {
+  const qq = String(q || '').trim().slice(0, 80);
+  const r = await call('reels_tag_search', { q: qq, limit: 20 });
+  if (r.ok) {
+    const arr = Array.isArray(r.data?.users) ? r.data.users : [];
+    return { ok: true, users: arr.map(normPerson).filter(Boolean), suggested: !!r.data?.suggested };
+  }
+  if (!r.missing) return { ok: false, users: [], error: r.error };
+  if (qq.replace(/^@/, '').length < 2) return { ok: true, users: [], suggested: true, fallback: true };
+  try {
+    const r2 = await api.peopleSearch(qq);
+    const d = payload(r2);
+    const arr = Array.isArray(d?.users) ? d.users : [...(d?.contacts || []), ...(d?.global || [])];
+    return { ok: true, users: arr.map(normPerson).filter(Boolean).slice(0, 20), fallback: true };
+  } catch (e) { return { ok: false, users: [], error: e?.message || 'network' }; }
+}
+/** A pessoa marcada se tira do post → { ok, removed, tagged_users, tagged }. */
+export async function tagRemove(postId) {
+  const r = await call('reels_tag_remove', { post_id: Number(postId) || 0 });
+  if (!r.ok) return r;
+  return { ok: true, removed: !!r.data?.removed, tagged_users: Array.isArray(r.data?.tagged_users) ? r.data.tagged_users : [], tagged: Array.isArray(r.data?.tagged) ? r.data.tagged : [] };
+}
+/** Lista "com @fulano" de um post: tagged (objetos, feed de reels) ou tagged_users (e-mails, feed antigo). */
+export function taggedPeople(post) {
+  if (!post) return [];
+  const objs = Array.isArray(post.tagged) ? post.tagged : null;
+  const list = objs || (Array.isArray(post.tagged_users) ? post.tagged_users.map((e) => ({ email: e })) : []);
+  const out = [];
+  const seen = new Set();
+  for (const it of list) {
+    const p = typeof it === 'string' ? { email: it } : it;
+    const email = String(p?.email || '').toLowerCase();
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    const handle = String(p.username || '').replace(/^@/, '') || email.split('@')[0];
+    out.push({ email, name: p.name || handle, handle });
+  }
+  return out;
+}
+
+export default { musicList, uploadAsset, mediaUploadMultipart, renderSubmit, renderStatus, captions, fileDescriptor, tagSearch, tagRemove, taggedPeople, TAG_MAX };

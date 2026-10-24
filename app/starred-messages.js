@@ -502,13 +502,13 @@ export default function StarredMessagesScreen() {
   // item NO MESMO LUGAR e refaz a estrela no servidor.
   const restar = useCallback(async (msg) => {
     setMessages((prev) => (prev.some((m) => String(m.id) === String(msg.id)) ? prev : [msg, ...prev]));
-    try { await api.chatStarMessage(msg.id, true); } catch {}
+    try { await api.chatStarMessage(msg.id, true, msg.conversation_id ?? null, msg); } catch {}
   }, []);
   const unstar = useCallback(async (msg) => {
     if (!msg || msg.id == null) return;
     setMessages((prev) => prev.filter((m) => String(m.id) !== String(msg.id)));
     try {
-      const r = await api.chatStarMessage(msg.id, false);
+      const r = await api.chatStarMessage(msg.id, false, msg.conversation_id ?? null, msg); // [sgu F4 P-1]
       if (r && r.success === false) throw new Error(r.message || '');
       showToast({
         message: t('starredV2.removed', 'Removida das favoritas'),
