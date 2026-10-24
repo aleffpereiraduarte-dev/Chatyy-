@@ -294,7 +294,7 @@ import { getGlobalCall as _getGC, setGlobalCall as _setGC, clearGlobalCall as _c
 // [CALL-E2EE 2026-06-28] Master kill-switch for end-to-end encrypted calls.
 // DEFAULT false → none of the call-key path below executes; the call behaves
 // exactly like today. See constants/featureFlags.js + services/callE2ee.js.
-import { CALL_E2EE_ENABLED, isPstnEnabled } from '../constants/featureFlags';
+import { CALL_E2EE_ENABLED, isPstnEnabled, GROUP_VIDEO_VISIBLE_ONLY, GROUP_SPEAKER_TO_FRONT } from '../constants/featureFlags';
 // [e2ee5 WP-13] Ligações E2EE v5 — gate JS barato (o resto mora em services/callE2ee.js).
 function _e5JsOn() { try { return globalThis.__chatyy_e2ee5 === true; } catch { return false; } }
 // [e2ee5 WP-13 2026-10-22] Telemetria da ligação cifrada: beacon callkit_diag kind "e2ee5_call"
@@ -440,6 +440,30 @@ function _groupRosterOf(map) {
     if (p && p.screenTrack) shares.push(id + '@' + String(p.screenTrack.sid || p.screenTrack.mediaStreamTrack?.id || '1'));
   }
   return { ids, shares, key: ids.join('|') + '#' + shares.join('|') };
+}
+// [grupo-reuniao 2026-10-24] páginas da grade (MESMA regra do render: fixado = página própria,
+// resto em blocos de perPage) — usada também p/ assinar só o vídeo da página visível.
+function _groupGridPages(keys, perPage, pinnedK) {
+  const rest = pinnedK ? keys.filter((k) => k !== pinnedK) : keys;
+  const pages = pinnedK ? [[pinnedK]] : [];
+  for (let i = 0; i < rest.length; i += perPage) pages.push(rest.slice(i, i + perPage));
+  return pages;
+}
+// Quem falou por último (fora da 1ª página) vem primeiro; o resto mantém a ordem do roster.
+function _groupOrderedIds(ids, front) {
+  if (!front || !front.length) return ids;
+  const present = new Set(ids);
+  const f = front.filter((x) => present.has(x));
+  if (!f.length) return ids;
+  const fs = new Set(f);
+  return [...f, ...ids.filter((x) => !fs.has(x))];
+}
+function _groupFlagOn(globalKey, def) {
+  try {
+    const o = typeof globalThis !== 'undefined' ? globalThis[globalKey] : undefined;
+    if (o === true || o === false) return o;
+  } catch {}
+  return def === true;
 }
 const _NOOP_UNSUB = () => {};
 const _noopSubscribe = () => _NOOP_UNSUB;
@@ -1091,6 +1115,13 @@ function CallScreenInner() {
   }, []);
   const [gridPage, setGridPage] = useState(0);
   const gridListRef = useRef(null);
+  // [grupo-reuniao 2026-10-24] falante sobe p/ 1ª página + assinatura só do visível
+  const [groupFront, setGroupFront] = useState([]);
+  const groupFrontRef = useRef([]);
+  const groupFrontAtRef = useRef(0);
+  const groupPage0Ref = useRef(null);   // Set das chaves da 1ª página (null = tudo cabe numa tela)
+  const groupVisibleRef = useRef(null); // Set das chaves da página visível (null = todas visíveis)
+  const groupPerPageRef = useRef(6);
   // callback ESTÁVEL p/ os tiles memoizados (ref → nunca muda de identidade)
   const _gridTogglePinRef = useRef(null);
   if (!_gridTogglePinRef.current) {
@@ -1338,6 +1369,30 @@ function CallScreenInner() {
 
   // ───── Refs ─────
   const roomRef = useRef(null);
+  // [grupo-reuniao 2026-10-24] Grade paginada: assina o VÍDEO de câmera só de quem está na
+  // página visível (WhatsApp/Zoom). Áudio e tela compartilhada nunca são tocados. Fora da
+  // página o tile mostra o avatar; ao deslizar, setSubscribed(true) traz o vídeo (~0,3 s).
+  // Reaplica a cada 2,5 s p/ pegar câmeras publicadas depois (autoSubscribe liga de novo).
+  useEffect(() => {
+    if (!gridMode || !_groupFlagOn('__chatyy_group_visible_only', GROUP_VIDEO_VISIBLE_ONLY)) return undefined;
+    const apply = () => {
+      try {
+        const room = roomRef.current;
+        if (!room || !room.remoteParticipants) return;
+        const vis = groupVisibleRef.current; // null = tudo visível
+        room.remoteParticipants.forEach((p) => {
+          const pub = typeof p?.getTrackPublication === 'function' ? p.getTrackPublication(Track.Source.Camera) : null;
+          if (!pub || typeof pub.setSubscribed !== 'function') return;
+          const want = !vis || vis.has(p.identity);
+          const cur = typeof pub.isDesired === 'boolean' ? pub.isDesired : !!pub.isSubscribed;
+          if (cur !== want) pub.setSubscribed(want);
+        });
+      } catch {}
+    };
+    apply();
+    const iv = setInterval(apply, 2500);
+    return () => clearInterval(iv);
+  }, [gridMode, groupRoster.key, gridPage, pinnedPeerKey, groupFront]);
   // [2026-05-25] In-flight guard for connectToRoom. roomRef.current is only
   // assigned AFTER up-to-4s adopt polling + token fetch + 15s connect, so a
   // second call (handleReconnect, retry) entering connectToRoom mid-flight
@@ -3248,6 +3303,20 @@ function CallScreenInner() {
           if (!!entry.isSpeaking !== next) {
             groupPeersRef.current.set(identity, { ...entry, isSpeaking: next });
             groupPeerStore.notify(identity);
+          }
+        }
+        // [grupo-reuniao 2026-10-24] estilo WhatsApp: o falante mais alto que está FORA da
+        // 1ª página sobe p/ ela (no máx. 1 troca a cada 1,5 s; sem efeito se tudo cabe numa tela).
+        if (_groupFlagOn('__chatyy_group_speaker_front', GROUP_SPEAKER_TO_FRONT) && remoteSpeakers.length) {
+          const top = remoteSpeakers[0]?.identity;
+          const page0 = groupPage0Ref.current;
+          const now = Date.now();
+          if (top && page0 && !page0.has(top) && groupPeersRef.current.has(top) && now - groupFrontAtRef.current > 1500) {
+            groupFrontAtRef.current = now;
+            const keep = Math.max(1, (groupPerPageRef.current || 6) - 1); // 1 vaga é do "você"
+            const nextFront = [top, ...groupFrontRef.current.filter((x) => x !== top)].slice(0, keep);
+            groupFrontRef.current = nextFront;
+            setGroupFront(nextFront);
           }
         }
       } catch {}
@@ -6021,7 +6090,9 @@ function CallScreenInner() {
           mirror: facingFront,
           micMuted: audioMuted,
         };
-        const keys = ['__self__', ...groupRoster.ids];
+        const _orderedIds = _groupFlagOn('__chatyy_group_speaker_front', GROUP_SPEAKER_TO_FRONT)
+          ? _groupOrderedIds(groupRoster.ids, groupFront) : groupRoster.ids;
+        const keys = ['__self__', ..._orderedIds];
         const youLabel = t('call.you') || 'Você';
         const _togglePin = _gridTogglePinRef.current;
 
@@ -6060,7 +6131,10 @@ function CallScreenInner() {
           />
         );
 
+        groupPerPageRef.current = perPage;
         if (!paged) {
+          groupPage0Ref.current = null;
+          groupVisibleRef.current = null;
           const cols = n <= 2 ? 1 : (n <= 4 ? 2 : 3);
           const rowsFit = Math.max(1, Math.ceil(n / cols));
           const tileW = Math.floor((availW - gap * (cols - 1)) / cols);
@@ -6080,9 +6154,11 @@ function CallScreenInner() {
 
         // Paginado: tile fixado = página própria (tela cheia) na frente; resto em blocos.
         const pinnedK = pinnedPeerKey && keys.includes(pinnedPeerKey) ? pinnedPeerKey : null;
-        const rest = pinnedK ? keys.filter((k) => k !== pinnedK) : keys;
-        const pages = pinnedK ? [[pinnedK]] : [];
-        for (let i = 0; i < rest.length; i += perPage) pages.push(rest.slice(i, i + perPage));
+        const pages = _groupGridPages(keys, perPage, pinnedK);
+        // [grupo-reuniao 2026-10-24] refs lidas pelo falante-ativo e pela assinatura do visível.
+        // Com tile fixado o usuário escolheu o foco → não reordena (page0 = null).
+        groupPage0Ref.current = pinnedK ? null : new Set(pages[0] || []);
+        groupVisibleRef.current = new Set(pages[Math.min(gridPage, pages.length - 1)] || []);
         const rows = perPage / 2;
         const pTileW = Math.floor((availW - gap) / 2);
         const pTileH = Math.max(90, Math.floor((availH - gap * (rows - 1)) / rows));

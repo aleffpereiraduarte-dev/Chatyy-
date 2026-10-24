@@ -257,6 +257,14 @@ export const GROUP_CALL_DATA_TOPIC = 'chatyy.call';
 // globalThis.__chatyy_native_group_call_ui = true | false.
 // Web never uses it (web keeps the LiveKit web room).
 export const NATIVE_GROUP_CALL_UI = false;
+// [grupo-reuniao 2026-10-24] Grade de grupo do /call (app/call.js), estilo WhatsApp:
+// GROUP_VIDEO_VISIBLE_ONLY = com mais de 1 página, só assina o VÍDEO de câmera de quem
+// está na página visível (áudio e tela compartilhada continuam assinados). Em 20 pessoas
+// derruba a descida de ~19 vídeos p/ ≤5 (H.264 do RN não tem simulcast no grupo).
+// GROUP_SPEAKER_TO_FRONT = quem começa a falar fora da 1ª página sobe p/ ela (histerese 1,5 s).
+// Desligar: false aqui (OTA) ou globalThis.__chatyy_group_visible_only / __chatyy_group_speaker_front = false.
+export const GROUP_VIDEO_VISIBLE_ONLY = true;
+export const GROUP_SPEAKER_TO_FRONT = true;
 export const NATIVE_GROUP_CALL_UI_TEST_ACCOUNTS = [
   'apitest@onemundo.com.br',
   'qa2@chatyy.com.br',
