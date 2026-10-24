@@ -9438,4 +9438,13 @@ export default {
   "feedPublic.retry": "ထပ်ကြိုးစားရန်",
   "feedPublic.goApp": "Chatyy သို့ သွားရန်",
   "chatConv.notMember": "သင်သည် ဤစကားဝိုင်း၏ အဖွဲ့ဝင် မဟုတ်ပါ။",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "သင့်အီးမေးလ်သည် ယခု ကမ္ဘာလုံးဆိုင်ရာ ဖြစ်ပါပြီ",
+  "emailGlobal.body": "Chatyy တွင် ယခု ကမ္ဘာတစ်ဝှမ်း အသုံးပြုနိုင်သော လိပ်စာ ရှိပါပြီ။",
+  "emailGlobal.newLabel": "သင့်အီးမေးလ်အသစ်",
+  "emailGlobal.oldLabel": "ဆက်လက်အလုပ်လုပ်ပါသည်",
+  "emailGlobal.reassure": "စိတ်မပူပါနှင့်- @chatyy.com.br သို့ ပို့သမျှ အရာအားလုံး တူညီသော စာတိုက်ပုံးသို့ ဆက်လက်ရောက်ရှိမည်။ ဘာမှမဆုံးရှုံးဘဲ မည်သူ့ကိုမျှ အသိပေးရန် မလိုပါ။",
+  "emailGlobal.ok": "နားလည်ပါပြီ",
+  "emailGlobal.copy": "အီးမေးလ်အသစ်ကို ကူးယူရန်",
+  "emailGlobal.copied": "ကူးယူပြီး",
 };

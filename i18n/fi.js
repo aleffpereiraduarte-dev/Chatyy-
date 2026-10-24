@@ -10220,4 +10220,13 @@ export default {
   "feedPublic.retry": "Yritä uudelleen",
   "feedPublic.goApp": "Siirry Chatyyhin",
   "chatConv.notMember": "Et ole tämän keskustelun jäsen.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "Sähköpostisi on nyt maailmanlaajuinen",
+  "emailGlobal.body": "Chatyylla on nyt osoite, joka toimii kaikkialla maailmassa.",
+  "emailGlobal.newLabel": "Uusi sähköpostisi",
+  "emailGlobal.oldLabel": "Toimii edelleen",
+  "emailGlobal.reassure": "Ei huolta: kaikki @chatyy.com.br-osoitteeseen lähetetty tulee edelleen samaan postilaatikkoon. Et menetä mitään, eikä sinun tarvitse ilmoittaa kenellekään.",
+  "emailGlobal.ok": "Selvä",
+  "emailGlobal.copy": "Kopioi uusi sähköposti",
+  "emailGlobal.copied": "Kopioitu",
 };

@@ -9438,4 +9438,13 @@ export default {
   "feedPublic.retry": "Қайталау",
   "feedPublic.goApp": "Chatyy-ге өту",
   "chatConv.notMember": "Сіз бұл сөйлесудің мүшесі емессіз.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "Поштаңыз енді жаһандық",
+  "emailGlobal.body": "Chatyy-де енді бүкіл әлемде жұмыс істейтін мекенжай бар.",
+  "emailGlobal.newLabel": "Жаңа поштаңыз",
+  "emailGlobal.oldLabel": "Жұмыс істей береді",
+  "emailGlobal.reassure": "Алаңдамаңыз: @chatyy.com.br мекенжайына жіберілгеннің бәрі сол жәшікке келе береді. Ештеңе жоғалтпайсыз және ешкімге хабарлаудың қажеті жоқ.",
+  "emailGlobal.ok": "Түсінікті",
+  "emailGlobal.copy": "Жаңа поштаны көшіру",
+  "emailGlobal.copied": "Көшірілді",
 };

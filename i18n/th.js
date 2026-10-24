@@ -12224,4 +12224,13 @@ export default {
   "feedPublic.loadErrorBody": "ตรวจสอบการเชื่อมต่อแล้วลองอีกครั้ง",
   "feedPublic.retry": "ลองอีกครั้ง",
   "chatConv.notMember": "คุณไม่ได้เป็นสมาชิกของการสนทนานี้",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "อีเมลของคุณใช้ได้ทั่วโลกแล้ว",
+  "emailGlobal.body": "ตอนนี้ Chatyy มีที่อยู่ที่ใช้งานได้ทั่วโลก",
+  "emailGlobal.newLabel": "อีเมลใหม่ของคุณ",
+  "emailGlobal.oldLabel": "ยังใช้งานได้",
+  "emailGlobal.reassure": "ไม่ต้องกังวล: ทุกอย่างที่ส่งถึง @chatyy.com.br จะยังเข้ากล่องจดหมายเดิม คุณไม่สูญเสียอะไรและไม่ต้องแจ้งใคร",
+  "emailGlobal.ok": "เข้าใจแล้ว",
+  "emailGlobal.copy": "คัดลอกอีเมลใหม่",
+  "emailGlobal.copied": "คัดลอกแล้ว",
 };

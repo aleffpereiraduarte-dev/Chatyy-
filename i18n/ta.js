@@ -5196,4 +5196,13 @@ export default {
   "feedPublic.retry": "மீண்டும் முயல்க",
   "feedPublic.goApp": "Chatyy-க்குச் செல்",
   "chatConv.notMember": "நீங்கள் இந்த உரையாடலின் உறுப்பினர் அல்ல.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "உங்கள் மின்னஞ்சல் இப்போது உலகளாவியது",
+  "emailGlobal.body": "Chatyy-க்கு இப்போது உலகம் முழுவதும் வேலை செய்யும் முகவரி உள்ளது.",
+  "emailGlobal.newLabel": "உங்கள் புதிய மின்னஞ்சல்",
+  "emailGlobal.oldLabel": "இன்னும் வேலை செய்கிறது",
+  "emailGlobal.reassure": "கவலை வேண்டாம்: @chatyy.com.br-க்கு அனுப்பப்படும் அனைத்தும் அதே இன்பாக்ஸுக்கு தொடர்ந்து வரும். நீங்கள் எதையும் இழக்கமாட்டீர்கள், யாருக்கும் சொல்ல வேண்டியதில்லை.",
+  "emailGlobal.ok": "புரிந்தது",
+  "emailGlobal.copy": "புதிய மின்னஞ்சலை நகலெடு",
+  "emailGlobal.copied": "நகலெடுக்கப்பட்டது",
 };

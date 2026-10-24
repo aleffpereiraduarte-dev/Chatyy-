@@ -9442,4 +9442,13 @@ export default {
   "feedPublic.retry": "Jaribu tena",
   "feedPublic.goApp": "Nenda Chatyy",
   "chatConv.notMember": "Wewe si mwanachama wa mazungumzo haya.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "Barua pepe yako sasa ni ya kimataifa",
+  "emailGlobal.body": "Sasa Chatyy ina anwani inayofanya kazi duniani kote.",
+  "emailGlobal.newLabel": "Barua pepe yako mpya",
+  "emailGlobal.oldLabel": "Bado inafanya kazi",
+  "emailGlobal.reassure": "Usijali: kila kinachotumwa kwa @chatyy.com.br kitaendelea kufika kwenye kikasha kilekile. Hupotezi chochote na huhitaji kumwambia mtu yeyote.",
+  "emailGlobal.ok": "Nimeelewa",
+  "emailGlobal.copy": "Nakili barua pepe mpya",
+  "emailGlobal.copied": "Imenakiliwa",
 };

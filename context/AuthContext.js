@@ -1460,6 +1460,8 @@ export function AuthProvider({ children }) {
         import('../services/cache').then(({ setCache }) => {
           setCache('user_profile', r.data, 600000);
         }).catch(() => {});
+        // [email-global 2026-10-24] alias @chatyy.app ativo → aviso único (flag __chatyy_email_global_notice, padrão off).
+        try { require('../services/emailGlobalNotice').maybeQueueEmailGlobalNotice(email, r.data).catch(() => {}); } catch {}
         // Update user name from profile if available. GUARD: only adopt the
         // value when it's a NON-EMPTY STRING. The server has historically
         // returned display_name as null, a number, or an object on edge

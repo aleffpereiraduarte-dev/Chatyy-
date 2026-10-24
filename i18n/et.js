@@ -9442,4 +9442,13 @@ export default {
   "feedPublic.retry": "Proovi uuesti",
   "feedPublic.goApp": "Ava Chatyy",
   "chatConv.notMember": "Sa ei ole selle vestluse liige.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "Sinu e-post on nüüd ülemaailmne",
+  "emailGlobal.body": "Chatyyl on nüüd aadress, mis töötab kogu maailmas.",
+  "emailGlobal.newLabel": "Sinu uus e-post",
+  "emailGlobal.oldLabel": "Töötab edasi",
+  "emailGlobal.reassure": "Ära muretse: kõik, mis saadetakse aadressile @chatyy.com.br, jõuab endiselt samasse postkasti. Sa ei kaota midagi ega pea kellelegi teatama.",
+  "emailGlobal.ok": "Selge",
+  "emailGlobal.copy": "Kopeeri uus e-post",
+  "emailGlobal.copied": "Kopeeritud",
 };

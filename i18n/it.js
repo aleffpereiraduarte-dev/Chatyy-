@@ -13038,4 +13038,13 @@ export default {
   "feedPublic.loadErrorBody": "Controlla la connessione e riprova.",
   "feedPublic.retry": "Riprova",
   "chatConv.notMember": "Non fai parte di questa conversazione.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "La tua email ora è globale",
+  "emailGlobal.body": "Ora Chatyy ha un indirizzo che funziona in tutto il mondo.",
+  "emailGlobal.newLabel": "La tua nuova email",
+  "emailGlobal.oldLabel": "Continua a funzionare",
+  "emailGlobal.reassure": "Non preoccuparti: tutto ciò che viene inviato a @chatyy.com.br continua ad arrivare nella stessa casella. Non perdi nulla e non devi avvisare nessuno.",
+  "emailGlobal.ok": "Ho capito",
+  "emailGlobal.copy": "Copia la nuova email",
+  "emailGlobal.copied": "Copiato",
 };

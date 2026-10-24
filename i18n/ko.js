@@ -12224,4 +12224,13 @@ export default {
   "feedPublic.loadErrorBody": "연결 상태를 확인하고 다시 시도하세요.",
   "feedPublic.retry": "다시 시도",
   "chatConv.notMember": "이 대화의 멤버가 아닙니다.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "이메일이 이제 글로벌해졌어요",
+  "emailGlobal.body": "이제 Chatyy에 전 세계에서 쓸 수 있는 주소가 생겼어요.",
+  "emailGlobal.newLabel": "새 이메일",
+  "emailGlobal.oldLabel": "계속 사용 가능",
+  "emailGlobal.reassure": "걱정하지 마세요. @chatyy.com.br로 보낸 메일은 계속 같은 받은편지함으로 와요. 잃는 것도 없고 누구에게 알릴 필요도 없어요.",
+  "emailGlobal.ok": "확인",
+  "emailGlobal.copy": "새 이메일 복사",
+  "emailGlobal.copied": "복사됨",
 };

@@ -9442,4 +9442,13 @@ export default {
   "feedPublic.retry": "Bandyti dar kartą",
   "feedPublic.goApp": "Eiti į Chatyy",
   "chatConv.notMember": "Jūs nesate šio pokalbio narys.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "Jūsų el. paštas dabar globalus",
+  "emailGlobal.body": "Chatyy dabar turi adresą, kuris veikia visame pasaulyje.",
+  "emailGlobal.newLabel": "Jūsų naujas el. paštas",
+  "emailGlobal.oldLabel": "Vis dar veikia",
+  "emailGlobal.reassure": "Nesijaudinkite: viskas, kas siunčiama į @chatyy.com.br, ir toliau pateks į tą pačią dėžutę. Nieko neprarandate ir niekam nereikia pranešti.",
+  "emailGlobal.ok": "Supratau",
+  "emailGlobal.copy": "Kopijuoti naują el. paštą",
+  "emailGlobal.copied": "Nukopijuota",
 };

@@ -2401,7 +2401,11 @@ async function _deviceLangCode() {
   code = String(code || '').toLowerCase().slice(0, 2);
   // [2026-10-12 push-parity] 11 app languages; also sent as `lang` with the
   // push token so the server localizes previews (pt-BR/pt-PT → pt).
-  return ['pt', 'en', 'es', 'fr', 'de', 'it', 'ja', 'ar', 'id', 'hi'].includes(code) ? code : 'pt';
+  // [email-global 2026-10-24] idioma do app fora dos 10 renderizados no servidor
+  // (ru, ko, tr, …) caía em 'pt' → push em português p/ quem não fala. Agora 'en';
+  // só sem idioma nenhum (leitura falhou) fica 'pt', o padrão histórico.
+  if (!code) return 'pt';
+  return ['pt', 'en', 'es', 'fr', 'de', 'it', 'ja', 'ar', 'id', 'hi'].includes(code) ? code : 'en';
 }
 
 // Localized titles for the notification ACTION buttons. iOS/Android render

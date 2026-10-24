@@ -9438,4 +9438,13 @@ export default {
   "feedPublic.retry": "ລອງໃໝ່",
   "feedPublic.goApp": "ໄປທີ່ Chatyy",
   "chatConv.notMember": "ທ່ານບໍ່ແມ່ນສະມາຊິກຂອງການສົນທະນານີ້.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "ອີເມວຂອງທ່ານໃຊ້ໄດ້ທົ່ວໂລກແລ້ວ",
+  "emailGlobal.body": "ຕອນນີ້ Chatyy ມີທີ່ຢູ່ທີ່ໃຊ້ໄດ້ທົ່ວໂລກ.",
+  "emailGlobal.newLabel": "ອີເມວໃໝ່ຂອງທ່ານ",
+  "emailGlobal.oldLabel": "ຍັງໃຊ້ໄດ້",
+  "emailGlobal.reassure": "ບໍ່ຕ້ອງກັງວົນ: ທຸກຢ່າງທີ່ສົ່ງໄປ @chatyy.com.br ຈະຍັງເຂົ້າກ່ອງຈົດໝາຍເດີມ. ທ່ານບໍ່ເສຍຫຍັງ ແລະ ບໍ່ຕ້ອງແຈ້ງໃຜ.",
+  "emailGlobal.ok": "ເຂົ້າໃຈແລ້ວ",
+  "emailGlobal.copy": "ສຳເນົາອີເມວໃໝ່",
+  "emailGlobal.copied": "ສຳເນົາແລ້ວ",
 };

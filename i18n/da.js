@@ -10220,4 +10220,13 @@ export default {
   "feedPublic.retry": "Prøv igen",
   "feedPublic.goApp": "Gå til Chatyy",
   "chatConv.notMember": "Du er ikke medlem af denne samtale.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "Din e-mail er nu global",
+  "emailGlobal.body": "Chatyy har nu en adresse, der virker i hele verden.",
+  "emailGlobal.newLabel": "Din nye e-mail",
+  "emailGlobal.oldLabel": "Virker stadig",
+  "emailGlobal.reassure": "Bare rolig: alt, der sendes til @chatyy.com.br, kommer stadig i den samme indbakke. Du mister intet og behøver ikke at give nogen besked.",
+  "emailGlobal.ok": "Forstået",
+  "emailGlobal.copy": "Kopiér ny e-mail",
+  "emailGlobal.copied": "Kopieret",
 };

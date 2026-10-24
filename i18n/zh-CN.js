@@ -12224,4 +12224,13 @@ export default {
   "feedPublic.loadErrorBody": "请检查网络连接后重试。",
   "feedPublic.retry": "重试",
   "chatConv.notMember": "你不是此对话的成员。",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "你的邮箱现已全球通用",
+  "emailGlobal.body": "Chatyy 现在有了一个全球通用的地址。",
+  "emailGlobal.newLabel": "你的新邮箱",
+  "emailGlobal.oldLabel": "仍可使用",
+  "emailGlobal.reassure": "别担心：发送到 @chatyy.com.br 的所有邮件仍会进入同一个收件箱。你不会丢失任何内容，也不需要通知任何人。",
+  "emailGlobal.ok": "知道了",
+  "emailGlobal.copy": "复制新邮箱",
+  "emailGlobal.copied": "已复制",
 };

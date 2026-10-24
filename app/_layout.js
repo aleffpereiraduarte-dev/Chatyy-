@@ -564,6 +564,7 @@ const _LATE_OVERLAYS = {
   PollVotesHost: () => require('../components/chat/PollVotesSheet').default, // [wave13e 2026-10-16] Ver votos
   ContactCardHost: () => require('../components/chat/ContactCardSheet').default, // [2026-10-17 share-contact] detalhes do cartão de contato
   EmailUndoBar: () => require('../components/EmailUndoBar').default,
+  EmailGlobalNoticeHost: () => require('../components/EmailGlobalNoticeHost').default, // [email-global 2026-10-24] aviso único @chatyy.app (flag __chatyy_email_global_notice)
   StorageOfferHost: () => require('../components/storage/StorageOfferHost').default, // [2026-10-17 smart-storage] sheet global "sem espaço" / backup não cabe
   PhoneOfflineBanner: () => require('../components/PhoneOfflineBanner').default,
   PushTokenStaleBanner: () => require('../components/PushTokenStaleBanner').default,
@@ -2561,6 +2562,7 @@ export default function RootLayout() {
                 <Late name="ContactCardHost" />
                 <Late name="EmailUndoBar" />
                 <Late name="StorageOfferHost" />
+                <Late name="EmailGlobalNoticeHost" />
                 <Late name="ConfettiHost" />{/* [2026-10-16 mascote] confete leve (1ª msg / grupo criado) */}
                 <Suspense fallback={null}>
                   <IncomingCallListener />

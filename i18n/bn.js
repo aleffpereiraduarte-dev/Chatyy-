@@ -9442,4 +9442,13 @@ export default {
   "feedPublic.retry": "আবার চেষ্টা করুন",
   "feedPublic.goApp": "Chatyy-তে যান",
   "chatConv.notMember": "আপনি এই কথোপকথনের সদস্য নন।",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "আপনার ইমেইল এখন গ্লোবাল",
+  "emailGlobal.body": "Chatyy-এর এখন এমন একটি ঠিকানা আছে যা সারা বিশ্বে কাজ করে।",
+  "emailGlobal.newLabel": "আপনার নতুন ইমেইল",
+  "emailGlobal.oldLabel": "এখনও কাজ করে",
+  "emailGlobal.reassure": "চিন্তা করবেন না: @chatyy.com.br-এ পাঠানো সবকিছু একই ইনবক্সে আসতে থাকবে। আপনি কিছুই হারাবেন না এবং কাউকে জানাতে হবে না।",
+  "emailGlobal.ok": "বুঝেছি",
+  "emailGlobal.copy": "নতুন ইমেইল কপি করুন",
+  "emailGlobal.copied": "কপি হয়েছে",
 };

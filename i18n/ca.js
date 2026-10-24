@@ -9442,4 +9442,13 @@ export default {
   "feedPublic.retry": "Torna-ho a provar",
   "feedPublic.goApp": "Anar a Chatyy",
   "chatConv.notMember": "No formes part d'aquesta conversa.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "El teu correu ara és global",
+  "emailGlobal.body": "Ara Chatyy té una adreça que funciona a tot el món.",
+  "emailGlobal.newLabel": "El teu correu nou",
+  "emailGlobal.oldLabel": "Continua funcionant",
+  "emailGlobal.reassure": "No et preocupis: tot el que s'enviï a @chatyy.com.br continua arribant a la mateixa safata. No perds res i no cal avisar ningú.",
+  "emailGlobal.ok": "Entesos",
+  "emailGlobal.copy": "Copia el correu nou",
+  "emailGlobal.copied": "Copiat",
 };

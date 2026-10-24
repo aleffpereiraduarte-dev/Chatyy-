@@ -16170,4 +16170,13 @@ export default {
   'comments.mentionRelFollowing': 'Siguiendo',
   'comments.mentionRelFollower': 'Te sigue',
   'comments.mentionListA11y': 'Sugerencias de personas para mencionar',
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "Tu correo ahora es global",
+  "emailGlobal.body": "Ahora Chatyy tiene una dirección que funciona en todo el mundo.",
+  "emailGlobal.newLabel": "Tu correo nuevo",
+  "emailGlobal.oldLabel": "Sigue funcionando",
+  "emailGlobal.reassure": "No te preocupes: todo lo que se envíe a @chatyy.com.br sigue llegando a la misma bandeja. No pierdes nada y no tienes que avisar a nadie.",
+  "emailGlobal.ok": "Entendido",
+  "emailGlobal.copy": "Copiar correo nuevo",
+  "emailGlobal.copied": "Copiado",
 };

@@ -13891,4 +13891,13 @@ export default {
   "chatConv.inviteLinkSheetSub": "QR, partilhar, redefinir ou revogar",
   "group.requests.title": "Pedidos para entrar",
   "group.requests.none": "Nenhum pedido pendente",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "O seu e-mail passou a ser global",
+  "emailGlobal.body": "Agora o Chatyy tem um endereço que funciona em todo o mundo.",
+  "emailGlobal.newLabel": "O seu novo e-mail",
+  "emailGlobal.oldLabel": "Continua a funcionar",
+  "emailGlobal.reassure": "Não se preocupe: tudo o que for enviado para o @chatyy.com.br continua a chegar à mesma caixa. Não perde nada e não precisa de avisar ninguém.",
+  "emailGlobal.ok": "Percebi",
+  "emailGlobal.copy": "Copiar novo e-mail",
+  "emailGlobal.copied": "Copiado",
 };

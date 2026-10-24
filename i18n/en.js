@@ -16186,4 +16186,13 @@ export default {
   'comments.mentionRelFollowing': 'Following',
   'comments.mentionRelFollower': 'Follows you',
   'comments.mentionListA11y': 'People suggestions to mention',
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "Your email is now global",
+  "emailGlobal.body": "Chatyy now has an address that works all over the world.",
+  "emailGlobal.newLabel": "Your new email",
+  "emailGlobal.oldLabel": "Still works",
+  "emailGlobal.reassure": "Don't worry: everything sent to @chatyy.com.br keeps arriving in the same inbox. You don't lose anything and you don't need to tell anyone.",
+  "emailGlobal.ok": "Got it",
+  "emailGlobal.copy": "Copy new email",
+  "emailGlobal.copied": "Copied",
 };

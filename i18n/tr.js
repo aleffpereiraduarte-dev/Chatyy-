@@ -12224,4 +12224,13 @@ export default {
   "feedPublic.loadErrorBody": "Bağlantınızı kontrol edip tekrar deneyin.",
   "feedPublic.retry": "Tekrar dene",
   "chatConv.notMember": "Bu sohbetin üyesi değilsiniz.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "E-postanız artık küresel",
+  "emailGlobal.body": "Chatyy'nin artık dünyanın her yerinde çalışan bir adresi var.",
+  "emailGlobal.newLabel": "Yeni e-postanız",
+  "emailGlobal.oldLabel": "Çalışmaya devam ediyor",
+  "emailGlobal.reassure": "Endişelenmeyin: @chatyy.com.br adresine gönderilen her şey aynı gelen kutusuna gelmeye devam eder. Hiçbir şey kaybetmezsiniz ve kimseye haber vermeniz gerekmez.",
+  "emailGlobal.ok": "Anladım",
+  "emailGlobal.copy": "Yeni e-postayı kopyala",
+  "emailGlobal.copied": "Kopyalandı",
 };

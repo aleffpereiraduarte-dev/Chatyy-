@@ -9442,4 +9442,13 @@ export default {
   "feedPublic.retry": "Subukang muli",
   "feedPublic.goApp": "Pumunta sa Chatyy",
   "chatConv.notMember": "Hindi ka miyembro ng usapang ito.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "Global na ang email mo",
+  "emailGlobal.body": "May address na ngayon ang Chatyy na gumagana sa buong mundo.",
+  "emailGlobal.newLabel": "Ang bago mong email",
+  "emailGlobal.oldLabel": "Gumagana pa rin",
+  "emailGlobal.reassure": "Huwag mag-alala: lahat ng ipinapadala sa @chatyy.com.br ay patuloy na darating sa parehong inbox. Wala kang mawawala at hindi mo kailangang sabihan ang sinuman.",
+  "emailGlobal.ok": "Sige",
+  "emailGlobal.copy": "Kopyahin ang bagong email",
+  "emailGlobal.copied": "Nakopya",
 };

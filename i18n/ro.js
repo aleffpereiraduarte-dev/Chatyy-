@@ -9442,4 +9442,13 @@ export default {
   "feedPublic.retry": "Încearcă din nou",
   "feedPublic.goApp": "Mergi la Chatyy",
   "chatConv.notMember": "Nu ești membru al acestei conversații.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "E-mailul tău este acum global",
+  "emailGlobal.body": "Chatyy are acum o adresă care funcționează în toată lumea.",
+  "emailGlobal.newLabel": "Noul tău e-mail",
+  "emailGlobal.oldLabel": "Funcționează în continuare",
+  "emailGlobal.reassure": "Nu-ți face griji: tot ce se trimite la @chatyy.com.br ajunge în continuare în aceeași căsuță. Nu pierzi nimic și nu trebuie să anunți pe nimeni.",
+  "emailGlobal.ok": "Am înțeles",
+  "emailGlobal.copy": "Copiază noul e-mail",
+  "emailGlobal.copied": "Copiat",
 };

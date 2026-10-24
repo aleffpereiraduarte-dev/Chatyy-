@@ -9442,4 +9442,13 @@ export default {
   "feedPublic.retry": "Skúsiť znova",
   "feedPublic.goApp": "Prejsť do Chatyy",
   "chatConv.notMember": "Nie ste členom tejto konverzácie.",
+  // [email-global 2026-10-24] aviso único "seu e-mail ficou global" (@chatyy.app)
+  "emailGlobal.title": "Váš e-mail je teraz globálny",
+  "emailGlobal.body": "Chatyy má teraz adresu, ktorá funguje na celom svete.",
+  "emailGlobal.newLabel": "Váš nový e-mail",
+  "emailGlobal.oldLabel": "Stále funguje",
+  "emailGlobal.reassure": "Nebojte sa: všetko, čo príde na @chatyy.com.br, bude naďalej chodiť do tej istej schránky. Nič nestratíte a nikomu nemusíte nič oznamovať.",
+  "emailGlobal.ok": "Rozumiem",
+  "emailGlobal.copy": "Kopírovať nový e-mail",
+  "emailGlobal.copied": "Skopírované",
 };
