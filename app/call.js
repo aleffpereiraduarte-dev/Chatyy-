@@ -691,6 +691,13 @@ function CallScreenInner() {
   const [controlsVisible, setControlsVisible] = useState(true);
   const [showEmojiBar, setShowEmojiBar] = useState(false);
   const [showAddParticipant, setShowAddParticipant] = useState(false);
+  // [grupo-reuniao 2026-10-24] Controles do anfitrião na chamada em grupo (mutar todos,
+  // remover, trancar) — mesma API do group-call.js (chat_call_mute_all /
+  // chat_call_remove_participant / chat_call_set_locked); o servidor decide quem pode (403).
+  const [gcLocked, setGcLocked] = useState(false);
+  const [gcCohost, setGcCohost] = useState(false);
+  const [gcHostBusy, setGcHostBusy] = useState('');
+  const gcCohostRef = useRef(false);
   const [addParticipantQuery, setAddParticipantQuery] = useState('');
   const [addParticipantBusy, setAddParticipantBusy] = useState(false);
   const [addParticipantCandidates, setAddParticipantCandidates] = useState([]);
@@ -3892,6 +3899,105 @@ function CallScreenInner() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isGroupCall, callId, user?.email, _gcIsDupReaction, _gcShowReaction, _gcApplyHand]);
+
+  // [grupo-reuniao 2026-10-24] Eventos dos controles do anfitrião (chat.php → WS do usuário).
+  //  call_mute_all      → quem não é anfitrião desliga o próprio microfone (o servidor também
+  //                       muta a faixa no SFU quando o kit grupo-host está aplicado);
+  //  call_force_end     → fui removido: aviso e saio;
+  //  call_set_locked    → espelha o cadeado em todos;
+  //  call_cohost_granted→ virei coanfitrião: passo a ver os controles.
+  useEffect(() => {
+    if (!isGroupCall || !callId) return undefined;
+    let mailWs = null;
+    try { mailWs = require('../services/websocket').default; } catch {}
+    if (!mailWs || typeof mailWs.on !== 'function') return undefined;
+    const me = (user?.email || '').toLowerCase();
+    const same = (d) => d && String(d.call_id || '') === String(callId);
+    const offs = [];
+    offs.push(mailWs.on('call_mute_all', (d) => {
+      if (!same(d)) return;
+      const by = String(d.by_email || '').toLowerCase();
+      if (!me || by === me) return;
+      if (isCaller || gcCohostRef.current) return; // anfitrião/coanfitrião não se muta
+      try {
+        const r = roomRef.current;
+        if (r && r.localParticipant) r.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+      } catch {}
+      try { setAudioMuted(true); audioMutedRef.current = true; } catch {}
+      try {
+        const { Alert } = require('react-native');
+        Alert.alert(t('call.muted') || 'Mudo', t('call.group.mutedAllByHost') || 'O anfitrião silenciou todos os participantes.', [{ text: 'OK' }]);
+      } catch {}
+    }));
+    offs.push(mailWs.on('call_force_end', (d) => {
+      if (!same(d)) return;
+      try { _callDiagAppend('info', 'grupo: removido pelo anfitrião', { call_id: callId, by: String(d.by_email || '') }); } catch {}
+      try { handleEndCallRef.current && handleEndCallRef.current(); } catch {}
+      try {
+        const { Alert } = require('react-native');
+        Alert.alert(t('call.group.removed') || 'Participante removido', t('call.group.removedByHost') || 'O anfitrião removeu você da chamada.', [{ text: 'OK' }]);
+      } catch {}
+    }));
+    offs.push(mailWs.on('call_set_locked', (d) => {
+      if (!same(d)) return;
+      setGcLocked(!!d.locked);
+    }));
+    offs.push(mailWs.on('call_cohost_granted', (d) => {
+      if (!same(d)) return;
+      if (String(d.cohost_email || '').toLowerCase() === me) { gcCohostRef.current = true; setGcCohost(true); }
+    }));
+    return () => { offs.forEach((fn) => { try { fn && fn(); } catch {} }); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGroupCall, callId, user?.email, isCaller]);
+
+  const _gcIdentEmail = (ident) => String(ident || '').split('#')[0].toLowerCase();
+  const handleGcMuteAll = useCallback(async () => {
+    if (gcHostBusy) return;
+    setGcHostBusy('mute_all');
+    try {
+      const { chatCallMuteAll } = require('../services/api');
+      await chatCallMuteAll(conversationId, callId);
+    } catch (e) {
+      try { _callDiagAppend('warn', 'grupo: mutar todos falhou', { call_id: callId, msg: String(e?.message || e).slice(0, 160) }); } catch {}
+    } finally { setGcHostBusy(''); }
+  }, [gcHostBusy, conversationId, callId]);
+  const handleGcToggleLock = useCallback(async () => {
+    if (gcHostBusy) return;
+    const next = !gcLocked;
+    setGcLocked(next); // otimista; volta se o servidor recusar
+    setGcHostBusy('lock');
+    try {
+      const { chatCallSetLocked } = require('../services/api');
+      const r = await chatCallSetLocked(conversationId, callId, next);
+      if (r && r.success === false) setGcLocked(!next);
+    } catch (e) {
+      setGcLocked(!next);
+    } finally { setGcHostBusy(''); }
+  }, [gcHostBusy, gcLocked, conversationId, callId]);
+  const handleGcRemove = useCallback((ident, display) => {
+    const target = _gcIdentEmail(ident);
+    if (!target) return;
+    const { Alert } = require('react-native');
+    Alert.alert(
+      t('call.group.removeTitle') || 'Remover da chamada?',
+      (t('call.group.removeBody') || '{name} sai da chamada agora.').replace('{name}', display || target.split('@')[0]),
+      [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        {
+          text: t('call.group.remove') || 'Remover',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { chatCallRemoveParticipant } = require('../services/api');
+              await chatCallRemoveParticipant(conversationId, callId, target);
+            } catch (e) {
+              try { _callDiagAppend('warn', 'grupo: remover falhou', { call_id: callId, msg: String(e?.message || e).slice(0, 160) }); } catch {}
+            }
+          },
+        },
+      ]
+    );
+  }, [conversationId, callId, t]);
 
   const _handleDataChannelMessage = useCallback((data, participant) => {
     if (!data || typeof data !== 'object') return;
@@ -7156,17 +7262,51 @@ function CallScreenInner() {
         existingEmails={addParticipantExisting}
         t={t}
         loading={addParticipantBusy}
-        topSlot={isGroupCall && isCaller ? (() => {
+        topSlot={isGroupCall && (isCaller || gcCohost) ? (() => {
               const r = roomRef.current;
               const joined = r && r.remoteParticipants
                 ? Array.from(r.remoteParticipants.values())
                 : [];
-              if (joined.length === 0) return null;
+              // [grupo-reuniao 2026-10-24] Controles do anfitrião: mutar todos + trancar
+              // (aparecem mesmo sem ninguém conectado ainda — trancar vale p/ quem chegar).
+              const pill = (on) => ({ flex: 1, minHeight: 40, borderRadius: 20, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? 'rgba(239,68,68,0.85)' : 'rgba(255,255,255,0.15)' });
               return (
                 <View style={{ marginBottom: 8, paddingHorizontal: 16 }}>
+                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                    <TouchableOpacity
+                      onPress={handleGcMuteAll}
+                      disabled={!!gcHostBusy || joined.length === 0}
+                      style={[pill(false), (gcHostBusy || joined.length === 0) ? { opacity: 0.5 } : null]}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('call.group.muteAll') || 'Silenciar todos'}
+                    >
+                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{t('call.group.muteAll') || 'Silenciar todos'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={handleGcToggleLock}
+                      disabled={!!gcHostBusy}
+                      style={[pill(gcLocked), gcHostBusy ? { opacity: 0.5 } : null]}
+                      activeOpacity={0.7}
+                      accessibilityRole="switch"
+                      accessibilityState={{ checked: gcLocked }}
+                      accessibilityLabel={t('call.group.lock') || 'Trancar chamada'}
+                    >
+                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+                        {gcLocked ? (t('call.group.unlock') || 'Destrancar chamada') : (t('call.group.lock') || 'Trancar chamada')}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  {gcLocked && (
+                    <Text style={[styles.addPartEmail, { marginBottom: 8 }]}>
+                      {t('call.group.lockedHint') || 'Chamada trancada: ninguém novo entra.'}
+                    </Text>
+                  )}
+                  {joined.length > 0 && (
                   <Text style={[styles.addPartEmail, { marginBottom: 8, fontWeight: '600' }]}>
                     {t('call.inCallSection') || 'Em chamada'}
                   </Text>
+                  )}
                   {joined.slice(0, MAX_CALL_PARTICIPANTS).map((p) => {
                     const ident = p?.identity || '';
                     const display = p?.name || ident.split('@')[0];
@@ -7194,6 +7334,15 @@ function CallScreenInner() {
                           <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
                             {t('call.mute') || 'Mudo'}
                           </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => handleGcRemove(ident, display)}
+                          style={[styles.addPartCallBtn, { backgroundColor: 'rgba(239,68,68,0.85)' }]}
+                          activeOpacity={0.7}
+                          accessibilityRole="button"
+                          accessibilityLabel={(t('call.group.remove') || 'Remover') + ' ' + display}
+                        >
+                          <IconX size={16} color="#fff" />
                         </TouchableOpacity>
                       </View>
                     );
