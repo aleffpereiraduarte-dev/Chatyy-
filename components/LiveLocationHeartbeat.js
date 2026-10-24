@@ -126,7 +126,11 @@ export default function LiveLocationHeartbeat() {
         if (!reasons.any) return;
         // Só o Mapa de amigos (sem ao vivo na conversa): ~2 min entre envios,
         // compartilhado com o envio ao abrir o app / tarefa em 2º plano.
-        if (!reasons.live && fms?.lastPublishedAt) {
+        // [2026-10-24 mapa-v2] envio ADAPTATIVO (parado = raro, andando = frequente):
+        // a decisão sai do ponto (friendMapCore.shouldPublish), não de um relógio fixo.
+        let _v2 = false;
+        try { _v2 = require('../services/friendMapCore').fmapV2() && typeof fms?.adaptiveDue === 'function'; } catch {}
+        if (!_v2 && !reasons.live && fms?.lastPublishedAt) {
           const lastPub = await fms.lastPublishedAt();
           if (now - lastPub < (fms.FRIEND_PUBLISH_GAP_MS || 120000)) return;
         }
@@ -142,10 +146,21 @@ export default function LiveLocationHeartbeat() {
         const perm = await Location.getForegroundPermissionsAsync().catch(() => ({ status: 'denied' }));
         if (perm?.status !== 'granted') return;
 
-        const loc = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy?.Balanced ?? 3,
-        }).catch(() => null);
+        // v2: posição recente do SO primeiro (custo ~0) — GPS só se não houver.
+        let loc = _v2 ? await Location.getLastKnownPositionAsync({ maxAge: 25 * 1000, requiredAccuracy: 100 }).catch(() => null) : null;
+        if (!loc?.coords) {
+          loc = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy?.Balanced ?? 3,
+          }).catch(() => null);
+        }
         if (!loc?.coords) return;
+        if (_v2) {
+          const due = await fms.adaptiveDue(loc.coords, reasons).catch(() => ({ publish: true }));
+          if (!due.publish) return;
+          lastPostRef.current = now;
+          await fms.postShareUpdate(loc.coords).catch(() => {});
+          return;
+        }
 
         lastPostRef.current = now;
         try { await fms?.markPublished?.(); } catch {}

@@ -283,6 +283,25 @@ final class FriendLocationAgent: NSObject, CLLocationManagerDelegate {
         }
     }
 
+    /// [2026-10-24 mapa-v2] (nível 0-100, carregando) — nil se o iOS não informar.
+    static func battery() -> (level: Int, charging: Bool)? {
+        let read: () -> (level: Int, charging: Bool)? = {
+            let d = UIDevice.current
+            if !d.isBatteryMonitoringEnabled { d.isBatteryMonitoringEnabled = true }
+            let lv = d.batteryLevel
+            if lv < 0 { return nil }
+            return (Int((lv * 100).rounded()), d.batteryState == .charging || d.batteryState == .full)
+        }
+        if Thread.isMainThread { return read() }
+        // Fora da main (função síncrona do JS / URLSession): sem main.sync (risco de
+        // trava); liga o monitor na main e lê o valor atual (-1 na 1ª vez → nil).
+        let d = UIDevice.current
+        if !d.isBatteryMonitoringEnabled { DispatchQueue.main.async { d.isBatteryMonitoringEnabled = true } }
+        let lv = d.batteryLevel
+        if lv < 0 { return nil }
+        return (Int((lv * 100).rounded()), d.batteryState == .charging || d.batteryState == .full)
+    }
+
     private func post(_ loc: CLLocation, done: @escaping (Bool) -> Void) {
         guard let u = ud, let bearer = u.string(forKey: "auth_token"), !bearer.isEmpty else { done(false); return }
         var base = u.string(forKey: "api_base") ?? "https://chatyy.com.br"
@@ -298,6 +317,8 @@ final class FriendLocationAgent: NSObject, CLLocationManagerDelegate {
         ]
         if loc.course >= 0 { body["heading"] = loc.course }
         if loc.speed >= 0 { body["speed"] = loc.speed }
+        // [2026-10-24 mapa-v2] bateria p/ o cartão do amigo (servidor antigo ignora)
+        if let b = Self.battery() { body["battery"] = b.level; body["charging"] = b.charging ? 1 : 0 }
         guard let data = try? JSONSerialization.data(withJSONObject: body) else { done(false); return }
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.httpMethod = "POST"

@@ -61,6 +61,8 @@ import { triggerLocationRequestModal, onLocationRequestResolved } from '../compo
 // [2026-10-12 mapa-amigos] envio da minha posição (razão do mapa), modo
 // fantasma no servidor, nome do lugar (cache) e rota no app de mapas.
 import * as fms from '../services/friendMapShare';
+// [2026-10-24 mapa-v2] envio adaptativo, rótulo estável, clusters nativos, bateria (kill: __chatyy_fmap_v2=false)
+import * as fmc from '../services/friendMapCore';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
@@ -78,7 +80,7 @@ import {
 } from '../services/snapMapPrefetch';
 import {
   IconArrowLeft, IconMapPin, IconUser, IconMessageSquare, IconX, IconNavigation,
-  IconPhone, IconEyeOff, IconClock, IconRefresh, IconFilter, IconUserPlus, IconSettings,
+  IconPhone, IconEyeOff, IconClock, IconRefresh, IconFilter, IconUserPlus, IconSettings, IconZap,
 } from '../components/Icons';
 import useDragToDismiss, { DragSheetRoot, DragPanel, DragScroll, DragBackdrop, DragFade } from '../components/ui/useDragToDismiss';
 
@@ -131,7 +133,7 @@ const CENTER_RANK = { fallback: 0, friend: 1, ip: 2, cache: 3, gps: 4 };
 // base elsewhere). We use it instead of the old 'world-cinza' fallback, which
 // is a LIGHT gray base and read washed-out in dark mode. Light mode keeps the
 // per-country coverage styles (they also feed the static balloon maps).
-function buildMapHtml({ center, zoom, isDark, initialPins, initialMe, labels }) {
+function buildMapHtml({ center, zoom, isDark, initialPins, initialMe, labels, v2 = false }) {
   // [2026-10-11 ui-sweep] Textos do chrome do WebView vêm traduzidos do RN.
   const _L = labels || {};
   const _h = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -157,8 +159,8 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe, labels }) 
   return `<!DOCTYPE html><html><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet"/>
-<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@${v2 ? '5.24.0' : '5'}/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@${v2 ? '5.24.0' : '5'}/dist/maplibre-gl.js"></script>
 <style>
   html,body,#map{margin:0;padding:0;width:100%;height:100%;background:${isDark ? '#0d0d0d' : '#e5e7eb'};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
   *{-webkit-tap-highlight-color:transparent}
@@ -245,8 +247,44 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe, labels }) 
   #compass{position:absolute;right:12px;top:12px;z-index:5;width:44px;height:44px;border-radius:50%;background:${glassBg};border:1px solid ${glassBorder};backdrop-filter:blur(16px) saturate(150%);-webkit-backdrop-filter:blur(16px) saturate(150%);box-shadow:0 6px 18px rgba(0,0,0,0.22);display:flex;align-items:center;justify-content:center;cursor:pointer}
   #compass .needle{width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:15px solid #ef4444;position:relative;transition:transform .12s linear}
   #compass .needle::after{content:'';position:absolute;left:-6px;top:15px;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:15px solid ${isDark ? '#6C6C70' : '#94a3b8'}}
+${v2 ? `
+  /* ── [2026-10-24 mapa-v2] visual nível Snap Map (só com body.v2) ───────── */
+  body.v2 .pin .ring{width:54px;height:54px;border-radius:50%;padding:3px;background:#fff;box-shadow:0 0 0 2.5px ${isDark ? 'rgba(255,255,255,0.92)' : 'rgba(17,17,17,0.88)'},0 8px 20px rgba(0,0,0,0.28)}
+  body.v2 .pin.live .ring{box-shadow:0 0 0 3px #30A46C,0 8px 22px rgba(48,164,108,0.35)}
+  body.v2 .pin.unlimited .ring{background:#fff}
+  body.v2 .pin.stale .ring,body.v2 .pin.old .ring{background:#fff;opacity:1;box-shadow:0 0 0 2.5px #A1A1AA,0 6px 14px rgba(0,0,0,0.2)}
+  body.v2 .pin.old{opacity:.72}
+  body.v2 .pin .ring img{background:#e4e4e7}
+  body.v2 .pin .ring .ini{font-size:20px;letter-spacing:.2px}
+  body.v2 .pin.online .ring::after{display:none}
+  body.v2 .pin.live .ring::after{display:block;content:'';position:absolute;inset:-5px;border-radius:50%;border:2px solid rgba(48,164,108,0.55);animation:pinPulse 2.4s ease-out infinite;pointer-events:none}
+  body.v2 .pin .tag{margin-top:7px;display:flex;align-items:center;gap:5px;max-width:170px;padding:4px 10px 4px 10px;border-radius:13px;background:${isDark ? 'rgba(28,28,32,0.86)' : 'rgba(255,255,255,0.94)'};color:${isDark ? '#f4f4f5' : '#18181b'};font-size:11.5px;font-weight:700;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.18);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+  body.v2 .pin .tag .nm{overflow:hidden;text-overflow:ellipsis}
+  body.v2 .pin .tag .tm{font-weight:600;opacity:.6;flex:0 0 auto}
+  body.v2 .pin.live .tag .tm{color:#30A46C;opacity:1}
+  body.v2 .pin .bat{position:absolute;right:-6px;top:-4px;display:flex;align-items:center;gap:2px;padding:2px 5px;border-radius:9px;background:${isDark ? '#1c1c20' : '#fff'};box-shadow:0 2px 6px rgba(0,0,0,0.25);font-size:9px;font-weight:800;color:${isDark ? '#f4f4f5' : '#18181b'}}
+  body.v2 .pin .bat i{display:block;width:13px;height:7px;border:1.3px solid currentColor;border-radius:2px;position:relative;box-sizing:border-box}
+  body.v2 .pin .bat i::after{content:'';position:absolute;right:-3px;top:1.5px;width:1.5px;height:2.5px;background:currentColor;border-radius:1px}
+  body.v2 .pin .bat i b{position:absolute;left:1px;top:1px;bottom:1px;border-radius:1px;background:currentColor}
+  body.v2 .pin .bat.low{color:#E5484D}
+  body.v2 .pin .bat.chg{color:#30A46C}
+  /* BUG antigo: .pin/.me com position:relative + transition:transform venciam o
+     position:absolute do .maplibregl-marker → cada pino ficava deslocado pela
+     altura dos anteriores (pino fora do lugar) e "nadava" atrás do mapa ao
+     arrastar (transição de 180 ms em cima do transform por quadro). */
+  body.v2 .maplibregl-marker.pin,body.v2 .maplibregl-marker.me,body.v2 .maplibregl-marker.cluster{position:absolute;transition:none}
+  body.v2 .pin:active,body.v2 .cluster:active{transform:none}
+  body.v2 .pin:active .ring,body.v2 .cluster:active .cstack{transform:scale(.94)}
+  body.v2 .pin.enter .ring,body.v2 .pin.enter .tag{animation:pinIn .5s cubic-bezier(.2,1.5,.45,1) both}
+  body.v2 .pin.enter .tag{animation-delay:.08s}
+  @keyframes pinIn{0%{transform:translateY(10px) scale(.35);opacity:0}100%{transform:none;opacity:1}}
+  body.v2 .cluster .cav{width:42px;height:42px;border:2.5px solid #fff;box-shadow:0 6px 14px rgba(0,0,0,0.25)}
+  body.v2 .cluster .ccount{margin-top:6px;background:${isDark ? 'rgba(28,28,32,0.9)' : 'rgba(255,255,255,0.95)'};color:${isDark ? '#f4f4f5' : '#18181b'};font-size:11.5px;padding:3px 11px;box-shadow:0 4px 12px rgba(0,0,0,0.18)}
+  body.v2 #vignette{box-shadow:inset 0 0 90px 10px ${isDark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.06)'}}
+  body.v2 .me .me-av{border-color:#fff;box-shadow:0 0 0 3px #2563eb,0 6px 16px rgba(37,99,235,0.45)}
+` : ''}
 </style>
-</head><body>
+</head><body${v2 ? ' class="v2"' : ''}>
 <div id="map"></div>
 <div id="vignette"></div>
 <div id="searchWrap">
@@ -272,6 +310,7 @@ var INITIAL_ME = ${meJson};
 var STYLE_URL = ${JSON.stringify(styleUrl)};
 // Theme-aware 3D building extrusion color (dark = slate ink, light = pale gray).
 var B3D_COLOR = ${JSON.stringify(isDark ? '#2c2c2e' : '#dfe3ea')};
+var V2 = ${v2 ? 'true' : 'false'};
 
 var __map = null;
 var __overlays = {};       // email → maplibregl.Marker (avatar pin)
@@ -310,8 +349,29 @@ setTimeout(function(){
   }
 }, 5000);
 
+// [2026-10-24 mapa-v2] cor estável das iniciais (sem foto) por e-mail.
+var V2_INI = ['#6E56CF','#E5484D','#12A594','#3E63DD','#F76B15','#D6409F','#46A758','#8E4EC6'];
+function iniColor(s) { var h = 0; s = String(s || ''); for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return V2_INI[Math.abs(h) % V2_INI.length]; }
+function batHtml(pin) {
+  if (pin.battery == null || !isFinite(pin.battery)) return '';
+  var lv = Math.max(0, Math.min(100, Math.round(pin.battery)));
+  if (!pin.charging && lv > 20) return '';
+  var cls = pin.charging ? 'bat chg' : 'bat low';
+  return '<div class="' + cls + '"><i><b style="width:' + Math.max(12, lv) * 0.09 + 'px"></b></i>' + lv + '%</div>';
+}
 function pinHtml(pin) {
   var initial = (pin.name || pin.email || '?').trim().charAt(0).toUpperCase();
+  if (V2) {
+    var nm2 = (pin.name || (pin.email ? pin.email.split('@')[0] : '?')).split(' ')[0];
+    var bg = iniColor(pin.email || pin.name);
+    var img2 = pin.avatar_url
+      ? '<img src="' + pin.avatar_url + '" onerror="this.style.display=\\'none\\';this.nextElementSibling&&(this.nextElementSibling.style.display=\\'flex\\')"/><div class="ini" style="display:none;background:' + bg + '">' + escapeHtml(initial) + '</div>'
+      : '<div class="ini" style="background:' + bg + '">' + escapeHtml(initial) + '</div>';
+    var cone2 = (!pin.is_old && pin.heading != null && isFinite(pin.heading))
+      ? '<div class="cone" data-h="' + Number(pin.heading) + '"></div>' : '';
+    var tm = pin.ago_short ? '<span class="tm">' + escapeHtml(pin.ago_short) + '</span>' : '';
+    return cone2 + '<div class="ring">' + img2 + batHtml(pin) + '</div><div class="tag"><span class="nm">' + escapeHtml(nm2) + '</span>' + tm + '</div>';
+  }
   var img = pin.avatar_url
     ? '<img src="' + pin.avatar_url + '" onerror="this.style.display=\\'none\\';this.nextElementSibling&&(this.nextElementSibling.style.display=\\'flex\\')"/><div class="ini" style="display:none">' + initial + '</div>'
     : '<div class="ini">' + initial + '</div>';
@@ -354,7 +414,7 @@ function escapeHtml(s) {
 // onto the coordinate, Find-My style).
 function pinClass(pin) {
   // online = fresh (non-stale) sharer → drives the pulsing GREEN ring.
-  return 'pin'
+  return 'pin' + (V2 && pin.fresh && !pin.is_stale ? ' live' : '')
     + (pin.is_unlimited ? ' unlimited' : '')
     + (pin.is_stale ? ' stale' : ' online')
     + (pin.is_old ? ' old' : '');
@@ -417,7 +477,7 @@ function glideMarker(marker, toLng, toLat) {
 var __clusterMarkers = [];
 var __clusterRAF = null;
 var CLUSTER_MAX_ZOOM = 15.5; // above this, show every friend individually
-var CLUSTER_RADIUS = 48;     // px — markers closer than this collapse
+var CLUSTER_RADIUS = V2 ? 72 : 48; // px — v2: pino + etiqueta ocupam ~110 px → raio maior evita sobrepor
 
 function clearClusterMarkers() {
   __clusterMarkers.forEach(function(m){ try { m.remove(); } catch(_){} });
@@ -439,6 +499,8 @@ function makeClusterEl(group) {
   el.innerHTML = '<div class="cstack" style="width:' + w + 'px">' + stack + '</div><div class="ccount">' + group.length + '</div>';
   return el;
 }
+// v2: a etiqueta fica ABAIXO do avatar → colisão por caixa (88×118 px), não por raio.
+function clNear(dx, dy, r2) { return V2 ? (Math.abs(dx) < 88 && Math.abs(dy) < 118) : (dx * dx + dy * dy <= r2); }
 function updateClusters() {
   if (!__map) return;
   try {
@@ -453,6 +515,18 @@ function updateClusters() {
       var pt = __map.project(ll);
       items.push({ em: em, m: m, x: pt.x, y: pt.y, ll: ll, el: elp });
     });
+    // [2026-10-24 mapa-v2] mesmos grupos (mesmos membros/pontos) → não mexe no DOM.
+    if (V2) {
+      var sg = [], usedS = {}, RS = CLUSTER_RADIUS * CLUSTER_RADIUS, big = zoom >= CLUSTER_MAX_ZOOM || items.length < 2;
+      if (!big) items.forEach(function(it){
+        if (usedS[it.em]) return; usedS[it.em] = true; var g = [it.em + '@' + it.ll.lng.toFixed(5) + ',' + it.ll.lat.toFixed(5)];
+        items.forEach(function(jt){ if (usedS[jt.em]) return; var dx = it.x - jt.x, dy = it.y - jt.y; if (clNear(dx, dy, RS)) { usedS[jt.em] = true; g.push(jt.em + '@' + jt.ll.lng.toFixed(5) + ',' + jt.ll.lat.toFixed(5)); } });
+        if (g.length > 1) sg.push(g.sort().join(';'));
+      });
+      var sig = (big ? 'none:' + items.length : sg.sort().join('|')) + '#' + items.length;
+      if (sig === window.__clSig) return;
+      window.__clSig = sig;
+    }
     // reset visibility + clear old cluster bubbles
     items.forEach(function(it){ it.el.style.display = ''; });
     clearClusterMarkers();
@@ -466,7 +540,7 @@ function updateClusters() {
       items.forEach(function(jt){
         if (used[jt.em]) return;
         var dx = it.x - jt.x, dy = it.y - jt.y;
-        if (dx * dx + dy * dy <= R2) { group.push(jt); used[jt.em] = true; }
+        if (clNear(dx, dy, R2)) { group.push(jt); used[jt.em] = true; }
       });
       if (group.length > 1) {
         group.forEach(function(g){ g.el.style.display = 'none'; });
@@ -671,6 +745,20 @@ function setupControls() {
   } catch (_) {}
 }
 
+// [2026-10-24 mapa-v2] Mapa LIMPO estilo Snap: esconde ruído (semáforos, nº de
+// casa, ícones/rótulos de comércio, setas de mão única, escudos de rua menor).
+// Bairros, ruas principais, parques e água continuam.
+function cleanStyle() {
+  if (!V2 || !__map) return;
+  var st = __map.getStyle(); if (!st || !st.layers) return;
+  st.layers.forEach(function(l){
+    var id = String(l.id || '');
+    if (/^(traffic-signals|housenumber|road_oneway|road_shield_minor)$/.test(id) || (/poi/i.test(id) && !/park/i.test(id))) {
+      try { if (__map.getLayoutProperty(id, 'visibility') !== 'none') __map.setLayoutProperty(id, 'visibility', 'none'); } catch(_){}
+    }
+  });
+}
+
 function bootMap() {
   __map = new maplibregl.Map({
     container: 'map',
@@ -695,12 +783,15 @@ function bootMap() {
   try {
     __map.on('rotate', function(){ applyHeadings(); applyCompass(); });
     __map.on('pitch', function(){ applyCompass(); });
-    __map.on('move', scheduleClusters);
-    __map.on('zoom', scheduleClusters);
+    // [2026-10-24 mapa-v2] agrupar NÃO roda a cada quadro do arrasto (recriava os
+    // marcadores de grupo 60×/s → arrasto travado); em pixels o grupo só muda com
+    // o zoom/rotação, então basta no fim do gesto.
+    if (!V2) { __map.on('move', scheduleClusters); __map.on('zoom', scheduleClusters); }
+    else { __map.on('rotateend', scheduleClusters); }
     __map.on('moveend', scheduleClusters);
     __map.on('zoomend', scheduleClusters);
     // setStyle (watchdog/online retry) reloads the style → re-add 3D buildings.
-    __map.on('styledata', function(){ try { add3DBuildings(); } catch(_){} });
+    __map.on('styledata', function(){ try { add3DBuildings(); } catch(_){} try { cleanStyle(); } catch(_){} });
   } catch (e) {}
 
   // ── Diagnostics: surface WHY the basemap goes gray. The engine can
@@ -766,19 +857,29 @@ function bootMap() {
       if (existing) {
         // Update visual chrome (ring/stale/online/cone/badge + click handler)
         // in place, then glide to the new coords so a live tick animates.
-        existing.getElement().className = pinClass(p);
-        existing.getElement().innerHTML = pinHtml(p);
+        var _cls = pinClass(p); var _html = pinHtml(p);
+        if (!V2) { existing.getElement().className = _cls; }
+        else if (existing.__cls !== _cls) {
+          // v2: alterna só as classes de estado — className= apagava as classes
+          // .maplibregl-marker* (posição absoluta/âncora) do elemento.
+          var _e = existing.getElement(), _cs = ' ' + _cls + ' ';
+          ['live', 'unlimited', 'stale', 'online', 'old'].forEach(function(c){ _e.classList.toggle(c, _cs.indexOf(' ' + c + ' ') >= 0); });
+          existing.__cls = _cls;
+        }
+        // v2: só reescreve o DOM se mudou (antes, a cada 10 s → foto recarregava/piscava)
+        if (!V2 || existing.__html !== _html) { existing.getElement().innerHTML = _html; existing.__html = _html; }
         existing.__pin = p; // keep latest pin data for the cluster bubble
         glideMarker(existing, p.lng, p.lat);
       } else {
         var el = makePinEl(p);
+        if (V2) { el.classList.add('enter'); setTimeout(function(){ try { el.classList.remove('enter'); } catch(_){} }, 600); }
         (function(em){
           el.addEventListener('click', function(){ rnPost({ type: 'pin_tap', email: em }); });
         })(p.email);
         var m = new maplibregl.Marker({ element: el, anchor: 'bottom' })
           .setLngLat([p.lng, p.lat])
           .addTo(__map);
-        m.__pin = p;
+        m.__pin = p; m.__html = el.innerHTML; m.__cls = pinClass(p);
         __overlays[p.email] = m;
       }
     });
@@ -991,6 +1092,26 @@ function isOldShare(s, now = Date.now()) {
 // Tap → opens the grants modal where each session can be revoked
 // individually. The chip text adapts to the count: "Compartilhando com Ana"
 // for 1, "Compartilhando com Ana + 2" for many.
+// [2026-10-24 mapa-v2] Bateria do amigo (desenhada com Views — sem emoji/fonte).
+function BatteryPill({ level, charging, colors, t }) {
+  if (level == null) return null;
+  const low = !charging && level <= 20;
+  const fill = low ? '#E5484D' : (charging ? '#30A46C' : colors.text);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}
+      accessibilityLabel={`${level}%`}>
+      <View style={{ width: 22, height: 11, borderRadius: 3, borderWidth: 1.4, borderColor: colors.textSecondary, padding: 1.2, justifyContent: 'center' }}>
+        <View style={{ width: `${Math.max(8, Math.min(100, level))}%`, height: '100%', borderRadius: 1.5, backgroundColor: fill }} />
+      </View>
+      <View style={{ width: 2, height: 5, borderRadius: 1, backgroundColor: colors.textSecondary, marginLeft: -4 }} />
+      <Text style={{ color: low ? '#E5484D' : colors.textSecondary, fontSize: 12, fontWeight: '600' }}>
+        {level}%
+      </Text>
+      {charging ? <IconZap size={12} color="#30A46C" /> : null}
+    </View>
+  );
+}
+
 function ActiveSessionsChip({ grantsData, isDark, colors, t, ghostMode, onOpen, onLoad }) {
   useEffect(() => { try { onLoad?.(); } catch {} }, []); // eslint-disable-line react-hooks/exhaustive-deps
   if (ghostMode) return null;
@@ -1058,6 +1179,8 @@ export default function SnapMapScreen() {
   const snapMapFocused = useIsFocused(); // [2026-10-21 tg3] poll só com o mapa na tela
   const snapPollTickRef = useRef(null);
   const snapPollLastRef = useRef(Date.now());
+  const fmapV2 = useMemo(() => fmc.fmapV2(), []);
+  const watchingMeRef = useRef(false); // v2: watchPosition ativo → o poll não liga o GPS
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
   const _drag3012 = useDragToDismiss({ onDismiss: () => { const f = () => setPickerOpen(false); f(); } });
   // [2026-10-17 drag-dismiss] folha desce arrastando de qualquer ponto (components/ui/useDragToDismiss).
@@ -1187,6 +1310,13 @@ export default function SnapMapScreen() {
 
   const sharesRef = useRef([]);
   sharesRef.current = shares;
+  // [2026-10-24 mapa-v2] O último estado (inclusive o que veio pelo WS) vai p/ o
+  // cache → a próxima abertura pinta os amigos onde estavam de fato.
+  useEffect(() => {
+    if (!fmapV2 || !user?.email) return undefined;
+    const tm = setTimeout(() => { try { writeSnapMapCache(user.email, { shares }); } catch {} }, 1500);
+    return () => clearTimeout(tm);
+  }, [shares, fmapV2, user?.email]);
   const refreshSharesRef = useRef(null);
 
   // Manual refresh for the friends panel — pulls shares + grants in
@@ -1390,7 +1520,15 @@ export default function SnapMapScreen() {
     let t1 = null;
     let _gate = true;
     try { _gate = globalThis.__chatyy_snapmap_poll_gate !== false; } catch {}
-    snapPollTickRef.current = () => { if (alive) { loadFriends(true); locate(); } };
+    snapPollTickRef.current = () => {
+      if (!alive) return;
+      // [2026-10-24 mapa-v2] WS conectado entrega location_update em tempo real →
+      // o poll vira só rede de segurança (2 min); GPS fica com o watchPosition.
+      if (fmapV2 && mailWs?.isConnected && Date.now() - (snapPollTickRef.lastFull || 0) < 120000) return;
+      snapPollTickRef.lastFull = Date.now();
+      loadFriends(true);
+      if (!watchingMeRef.current) locate();
+    };
     if (!_gate) t1 = setInterval(() => { loadFriends(true); locate(); }, 30000); // 30s poll fallback
     return () => { alive = false; snapPollTickRef.current = null; if (t1) clearInterval(t1); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1403,6 +1541,36 @@ export default function SnapMapScreen() {
     const stop = setActiveInterval(_t, 30000);
     return () => stop();
   }, [snapMapFocused]);
+
+  // [2026-10-24 mapa-v2] "Você" ao vivo: watchPosition (Balanced, 10 m) só com o
+  // mapa na tela — o pontinho anda liso e o GPS não é religado a cada 30 s.
+  // Se eu compartilho, cada ponto passa pelo envio adaptativo (parado = raro).
+  useEffect(() => {
+    if (!fmapV2 || Platform.OS === 'web' || !snapMapFocused) return undefined;
+    let sub = null; let dead = false;
+    (async () => {
+      try {
+        const Location = require('expo-location');
+        const perm = await Location.getForegroundPermissionsAsync().catch(() => null);
+        if (dead || perm?.status !== 'granted' || !Location.watchPositionAsync) return;
+        sub = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy?.Balanced ?? 3, distanceInterval: 10, timeInterval: 5000 },
+          (pos) => {
+            const c = pos?.coords; if (!c) return;
+            const hdg = Number(c.heading);
+            setMyLocation((prev) => {
+              if (prev && fmc.distanceMeters(prev.lat, prev.lng, c.latitude, c.longitude) < 5) return prev;
+              return { lat: c.latitude, lng: c.longitude, heading: Number.isFinite(hdg) && hdg >= 0 ? hdg : undefined };
+            });
+            fms.publishMyLocationNow().catch(() => {});
+          },
+        );
+        if (dead) { try { sub?.remove?.(); } catch {} return; }
+        watchingMeRef.current = true;
+      } catch {}
+    })();
+    return () => { dead = true; watchingMeRef.current = false; try { sub?.remove?.(); } catch {} };
+  }, [fmapV2, snapMapFocused]);
 
   // ── WS live patches ────────────────────────────────────────────────
   // Subscribes to two events:
@@ -1457,7 +1625,16 @@ export default function SnapMapScreen() {
         return [{ email: data.requester_email, name: data.requester_name, message: data.message }, ...prev];
       });
     });
+    // [2026-10-24 mapa-v2] socket voltou (reconexão / resync) → busca o estado já,
+    // sem esperar o poll (amigo "sumido" ou parado no lugar antigo).
+    let _rsT = null;
+    const _resync = () => { if (_rsT) return; _rsT = setTimeout(() => { _rsT = null; try { refreshSharesRef.current?.(); } catch {} }, 600); };
+    const subResync = fmapV2 ? mailWs.on('ws_resync', _resync) : null;
+    const subConn = fmapV2 ? mailWs.on('connection', (d) => { if (d?.status === 'connected') _resync(); }) : null;
     return () => {
+      try { subResync?.(); } catch {}
+      try { subConn?.(); } catch {}
+      if (_rsT) clearTimeout(_rsT);
       try { subUpdate?.(); } catch {}
       try { subRevoke?.(); } catch {}
       try { subHidden?.(); } catch {}
@@ -1598,10 +1775,13 @@ export default function SnapMapScreen() {
   // that the share is alive on the backend but hasn't sent a fresh tick
   // recently. This is the user-facing answer to "ta desconectando": the
   // pin stays visible with an explicit "stale" UI instead of vanishing.
-  const STALE_THRESHOLD_MS = 2 * 60 * 1000; // 2min without a tick → stale
+  const STALE_THRESHOLD_MS = fmc.staleThresholdMs(); // v1 2 min · v2 15 min (envio adaptativo)
+  const _myEmailLc = String(user?.email || '').toLowerCase();
   const pinsPayload = useMemo(() => (
     filteredShares
       .filter((s) => Number.isFinite(s.latitude) && Number.isFinite(s.longitude))
+      // [2026-10-24 mapa-v2] eu mesmo nunca viro pino de amigo (pino duplicado com o "você").
+      .filter((s) => !fmapV2 || !_myEmailLc || String(s.email || '').toLowerCase() !== _myEmailLc)
       .map((s) => {
         let ageMs = null;
         if (s.updated_at) {
@@ -1628,18 +1808,25 @@ export default function SnapMapScreen() {
           is_stale: isStale,
           is_old: isOld,
           ago_label: ageMs !== null ? ago(s.updated_at) : '',
+          // [2026-10-24 mapa-v2] rótulo grosso (muda ≤1×/min) + ao vivo + bateria
+          ago_short: ageMs !== null ? fmc.agoShort(s.updated_at, nowTick, t) : '',
+          fresh: ageMs !== null && ageMs < fmc.LIVE_MS,
+          battery: fmc.batteryOf(s)?.level ?? null,
+          charging: fmc.batteryOf(s)?.charging ?? false,
           dist_label: distLabel,
           avatar_url: s.email ? getAvatarUrlForEmail(s.email) : null,
           // [beauty 2026-10-01] heading/speed/accuracy are already returned by
           // the backend (chat_friends_map_shares) but were being discarded here.
           // Forward them so the map can draw a direction cone (walking/driving
           // that way, Snapchat-style) + a precision halo (Find-My-style).
-          heading: Number.isFinite(Number(s.heading)) ? Number(s.heading) : null,
+          // [2026-10-24 mapa-v2] servidor grava heading=0 quando não há rumo → o cone
+          // apontava sempre p/ o norte. Só mostra rumo com o amigo andando (> 0,5 m/s).
+          heading: Number.isFinite(Number(s.heading)) && (!fmapV2 || Number(s.speed) > 0.5) ? Number(s.heading) : null,
           speed: Number.isFinite(Number(s.speed)) ? Number(s.speed) : null,
           accuracy: Number.isFinite(Number(s.accuracy)) ? Number(s.accuracy) : null,
         };
       })
-  ), [filteredShares, nowTick, myLocation]);
+  ), [filteredShares, nowTick, myLocation, fmapV2, _myEmailLc]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // [7181 fix 2026-05-22] Wake stale sharers. When iOS sleeps a friend's
   // app or Android force-stops it, the location row sits frozen in PG and
@@ -1650,7 +1837,7 @@ export default function SnapMapScreen() {
   // APNs background quota. Backend has a 60s server-side throttle too.
   const lastPingedRef = useRef({});
   useEffect(() => {
-    const STALE_PING_MS = 5 * 60 * 1000; // wake after 5min of silence
+    const STALE_PING_MS = fmc.wakePingAfterMs(); // v1 5 min · v2 20 min (parado publica a cada ~10 min)
     const COOLDOWN_MS = 90 * 1000;
     const now = Date.now();
     pinsPayload.forEach((p) => {
@@ -1737,6 +1924,7 @@ export default function SnapMapScreen() {
     isDark,
     initialPins: pinsPayload,
     initialMe: mePayload,
+    v2: fmapV2,
     labels: {
       searchPlace: t('uiG.snapmap.searchPlace'),
       north: t('uiG.snapmap.north'),
@@ -1768,6 +1956,8 @@ export default function SnapMapScreen() {
   const [selectedSearch, setSelectedSearch] = useState(null);
   const camSeqRef = useRef(0);
   const nativeZoomRef = useRef(DEFAULT_ZOOM);
+  const [nativeZoomState, setNativeZoomState] = useState(DEFAULT_ZOOM); // v2: clusters (passo 0,5)
+  const clusterGroupsRef = useRef({});
   const nativeFittedRef = useRef(false);
   const nativeCameraTo = useCallback((cam) => {
     camSeqRef.current += 1;
@@ -1803,7 +1993,12 @@ export default function SnapMapScreen() {
         longitude: p.lng,
         kind: 'avatar',
         label: nm.split(' ')[0],
-        sublabel: [p.ago_label, p.dist_label].filter(Boolean).join(' · '),
+        // [2026-10-24 mapa-v2] sublabel ESTÁVEL ("agora"/"5 min" + bateria baixa): o
+        // "há 20s" + distância mudavam a cada 10 s e o iOS recriava o pino (piscava).
+        sublabel: fmapV2
+          ? [p.ago_short, (p.battery != null && !p.charging && p.battery <= 20) ? `${p.battery}%` : ''].filter(Boolean).join(' · ')
+          : [p.ago_label, p.dist_label].filter(Boolean).join(' · '),
+        pulse: fmapV2 && !!p.fresh && !p.is_stale,
         imageUrl: p.avatar_url || undefined,
         initials: nm.trim().charAt(0).toUpperCase(),
         stale: !!p.is_stale,
@@ -1818,8 +2013,12 @@ export default function SnapMapScreen() {
     if (selectedSearch) {
       list.push({ id: '__search', latitude: selectedSearch.latitude, longitude: selectedSearch.longitude, kind: 'search', color: isDark ? '#FFFFFF' : '#111111', label: selectedSearch.title });
     }
-    return list;
-  }, [nativeMap, pinsPayload, mePayload, selected, selectedSearch, isDark]);
+    if (!fmapV2) return list;
+    // [2026-10-24 mapa-v2] amigos próximos viram 1 grupo ("Ana +2") abaixo do zoom 16.
+    const cl = fmc.clusterAvatarMarkers(list, nativeZoomState, { keepId: selected?.email || null });
+    clusterGroupsRef.current = cl.groups;
+    return cl.markers;
+  }, [nativeMap, pinsPayload, mePayload, selected, selectedSearch, isDark, fmapV2, nativeZoomState]);
 
   // Fit every friend (+ me) — native counterpart of the WebView's __fitAll.
   const nativeFitAll = useCallback((animated) => {
@@ -2107,6 +2306,36 @@ export default function SnapMapScreen() {
     setTimeout(() => setPingedEmail((cur) => (cur === email ? null : cur)), 4000);
   };
 
+  // [2026-10-24 mapa-v2] tradução com fallback real (t devolve a própria chave se faltar).
+  const tx = (k, fb) => { try { const v = t?.(k); if (v && v !== k) return v; } catch {} return fb; };
+  // Precisão por pessoa: otimista + servidor (chat_friend_location_precision).
+  const setPrecision = async (email, precision) => {
+    setGrantsData((cur) => (cur ? { ...cur, sharing_with: (cur.sharing_with || []).map((g) => (String(g.email).toLowerCase() === String(email).toLowerCase() ? { ...g, precision } : g)) } : cur));
+    try {
+      const r = await api.apiCall('chat_friend_location_precision', { receiver_email: email, precision }, 'POST');
+      if (!r?.success) throw new Error('fail');
+    } catch { loadGrantsRef.current?.(); }
+  };
+
+  // [2026-10-24 mapa-v2] Nunca Modal sobre Modal no iOS: a próxima folha só abre
+  // DEPOIS que a de privacidade terminou de fechar (onDismiss); Android/web (sem
+  // onDismiss) e o kill v2 seguem com o atraso fixo antigo.
+  const afterGrantsRef = useRef(null);
+  const runAfterGrantsClose = useCallback(() => {
+    const f = afterGrantsRef.current; afterGrantsRef.current = null;
+    if (f) setTimeout(() => { try { f(); } catch {} }, 30);
+  }, []);
+  const closeGrantsThen = (fn, fallbackMs) => {
+    setGrantsOpen(false);
+    if (fmapV2 && Platform.OS === 'ios') {
+      afterGrantsRef.current = fn;
+      // rede de segurança: se o onDismiss não vier em 900 ms, roda assim mesmo.
+      setTimeout(() => { if (afterGrantsRef.current === fn) runAfterGrantsClose(); }, 900);
+      return;
+    }
+    setTimeout(fn, fallbackMs);
+  };
+
   // Tocar num amigo (lista/"Recebendo de") → centraliza no último local.
   const focusFriend = (s) => {
     if (!s) return;
@@ -2315,6 +2544,9 @@ export default function SnapMapScreen() {
             style={{ flex: 1 }}
             dark={isDark}
             rotateEnabled
+            // [2026-10-24 mapa-v2] iOS: mapa limpo (sem POIs, cores suaves) estilo Snap.
+            showsPOI={fmapV2 ? false : undefined}
+            appearance={fmapV2 ? 'muted' : undefined}
             styleUrl={nativeMapStyleUrl(initialCenter.lat, initialCenter.lng, isDark)}
             camera={nativeCamera}
             markers={nativeMarkers}
@@ -2324,10 +2556,22 @@ export default function SnapMapScreen() {
               const id = e?.id;
               if (!id || id === '__me') return;
               if (id === '__search') { setSelectedSearch(null); return; }
+              if (String(id).startsWith('__cl:')) {
+                const b = fmc.boundsOf(clusterGroupsRef.current[id]);
+                if (b) {
+                  userMovedRef.current = true;
+                  nativeCameraTo({ latitude: b.lat, longitude: b.lng, zoom: 17, animated: true, minLatitude: b.minLat, minLongitude: b.minLng, maxLatitude: b.maxLat, maxLongitude: b.maxLng, padding: 90, maxZoom: 17.5 });
+                }
+                return;
+              }
               onWebMessage({ type: 'pin_tap', email: id });
             }}
             onRegionWillChange={(r) => { if (r?.gesture) userMovedRef.current = true; }}
-            onRegionDidChange={(r) => { if (Number.isFinite(r?.zoom)) nativeZoomRef.current = r.zoom; }}
+            onRegionDidChange={(r) => {
+              if (!Number.isFinite(r?.zoom)) return;
+              nativeZoomRef.current = r.zoom;
+              if (fmapV2) { const zq = Math.round(r.zoom * 2) / 2; setNativeZoomState((z) => (z === zq ? z : zq)); }
+            }}
           />
         ) : (
           <WebView
@@ -2743,8 +2987,10 @@ export default function SnapMapScreen() {
               const updAt = liveRow?.updated_at || selected.updated_at;
               const updating = isPingPending(selected.email);
               const ageMs = ageMsOf(updAt, nowTick);
-              const isStale = ageMs !== null && ageMs > 2 * 60 * 1000;
+              const isStale = ageMs !== null && ageMs > STALE_THRESHOLD_MS;
               const old = isOldShare(liveRow || selected, nowTick);
+              const batt = fmapV2 ? fmc.batteryOf(liveRow || selected) : null;
+              const isLive = fmapV2 && ageMs !== null && ageMs < fmc.LIVE_MS;
               const hasPos = Number.isFinite(Number(selected.latitude)) && Number.isFinite(Number(selected.longitude));
               const dist = myLocation && hasPos
                 ? haversineMeters(myLocation.lat, myLocation.lng, Number(selected.latitude), Number(selected.longitude))
@@ -2758,7 +3004,7 @@ export default function SnapMapScreen() {
               return (
               <>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                  <View style={{ borderWidth: 3, borderColor: (isStale || old) ? '#8e8e93' : colors.text, borderRadius: 36, padding: 2, opacity: old ? 0.6 : 1 }}>
+                  <View style={{ borderWidth: 3, borderColor: (isStale || old) ? '#8e8e93' : (isLive ? '#30A46C' : colors.text), borderRadius: 36, padding: 2, opacity: old ? 0.6 : 1 }}>
                     <AvatarCircle name={nm} email={selected.email} size={60} />
                   </View>
                   <View style={{ flex: 1 }}>
@@ -2777,6 +3023,10 @@ export default function SnapMapScreen() {
                       <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }} numberOfLines={1}>
                         {[place, dist !== null ? `${formatDistance(dist)} ${t?.('snapmap.awayFromYou') || 'de você'}` : ''].filter(Boolean).join(' · ')}
                       </Text>
+                    ) : null}
+                    {batt ? <View style={{ marginTop: 5 }}><BatteryPill level={batt.level} charging={batt.charging} colors={colors} t={t} /></View> : null}
+                    {fmapV2 && (liveRow || selected)?.approx ? (
+                      <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>{tx('fmap.approxNote', 'Localização aproximada (~2 km)')}</Text>
                     ) : null}
                   </View>
                 </View>
@@ -2824,8 +3074,14 @@ export default function SnapMapScreen() {
                 {myLocation && midLat !== null && midLng !== null && (
                   <TouchableOpacity
                     onPress={() => {
-                      const url = `https://www.google.com/maps/search/?api=1&query=cafe&query_place_id=&center=${midLat},${midLng}&zoom=15`;
-                      Linking.openURL(url).catch(() => {});
+                      // [2026-10-24 mapa-v2] sem Google (DE-GOOGLE): Mapas do aparelho / OSM.
+                      const q = encodeURIComponent(t?.('fmap.meetQuery') || 'café');
+                      const url = Platform.OS === 'ios'
+                        ? `http://maps.apple.com/?q=${q}&sll=${midLat},${midLng}&z=15`
+                        : Platform.OS === 'android'
+                          ? `geo:${midLat},${midLng}?q=${q}`
+                          : `https://www.openstreetmap.org/search?query=${q}#map=15/${midLat}/${midLng}`;
+                      Linking.openURL(url).catch(() => { Linking.openURL(`https://www.openstreetmap.org/#map=15/${midLat}/${midLng}`).catch(() => {}); });
                     }}
                     style={[actionBtn, { flex: 0, marginTop: 10 }]}
                   >
@@ -2863,7 +3119,7 @@ export default function SnapMapScreen() {
       {/* Privacy / grants modal — [2026-10-12 mapa-amigos] quem vê minha
           localização (parar por pessoa / todos), modo fantasma, pedidos
           recebidos/enviados e de quem recebo (com "atualizado há X"). */}
-      <Modal visible={grantsOpen} transparent animationType="slide" onRequestClose={() => setGrantsOpen(false)}>
+      <Modal visible={grantsOpen} transparent animationType="slide" onRequestClose={() => setGrantsOpen(false)} onDismiss={runAfterGrantsClose}>
         <DragSheetRoot>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <DragFade drag={_drag2841}><Pressable style={{ flex: 1 }} onPress={() => setGrantsOpen(false)} /></DragFade>
@@ -2917,6 +3173,18 @@ export default function SnapMapScreen() {
                             : (g.is_unlimited || g.expires_at == null) ? (t?.('fmap.durForever') || 'Até eu desligar') : t('uiG.snapmap.expiresInMin', { n: Math.max(0, Math.round((g.expires_at - Date.now() / 1000) / 60)) })}
                         </Text>
                       </View>
+                      {/* [2026-10-24 mapa-v2] precisão por pessoa (exata / ~2 km) — só com o servidor novo (kit fmap2 devolve `precision`). */}
+                      {fmapV2 && g.precision != null && (
+                        <TouchableOpacity
+                          onPress={() => setPrecision(g.email, g.precision === 'approx' ? 'exact' : 'approx')}
+                          style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, borderWidth: 1, borderColor: g.precision === 'approx' ? colors.text : 'transparent', backgroundColor: g.precision === 'approx' ? 'transparent' : softBg }}
+                          accessibilityRole="button"
+                        >
+                          <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>
+                            {g.precision === 'approx' ? tx('fmap.precApprox', 'Aproximada') : tx('fmap.precExact', 'Exata')}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                       <TouchableOpacity onPress={() => revokeGrant(g.email, 'sharing', g.name)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: softBg }}>
                         <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>{t?.('snapmap.stop') || 'Parar'}</Text>
                       </TouchableOpacity>
@@ -2943,7 +3211,7 @@ export default function SnapMapScreen() {
                         <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{r.name || r.email}</Text>
                         <Text style={{ color: colors.textSecondary, fontSize: 11 }} numberOfLines={1}>{t?.('snapmap.wantsToSee') || 'Quer ver sua localização'}</Text>
                       </View>
-                      <TouchableOpacity onPress={() => { setGrantsOpen(false); setTimeout(() => respondToRequest(r, true), 350); }} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: inkBg }}>
+                      <TouchableOpacity onPress={() => closeGrantsThen(() => respondToRequest(r, true), 350)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: inkBg }}>
                         <Text style={{ color: inkFg, fontSize: 12, fontWeight: '700' }}>{t?.('common.accept') || 'Aceitar'}</Text>
                       </TouchableOpacity>
                       <TouchableOpacity onPress={() => respondToRequest(r, false)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: softBg }}>
@@ -2992,7 +3260,7 @@ export default function SnapMapScreen() {
                     <TouchableOpacity
                       key={'r-' + g.email}
                       disabled={!hasPos}
-                      onPress={() => { setGrantsOpen(false); setTimeout(() => focusFriend(sh), 250); }}
+                      onPress={() => closeGrantsThen(() => focusFriend(sh), 250)}
                       style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 9, gap: 12 }}
                       accessibilityRole="button"
                     >
@@ -3018,7 +3286,7 @@ export default function SnapMapScreen() {
               )}
 
               <TouchableOpacity
-                onPress={() => { setGrantsOpen(false); setTimeout(openPicker, 300); }}
+                onPress={() => closeGrantsThen(openPicker, 300)}
                 style={{ marginTop: 18, marginBottom: 6, paddingVertical: 12, borderRadius: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8, backgroundColor: inkBg }}
                 accessibilityRole="button"
               >

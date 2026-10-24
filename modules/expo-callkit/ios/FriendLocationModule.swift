@@ -16,6 +16,12 @@ public class FriendLocationModule: Module {
       return true
     }
 
+    /// [2026-10-24 mapa-v2] bateria p/ o envio em 1º plano (JS friendMapShare.postShareUpdate).
+    Function("getBattery") { () -> [String: Any] in
+      if let b = FriendLocationAgent.battery() { return ["level": b.level, "charging": b.charging] }
+      return ["level": -1, "charging": false]
+    }
+
     /// Liga o envio nativo em 2º plano (persistido no App Group). `acct` = conta ativa.
     AsyncFunction("start") { (acct: String) -> [String: Any] in
       FriendLocationAgent.shared.enable(acct: acct)

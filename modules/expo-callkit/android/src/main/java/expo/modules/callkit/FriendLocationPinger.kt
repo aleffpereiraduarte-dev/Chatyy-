@@ -196,6 +196,17 @@ object FriendLocationPinger {
         return if (System.currentTimeMillis() - b.time <= maxAgeMs) b else null
     }
 
+    /** [2026-10-24 mapa-v2] (nível 0-100, carregando) via ACTION_BATTERY_CHANGED (sticky, sem permissão). */
+    @JvmStatic
+    fun battery(ctx: Context): Pair<Int, Boolean>? = try {
+        val i = ctx.registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val lv = i?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val sc = i?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+        val st = i?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+        if (lv < 0 || sc <= 0) null else Pair((lv * 100) / sc,
+            st == android.os.BatteryManager.BATTERY_STATUS_CHARGING || st == android.os.BatteryManager.BATTERY_STATUS_FULL)
+    } catch (_: Throwable) { null }
+
     private fun publish(ctx: Context, loc: Location, source: String): Boolean {
         val acct = try { prefs(ctx).getString(KEY_ACCT, "") ?: "" } catch (_: Throwable) { "" }
         val bearer = ChatNotifStore.bearerFor(ctx, acct)
@@ -211,6 +222,8 @@ object FriendLocationPinger {
                 if (loc.hasBearing()) put("heading", loc.bearing.toDouble())
                 if (loc.hasSpeed()) put("speed", loc.speed.toDouble())
                 put("source", source)
+                // [2026-10-24 mapa-v2] bateria p/ o cartão do amigo (servidor antigo ignora)
+                battery(ctx)?.let { put("battery", it.first); put("charging", if (it.second) 1 else 0) }
             }.toString()
             val url = ChatNotifStore.apiBase(ctx) + "/api/email.php?action=chat_friend_location_share_update"
             conn = (URL(url).openConnection() as HttpURLConnection).apply {

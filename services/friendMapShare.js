@@ -23,7 +23,9 @@ export const LIVE_SHARE_FLAG = 'live_location_active';
 export const GHOST_FLAG = 'snap_map_ghost_mode';
 const LAST_PUBLISH_KEY = 'friend_map_last_publish_ts';
 const LAST_SYNC_KEY = 'friend_map_grants_sync_ts';
-const GHOST_SYNCED_KEY = 'snap_map_ghost_server_synced';
+// [2026-10-24 mapa-v2] _v2: reenvia 1x o fantasma ligado → o servidor (kit fmap2) passa a
+// barrar o envio de TODOS os aparelhos da conta.
+const GHOST_SYNCED_KEY = 'snap_map_ghost_server_synced_v2';
 
 export const FRIEND_PUBLISH_GAP_MS = 2 * 60 * 1000; // publica no máx. a cada ~2 min
 const SYNC_TTL_MS = 10 * 60 * 1000; // relê os grants no máx. a cada 10 min
@@ -189,9 +191,55 @@ export async function syncFriendMapShare({ force = false, grantsData = null } = 
 }
 
 let _pubInflight = false;
+
+// [2026-10-24 mapa-v2] Último ponto publicado (envio adaptativo) + POST único
+// com bateria (binário novo expõe ChatyyFriendLocation.getBattery; antigo = sem).
+const LAST_POS_KEY = 'friend_map_last_publish_pos';
+export async function lastPublishedPos() {
+  try { const v = JSON.parse((await getItem(LAST_POS_KEY)) || 'null'); return v && Number.isFinite(Number(v.lat)) ? v : null; } catch { return null; }
+}
+/** Envia chat_friend_location_share_update (+ bateria) e grava o ponto/hora. */
+export async function postShareUpdate(coords, extra = {}) {
+  if (!coords || !Number.isFinite(Number(coords.latitude)) || !Number.isFinite(Number(coords.longitude))) return false;
+  const now = Date.now();
+  await setItem(LAST_PUBLISH_KEY, String(now));
+  await setItem(LAST_POS_KEY, JSON.stringify({ lat: coords.latitude, lng: coords.longitude, at: now }));
+  const body = {
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+    accuracy: coords.accuracy || null,
+    heading: coords.heading ?? null,
+    speed: coords.speed ?? null,
+    ...extra,
+  };
+  if (core().fmapV2()) {
+    const b = core().readDeviceBattery();
+    if (b) { body.battery = b.battery; body.charging = b.charging ? 1 : 0; }
+  }
+  const api = require('./api');
+  const r = await api.apiCall('chat_friend_location_share_update', body, 'POST').catch(() => null);
+  return !!r?.success;
+}
+function core() { return require('./friendMapCore'); }
+
+/**
+ * Decide pelo envio adaptativo (v2) se vale publicar `coords` agora.
+ * Parado → keepalive raro (mapa 10 min / conversa 90 s); andando → 45 s / 30 s.
+ */
+export async function adaptiveDue(coords, reasons) {
+  const c = core();
+  const last = await lastPublishedPos();
+  return c.shouldPublish({
+    reason: reasons?.live ? 'live' : 'friend',
+    pos: coords ? { lat: coords.latitude, lng: coords.longitude, accuracy: coords.accuracy, speed: coords.speed } : null,
+    last,
+  });
+}
+
 /**
  * Publica a posição atual (1º plano) se houver razão ativa. Throttle ~2 min
- * (persistido) salvo `force`. Nunca pede permissão; nunca lança.
+ * (persistido) salvo `force` — no v2 o throttle é ADAPTATIVO (parado = raro).
+ * Nunca pede permissão; nunca lança.
  */
 export async function publishMyLocationNow({ force = false } = {}) {
   if (Platform.OS === 'web' || _pubInflight) return false;
@@ -199,9 +247,15 @@ export async function publishMyLocationNow({ force = false } = {}) {
   try {
     const r = await getShareReasons();
     if (!r.any) return false;
-    if (!force) {
+    const v2 = core().fmapV2();
+    if (!force && !v2) {
       const last = Number(await getItem(LAST_PUBLISH_KEY)) || 0;
       if (Date.now() - last < FRIEND_PUBLISH_GAP_MS) return false;
+    }
+    if (!force && v2) {
+      // Piso de 30 s contra rajadas (abrir/fechar o mapa).
+      const last = Number(await getItem(LAST_PUBLISH_KEY)) || 0;
+      if (Date.now() - last < 30 * 1000) return false;
     }
     const Location = require('expo-location');
     const perm = await Location.getForegroundPermissionsAsync().catch(() => null);
@@ -214,15 +268,11 @@ export async function publishMyLocationNow({ force = false } = {}) {
       ]).catch(() => null);
     }
     if (!loc?.coords) return false;
-    await setItem(LAST_PUBLISH_KEY, String(Date.now()));
-    const api = require('./api');
-    await api.apiCall('chat_friend_location_share_update', {
-      latitude: loc.coords.latitude,
-      longitude: loc.coords.longitude,
-      accuracy: loc.coords.accuracy || null,
-      heading: loc.coords.heading ?? null,
-      speed: loc.coords.speed ?? null,
-    }, 'POST').catch(() => {});
+    if (!force && v2) {
+      const d = await adaptiveDue(loc.coords, r);
+      if (!d.publish) return false;
+    }
+    await postShareUpdate(loc.coords);
     return true;
   } catch { return false; }
   finally { _pubInflight = false; }

@@ -82,6 +82,19 @@ export function registerBackgroundLocationTask() {
         try { api = require('./api'); } catch {}
         if (!api?.apiCall) return;
 
+        // [2026-10-24 mapa-v2] envio adaptativo também em 2º plano: parado não
+        // re-publica o mesmo ponto (o SO já só acorda a cada 100 m / 5 min).
+        try {
+          const core = require('./friendMapCore');
+          const fms = require('./friendMapShare');
+          if (core.fmapV2() && typeof fms.postShareUpdate === 'function') {
+            const live = await AsyncStorage?.getItem('live_location_active').catch(() => null);
+            const due = await fms.adaptiveDue(last.coords, { live: live === '1' || live === 'true' });
+            if (!due.publish) return;
+            await fms.postShareUpdate(last.coords);
+            return;
+          }
+        } catch {}
         try { await AsyncStorage?.setItem('friend_map_last_publish_ts', String(Date.now())); } catch {}
         await api.apiCall('chat_friend_location_share_update', {
           latitude:  last.coords.latitude,

@@ -24,6 +24,14 @@ class FriendLocationModule : Module() {
 
     Function("isSupported") { true }
 
+    // [2026-10-24 mapa-v2] bateria p/ o envio em 1º plano (JS friendMapShare.postShareUpdate)
+    Function("getBattery") {
+      val ctx = context
+      val b = if (ctx == null) null else FriendLocationPinger.battery(ctx)
+      if (b == null) mapOf<String, Any?>("level" to -1, "charging" to false)
+      else mapOf<String, Any?>("level" to b.first, "charging" to b.second)
+    }
+
     AsyncFunction("start") { acct: String ->
       val ctx = context
       if (ctx == null) {
