@@ -1680,26 +1680,27 @@ export async function registerForPushNotifications(opts = {}) {
     // servidor (≈4 s). Conta nova que fechava o app nesse intervalo ficava sem
     // token nenhum (Android 10-17: expo_token e nada depois). Rodam em paralelo.
     (async () => {
+      // [email-global 2026-10-24] botões no idioma do app (antes fixos em pt/en)
+      const L = await _notifActionLabels();
       await Notifications.setNotificationCategoryAsync('EMAIL', [
         {
           identifier: 'REPLY',
-          buttonTitle: 'Responder',
+          buttonTitle: L.reply,
           options: { opensAppToForeground: true },
         },
         {
           identifier: 'ARCHIVE',
-          buttonTitle: 'Arquivar',
+          buttonTitle: L.archive,
           options: { isDestructive: false },
         },
         {
           identifier: 'DELETE',
-          buttonTitle: 'Excluir',
+          buttonTitle: L.delete,
           options: { isDestructive: true },
         },
       ]);
 
       // [2026-10-05] Action button titles follow the app language (pt/en/es).
-      const L = await _notifActionLabels();
 
       await Notifications.setNotificationCategoryAsync('CHAT', [
         {
@@ -1753,12 +1754,12 @@ export async function registerForPushNotifications(opts = {}) {
       await Notifications.setNotificationCategoryAsync('new_email', [
         {
           identifier: 'archive',
-          buttonTitle: 'Arquivar',
+          buttonTitle: L.archive,
           options: { isDestructive: false },
         },
         {
           identifier: 'mark_read',
-          buttonTitle: 'Marcar como lido',
+          buttonTitle: L.markReadEmail,
           options: { isDestructive: false },
         },
       ]);
@@ -1767,17 +1768,17 @@ export async function registerForPushNotifications(opts = {}) {
       await Notifications.setNotificationCategoryAsync('email_new', [
         {
           identifier: 'REPLY',
-          buttonTitle: 'Responder',
+          buttonTitle: L.reply,
           options: { opensAppToForeground: true },
         },
         {
           identifier: 'ARCHIVE',
-          buttonTitle: 'Arquivar',
+          buttonTitle: L.archive,
           options: { isDestructive: false },
         },
         {
           identifier: 'DELETE',
-          buttonTitle: 'Excluir',
+          buttonTitle: L.delete,
           options: { isDestructive: true },
         },
       ]);
@@ -1820,13 +1821,13 @@ export async function registerForPushNotifications(opts = {}) {
       await Notifications.setNotificationCategoryAsync('chat_reaction', [
         {
           identifier: 'view',
-          buttonTitle: 'Ver',
+          buttonTitle: L.view,
           options: { opensAppToForeground: true },
         },
         {
           identifier: 'reply',
-          buttonTitle: 'Responder',
-          textInput: { submitButtonTitle: 'Enviar', placeholder: 'Mensagem...' },
+          buttonTitle: L.reply,
+          textInput: { submitButtonTitle: L.send, placeholder: L.placeholder },
         },
       ]);
 
@@ -1850,7 +1851,7 @@ export async function registerForPushNotifications(opts = {}) {
         await Notifications.setNotificationCategoryAsync(cat, [
           {
             identifier: 'VIEW',
-            buttonTitle: 'Ver',
+            buttonTitle: L.view,
             options: { opensAppToForeground: true },
           },
         ]);
@@ -1860,12 +1861,12 @@ export async function registerForPushNotifications(opts = {}) {
       await Notifications.setNotificationCategoryAsync('live_start', [
         {
           identifier: 'JOIN',
-          buttonTitle: 'Entrar ao vivo',
+          buttonTitle: L.joinLive,
           options: { opensAppToForeground: true },
         },
         {
           identifier: 'DISMISS',
-          buttonTitle: 'Ignorar',
+          buttonTitle: L.ignore,
           options: { isDestructive: false },
         },
       ]);
@@ -1884,7 +1885,7 @@ export async function registerForPushNotifications(opts = {}) {
           // at registration time. The active language is read from the
           // running app, but iOS caches the category between launches so
           // the title only updates after the app foregrounds.
-          buttonTitle: 'Ligar de volta',
+          buttonTitle: L.callBack,
           options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: true },
         },
       ]);
@@ -1892,12 +1893,12 @@ export async function registerForPushNotifications(opts = {}) {
       await Notifications.setNotificationCategoryAsync('incoming_call', [
         {
           identifier: 'accept_call',
-          buttonTitle: 'Accept',
+          buttonTitle: L.accept,
           options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: true },
         },
         {
           identifier: 'decline_call',
-          buttonTitle: 'Decline',
+          buttonTitle: L.decline,
           options: { isDestructive: true, isAuthenticationRequired: false },
         },
       ]);
@@ -2413,16 +2414,16 @@ async function _deviceLangCode() {
 // at registration time (re-registered on every registerForPushNotifications).
 // [2026-10-12 push-parity] 11 app languages (pt-BR/pt-PT → pt).
 const _NOTIF_ACTION_LABELS = {
-  pt: { newMessage: 'Nova mensagem', reply: 'Responder', send: 'Enviar', placeholder: 'Mensagem...', markRead: 'Marcar como lida', view: 'Ver', mute8h: 'Silenciar 8h', mute1w: 'Silenciar 1 semana', snooze1h: 'Soneca 1h', replyMention: 'Responder menção...' },
-  en: { newMessage: 'New message', reply: 'Reply', send: 'Send', placeholder: 'Message...', markRead: 'Mark as read', view: 'View', mute8h: 'Mute 8h', mute1w: 'Mute 1 week', snooze1h: 'Snooze 1h', replyMention: 'Reply to mention...' },
-  es: { newMessage: 'Nuevo mensaje', reply: 'Responder', send: 'Enviar', placeholder: 'Mensaje...', markRead: 'Marcar como leído', view: 'Ver', mute8h: 'Silenciar 8 h', mute1w: 'Silenciar 1 semana', snooze1h: 'Posponer 1h', replyMention: 'Responder mención...' },
-  fr: { newMessage: 'Nouveau message', reply: 'Répondre', send: 'Envoyer', placeholder: 'Message...', markRead: 'Marquer comme lu', view: 'Voir', mute8h: 'Silence 8 h', mute1w: 'Silence 1 semaine', snooze1h: 'Reporter 1 h', replyMention: 'Répondre à la mention...' },
-  de: { newMessage: 'Neue Nachricht', reply: 'Antworten', send: 'Senden', placeholder: 'Nachricht...', markRead: 'Als gelesen markieren', view: 'Ansehen', mute8h: '8 Std. stumm', mute1w: '1 Woche stumm', snooze1h: '1 Std. pausieren', replyMention: 'Auf Erwähnung antworten...' },
-  it: { newMessage: 'Nuovo messaggio', reply: 'Rispondi', send: 'Invia', placeholder: 'Messaggio...', markRead: 'Segna come letto', view: 'Vedi', mute8h: 'Silenzia 8 h', mute1w: 'Silenzia 1 settimana', snooze1h: 'Posticipa 1 h', replyMention: 'Rispondi alla menzione...' },
-  ja: { newMessage: '新しいメッセージ', reply: '返信', send: '送信', placeholder: 'メッセージ...', markRead: '既読にする', view: '表示', mute8h: '8時間ミュート', mute1w: '1週間ミュート', snooze1h: '1時間スヌーズ', replyMention: 'メンションに返信...' },
-  ar: { newMessage: 'رسالة جديدة', reply: 'رد', send: 'إرسال', placeholder: 'رسالة...', markRead: 'وضع علامة كمقروءة', view: 'عرض', mute8h: 'كتم 8 ساعات', mute1w: 'كتم أسبوع', snooze1h: 'غفوة ساعة', replyMention: 'الرد على الإشارة...' },
-  id: { newMessage: 'Pesan baru', reply: 'Balas', send: 'Kirim', placeholder: 'Pesan...', markRead: 'Tandai dibaca', view: 'Lihat', mute8h: 'Bisukan 8 jam', mute1w: 'Bisukan 1 minggu', snooze1h: 'Tunda 1 jam', replyMention: 'Balas sebutan...' },
-  hi: { newMessage: 'नया मैसेज', reply: 'जवाब दें', send: 'भेजें', placeholder: 'मैसेज...', markRead: 'पढ़ा हुआ मार्क करें', view: 'देखें', mute8h: '8 घंटे म्यूट', mute1w: '1 हफ़्ते म्यूट', snooze1h: '1 घंटा स्नूज़', replyMention: 'मेंशन का जवाब दें...' },
+  pt: { newMessage: 'Nova mensagem', reply: 'Responder', send: 'Enviar', placeholder: 'Mensagem...', markRead: 'Marcar como lida', view: 'Ver', mute8h: 'Silenciar 8h', mute1w: 'Silenciar 1 semana', snooze1h: 'Soneca 1h', replyMention: 'Responder menção...', archive: 'Arquivar', delete: 'Excluir', markReadEmail: 'Marcar como lido', joinLive: 'Entrar ao vivo', ignore: 'Ignorar', callBack: 'Ligar de volta', accept: 'Atender', decline: 'Recusar' },
+  en: { newMessage: 'New message', reply: 'Reply', send: 'Send', placeholder: 'Message...', markRead: 'Mark as read', view: 'View', mute8h: 'Mute 8h', mute1w: 'Mute 1 week', snooze1h: 'Snooze 1h', replyMention: 'Reply to mention...', archive: 'Archive', delete: 'Delete', markReadEmail: 'Mark as read', joinLive: 'Join live', ignore: 'Dismiss', callBack: 'Call back', accept: 'Accept', decline: 'Decline' },
+  es: { newMessage: 'Nuevo mensaje', reply: 'Responder', send: 'Enviar', placeholder: 'Mensaje...', markRead: 'Marcar como leído', view: 'Ver', mute8h: 'Silenciar 8 h', mute1w: 'Silenciar 1 semana', snooze1h: 'Posponer 1h', replyMention: 'Responder mención...', archive: 'Archivar', delete: 'Eliminar', markReadEmail: 'Marcar como leído', joinLive: 'Ver en vivo', ignore: 'Ignorar', callBack: 'Devolver llamada', accept: 'Contestar', decline: 'Rechazar' },
+  fr: { newMessage: 'Nouveau message', reply: 'Répondre', send: 'Envoyer', placeholder: 'Message...', markRead: 'Marquer comme lu', view: 'Voir', mute8h: 'Silence 8 h', mute1w: 'Silence 1 semaine', snooze1h: 'Reporter 1 h', replyMention: 'Répondre à la mention...', archive: 'Archiver', delete: 'Supprimer', markReadEmail: 'Marquer comme lu', joinLive: 'Rejoindre le live', ignore: 'Ignorer', callBack: 'Rappeler', accept: 'Répondre', decline: 'Refuser' },
+  de: { newMessage: 'Neue Nachricht', reply: 'Antworten', send: 'Senden', placeholder: 'Nachricht...', markRead: 'Als gelesen markieren', view: 'Ansehen', mute8h: '8 Std. stumm', mute1w: '1 Woche stumm', snooze1h: '1 Std. pausieren', replyMention: 'Auf Erwähnung antworten...', archive: 'Archivieren', delete: 'Löschen', markReadEmail: 'Als gelesen markieren', joinLive: 'Live ansehen', ignore: 'Ignorieren', callBack: 'Zurückrufen', accept: 'Annehmen', decline: 'Ablehnen' },
+  it: { newMessage: 'Nuovo messaggio', reply: 'Rispondi', send: 'Invia', placeholder: 'Messaggio...', markRead: 'Segna come letto', view: 'Vedi', mute8h: 'Silenzia 8 h', mute1w: 'Silenzia 1 settimana', snooze1h: 'Posticipa 1 h', replyMention: 'Rispondi alla menzione...', archive: 'Archivia', delete: 'Elimina', markReadEmail: 'Segna come letto', joinLive: 'Guarda la diretta', ignore: 'Ignora', callBack: 'Richiama', accept: 'Rispondi', decline: 'Rifiuta' },
+  ja: { newMessage: '新しいメッセージ', reply: '返信', send: '送信', placeholder: 'メッセージ...', markRead: '既読にする', view: '表示', mute8h: '8時間ミュート', mute1w: '1週間ミュート', snooze1h: '1時間スヌーズ', replyMention: 'メンションに返信...', archive: 'アーカイブ', delete: '削除', markReadEmail: '既読にする', joinLive: 'ライブを見る', ignore: '無視', callBack: '折り返し電話', accept: '応答', decline: '拒否' },
+  ar: { newMessage: 'رسالة جديدة', reply: 'رد', send: 'إرسال', placeholder: 'رسالة...', markRead: 'وضع علامة كمقروءة', view: 'عرض', mute8h: 'كتم 8 ساعات', mute1w: 'كتم أسبوع', snooze1h: 'غفوة ساعة', replyMention: 'الرد على الإشارة...', archive: 'أرشفة', delete: 'حذف', markReadEmail: 'وضع علامة كمقروء', joinLive: 'مشاهدة البث', ignore: 'تجاهل', callBack: 'معاودة الاتصال', accept: 'رد', decline: 'رفض' },
+  id: { newMessage: 'Pesan baru', reply: 'Balas', send: 'Kirim', placeholder: 'Pesan...', markRead: 'Tandai dibaca', view: 'Lihat', mute8h: 'Bisukan 8 jam', mute1w: 'Bisukan 1 minggu', snooze1h: 'Tunda 1 jam', replyMention: 'Balas sebutan...', archive: 'Arsipkan', delete: 'Hapus', markReadEmail: 'Tandai dibaca', joinLive: 'Tonton live', ignore: 'Abaikan', callBack: 'Telepon balik', accept: 'Jawab', decline: 'Tolak' },
+  hi: { newMessage: 'नया मैसेज', reply: 'जवाब दें', send: 'भेजें', placeholder: 'मैसेज...', markRead: 'पढ़ा हुआ मार्क करें', view: 'देखें', mute8h: '8 घंटे म्यूट', mute1w: '1 हफ़्ते म्यूट', snooze1h: '1 घंटा स्नूज़', replyMention: 'मेंशन का जवाब दें...', archive: 'संग्रहित करें', delete: 'हटाएँ', markReadEmail: 'पढ़ा हुआ मार्क करें', joinLive: 'लाइव देखें', ignore: 'अनदेखा करें', callBack: 'वापस कॉल करें', accept: 'उठाएँ', decline: 'अस्वीकार करें' },
 };
 async function _notifActionLabels() {
   const code = await _deviceLangCode();
