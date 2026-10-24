@@ -614,7 +614,10 @@ async function _rtSync() {
   for (const k of unsub) _rt.unsub.delete(k);
   _rt.inflight = true;
   let r = null;
-  try { r = await _api().apiCall('post_rt_sub', { ids: _rt.active ? ids : [], unsub, sid: _rt.sid }, 'POST'); } catch { r = null; }
+  // [mural-fb 2026-10-24] rt_v 2 = este app aceita contadores SEM seq vindos do edge (assinatura servida pela réplica
+  // regional em ~20-60 ms em vez de 250-1300 ms no US). Kill OTA: globalThis.__chatyy_mural_rt_edge = false → servidor responde do US.
+  const _rtV = (() => { try { return globalThis.__chatyy_mural_rt_edge === false ? {} : { rt_v: 2 }; } catch { return {}; } })();
+  try { r = await _api().apiCall('post_rt_sub', { ids: _rt.active ? ids : [], unsub, sid: _rt.sid, ..._rtV }, 'POST'); } catch { r = null; }
   _rt.inflight = false;
   if (r && r.success === false && _UNKNOWN_RE.test(_errMsg(r))) { _rt.unsupported = true; return; } // servidor velho: só refetch ao focar
   const d = r && r.success && r.data ? r.data : null;
@@ -632,10 +635,16 @@ async function _rtSync() {
 // Foto dos contadores (renovação/polling): só vale se não for mais velha que o último evento aplicado.
 function _applySnap(k, s) {
   if (!k || !s) return;
-  const seq = Number(s.seq) || 0;
-  const last = _seq.get(k) || 0;
-  if (seq < last) return;
-  if (seq) _seq.set(k, seq);
+  // [mural-fb 2026-10-24] foto do edge (src 'edge', sem seq): a réplica pode estar ~1 s atrás → não passa por cima de
+  // evento ao vivo aplicado há < 4 s; fora disso vale (é o polling quando o WS caiu).
+  if (s.seq == null && s.src === 'edge') {
+    if (Date.now() - (_evAt.get(k) || 0) < 4000) return;
+  } else {
+    const seq = Number(s.seq) || 0;
+    const last = _seq.get(k) || 0;
+    if (seq < last) return;
+    if (seq) _seq.set(k, seq);
+  }
   const patch = {};
   if (s.like_count != null && !_likeOps.has(k)) { patch.likes = Number(s.like_count); if (s.liked_by_me != null) patch.liked = !!s.liked_by_me; }
   if (s.comment_count != null) patch.comments = Number(s.comment_count);
@@ -647,7 +656,9 @@ function _applySnap(k, s) {
     _cmTimers.set(k, setTimeout(() => { _cmTimers.delete(k); loadComments(k); }, 300));
   }
 }
+const _evAt = new Map(); // [mural-fb 2026-10-24] id -> quando chegou o último evento ao vivo
 function _seqOk(k, seq) {
+  try { _evAt.set(k, Date.now()); if (_evAt.size > 500) _evAt.delete(_evAt.keys().next().value); } catch {}
   const n = Number(seq) || 0;
   if (!n) return true;
   if (n <= (_seq.get(k) || 0)) return false;
