@@ -19,6 +19,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { duration as edlDuration, newEdl, cloneEdl } from './edl';
+import { rebaseDocUri } from '../durablePath';
 
 let FS = null;
 if (Platform.OS !== 'web') {
@@ -79,6 +80,21 @@ export function getDraft(id) {
   return mem.get(id) || null;
 }
 
+// [2026-10-23 reels-sumiu] iOS troca o UUID do container a cada atualização do app
+// (TestFlight 773→774): os file:// absolutos do rascunho apontavam p/ a pasta velha →
+// vídeo "sumia" (prévia preta, upload tamanho 0). Re-aponta p/ o documentDirectory atual.
+const MARK = 'video-studio/';
+export function rebaseEdl(edl) {
+  if (!edl || typeof edl !== 'object') return edl;
+  let changed = false;
+  const rb = (u) => { const n = rebaseDocUri(u, MARK); if (n !== u) changed = true; return n; };
+  const clips = (edl.clips || []).map((c) => (c && (c.uri || c.thumb) ? { ...c, uri: rb(c.uri), ...(c.thumb ? { thumb: rb(c.thumb) } : null) } : c));
+  const audio = edl.audio && edl.audio.voiceover && edl.audio.voiceover.uri
+    ? { ...edl.audio, voiceover: { ...edl.audio.voiceover, uri: rb(edl.audio.voiceover.uri) } } : edl.audio;
+  const overlays = (edl.overlays || []).map((o) => (o && o.sticker_url ? { ...o, sticker_url: rb(o.sticker_url) } : o));
+  return changed ? { ...edl, clips, audio, overlays } : edl;
+}
+
 export async function loadDraft(id) {
   if (!id) return null;
   if (mem.has(id)) return mem.get(id);
@@ -87,8 +103,11 @@ export async function loadDraft(id) {
     if (!raw) return null;
     const d = JSON.parse(raw);
     if (!d || !d.edl) return null;
-    mem.set(id, d);
-    return d;
+    const edl = rebaseEdl(d.edl);
+    const nd = edl === d.edl ? d : { ...d, edl };
+    mem.set(id, nd);
+    if (nd !== d) scheduleSave(id, 0);
+    return nd;
   } catch { return null; }
 }
 
@@ -150,7 +169,7 @@ async function readIndex() {
 }
 
 export async function listDrafts() {
-  const idx = await readIndex();
+  const idx = (await readIndex()).map((x) => (x && x.thumb ? { ...x, thumb: rebaseDocUri(x.thumb, MARK) } : x));
   return idx.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 }
 

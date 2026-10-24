@@ -32,6 +32,8 @@ import {
   addOverlay, updateOverlay, removeOverlay, setOverlayRange, ensureOverlayIds, clampOverlays, clipStarts, fmtTime,
 } from '../../services/videoStudio/edlOps';
 import { createDraft, loadDraft, updateDraft, saveDraftNow, adoptFile } from '../../services/videoStudio/draftStore';
+import { vsDiag } from '../../services/videoStudio/diag';
+import { fileExists } from '../../services/durablePath';
 
 const HISTORY_MAX = 40;
 
@@ -112,10 +114,22 @@ export default function VideoStudioEditor() {
     let alive = true;
     (async () => {
       const id = String(params.draft || params.draftId || '');
+      const t0 = Date.now();
       if (id) {
-        const d = await loadDraft(id).catch(() => null); // [2026-10-21 media-audit] falha de leitura → tela de erro (antes: carregando p/ sempre)
+        let d = await loadDraft(id).catch(() => null); // [2026-10-21 media-audit] falha de leitura → tela de erro (antes: carregando p/ sempre)
+        // [2026-10-23 reels-sumiu] a gravação do disco pode ainda estar terminando → 2ª tentativa curta.
+        if (!d?.edl && alive) { await new Promise((r) => setTimeout(r, 400)); d = await loadDraft(id).catch(() => null); }
         if (!alive) return;
-        if (d?.edl) { setDraftId(id); setEdl(clampOverlays(ensureOverlayIds(d.edl))); return; }
+        if (d?.edl) {
+          setDraftId(id); setEdl(clampOverlays(ensureOverlayIds(d.edl)));
+          // Metadados: quantos trechos e quantos arquivos locais sumiram do disco.
+          (async () => {
+            let miss = 0;
+            for (const c of (d.edl.clips || [])) { if ((await fileExists(c.uri)) === false) miss += 1; }
+            vsDiag('ed_load', { ms: Date.now() - t0, n: (d.edl.clips || []).length, miss });
+          })().catch(() => {});
+          return;
+        }
       }
       if (params.edl) {
         try {
@@ -127,7 +141,7 @@ export default function VideoStudioEditor() {
           return;
         } catch {}
       }
-      if (alive) setLoadErr(true);
+      if (alive) { vsDiag('ed_load_fail', { id: id ? 1 : 0, edl: params.edl ? 1 : 0 }); setLoadErr(true); }
     })();
     return () => { alive = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -331,8 +345,9 @@ export default function VideoStudioEditor() {
     pause();
     const e = edlRef.current;
     const v = validate({ ...e, overlays: (e.overlays || []).map(({ id, kind, ...o }) => o) });
-    if (!v.ok) { Alert.alert(t('studio.editor.title'), t('studio.editor.invalid')); return; }
-    if (draftRef.current) await saveDraftNow(draftRef.current);
+    if (!v.ok) { vsDiag('ed_invalid', { e: String((v.errors || [])[0] || '').slice(0, 50) }); Alert.alert(t('studio.editor.title'), t('studio.editor.invalid')); return; }
+    if (draftRef.current) await Promise.race([saveDraftNow(draftRef.current).catch(() => {}), new Promise((r) => setTimeout(r, 2000))]);
+    vsDiag('ed_next', { n: (e.clips || []).length, ov: (e.overlays || []).length, mus: e.audio?.music ? 1 : 0 });
     router.push({ pathname: '/video-studio/publish', params: { draft: draftRef.current } });
   }, [pause, router, t]);
 

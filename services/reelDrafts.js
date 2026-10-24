@@ -26,7 +26,15 @@ export async function listReelDrafts() {
   try {
     const raw = await AsyncStorage.getItem(REEL_DRAFTS_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list : [];
+    if (!Array.isArray(list)) return [];
+    // [2026-10-23 reels-sumiu] iOS: o caminho do container muda na atualização do app →
+    // file:// absolutos do rascunho ficavam órfãos (vídeo some). Re-aponta p/ a pasta atual.
+    let rb = null;
+    try { rb = require('./durablePath').rebaseDocUri; } catch {}
+    if (!rb) return list;
+    return list.map((d) => (d && Array.isArray(d.clips)
+      ? { ...d, clips: d.clips.map((c) => (c && c.uri ? { ...c, uri: rb(c.uri, DRAFT_DIR), ...(c.thumb ? { thumb: rb(c.thumb, DRAFT_DIR) } : null) } : c)) }
+      : d));
   } catch { return []; }
 }
 
