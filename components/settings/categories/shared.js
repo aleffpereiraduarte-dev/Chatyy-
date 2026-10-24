@@ -199,9 +199,48 @@ export function privacyValueLabel(t, privacy, field) {
     return t('settings.privacyNobody');
   }
   // [2026-10-20 wa2] phone_visibility usa 'all' (não 'everyone') → aparecia "Ninguém".
+  if (field === 'online' && _onlineSame === true && v === onlineFromLastSeen(privacy.last_seen)) {
+    return t('privacy.onlineSameAsLastSeen') || 'Igual ao visto por último';
+  }
   if (v === 'everyone' || v === 'all') return t('settings.privacyEveryone');
   if (v === 'contacts') return t('settings.privacyContacts');
   return field === 'online' ? t('settings.privacyInvisible') : t('settings.privacyNobody');
+}
+
+// [conversa-wa 2026-10-24] "Quem pode ver quando estou online: Igual ao visto
+// por último" (WhatsApp). O servidor só conhece everyone|contacts|nobody, então
+// a opção é uma marca no aparelho: ao escolher, grava online = valor do visto
+// por último; ao mudar o visto por último com a marca ligada, grava os dois.
+// Se outro aparelho mudar o online, o rótulo volta ao valor real (marca ignorada).
+// Kill: globalThis.__chatyy_online_same_ls = false (some a opção).
+const ONLINE_SAME_KEY = 'chatyy_online_same_ls_v1';
+let _onlineSame = null;
+export function onlineFromLastSeen(ls) {
+  if (ls === 'everyone' || ls === 'all') return 'everyone';
+  if (ls === 'contacts') return 'contacts';
+  return 'nobody';
+}
+export function onlineSameEnabled() {
+  try { if (globalThis.__chatyy_online_same_ls === false) return false; } catch {}
+  return true;
+}
+export function onlineSameAsLastSeen() { return onlineSameEnabled() && _onlineSame === true; }
+export async function loadOnlineSame() {
+  try {
+    let s = null;
+    if (Platform.OS === 'web') { if (typeof localStorage !== 'undefined') s = localStorage.getItem(ONLINE_SAME_KEY); }
+    else { const m = await import('@react-native-async-storage/async-storage'); s = await m.default.getItem(ONLINE_SAME_KEY); }
+    _onlineSame = s === '1';
+  } catch { if (_onlineSame === null) _onlineSame = false; }
+  return onlineSameAsLastSeen();
+}
+export function setOnlineSame(v) {
+  _onlineSame = !!v;
+  const s = v ? '1' : '0';
+  try {
+    if (Platform.OS === 'web') { if (typeof localStorage !== 'undefined') localStorage.setItem(ONLINE_SAME_KEY, s); }
+    else import('@react-native-async-storage/async-storage').then(m => m.default.setItem(ONLINE_SAME_KEY, s).catch(() => {})).catch(() => {});
+  } catch {}
 }
 
 // ── Padrões do chat (auto-download + temporárias) ────────────────────────

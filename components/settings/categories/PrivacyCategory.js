@@ -24,7 +24,7 @@ import {
   SettingsGroup, SettingsRow, SettingsSwitchRow, SettingsPickerRow, OptionSheet, SettingsIconTile, useGroupedColors, grafiteTileStyle,
 } from '../SettingsKit';
 import { PrivacyExtrasGroup } from '../SettingsPanels';
-import { useSafeNav, useSettingsHost, useChatPrivacy, useChatDefaults, privacyValueLabel } from './shared';
+import { useSafeNav, useSettingsHost, useChatPrivacy, useChatDefaults, privacyValueLabel, onlineFromLastSeen, onlineSameAsLastSeen, onlineSameEnabled, loadOnlineSame, setOnlineSame } from './shared';
 import { useSilenceUnknownCallers } from '../../calls/silenceUnknownCallers'; // [2026-10-16 wave12-D]
 import { useFollowRequestState, setProfilePrivate } from '../../../services/followRequests'; // [privado 2026-10-22]
 import { useCaptureBlockGlobal, setCaptureBlockGlobal, useAdvPrivacyDefault, setAdvPrivacyDefault } from '../../../services/captureBlock'; // [2026-10-19 secure-view] [2026-10-19 capmember]
@@ -60,6 +60,10 @@ export default function PrivacyCategory() {
   const { privacy, savePrivacy } = useChatPrivacy();
   const { defaults, updateDefault } = useChatDefaults();
   const [picker, setPicker] = useState(null);
+  // [conversa-wa 2026-10-24] Online "Igual ao visto por último" (marca no aparelho, ver shared.js).
+  const [onlineSame, setOnlineSameSt] = useState(onlineSameAsLastSeen());
+  useEffect(() => { let on = true; loadOnlineSame().then((v) => { if (on) setOnlineSameSt(!!v); }).catch(() => {}); return () => { on = false; }; }, []);
+  const onlineSameActive = onlineSame && privacy.online === onlineFromLastSeen(privacy.last_seen);
   const [silenceUnknown, setSilenceUnknown] = useSilenceUnknownCallers();
   const isWeb = Platform.OS === 'web';
 
@@ -199,6 +203,7 @@ export default function PrivacyCategory() {
   );
   const optionsFor = (field) => (
     field === 'online' ? [
+      ...(onlineSameEnabled() ? [{ value: 'same_last_seen', label: tr('privacy.onlineSameAsLastSeen', 'Igual ao visto por último') }] : []),
       { value: 'everyone', label: t('settings.privacyEveryone') },
       { value: 'contacts', label: t('settings.privacyContacts') },
       { value: 'nobody', label: t('settings.privacyInvisible') },
@@ -454,6 +459,7 @@ export default function PrivacyCategory() {
           value={picker === 'story_privacy'
             ? ((privacy.story_privacy === 'everyone' || privacy.story_privacy === 'all' || privacy.story_privacy === 'except')
               ? (exceptN > 0 ? 'except' : 'all') : privacy.story_privacy)
+            : picker === 'online' && onlineSameActive ? 'same_last_seen'
             : (picker === 'phone_visibility' && privacy.phone_visibility === 'everyone' ? 'all' : privacy[picker])}
           cancelLabel={t('common.cancel') || 'Cancelar'}
           onSelect={(v) => {
@@ -461,6 +467,9 @@ export default function PrivacyCategory() {
             // [2026-10-20 wa2] "Exceto…" = Todos + lista (o servidor não tem 'except'): só abre a lista.
             if (field === 'story_privacy' && v === 'except') savePrivacy({ story_privacy: 'everyone' });
             else if (field === 'story_privacy' && v === 'all' && exceptN > 0) savePrivacy({ story_privacy: 'everyone', status_except: [] });
+            else if (field === 'online' && v === 'same_last_seen') { setOnlineSame(true); setOnlineSameSt(true); savePrivacy({ online: onlineFromLastSeen(privacy.last_seen) }); }
+            else if (field === 'online') { setOnlineSame(false); setOnlineSameSt(false); savePrivacy({ online: v }); }
+            else if (field === 'last_seen' && onlineSameActive) savePrivacy({ last_seen: v, online: onlineFromLastSeen(v) });
             else if (field) savePrivacy({ [field]: v });
             if (field === 'story_privacy' && v === 'close_friends') { try { router.push('/close-friends'); } catch {} }
             else if (field === 'story_privacy' && v === 'except') { try { router.push('/status-except'); } catch {} }
