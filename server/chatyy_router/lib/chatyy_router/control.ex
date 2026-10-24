@@ -34,7 +34,7 @@ defmodule ChatyyRouter.Control do
     GET  /pull ... &since_pts=P (com cid) → tudo que mudou depois de P; itens trazem pts/pts0/rtype/upto/ref
                  resposta ganha "events" (recibos e apagar para todos)
     GET  /f4/convs?uid=U&cids=1,2   → {"convs":[{cid,pts,unread,read_pts,last,peers}]} (calculado na casa)
-    GET  /f4/status
+    GET  /f4/status          GET /f4/locate?cids=1,2&mid=M → {"found":{cid,pts,from_uid,deleted}|null}
   """
   use GenServer
   require Logger
@@ -268,6 +268,15 @@ defmodule ChatyyRouter.Control do
   end
 
   defp route(:GET, "/f4/status", _, _), do: ok(ChatyyRouter.F4.status())
+
+  defp route(:GET, "/f4/locate", q, _) do
+    cids = (q["cids"] || "") |> String.split(",", trim: true) |> Enum.flat_map(&(case Integer.parse(String.trim(&1)) do {i, ""} -> [i]; _ -> [] end))
+
+    case Integer.parse(q["mid"] || "") do
+      {mid, ""} -> ok(%{found: ChatyyRouter.F4.locate(Enum.take(cids, 200), mid)})
+      _ -> {400, "application/json", json(%{ok: false, error: "no_mid"})}
+    end
+  end
 
   defp route(:GET, "/f1/report", _, _), do: ok(ChatyyRouter.BodyCompare.report())
   defp route(:GET, "/f1/status", _, _), do: ok(ChatyyRouter.BodyStore.status())

@@ -138,6 +138,9 @@ defmodule ChatyyRouter.F4Test do
     assert {:ok, %{stale: true}} = msg(c, "a", 430, 50, "u1", %{kind: "edit", env: "VOLTA", rev: 10})
     {:ok, _} = del(c, "b", 430, "u1", 51)
     assert sum(c, "a", 430, "u2").last.deleted == true
+    # o PHP não tem a linha: pergunta ao roteador em qual conversa a mensagem está
+    assert %{cid: 430, from_uid: "u1", deleted: true} = on(c, "e", F4, :locate, [[401, 430], 51])
+    assert on(c, "e", F4, :locate, [[430], 777]) == nil
   end
 
   test "since_pts: o aparelho recebe tudo que mudou depois do pts (edição, lápide, recibo)", %{c: c} do

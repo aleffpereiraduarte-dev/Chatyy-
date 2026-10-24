@@ -358,6 +358,26 @@ defmodule ChatyyRouter.F4 do
 
   def summaries_local(uid, cids), do: for(c <- cids, do: summary(c, uid))
 
+  @doc """
+  Em qual das conversas F4 `cids` a mensagem `mid` está (o PG não tem a linha para dizer): pergunta à casa em
+  exercício de cada uma. → %{cid, pts, from_uid, deleted} | nil
+  """
+  def locate(cids, mid) do
+    cids
+    |> Enum.filter(&conv?/1)
+    |> Enum.group_by(&BodyHome.acting/1)
+    |> Enum.flat_map(fn {r, cs} ->
+      if r == ChatyyRouter.Net.me(),
+        do: locate_local(cs, mid),
+        else: (case ChatyyRouter.Net.call(r, ChatyyRouter.BodyStore, {:f4_locate, cs, mid}, ChatyyRouter.Net.tmo(r, 5_000)) do l when is_list(l) -> l; _ -> [] end)
+    end)
+    |> List.first()
+  end
+
+  def locate_local(cids, mid) do
+    for c <- cids, e = target_entry(c, mid), e != nil, do: %{cid: c, pts: e.pts, from_uid: e.from_uid, deleted: e.deleted, type: e.type}
+  end
+
   def status do
     cids = Enum.filter(BodyHome.enabled_cids(), &conv?/1)
 

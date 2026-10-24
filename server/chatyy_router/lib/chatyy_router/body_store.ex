@@ -1040,6 +1040,7 @@ defmodule ChatyyRouter.BodyStore do
   end
 
   def handle_call(:inherit_all, from, s), do: async_reply(from, fn -> inherits() end, s)
+  def handle_call({:f4_locate, cids, mid}, from, s), do: async_reply(from, fn -> ChatyyRouter.F4.locate_local(cids, mid) end, s)
   def handle_call({:f4_sum, uid, cids}, from, s), do: async_reply(from, fn -> ChatyyRouter.F4.summaries_local(uid, cids) end, s)
 
   def handle_call({:acks_of, cid, subs}, from, s) do
