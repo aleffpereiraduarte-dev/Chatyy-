@@ -201,6 +201,11 @@
             {
               "scheme": "https",
               "host": "chatyy.com.br",
+              "pathPrefix": "/r/"
+            },
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
               "pathPrefix": "/j/"
             },
             {

@@ -75,6 +75,8 @@ export function resolveUniversalLink(url) {
     case 'call':
     case 'c': // [call-link 2026-10-19] link curto chatyy.com.br/c/xxxx-xxxx-xxxx → mesmo lobby
       return seg[1] && ID_RE.test(seg[1]) ? { href: '/call/' + seg[1], owner: 'router' } : null;
+    case 'r': // [migracao .app 2026-10-24] Reels: chatyy.app|chatyy.com.br/r/<id> (AASA + intent-filter)
+      return seg[1] && ID_RE.test(seg[1]) ? { href: '/r/' + seg[1], owner: 'router' } : null;
     case 'j':
     case 'g':
       // Backend mints chatyy.com.br/g/<token>; the app screen is /j/[token].
@@ -139,4 +141,4 @@ function _resolveShort(seg) {
 }
 
 // Mirror of the app-claimed paths (documentation + tests).
-export const UNIVERSAL_PATHS = ['/call/', '/c/', '/j/', '/g/', '/u/', '/@', '/ch/', '/live/', '/feed/', '/meet/', '/chat/', '/stickers/store', '/signup'];
+export const UNIVERSAL_PATHS = ['/call/', '/c/', '/r/', '/j/', '/g/', '/u/', '/@', '/ch/', '/live/', '/feed/', '/meet/', '/chat/', '/stickers/store', '/signup'];
